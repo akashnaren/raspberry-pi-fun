@@ -67,6 +67,7 @@ test("HUD status is a quiet static line", () => {
     actingName: "Nova Chen",
   });
   assert.equal(line.line, "Day 1 · 4 people · $0.00 / $5 · Nova");
+  assert.equal(hudStatus({ paused: true }).who, "paused");
   assert.equal(latestEventLine([]), "the room is still");
   assert.equal(
     latestEventLine([

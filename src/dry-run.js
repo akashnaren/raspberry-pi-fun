@@ -1,4 +1,6 @@
-/** Scripted turns. $0. Walks and furniture edits still hit the event log. */
+/** Scripted day. $0. Walks, Docs ship, backlog, and furniture still hit the event log. */
+
+import { applyNovaDocsTweak } from "./docs-tweak.js";
 
 const SCRIPTS = {
   mira: [
@@ -19,13 +21,17 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Coffee. Then I cut anything that looks like a spreadsheet.",
+          message: "Backlog is set. Invoice waits. Coffee, then I cut anything that looks like a spreadsheet.",
         },
+      },
+      {
+        name: "add_task",
+        arguments: { text: "Invoice print page only after download is boringly reliable." },
       },
       {
         name: "journal",
         arguments: {
-          text: "Nova will ship tonight. Kessler will reject a loose green. Backlog stays Docs.",
+          text: "Backlog: Docs, then invoice. Sheets stay a stub. Nova ships tonight. Kessler greens what a stranger can use.",
         },
       },
     ],
@@ -44,7 +50,7 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Working copy is on my desk. Mira, Docs still ships first.",
+          message: "Ctrl+S writes a .md. Mira, Docs still ships first.",
           to: "mira",
         },
       },
@@ -72,7 +78,7 @@ const SCRIPTS = {
       {
         name: "journal",
         arguments: {
-          text: "Docs writes. Next: make download obvious. Working beats pretty.",
+          text: "Docs writes. Ctrl+S downloads .md. Working beats pretty.",
         },
       },
     ],
@@ -82,13 +88,19 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Using the last green build. Mira, I'll review Docs at the table.",
+          message: "Using the last green build. Mira, I found a bug at the table.",
           to: "mira",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Download must give you a file. A dead button is a fail." },
+        arguments: { text: "Bug: download .md must keep the title as the first H1. A dead file is a fail." },
+      },
+      {
+        name: "journal",
+        arguments: {
+          text: "Bug note: print chrome hides, good. If download .md drops the title H1 I will reject the green.",
+        },
       },
     ],
     [
@@ -106,12 +118,6 @@ const SCRIPTS = {
         arguments: {
           message: "Coffee with Jules. A lying export is worse than late.",
           to: "jules",
-        },
-      },
-      {
-        name: "journal",
-        arguments: {
-          text: "I will click download before I close anything. A lying export is worse than late.",
         },
       },
     ],
@@ -135,12 +141,15 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Board is the plan. Coffee stays. Two furniture credits.",
+          message: "Board is the plan. Tidied Mira's stickies. Coffee stays. Two furniture credits.",
         },
       },
       {
         name: "edit_office",
-        arguments: { whiteboard: "SHIP: Docs. Print. Download." },
+        arguments: {
+          whiteboard: "SHIP: Docs. Print. Download.",
+          deskItem: { owner: "mira", item: "sticky_notes" },
+        },
       },
     ],
     [
@@ -173,7 +182,7 @@ const SCRIPTS = {
       {
         name: "journal",
         arguments: {
-          text: "Nova will ask again. Budget stays two until something ships.",
+          text: "Tidied. Nova will ask again. Budget stays two until something ships.",
         },
       },
     ],
@@ -189,31 +198,66 @@ const WRAP_BEATS = [
   },
 ];
 
-export function dryRunCalls(employeeId, turnIndex) {
-  const n = Math.max(0, Number(turnIndex) || 0);
-  const sequence = SCRIPTS[employeeId] || SCRIPTS.mira;
-  const step = sequence[n % sequence.length].map((call) => ({
+function novaShipCalls(html) {
+  const step = SCRIPTS.nova[0].map((call) => ({
     name: call.name,
     arguments: { ...(call.arguments || {}) },
   }));
-  if (n >= sequence.length) {
-    const extra = WRAP_BEATS[n % WRAP_BEATS.length];
-    step.unshift({
-      name: extra.name,
-      arguments: { ...extra.arguments, ...(extra.name === "journal" ? { text: `Dry-run turn ${n + 1}. Still watching Docs. Changing the note.` } : {}) },
+  if (html && String(html).includes("<html")) {
+    step.push({
+      name: "write_file",
+      arguments: {
+        path: "product/index.html",
+        contents: applyNovaDocsTweak(html),
+      },
     });
   }
   return step;
 }
 
-export function createDryRunDriver() {
+export function dryRunCalls(employeeId, turnIndex, ctx = {}) {
+  const n = Math.max(0, Number(turnIndex) || 0);
+  const sequence = SCRIPTS[employeeId] || SCRIPTS.mira;
+  let step;
+  if (employeeId === "nova" && n % sequence.length === 0) {
+    step = novaShipCalls(ctx.productHtml);
+  } else {
+    step = sequence[n % sequence.length].map((call) => ({
+      name: call.name,
+      arguments: { ...(call.arguments || {}) },
+    }));
+  }
+  if (n >= sequence.length) {
+    const extra = WRAP_BEATS[n % WRAP_BEATS.length];
+    step.unshift({
+      name: extra.name,
+      arguments: {
+        ...extra.arguments,
+        ...(extra.name === "journal"
+          ? { text: `Dry-run turn ${n + 1}. Still watching Docs. Changing the note.` }
+          : {}),
+      },
+    });
+  }
+  return step;
+}
+
+export function createDryRunDriver({ readProduct } = {}) {
   const seen = new Map();
   return {
     complete({ employee }) {
       const n = seen.get(employee.id) || 0;
       seen.set(employee.id, n + 1);
+      let productHtml = "";
+      if (typeof readProduct === "function") {
+        try {
+          productHtml = readProduct() || "";
+        } catch {
+          productHtml = "";
+        }
+      }
       return {
-        toolCalls: dryRunCalls(employee.id, n),
+        toolCalls: dryRunCalls(employee.id, n, { productHtml }),
         text: "",
         costUsd: 0,
         dryRun: true,
