@@ -6,57 +6,64 @@
     <title>Meridian Office — Sheets</title>
     <style>
       :root {
-        color-scheme: dark;
-        --chrome: #1c1916;
+        color-scheme: light;
         --paper: #f4ecd8;
+        --sheet: #faf4e8;
         --ink: #2a2118;
         --muted: #8a7d6b;
-        --line: #3a322b;
         --rule: #e0d4bc;
+        --rail: #efe6d2;
+        --rail-line: #d8cbb0;
         --ui: system-ui, -apple-system, "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
         font-family: var(--ui);
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: var(--chrome); color: #e8dfd2; }
-      body { display: grid; grid-template-rows: auto auto 1fr auto; min-height: 100dvh; }
+      html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); }
+      body { display: grid; grid-template-columns: 6.1rem 1fr; grid-template-rows: auto auto 1fr auto; min-height: 100dvh; }
+      .rail {
+        grid-row: 1 / -1; display: flex; flex-direction: column; gap: 0.55rem;
+        padding: 0.7rem 0.5rem 0.8rem; background: var(--rail);
+        border-right: 1px solid var(--rail-line);
+      }
+      .brand { font-size: 0.72rem; font-weight: 600; line-height: 1.25; }
+      .apps { display: flex; flex-direction: column; gap: 0.15rem; }
+      .apps a, .more a {
+        color: #6b5d4d; text-decoration: none; font-size: 0.8rem;
+        padding: 0.32rem 0.4rem; border-radius: 5px;
+      }
+      .apps a[aria-current="page"] { background: #faf4e8; color: var(--ink); box-shadow: inset 2px 0 0 var(--ink); }
+      .more { margin-top: auto; padding-top: 0.55rem; border-top: 1px solid var(--rail-line); }
+      .more span { display: block; font-size: 0.62rem; color: var(--muted); letter-spacing: 0.04em; margin: 0 0.4rem 0.25rem; }
+      .more a { display: block; font-size: 0.68rem; padding: 0.22rem 0.4rem; }
       header {
-        display: flex; align-items: baseline; gap: 1.1rem;
-        padding: 0.55rem 1rem; border-bottom: 1px solid var(--line);
+        display: flex; align-items: baseline; gap: 0.9rem;
+        padding: 0.5rem 1rem; border-bottom: 1px solid var(--rule);
       }
-      .brand { font-size: 0.78rem; letter-spacing: 0.02em; }
-      nav { display: flex; gap: 0.85rem; font-size: 0.78rem; }
-      nav a { color: #9a8f80; text-decoration: none; }
-      nav a[aria-current="page"] { color: #f3ead7; }
+      .module { font-size: 0.78rem; color: var(--muted); }
       .tools { margin-left: auto; display: flex; gap: 0.85rem; font-size: 0.72rem; }
-      .tools button {
-        border: 0; background: none; color: #f3ead7; font: inherit; cursor: pointer; padding: 0;
-      }
-      .tools button:hover { color: #c4b8a8; }
+      .tools button { border: 0; background: none; color: var(--ink); font: inherit; cursor: pointer; padding: 0; }
+      .tools button:hover { color: #6b5d4d; }
       .paste-row {
         display: flex; gap: 0.7rem; align-items: start;
-        padding: 0.45rem 1rem; border-bottom: 1px solid var(--line);
-        background: #211c18;
+        padding: 0.45rem 1rem; border-bottom: 1px solid var(--rule);
+        background: #efe6d2;
       }
-      .paste-label { font-size: 0.7rem; color: #9a8f80; padding-top: 0.35rem; }
+      .paste-label { font-size: 0.7rem; color: var(--muted); padding-top: 0.35rem; }
       #paste-from {
         flex: 1; min-height: 3.1rem; max-height: 5.5rem; resize: vertical;
-        border: 1px solid #3a322b; background: #2a241e; color: #f3ead7;
+        border: 1px solid var(--rule); background: #faf4e8; color: var(--ink);
         font: 0.78rem/1.35 ui-monospace, "Liberation Mono", monospace;
         padding: 0.35rem 0.45rem;
       }
       .paste-row button {
-        border: 0; background: none; color: #f3ead7; font: 0.72rem var(--ui);
+        border: 0; background: none; color: var(--ink); font: 0.72rem var(--ui);
         cursor: pointer; padding: 0.35rem 0;
       }
-      .stage {
-        min-height: 0; overflow: auto;
-        background: linear-gradient(180deg, #2a241e 0%, #1c1916 18%, #1c1916 100%);
-        padding: 0.7rem 0 1.2rem;
-      }
+      .stage { min-height: 0; overflow: auto; padding: 0.7rem 0 1.2rem; }
       main {
         width: min(46rem, calc(100% - 1.4rem));
-        margin: 0 auto; background: var(--paper); color: var(--ink);
-        box-shadow: 0 0 0 1px #d8cbb0, 0 18px 40px rgba(0, 0, 0, 0.28);
+        margin: 0 auto; background: var(--sheet); color: var(--ink);
+        box-shadow: 0 0 0 1px #d8cbb0, 0 14px 32px rgba(42, 33, 24, 0.08);
       }
       .sheet-head {
         display: flex; align-items: baseline; gap: 0.7rem;
@@ -84,19 +91,27 @@
       }
       footer {
         display: flex; justify-content: space-between; gap: 1rem;
-        padding: 0.35rem 1rem; border-top: 1px solid var(--line);
-        color: #9a8f80; font-size: 0.7rem;
+        padding: 0.35rem 1rem; border-top: 1px solid var(--rule);
+        color: var(--muted); font-size: 0.7rem;
       }
     </style>
   </head>
   <body>
-    <header>
-      <span class="brand">Meridian Office</span>
-      <nav aria-label="Meridian Office">
+    <aside class="rail" aria-label="Meridian Office">
+      <div class="brand">Meridian Office</div>
+      <nav class="apps" aria-label="Apps">
         <a href="./index.html">Docs</a>
         <a href="./sheets.html" aria-current="page">Sheets</a>
         <a href="./slides.html">Slides</a>
       </nav>
+      <nav class="more" aria-label="Catalogue">
+        <span>CATALOGUE</span>
+        <a href="./paste-csv.html">Paste → CSV</a>
+        <a href="./timezone-buddy.html">Timezone Buddy</a>
+      </nav>
+    </aside>
+    <header>
+      <span class="module">Sheets</span>
       <div class="tools">
         <button id="download-csv" type="button">download .csv</button>
       </div>

@@ -5,6 +5,7 @@ import {
   mergeStudioState,
   parseSocketMessage,
   reconnectDelayMs,
+  sanitizeEvents,
   usableOffice,
 } from "../public/office-net.js";
 
@@ -37,6 +38,21 @@ test("mergeStudioState keeps the seed office if /api/state is empty or torn", ()
   const merged = mergeStudioState(painted, live, FALLBACK_OFFICE, FALLBACK_CAST);
   assert.equal(merged.office.walls, "#111111");
   assert.equal(merged.paused, true);
+});
+
+test("sanitizeEvents drops torn entries so the office can keep painting", () => {
+  assert.deepEqual(sanitizeEvents([{ type: "say" }, null, "nope", ["x"], { type: "journal" }]), [
+    { type: "say" },
+    { type: "journal" },
+  ]);
+  const merged = mergeStudioState(
+    { office: FALLBACK_OFFICE, employees: FALLBACK_CAST, events: [] },
+    { office: FALLBACK_OFFICE, employees: FALLBACK_CAST, events: [{ type: "say" }, "torn"] },
+    FALLBACK_OFFICE,
+    FALLBACK_CAST,
+  );
+  assert.equal(merged.events.length, 1);
+  assert.equal(merged.events[0].type, "say");
 });
 
 test("socket messages that are not JSON do not throw", () => {

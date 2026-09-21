@@ -20,6 +20,7 @@ export function prettyPath(path) {
   if (rel === "product/sheets.html") return "Meridian Sheets";
   if (rel === "product/slides.html") return "Meridian Slides";
   if (rel === "product/timezone-buddy.html") return "Timezone Buddy";
+  if (rel === "product/paste-csv.html") return "Paste → CSV";
   if (rel.startsWith("product/")) return "the working copy";
   if (rel === "backlog.json") return "the backlog";
   if (rel === "office.json") return "the office layout";

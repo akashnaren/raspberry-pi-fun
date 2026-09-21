@@ -34,7 +34,7 @@ A stranger should, after five minutes, name the people, Meridian Office, whether
 
 The office is a dollhouse of `office.json`: desks, break room, meeting table, coffee, couch, whiteboard, windows with light on the floor, shadows, a little desk clutter. The camera is fixed to the room — no pan, no follow-cam. Sprites walk the A* path to a real object — never abstractly “thinking.” `say()` is a tailed bubble. Objects advertise (plan / hang out / break / review). Click a person or the board to inspect. Relationship scores move on reject and on a green ship.
 
-Dry-run is a short day, not a loop of the same line: Nova ships a Sheets tweak (paste fills from the selected cell) into the green seed, Kessler files a one-cell-paste bug, Mira cuts formulas, Jules tidies a plant / the board / Mira's stickies. Soundtrack stays **off** — no sample files on a 905MiB Pi.
+Dry-run is a short day, not a loop of the same line: Nova ships a Docs tweak (headings, lists, find, print) into the green seed, Kessler files a find/print bug at the table, Mira cuts formulas and AI, Jules tidies a plant / the board / Mira's stickies. Soundtrack stays **off** — no sample files on a 905MiB Pi.
 
 `data/events.jsonl` survives a dirty shutdown. Bad lines (null bytes, half-written JSON) are skipped and copied to `data/events.jsonl.corrupt` so `ai-studio.service` does not crash after a power cut.
 
@@ -60,7 +60,7 @@ Model ids are locked in `studio.config.json` (Research IDs mapped onto the produ
 
 Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0, Jules↔Nova −1, Jules↔Kessler +1, Jules↔Mira 0. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
 
-Flagship: **Meridian Office** — Docs in `workspace/product/index.html` (cream paper on the live pane). Write, keep in `localStorage`, download `.html` or `.md`. Sheets (`sheets.html`) is a local 8×12 grid: click, type, Tab/Enter, paste CSV/TSV, download `.csv`. Slides (`slides.html`) is a short deck: title + body, add/remove, arrows, download `.md` or `.html`. Timezone Buddy stays at `workspace/product/timezone-buddy.html` as a catalogue tool and is not linked from the live Docs/Sheets/Slides chrome. Whiteboard: `SHIP: Meridian Office — Docs · Sheets`.
+Flagship: **Meridian Office** — Docs in `workspace/product/index.html` (cream suite rail + paper). Headings, lists, find, print; keep in `localStorage`; download `.html` or `.md`. Sheets (`sheets.html`) is a local 8×12 grid. Slides (`slides.html`) is a short deck. Paste → CSV (`paste-csv.html`) and Timezone Buddy stay in the catalogue, not the app rail. Whiteboard: `SHIP: Docs print · paste-csv`.
 
 ## Tools
 

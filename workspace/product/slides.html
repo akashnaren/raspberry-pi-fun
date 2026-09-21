@@ -6,44 +6,51 @@
     <title>Meridian Office — Slides</title>
     <style>
       :root {
-        color-scheme: dark;
-        --chrome: #1c1916;
+        color-scheme: light;
         --paper: #f4ecd8;
+        --sheet: #faf4e8;
         --ink: #2a2118;
         --muted: #8a7d6b;
-        --line: #3a322b;
         --rule: #e0d4bc;
+        --rail: #efe6d2;
+        --rail-line: #d8cbb0;
         --ui: system-ui, -apple-system, "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
         font-family: var(--ui);
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: var(--chrome); color: #e8dfd2; }
-      body { display: grid; grid-template-rows: auto 1fr auto; min-height: 100dvh; }
+      html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); }
+      body { display: grid; grid-template-columns: 6.1rem 1fr; grid-template-rows: auto 1fr auto; min-height: 100dvh; }
+      .rail {
+        grid-row: 1 / -1; display: flex; flex-direction: column; gap: 0.55rem;
+        padding: 0.7rem 0.5rem 0.8rem; background: var(--rail);
+        border-right: 1px solid var(--rail-line);
+      }
+      .brand { font-size: 0.72rem; font-weight: 600; line-height: 1.25; }
+      .apps { display: flex; flex-direction: column; gap: 0.15rem; }
+      .apps a, .more a {
+        color: #6b5d4d; text-decoration: none; font-size: 0.8rem;
+        padding: 0.32rem 0.4rem; border-radius: 5px;
+      }
+      .apps a[aria-current="page"] { background: #faf4e8; color: var(--ink); box-shadow: inset 2px 0 0 var(--ink); }
+      .more { margin-top: auto; padding-top: 0.55rem; border-top: 1px solid var(--rail-line); }
+      .more span { display: block; font-size: 0.62rem; color: var(--muted); letter-spacing: 0.04em; margin: 0 0.4rem 0.25rem; }
+      .more a { display: block; font-size: 0.68rem; padding: 0.22rem 0.4rem; }
       header {
-        display: flex; align-items: baseline; gap: 1.1rem;
-        padding: 0.55rem 1rem; border-bottom: 1px solid var(--line);
+        display: flex; align-items: baseline; gap: 0.9rem;
+        padding: 0.5rem 1rem; border-bottom: 1px solid var(--rule);
       }
-      .brand { font-size: 0.78rem; letter-spacing: 0.02em; }
-      nav { display: flex; gap: 0.85rem; font-size: 0.78rem; }
-      nav a { color: #9a8f80; text-decoration: none; }
-      nav a[aria-current="page"] { color: #f3ead7; }
+      .module { font-size: 0.78rem; color: var(--muted); }
       .tools { margin-left: auto; display: flex; gap: 0.85rem; font-size: 0.72rem; flex-wrap: wrap; }
-      .tools button {
-        border: 0; background: none; color: #f3ead7; font: inherit; cursor: pointer; padding: 0;
-      }
-      .tools button:hover { color: #c4b8a8; }
-      .stage {
-        min-height: 0; overflow: auto;
-        background: linear-gradient(180deg, #2a241e 0%, #1c1916 18%, #1c1916 100%);
-        padding: 0.8rem 0 1.2rem;
-      }
+      .tools button { border: 0; background: none; color: var(--ink); font: inherit; cursor: pointer; padding: 0; }
+      .tools button:hover { color: #6b5d4d; }
+      .stage { min-height: 0; overflow: auto; padding: 0.8rem 0 1.2rem; }
       main {
         width: min(40rem, calc(100% - 1.6rem));
         margin: 0 auto;
       }
       .deck {
-        aspect-ratio: 16/9; background: var(--paper); color: var(--ink);
-        box-shadow: 0 0 0 1px #d8cbb0, 0 18px 40px rgba(0, 0, 0, 0.28);
+        aspect-ratio: 16/9; background: var(--sheet); color: var(--ink);
+        box-shadow: 0 0 0 1px #d8cbb0, 0 14px 32px rgba(42, 33, 24, 0.08);
         padding: 1.2rem 1.35rem 1rem;
         display: grid; grid-template-rows: auto 1fr; min-height: 14rem;
       }
@@ -60,10 +67,10 @@
       }
       .bar {
         display: flex; align-items: center; justify-content: space-between;
-        gap: 0.7rem; margin-top: 0.7rem; color: #c4b8a8; font-size: 0.72rem;
+        gap: 0.7rem; margin-top: 0.7rem; color: #6b5d4d; font-size: 0.72rem;
       }
       .bar button {
-        border: 0; background: none; color: #f3ead7; font: inherit; cursor: pointer; padding: 0;
+        border: 0; background: none; color: var(--ink); font: inherit; cursor: pointer; padding: 0;
       }
       .dots { display: flex; gap: 0.35rem; }
       .dot {
@@ -73,19 +80,27 @@
       .dot[aria-current="true"] { background: #f3ead7; }
       footer {
         display: flex; justify-content: space-between; gap: 1rem;
-        padding: 0.35rem 1rem; border-top: 1px solid var(--line);
-        color: #9a8f80; font-size: 0.7rem;
+        padding: 0.35rem 1rem; border-top: 1px solid var(--rule);
+        color: var(--muted); font-size: 0.7rem;
       }
     </style>
   </head>
   <body>
-    <header>
-      <span class="brand">Meridian Office</span>
-      <nav aria-label="Meridian Office">
+    <aside class="rail" aria-label="Meridian Office">
+      <div class="brand">Meridian Office</div>
+      <nav class="apps" aria-label="Apps">
         <a href="./index.html">Docs</a>
         <a href="./sheets.html">Sheets</a>
         <a href="./slides.html" aria-current="page">Slides</a>
       </nav>
+      <nav class="more" aria-label="Catalogue">
+        <span>CATALOGUE</span>
+        <a href="./paste-csv.html">Paste → CSV</a>
+        <a href="./timezone-buddy.html">Timezone Buddy</a>
+      </nav>
+    </aside>
+    <header>
+      <span class="module">Slides</span>
       <div class="tools">
         <button id="add" type="button">add slide</button>
         <button id="remove" type="button">remove</button>
@@ -115,8 +130,8 @@
       const KEY = "meridian-office-slides-v1";
       const seed = [
         { title: "Meridian Office", body: "Docs, Sheets, Slides.\nLocal only. No accounts." },
-        { title: "Paste a grid", body: "CSV in. CSV out.\nNo formulas this week." },
-        { title: "A short deck", body: "Title and a thought.\nArrows move. Download when you want a file." },
+        { title: "Docs print", body: "Headings and lists stay.\nPrint hides the rail." },
+        { title: "Paste → CSV", body: "Messy columns in.\nA tidy file out. Catalogue only." },
       ];
       const title = document.getElementById("slide-title");
       const body = document.getElementById("slide-body");

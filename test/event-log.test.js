@@ -55,6 +55,21 @@ test("corrupt JSONL after a power cut does not crash the log", async () => {
   assert.match(quarantine, /null-byte|json/);
 });
 
+test("BOM and a torn line are skipped and the live log is rewritten clean", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "events-"));
+  const filePath = join(dir, "events.jsonl");
+  const good = JSON.stringify({ id: "e-000010", type: "say", actor: "mira", message: "print" });
+  await writeFile(filePath, `\uFEFF${good}\n{"nope":\n`);
+  const log = await createEventLog({ filePath, now: () => 80 });
+  assert.equal(log.all().length, 1);
+  assert.equal(log.all()[0].id, "e-000010");
+  assert.ok(log.quarantined().some((item) => item.reason === "json"));
+  const cleaned = await readFile(filePath, "utf8");
+  assert.equal(cleaned.includes("{"), true);
+  assert.doesNotMatch(cleaned, /nope/);
+  assert.doesNotMatch(cleaned, /\uFEFF/);
+});
+
 test("empty or missing log is fine; append after quarantine still writes", async () => {
   const dir = await mkdtemp(join(tmpdir(), "events-"));
   const filePath = join(dir, "events.jsonl");

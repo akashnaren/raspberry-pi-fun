@@ -71,13 +71,17 @@ export async function createEventLog({ filePath, now = () => Date.now(), names =
  * Those must never take down ai-studio.service.
  */
 export function parseJsonl(raw) {
-  const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw ?? "");
+  const text = (Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw ?? "")).replace(/^\uFEFF/, "");
   const events = [];
   const quarantined = [];
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     if (line.includes("\u0000")) {
       quarantined.push({ reason: "null-byte", line: line.replace(/\u0000/g, "") });
+      continue;
+    }
+    if (line.length > 1_000_000) {
+      quarantined.push({ reason: "too-long", line: line.slice(0, 240) });
       continue;
     }
     try {
@@ -103,6 +107,14 @@ async function load(filePath) {
         .map((item) => JSON.stringify({ reason: item.reason, line: item.line, ts: Date.now() }))
         .join("\n");
       await appendFile(`${filePath}.corrupt`, `${dump}\n`, "utf8");
+      try {
+        const kept = parsed.events.map((event) => JSON.stringify(event)).join("\n");
+        const tmp = `${filePath}.clean`;
+        await writeFile(tmp, kept ? `${kept}\n` : "", "utf8");
+        await rename(tmp, filePath);
+      } catch {
+        // Skip-bad-line is enough. Rewrite is best-effort.
+      }
     }
     return parsed;
   } catch (error) {

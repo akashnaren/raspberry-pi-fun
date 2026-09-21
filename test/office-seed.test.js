@@ -32,7 +32,7 @@ test("fallback office paints a room before any socket", async () => {
   assert.ok(FALLBACK_OFFICE.decor.some((item) => item.kind === "window"));
   const plants = FALLBACK_OFFICE.decor.filter((item) => item.kind === "plant");
   assert.ok(plants.length >= 5);
-  assert.match(FALLBACK_OFFICE.decor.find((item) => item.kind === "whiteboard").text, /Sheets/);
+  assert.match(FALLBACK_OFFICE.decor.find((item) => item.kind === "whiteboard").text, /print|paste-csv/);
   assert.ok(windowSky(false).top);
   assert.notEqual(windowSky(false).top, windowSky(true).top);
   const looks = Object.fromEntries(FALLBACK_CAST.map((person) => [person.id, lookOf(person)]));
@@ -42,6 +42,11 @@ test("fallback office paints a room before any socket", async () => {
   assert.equal(looks.jules.topKind, "cardigan");
   assert.notEqual(looks.nova.top, looks.mira.top);
   assert.notEqual(looks.jules.top, looks.kessler.top);
+  assert.equal(looks.nova.face, "oval-pony");
+  assert.equal(looks.kessler.face, "square-crop");
+  assert.equal(looks.mira.face, "long-part");
+  assert.equal(looks.jules.face, "round-wave");
+  assert.equal(new Set(Object.values(looks).map((look) => look.face)).size, 4);
 });
 
 test("workspace office and fallback stay aligned on the load-bearing bits", async () => {
@@ -65,12 +70,15 @@ test("workspace office and fallback stay aligned on the load-bearing bits", asyn
   assert.match(draw, /drawDeskLamp/);
   assert.match(draw, /drawKeyboard/);
   assert.match(draw, /255,224,138/);
+  assert.match(draw, /oval-pony|square-crop|long-part|round-wave/);
+  assert.match(draw, /cell \* 0\.72/);
   const officeJs = await readFile(join(REPO, "public/office.js"), "utf8");
   assert.match(officeJs, /FALLBACK_OFFICE/);
   assert.match(officeJs, /hydrateFromHttp/);
   assert.match(officeJs, /\/api\/state/);
   assert.match(officeJs, /reconnectDelayMs/);
   assert.match(officeJs, /mergeStudioState/);
+  assert.match(officeJs, /facePairs/);
   assert.match(officeJs, /requestAnimationFrame\(loop\)/);
   const loopAt = officeJs.indexOf("requestAnimationFrame(loop)");
   const connectAt = officeJs.lastIndexOf("connect()");
