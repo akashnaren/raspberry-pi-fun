@@ -477,9 +477,9 @@ canvas.addEventListener("mousemove", (event) => {
   for (const employee of state.employees || []) {
     const sprite = state.sprites.get(employee.id);
     if (!sprite) continue;
-    const px = ox + sprite.x * CELL;
-    const py = oy + sprite.y * CELL;
-    if (Math.hypot(x - px - 8, y - py) < 22) hoverId = employee.id;
+    const px = ox + sprite.x * CELL + CELL * 0.35;
+    const py = oy + sprite.y * CELL + CELL * 0.15;
+    if (Math.hypot(x - px, y - py) < CELL * 0.85) hoverId = employee.id;
   }
 });
 canvas.addEventListener("mouseleave", () => {

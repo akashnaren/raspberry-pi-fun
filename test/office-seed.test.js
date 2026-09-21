@@ -26,9 +26,17 @@ test("fallback office paints a room before any socket", async () => {
     assert.ok(look.top);
     assert.ok(look.hair);
     assert.ok(look.skin);
+    assert.ok(look.bottomKind);
   }
   assert.ok(FALLBACK_OFFICE.decor.some((item) => item.kind === "window"));
   assert.ok(FALLBACK_OFFICE.decor.some((item) => item.kind === "plant"));
+  const looks = Object.fromEntries(FALLBACK_CAST.map((person) => [person.id, lookOf(person)]));
+  assert.equal(looks.nova.topKind, "hoodie");
+  assert.equal(looks.kessler.accessory, "glasses");
+  assert.equal(looks.mira.topKind, "blazer");
+  assert.equal(looks.jules.topKind, "cardigan");
+  assert.notEqual(looks.nova.top, looks.mira.top);
+  assert.notEqual(looks.jules.top, looks.kessler.top);
 });
 
 test("workspace office and fallback stay aligned on the load-bearing bits", async () => {
