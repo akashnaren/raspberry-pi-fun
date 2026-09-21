@@ -2,7 +2,7 @@ const FALLBACK = {
   mira: "Mira Sol",
   nova: "Nova Chen",
   kessler: "Kessler Holt",
-  reed: "Reed Park",
+  jules: "Jules Park",
   system: "Meridian Desk",
 };
 
@@ -48,7 +48,7 @@ export function headlineFor(event, names = {}) {
     case "world_resumed":
       return "Meridian Desk resumed. Someone will move.";
     case "budget_paused":
-      return "Daily ceiling hit. The lights dim until tomorrow.";
+      return "Studio sleeping. Daily ceiling hit; lights down until tomorrow.";
     case "turn_started":
       return `${who} is acting.`;
     case "turn_finished":
@@ -81,7 +81,7 @@ export function headlineFor(event, names = {}) {
     case "tool_error":
       return `${who} could not ${data.tool || "finish that"}.`;
     case "request_filed":
-      return `${who} asked Reed for ${clip(data.item, 40)}.`;
+      return `${who} asked Jules for ${clip(data.item, 40)}.`;
     case "request_decided":
       return `${who} ${data.decision || "answered"} a request for ${clip(data.item, 40)}.`;
     case "office_edited":

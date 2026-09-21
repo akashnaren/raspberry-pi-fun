@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { assembleContext, repeatingPattern } from "./context.js";
 import { resolveWorkspacePath } from "./paths.js";
+import { stubCall } from "./stubs.js";
 import { filterSay } from "./tools.js";
 
 export function pickEmployee(employees, lottery, random) {
@@ -33,6 +34,8 @@ export function createOrchestrator({
   llm,
   budget,
   killSwitch,
+  replay = false,
+  localStubs = true,
   now = () => Date.now(),
   random = Math.random,
   onTickScheduled,
@@ -40,6 +43,7 @@ export function createOrchestrator({
   let timer = null;
   let stopped = false;
   let running = false;
+  let replayIndex = 0;
 
   async function readDoc(rel) {
     try {
@@ -50,8 +54,23 @@ export function createOrchestrator({
     }
   }
 
+  function alreadySleepingToday(day) {
+    return events
+      .all()
+      .some((event) => event.type === "budget_paused" && event.data?.day === day);
+  }
+
+  async function replayOnce() {
+    const replayable = events.all().filter((event) => event.actor && event.actor !== "system");
+    if (!replayable.length) return { skipped: "replay-empty" };
+    const event = replayable[replayIndex % replayable.length];
+    replayIndex += 1;
+    return { replayed: event, skipped: "replay" };
+  }
+
   async function tickOnce() {
     if (running) return { skipped: "in-flight" };
+    if (replay) return replayOnce();
     if (await killSwitch.paused()) {
       await events.append({
         type: "world_paused",
@@ -63,22 +82,30 @@ export function createOrchestrator({
     }
     const snap = budget.snapshot();
     if (snap.exhausted) {
-      await events.append({
-        type: "budget_paused",
-        actor: "system",
-        message: `daily ceiling hit ($${snap.ceilingUsd.toFixed(2)}). world waits until ${nextUtcDay(now())}`,
-        data: snap,
-      });
+      if (localStubs && !alreadySleepingToday(snap.day)) {
+        const employee = pickEmployee(employees, lottery, random);
+        const stub = stubCall(employee, "say");
+        await tools.execute(employee.id, stub.name, stub.arguments);
+      }
+      if (!alreadySleepingToday(snap.day)) {
+        await events.append({
+          type: "budget_paused",
+          actor: "system",
+          message: "studio sleeping",
+          data: { ...snap, sleeping: true },
+        });
+      }
       return { skipped: "budget" };
     }
 
     running = true;
     const employee = pickEmployee(employees, lottery, random);
+    const kind = employee.role === "programmer" ? "write" : "chatter";
     await events.append({
       type: "turn_started",
       actor: employee.id,
       message: `${employee.name} takes a turn`,
-      data: { role: employee.role, model: employee.model, dryRun: llm.dryRun },
+      data: { role: employee.role, model: employee.model, dryRun: llm.dryRun, kind },
     });
 
     try {
@@ -103,12 +130,10 @@ export function createOrchestrator({
         constitution,
         strategy,
       });
-      const result = await llm.complete({ employee, messages });
+      const result = await llm.complete({ employee, messages, kind });
       await budget.recordSpend(result.costUsd || 0);
 
-      const calls = result.toolCalls?.length
-        ? result.toolCalls
-        : fallbackCalls(employee, result.text);
+      const calls = result.toolCalls?.length ? result.toolCalls : fallbackCalls(employee, result.text);
 
       const outcomes = [];
       for (const call of calls.slice(0, 4)) {
@@ -124,6 +149,7 @@ export function createOrchestrator({
           dryRun: Boolean(result.dryRun),
           costUsd: result.costUsd || 0,
           tools: calls.map((call) => call.name),
+          kind,
         },
       });
       return { employee, outcomes, result };
@@ -175,11 +201,4 @@ function fallbackCalls(employee, text) {
       arguments: { text: `${employee.name} sat with the problem and did not speak.` },
     },
   ];
-}
-
-function nextUtcDay(ts) {
-  const date = new Date(ts);
-  date.setUTCDate(date.getUTCDate() + 1);
-  date.setUTCHours(0, 0, 0, 0);
-  return date.toISOString().slice(0, 10);
 }

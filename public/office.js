@@ -10,12 +10,19 @@ const onAir = document.getElementById("on-air");
 const actingEl = document.getElementById("acting");
 const budgetEl = document.getElementById("budget");
 const burnBar = document.getElementById("burn-bar");
+const treasuryEl = document.getElementById("treasury");
+const runwayEl = document.getElementById("runway");
+const ceilingLeftEl = document.getElementById("ceiling-left");
+const staffEl = document.getElementById("staff-count");
+const sleepBadge = document.getElementById("sleep-badge");
+const soundBtn = document.getElementById("sound-btn");
 
 const CELL = 26;
 const DPR = 1;
 const ENTER = 220;
 const HOLD = 4200;
 const FADE = 700;
+const INDIGO = "#6366F1";
 
 let state = {
   office: null,
@@ -24,7 +31,11 @@ let state = {
   sprites: new Map(),
   dryRun: true,
   paused: false,
+  replay: false,
+  sleeping: false,
+  lite: false,
   budget: null,
+  hud: null,
   acting: null,
   relationships: null,
   startedAt: Date.now(),
@@ -34,13 +45,16 @@ let hoverId = null;
 let lastDraw = 0;
 let replayIndex = 0;
 let lastReplay = 0;
+const camera = { x: 0, y: 0, tx: 0, ty: 0 };
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${proto}://${location.host}/ws`);
   socket.addEventListener("message", (event) => {
     const msg = JSON.parse(event.data);
-    if (msg.type === "hello" || msg.type === "event") applyState(msg.state, msg.event);
+    if (msg.type === "hello" || msg.type === "event" || msg.type === "replay") {
+      applyState(msg.state, msg.event);
+    }
     if (msg.type === "validate") runValidation(socket, msg);
   });
   socket.addEventListener("close", () => setTimeout(connect, 1500));
@@ -55,20 +69,33 @@ function applyState(next, event) {
     document.getElementById("studio-name").textContent = next.studio.name;
     document.getElementById("product-name").textContent = next.studio.product;
   }
-  if (next.budget) {
-    const used = next.budget.spentUsd;
-    const cap = next.budget.ceilingUsd || 5;
-    budgetEl.textContent = `$${used.toFixed(2)} / $${cap.toFixed(0)}`;
-    burnBar.style.width = `${Math.min(100, (used / cap) * 100)}%`;
-  }
-  modeBadge.textContent = next.dryRun ? "dry-run" : "live";
-  modeBadge.classList.toggle("live", !next.dryRun);
-  onAir.classList.toggle("hidden", Boolean(next.dryRun) || Boolean(next.paused) || Boolean(next.budget?.exhausted));
-  pauseBadge.classList.toggle("hidden", !next.paused && !next.budget?.exhausted);
-  pauseBadge.textContent = next.budget?.exhausted ? "ceiling" : "paused";
+  const hud = next.hud || {};
+  const used = next.budget?.spentUsd ?? hud.burnUsd ?? 0;
+  const cap = next.budget?.ceilingUsd || hud.ceilingUsd || 5;
+  const left = next.budget?.remainingUsd ?? hud.remainingUsd ?? Math.max(0, cap - used);
+  budgetEl.textContent = `$${used.toFixed(2)} / $${cap.toFixed(0)}`;
+  burnBar.style.width = `${Math.min(100, (used / cap) * 100)}%`;
+  treasuryEl.textContent = `${hud.treasury ?? next.office?.budget?.furniture ?? 0} credits`;
+  ceilingLeftEl.textContent = `$${Number(left).toFixed(2)}`;
+  runwayEl.textContent =
+    next.budget?.exhausted || hud.sleeping
+      ? "sleeping"
+      : hud.runwayHours == null
+        ? "full day"
+        : `${hud.runwayHours}h`;
+  staffEl.textContent = String(hud.staff || (next.employees || []).length || 4);
+  const mode = next.mode || (next.dryRun ? "dry-run" : "live");
+  modeBadge.textContent = mode;
+  modeBadge.classList.toggle("live", mode === "live");
+  const sleeping = Boolean(next.sleeping || next.budget?.exhausted || hud.sleeping);
+  document.body.classList.toggle("sleeping", sleeping);
+  document.body.classList.toggle("lite", Boolean(next.lite) || new URLSearchParams(location.search).has("lite"));
+  onAir.classList.toggle("hidden", mode !== "live" || Boolean(next.paused) || sleeping);
+  pauseBadge.classList.toggle("hidden", !next.paused || sleeping);
+  sleepBadge.classList.toggle("hidden", !sleeping);
   pauseBtn.textContent = next.paused ? "Resume" : "Pause";
   paintTicker(next.events || []);
-  paintActing(next);
+  paintActing(next, sleeping);
   if (event) react(event);
   if (event?.type === "build_passed") product.src = `/dist/index.html?t=${event.ts}`;
   syncSprites();
@@ -83,9 +110,13 @@ function paintTicker(events) {
   tickerEl.textContent = crawl ? `${crawl}     ·     ${crawl}` : "the office is quiet";
 }
 
-function paintActing(next) {
-  if (next.budget?.exhausted) {
-    actingEl.textContent = "daily ceiling hit — lights down until tomorrow";
+function paintActing(next, sleeping) {
+  if (sleeping) {
+    actingEl.textContent = "studio sleeping — lights down until tomorrow";
+    return;
+  }
+  if (next.replay) {
+    actingEl.textContent = "replay — walking the event log, zero tokens";
     return;
   }
   if (next.paused) {
@@ -97,8 +128,7 @@ function paintActing(next) {
     actingEl.textContent = "waiting for someone to act";
     return;
   }
-  const where = placeLabel(acting.id);
-  actingEl.textContent = `${acting.name} is acting — ${where}`;
+  actingEl.textContent = `${acting.name} is acting — ${placeLabel(acting.id)}`;
 }
 
 function placeLabel(id) {
@@ -128,8 +158,8 @@ function targetFor(event) {
   const office = state.office;
   if (!office || event.actor === "system") return null;
   if (event.type === "request_filed") {
-    const reed = deskFor("reed");
-    if (reed) return { ...standAtDesk(reed), at: "desk" };
+    const jules = deskFor("jules");
+    if (jules) return { ...standAtDesk(jules), at: "desk" };
   }
   if (event.type === "office_edited" || event.type === "aesthetics_changed") {
     const desk = deskFor(event.actor);
@@ -171,6 +201,7 @@ function syncSprites() {
         frame: 0,
         at: "desk",
         active: 0,
+        blinkUntil: 0,
       });
     }
   }
@@ -186,6 +217,8 @@ function react(event) {
     sprite.pose = path.length ? "walk" : poseFor(event);
     sprite.wantPose = poseFor(event);
     sprite.active = 1;
+    camera.tx = -(target.x * CELL - canvas.width / (2 * DPR) + 20);
+    camera.ty = -(target.y * CELL - canvas.height / (2 * DPR) + 16);
   }
   for (const [id, other] of state.sprites) {
     if (id !== event.actor) other.active = Math.max(0, other.active - 0.4);
@@ -345,15 +378,31 @@ function stepSprites(now) {
     } else {
       sprite.frame = Math.floor(now / 700) % 2;
     }
+    if (sprite.pose === "idle" && now > sprite.blinkUntil + 2400 + (sprite.x * 400) % 1800) {
+      sprite.blinkUntil = now + 120;
+    }
     sprite.active *= 0.992;
   }
+  camera.x += (camera.tx - camera.x) * 0.06;
+  camera.y += (camera.ty - camera.y) * 0.06;
   return walking;
 }
 
-function drawOffice(ox, oy, now) {
+function roundRect(x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
+function drawOffice(ox, oy) {
   const office = state.office;
   if (!office) return;
-  const dim = state.paused || state.budget?.exhausted;
+  const dim = state.paused || state.sleeping || state.budget?.exhausted;
   ctx.fillStyle = office.walls || "#2a2118";
   const bounds = office.rooms?.reduce(
     (acc, room) => ({ w: Math.max(acc.w, room.x + room.w), h: Math.max(acc.h, room.y + room.h) }),
@@ -382,18 +431,18 @@ function drawOffice(ox, oy, now) {
 
   for (const desk of office.desks || []) {
     const lamp = { x: ox + (desk.x + 1) * CELL, y: oy + desk.y * CELL };
-    const glow = ctx.createRadialGradient(lamp.x, lamp.y, 4, lamp.x, lamp.y, 70);
-    glow.addColorStop(0, dim ? "rgba(245,158,11,0.10)" : "rgba(245,158,11,0.28)");
+    const glow = ctx.createRadialGradient(lamp.x, lamp.y, 4, lamp.x, lamp.y, 78);
+    glow.addColorStop(0, dim ? "rgba(245,158,11,0.10)" : "rgba(245,158,11,0.32)");
     glow.addColorStop(1, "rgba(245,158,11,0)");
     ctx.fillStyle = glow;
-    ctx.fillRect(lamp.x - 70, lamp.y - 40, 140, 120);
+    ctx.fillRect(lamp.x - 78, lamp.y - 44, 156, 130);
   }
 
   for (const item of office.decor || []) drawDecor(ox, oy, item);
   for (const desk of office.desks || []) drawDesk(ox, oy, desk);
 
   if (dim) {
-    ctx.fillStyle = "rgba(8,6,4,0.42)";
+    ctx.fillStyle = "rgba(8,6,4,0.46)";
     ctx.fillRect(ox - 8, oy - 8, bounds.w * CELL + 16, bounds.h * CELL + 16);
   }
 }
@@ -402,7 +451,8 @@ function drawDesk(ox, oy, desk) {
   const x = ox + desk.x * CELL;
   const y = oy + desk.y * CELL;
   ctx.fillStyle = "#5a4030";
-  ctx.fillRect(x, y, CELL * 2.1, CELL * 1.25);
+  roundRect(x, y, CELL * 2.1, CELL * 1.25, 6);
+  ctx.fill();
   ctx.fillStyle = "#3d2b20";
   ctx.fillRect(x + 2, y + CELL * 1.15, 8, 8);
   ctx.fillRect(x + CELL * 1.7, y + CELL * 1.15, 8, 8);
@@ -446,6 +496,16 @@ function drawDesk(ox, oy, desk) {
     ctx.fillStyle = "#F97316";
     ctx.fillRect(x + 30, y + 20, 5, 5);
   }
+  const tag = (owner?.name || desk.owner).split(" ")[0];
+  ctx.font = "9px sans-serif";
+  const tw = ctx.measureText(tag).width;
+  ctx.fillStyle = "#1b140e";
+  roundRect(x + 4, y - 12, tw + 10, 11, 3);
+  ctx.fill();
+  ctx.fillStyle = owner?.accent || owner?.color || INDIGO;
+  ctx.fillRect(x + 4, y - 12, 3, 11);
+  ctx.fillStyle = "#f3eadc";
+  ctx.fillText(tag, x + 10, y - 4);
 }
 
 function drawDecor(ox, oy, item) {
@@ -508,7 +568,7 @@ function drawDecor(ox, oy, item) {
     ctx.fillRect(x + 2, y + 8, 4, 16);
     ctx.fillRect(x + CELL * 1.7, y + 8, 4, 16);
   } else if (item.kind === "beanbag") {
-    ctx.fillStyle = "#5b3a78";
+    ctx.fillStyle = "#4338ca";
     ctx.beginPath();
     ctx.ellipse(x + 14, y + 12, 16, 10, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -520,31 +580,41 @@ function drawDecor(ox, oy, item) {
   }
 }
 
-const SKIN = { fair: "#f3d2b3", warm: "#d4a574", olive: "#c4a06a", deep: "#8d5a3c" };
+const SKIN = {
+  fair: "#f3d2b3",
+  warm_light: "#e4b48a",
+  warm_medium: "#c48a5a",
+  deep: "#8d5a3c",
+  cool_olive: "#9c8a5a",
+};
 const HAIR_COLOR = {
-  "short-black": "#1b1b1b",
-  "bun-amber": "#c4842a",
-  "wave-teal": "#0f766e",
-  "crop-violet": "#5b21b6",
-  ponytail: "#3f2a1d",
+  ponytail_dark: "#3f2a1d",
+  cropped_silver: "#c5c7ce",
+  shoulder_brown: "#6b3f24",
+  short_black_wavy: "#1b1b1b",
+  bun: "#3f2a1d",
+  buzz: "#2a2218",
+  long_wave: "#4a2c1a",
+  fade: "#1f1a16",
 };
 const TOP_COLOR = {
   hoodie: "#F97316",
   tee: "#e8e0d2",
   blazer: "#F59E0B",
-  cardigan: "#14B8A6",
-  henley: "#8B5CF6",
+  cardigan: "#6366F1",
+  flannel: "#7c2d12",
+  turtleneck: "#1f2937",
 };
-const BOTTOM_COLOR = { jeans: "#314e73", chinos: "#8a6a3d", skirt: "#5b3a78", trousers: "#2c241c" };
-const SHOE_COLOR = { sneakers: "#efe6d4", boots: "#3b2418", loafers: "#5a3b22" };
+const BOTTOM_COLOR = { jeans: "#314e73", chinos: "#8a6a3d", skirt: "#5b3a78", trousers: "#2c241c", shorts: "#3f4f6b" };
+const SHOE_COLOR = { sneakers: "#efe6d4", boots: "#3b2418", loafers: "#5a3b22", sandals: "#c4a574" };
 
 function lookOf(employee) {
   const aesthetics = employee.aesthetics || {};
   const outfit = aesthetics.outfit || {};
   return {
-    skin: SKIN[aesthetics.skin] || SKIN.warm,
+    skin: SKIN[aesthetics.skin] || SKIN.warm_medium,
     hair: HAIR_COLOR[aesthetics.hair] || employee.color || "#1b1b1b",
-    hairStyle: aesthetics.hair || "short-black",
+    hairStyle: aesthetics.hair || "short_black_wavy",
     top: TOP_COLOR[outfit.top] || employee.color || "#888",
     topKind: outfit.top || "tee",
     bottom: BOTTOM_COLOR[outfit.bottom] || "#314e73",
@@ -575,12 +645,33 @@ function drawPerson(ox, oy, employee, sprite, now) {
   ctx.fill();
   const walk = sprite.pose === "walk" ? sprite.frame : 0;
   const type = sprite.pose === "type" ? sprite.frame : 0;
+  const blink = now < (sprite.blinkUntil || 0);
   ctx.save();
   ctx.translate(px + 8, py + 4 + bob);
   ctx.scale(sprite.facing || 1, 1);
-  ctx.fillStyle = look.shoes;
-  ctx.fillRect(-5, 14, 4, 3);
-  ctx.fillRect(1, 14, 4, 3);
+  ctx.fillStyle = look.skin;
+  ctx.fillRect(-5, -2, 10, 10);
+  ctx.fillStyle = look.hair;
+  if (look.hairStyle === "bun") {
+    ctx.fillRect(-6, -14, 12, 5);
+    ctx.beginPath();
+    ctx.arc(0, -16, 3, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (look.hairStyle === "ponytail_dark") {
+    ctx.fillRect(-6, -14, 12, 5);
+    ctx.fillRect(5, -12, 4, 10);
+  } else if (look.hairStyle === "shoulder_brown" || look.hairStyle === "long_wave") {
+    ctx.fillRect(-7, -14, 14, 6);
+    ctx.fillRect(-8, -10, 3, 8);
+    ctx.fillRect(5, -10, 3, 8);
+  } else if (look.hairStyle === "short_black_wavy") {
+    ctx.fillRect(-7, -14, 14, 6);
+    ctx.fillRect(-8, -10, 3, 4);
+  } else if (look.hairStyle === "cropped_silver" || look.hairStyle === "buzz" || look.hairStyle === "fade") {
+    ctx.fillRect(-6, -13, 12, 4);
+  } else {
+    ctx.fillRect(-6, -14, 12, 6);
+  }
   ctx.fillStyle = look.bottom;
   ctx.fillRect(-5, 8, 4, 7 + (walk ? 1 : 0));
   ctx.fillRect(1, 8, 4, 7 + (walk ? 0 : 1));
@@ -591,26 +682,33 @@ function drawPerson(ox, oy, employee, sprite, now) {
     ctx.fillRect(4, -4, 3, 6);
   }
   if (look.topKind === "blazer") ctx.fillRect(-7, -2, 2, 10);
+  if (look.topKind === "cardigan") {
+    ctx.fillStyle = "#312e81";
+    ctx.fillRect(-2, -2, 1, 10);
+  }
+  if (look.topKind === "turtleneck") ctx.fillRect(-4, -4, 8, 3);
+  if (look.topKind === "flannel") {
+    ctx.fillStyle = "#fde68a";
+    ctx.fillRect(-5, 1, 10, 1);
+  }
+  ctx.fillStyle = look.shoes;
+  ctx.fillRect(-5, 14, 4, 3);
+  ctx.fillRect(1, 14, 4, 3);
   ctx.fillStyle = look.skin;
   ctx.fillRect(-5, -10, 10, 8);
+  if (blink) {
+    ctx.fillStyle = look.skin;
+    ctx.fillRect(-3, -7, 2, 1);
+    ctx.fillRect(1, -7, 2, 1);
+  } else {
+    ctx.fillStyle = "#1b1b1b";
+    ctx.fillRect(-3, -7, 2, 2);
+    ctx.fillRect(1, -7, 2, 2);
+  }
   const arm = sprite.pose === "type" ? -4 - type * 2 : sprite.pose === "walk" ? walk * 3 - 1 : 1;
+  ctx.fillStyle = look.skin;
   ctx.fillRect(-8, 0, 3, 7 + (sprite.pose === "talk" ? 1 : 0));
   ctx.fillRect(5, arm, 3, 7);
-  ctx.fillStyle = look.hair;
-  if (look.hairStyle === "bun-amber") {
-    ctx.fillRect(-6, -14, 12, 5);
-    ctx.beginPath();
-    ctx.arc(0, -16, 3, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (look.hairStyle === "ponytail") {
-    ctx.fillRect(-6, -14, 12, 5);
-    ctx.fillRect(5, -12, 4, 10);
-  } else if (look.hairStyle === "wave-teal") {
-    ctx.fillRect(-7, -14, 14, 6);
-    ctx.fillRect(-8, -10, 3, 5);
-  } else {
-    ctx.fillRect(-6, -14, 12, 6);
-  }
   if (look.accessory === "glasses") {
     ctx.strokeStyle = "#1b1b1b";
     ctx.strokeRect(-4, -8, 3, 2);
@@ -621,12 +719,22 @@ function drawPerson(ox, oy, employee, sprite, now) {
     ctx.fillRect(-6, -6, 2, 2);
   }
   if (look.accessory === "badge") {
-    ctx.fillStyle = "#8B5CF6";
+    ctx.fillStyle = INDIGO;
     ctx.fillRect(3, 2, 3, 4);
   }
   if (look.accessory === "watch") {
     ctx.fillStyle = "#d4af37";
     ctx.fillRect(-8, 4, 3, 2);
+  }
+  if (look.accessory === "keys") {
+    ctx.fillStyle = "#d4af37";
+    ctx.beginPath();
+    ctx.arc(6, 10, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (look.accessory === "scarf") {
+    ctx.fillStyle = INDIGO;
+    ctx.fillRect(-6, 0, 12, 2);
   }
   ctx.restore();
 
@@ -691,21 +799,22 @@ function drawBubble(ox, oy, now) {
   ctx.translate(x, y);
   ctx.scale(scale, scale);
   const lines = bubble.lines;
+  ctx.font = "11px sans-serif";
   const w = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 16;
   const h = 12 + lines.length * 12;
   ctx.fillStyle = "#2a2118";
-  ctx.fillRect(0, 0, w, h);
+  roundRect(0, 0, w, h, 6);
+  ctx.fill();
   ctx.strokeStyle = "#d7b07a";
-  ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  ctx.stroke();
   ctx.fillStyle = "#f3eadc";
-  ctx.font = "11px sans-serif";
   lines.forEach((line, i) => ctx.fillText(line, 8, 14 + i * 12));
   ctx.restore();
   return true;
 }
 
 function maybeReplay(now) {
-  if (!(state.paused || state.budget?.exhausted)) return;
+  if (!(state.paused || state.sleeping || state.replay || state.budget?.exhausted)) return;
   if (now - lastReplay < 6000) return;
   const replayable = (state.events || []).filter((event) => event.actor && event.actor !== "system");
   if (!replayable.length) return;
@@ -715,19 +824,15 @@ function maybeReplay(now) {
   react(event);
 }
 
-function busy(walking, talking) {
-  return walking || talking || Boolean(hoverId);
-}
-
 function draw(now) {
   const w = canvas.width / DPR;
   const h = canvas.height / DPR;
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = "#120e0b";
   ctx.fillRect(0, 0, w, h);
-  const ox = 20;
-  const oy = 16;
-  drawOffice(ox, oy, now);
+  const ox = 20 + camera.x;
+  const oy = 16 + camera.y;
+  drawOffice(ox, oy);
   const walking = stepSprites(now);
   for (const employee of state.employees || []) {
     const sprite = state.sprites.get(employee.id);
@@ -754,7 +859,10 @@ function stepNeed(ts) {
   for (const sprite of state.sprites.values()) {
     if (sprite.path?.length || sprite.active > 0.05) return true;
   }
-  if ((state.paused || state.budget?.exhausted) && ts - lastReplay > 5500) return true;
+  if ((state.paused || state.sleeping || state.replay || state.budget?.exhausted) && ts - lastReplay > 5500) {
+    return true;
+  }
+  if (Math.abs(camera.x - camera.tx) > 0.4 || Math.abs(camera.y - camera.ty) > 0.4) return true;
   return false;
 }
 
@@ -763,8 +871,8 @@ canvas.addEventListener("mousemove", (event) => {
   const x = ((event.clientX - rect.left) / rect.width) * (canvas.width / DPR);
   const y = ((event.clientY - rect.top) / rect.height) * (canvas.height / DPR);
   hoverId = null;
-  const ox = 20;
-  const oy = 16;
+  const ox = 20 + camera.x;
+  const oy = 16 + camera.y;
   for (const employee of state.employees || []) {
     const sprite = state.sprites.get(employee.id);
     if (!sprite) continue;
@@ -781,6 +889,40 @@ pauseBtn.addEventListener("click", async () => {
   const path = state.paused ? "/api/resume" : "/api/pause";
   await fetch(path, { method: "POST" });
 });
+
+let audio = null;
+function toggleSound() {
+  const on = soundBtn.getAttribute("aria-pressed") === "true";
+  if (on) {
+    audio?.stop();
+    audio = null;
+    soundBtn.setAttribute("aria-pressed", "false");
+    soundBtn.textContent = "sound off";
+    return;
+  }
+  const ctxAudio = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctxAudio.createOscillator();
+  const gain = ctxAudio.createGain();
+  const filter = ctxAudio.createBiquadFilter();
+  osc.type = "sine";
+  osc.frequency.value = 110;
+  filter.type = "lowpass";
+  filter.frequency.value = 420;
+  gain.gain.value = 0.03;
+  osc.connect(filter);
+  filter.connect(gain);
+  gain.connect(ctxAudio.destination);
+  osc.start();
+  audio = {
+    stop() {
+      osc.stop();
+      ctxAudio.close();
+    },
+  };
+  soundBtn.setAttribute("aria-pressed", "true");
+  soundBtn.textContent = "sound on";
+}
+soundBtn.addEventListener("click", toggleSound);
 
 window.addEventListener("resize", resize);
 resize();

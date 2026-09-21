@@ -7,9 +7,10 @@ The studio on screen is **Meridian Desk**. The stage name stays fishbowl.
 ## Locked defaults (2026-09-20)
 
 - Private
-- 3 employees originally; Stage 1 now seats **4** (office manager added)
+- 4 employees (office manager included)
 - Starting product: useful browser tool (not a game)
 - Daily API ceiling: $5
+- **DRY_RUN=true** unless you set `DRY_RUN=false` and provide a key
 
 ## Stack
 
@@ -25,7 +26,7 @@ The display is one page, split down the middle:
 
 | Left | Right |
 | --- | --- |
-| Top-down office. Pixel people at desks and objects, driven by the event log plus `workspace/office.json`. | An iframe pointed at `dist/` — the last build that passed the green-build gate. |
+| Top-down office. Pixel people at desks and objects, driven by the event log plus `workspace/office.json`. | An iframe in a **LIVE BUILD** chrome frame, pointed at `dist/` — the last build that passed the green-build gate. |
 
 Four load-bearing rules, unchanged from the spec:
 
@@ -36,51 +37,96 @@ Four load-bearing rules, unchanged from the spec:
 
 ## Cast
 
-| ID | Name | Role | Accent | Model family | Priority |
-| --- | --- | --- | --- | --- | --- |
-| `nova` | Nova Chen | programmer | coral `#F97316` | OpenAI | Ship a usable tool tonight. Working > pretty. |
-| `kessler` | Kessler Holt | QA | teal `#14B8A6` | Nous / Hermes | No ugly or broken UX. Reject loose greens. |
-| `mira` | Mira Sol | producer | amber `#F59E0B` | xAI / Grok | One clear useful tool. Kill scope creep. |
-| `reed` | Reed Park | office manager | violet `#8B5CF6` | Google | Room stays usable. Furniture budget is real. |
+| ID | Name | Role | Accent | Model |
+| --- | --- | --- | --- | --- |
+| `nova` | Nova Chen | programmer | coral `#F97316` | `qwen/qwen3-coder-next` |
+| `kessler` | Kessler Holt | QA | teal `#14B8A6` | `nousresearch/hermes-3-llama-3.1-70b` |
+| `mira` | Mira Sol | producer | amber `#F59E0B` | `z-ai/glm-5.3-flash` |
+| `jules` | Jules Park | office manager | indigo `#6366F1` | `meta-llama/llama-4-scout` |
 
-Looks live in `workspace/employees/<id>.json`: skin, hair, outfit layers, desk_style, wardrobe_unlocked. Only that person may `edit_self_aesthetics`. Reed alone may `edit_office`.
+Looks live in `workspace/employees/<id>.json`: skin, hair, outfit layers, desk_style, wardrobe_unlocked from `wardrobe-vocab.json`. Only that person may `edit_self_aesthetics`. Jules alone may `edit_office`.
 
-Model ids are not hardcoded in the orchestrator. On a live boot the process reads OpenRouter's model list and picks each employee's first available `preferredModels` entry (then any model in that family). Edit `studio.config.json` to swap brains. Lottery weights: Nova 4, everyone else 2.
+Model ids are locked in `studio.config.json`. Lottery weights: Nova **45**, Kessler **20**, Mira **20**, Jules **15**. Strongest model is used only for programmer writes; chatter seats stay on their cheap/mid ids. Constitution is sent as a separate cached prefix when OpenRouter honors `cache_control`.
 
-Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0, plus Reed pairs. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
+Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0, Jules↔Nova −1, Jules↔Kessler +1, Jules↔Mira 0. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
 
 Starting product: **Timezone Buddy**, a single-file “paste a time + city → 3–5 saved cities” converter in `workspace/product/index.html`. Whiteboard: `SHIP: Timezone Buddy — usable in <1 min`.
 
 ## Tools
 
-`read_file`, `write_file`, `add_task`, `close_task`, `say`, `journal`, `request`, `edit_office` (Reed only), `edit_self_aesthetics` (self only).
+`read_file`, `write_file`, `add_task`, `close_task`, `say`, `journal`, `request`, `edit_office` (Jules only), `edit_self_aesthetics` (self only).
+
+## Token saving
+
+Context per turn is only: role + persona + constitution + strategy + backlog + last 10 events + opinions + one file.
+
+| Mode | Env | Tokens |
+| --- | --- | --- |
+| Dry-run (default) | `DRY_RUN=true` or no key | $0, scripted turns |
+| Replay | `STUDIO_MODE=replay` | $0, walks `events.jsonl` |
+| Live | `DRY_RUN=false` + `OPENROUTER_API_KEY` | billed; pauses at $5 |
+| Local stubs | `STUDIO_LOCAL_STUBS=true` (default) | template `say()` when the ceiling hits |
+
+When the UTC-day spend hits **$5**, ticks stop, the HUD shows **studio sleeping**, lights dim, and the canvas replays the log.
 
 ## Run on a Raspberry Pi
 
-Use Raspberry Pi OS Bookworm 64-bit. Put the checkout on a **USB SSD** if you can — the event log is a lot of small writes for SD flash. Heatsink and fan; this is a 24/7 process.
+Target: Raspberry Pi OS Debian **aarch64**, ~1GB RAM (Pi 3 ≈ 905MiB). Chromium kiosk is tight. Put the checkout on a **USB SSD** if you can — the event log is a lot of small writes for SD flash. Heatsink and fan; this is a 24/7 process.
 
-Install **Node 20 LTS** from the official linux-arm64 tarball into `/usr/local`. No nvm. No NodeSource apt repo.
+### Memory tips (Pi 3)
+
+- Enable **zram** (`sudo apt install -y zram-tools` or `dphys-swapfile` only as a last resort).
+- Run **one** Chromium, kiosk only — no extra tabs, no GPU compositor.
+- Office renderer forces **DPR=1** and throttles `requestAnimationFrame` when nobody is walking or speaking.
+- If the compositor still swaps: `STUDIO_LITE=1` or open `/?lite=1` to disable ticker / ON AIR animations. Soundtrack stays **off** until you toggle it.
+
+### Node 20 LTS arm64 (prefer user-local, no sudo)
+
+OPS pins **v20.20.2** into `~/.local`. Do not use nvm or the NodeSource apt repo.
 
 ```bash
-sudo apt update
-sudo apt install -y curl xz-utils git
+NODE_VER=v20.20.2
+ARCH=linux-arm64
+PREFIX="$HOME/.local/node-$NODE_VER"
 
-NODE_VER=20.19.5
-curl -fsSL "https://nodejs.org/dist/v${NODE_VER}/node-v${NODE_VER}-linux-arm64.tar.xz" -o /tmp/node.tar.xz
-sudo tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
-node -v   # v20.19.x
+mkdir -p "$HOME/.local/src" "$PREFIX"
+cd "$HOME/.local/src"
+curl -fsSLO "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.tar.xz"
+tar -xJf "node-${NODE_VER}-${ARCH}.tar.xz" -C "$PREFIX" --strip-components=1
+
+grep -q "node-${NODE_VER}" ~/.profile 2>/dev/null || echo "export PATH=\"$PREFIX/bin:\$PATH\"" >> ~/.profile
+export PATH="$PREFIX/bin:$PATH"
+
+node -v   # v20.20.2
 npm -v
+which node   # ~/.local/node-v20.20.2/bin/node
+```
 
+Optional symlink only if sudo works:
+
+```bash
+sudo ln -sfn "$HOME/.local/node-v20.20.2/bin/node" /usr/local/bin/node
+sudo ln -sfn "$HOME/.local/node-v20.20.2/bin/npm"  /usr/local/bin/npm
+```
+
+Node 22 linux-arm64 is fine later (`engines.node >= 20`). Same tarball recipe with `NODE_VER=v22.20.0` if you bump.
+
+```bash
 git clone https://github.com/akashnaren/raspberry-pi-fun.git
 cd raspberry-pi-fun
 npm install
 cp .env.example .env
+# DRY_RUN=true is the default
 npm start
 ```
 
-On a Pi 3 (~905MiB) that is enough. The office renderer forces **DPR=1** and throttles `requestAnimationFrame` when nobody is walking or speaking.
+First boot needs **no API key**. Dry-run: scripted turns, real events, real walks, $0 spent. Replay for visitors:
 
-First boot needs **no API key**. Without `OPENROUTER_API_KEY` the studio runs in **dry-run**: scripted turns, real events, real walks, $0 spent. Open `http://127.0.0.1:8787` (or point Chromium kiosk at it).
+```bash
+STUDIO_MODE=replay npm start
+```
+
+Open `http://127.0.0.1:8787` (or point Chromium kiosk at it).
 
 Then, when you are ready to spend, put the key **outside the workspace** so bots cannot read it:
 
@@ -88,6 +134,7 @@ Then, when you are ready to spend, put the key **outside the workspace** so bots
 mkdir -p ~/.secrets/fishbowl
 cat > ~/.secrets/fishbowl/openrouter.env <<'EOF'
 OPENROUTER_API_KEY=sk-or-...
+DRY_RUN=false
 DAILY_CEILING_USD=5
 EOF
 chmod 600 ~/.secrets/fishbowl/openrouter.env
@@ -95,14 +142,18 @@ chmod 600 ~/.secrets/fishbowl/openrouter.env
 
 The systemd unit loads `EnvironmentFile=-%h/.secrets/fishbowl/openrouter.env`. Never put the key in `workspace/`. A local `.env` in the repo root is also gitignored and is only for laptop dry-runs.
 
-Restart the process. Four people call OpenRouter, each on a different model family. The HUD shows **ON AIR** when live.
+Restart the process. Four people call OpenRouter, each on a locked model id. The HUD shows **ON AIR** when live.
 
 ### Env vars
 
 | Variable | Default | What it does |
 | --- | --- | --- |
+| `DRY_RUN` | `true` | Live only when `false` **and** a key is set. |
+| `STUDIO_MODE` | empty | `replay` = event log only, zero tokens. |
 | `OPENROUTER_API_KEY` | empty | Live turns. Empty = dry-run. |
-| `DAILY_CEILING_USD` | `5` | Hard pause when the UTC-day spend reaches this. Lights dim; ticker says so. |
+| `DAILY_CEILING_USD` | `5` | Hard pause when the UTC-day spend reaches this. HUD: studio sleeping. |
+| `STUDIO_LOCAL_STUBS` | `true` | Template `say()` when the ceiling hits. |
+| `STUDIO_LITE` | empty | Disable CSS animations for Pi 3. |
 | `PORT` | `8787` | HTTP + websocket. |
 | `HOST` | `127.0.0.1` | Bind address. Keep loopback on the Pi. |
 | `STUDIO_TICK_MIN_MS` | `90000` | Lower bound of the tick lottery. |
@@ -125,9 +176,11 @@ Pauses the world. Does not delete the log. The office dims and slowly **replays*
 
 ### $5 / day ceiling
 
-The orchestrator records each turn's estimated USD cost in `data/spend.json`. When the UTC day hits `$5`, ticks stop, the burn bar fills, the lights dim, and the ticker says the ceiling hit. The next UTC day resets the counter. This protects the card; it is independent of any later credit fiction.
+The orchestrator records each turn's estimated USD cost in `data/spend.json`. When the UTC day hits `$5`, ticks stop, the burn bar fills, the lights dim, and the HUD says **studio sleeping**. The next UTC day resets the counter. This protects the card; it is independent of any later credit fiction.
 
 ### Chromium kiosk + systemd
+
+Units live in `deploy/ai-studio.service` and `deploy/chromium-kiosk.service`. Keep them. The orchestrator unit prefers `~/.local/node-v20.20.2` then `/usr/local/bin/node`.
 
 Disable screen blanking, then:
 
@@ -171,7 +224,8 @@ dist/                last green build (created at boot from the seed)
 data/                events.jsonl, spend.json, PAUSED
 deploy/              systemd units
 snapshots/           hook for later weekly snapshots
-studio.config.json   cast, families, tick, ceiling
+studio.config.json   cast, models, tick, ceiling
+wardrobe-vocab.json  Product wardrobe allowlist
 ```
 
 ## Develop

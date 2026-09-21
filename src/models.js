@@ -5,6 +5,7 @@ export function familyOf(modelId) {
 }
 
 export function pickModel(employee, available) {
+  if (employee.model) return employee.model;
   const preferred = employee.preferredModels || [];
   const catalog = Array.isArray(available) ? available : [];
   const ids = new Set(catalog.map((item) => item.id));
@@ -16,6 +17,15 @@ export function pickModel(employee, available) {
   if (match) return match.id;
   if (preferred[0]) return preferred[0];
   throw new Error(`no model for ${employee.id} family ${family}`);
+}
+
+export function modelForTurn(employee, { kind = "auto" } = {}) {
+  const write = employee.model || employee.preferredModels?.[0];
+  const chatter = employee.chatterModel || write;
+  if (kind === "write" || (kind === "auto" && employee.role === "programmer")) {
+    return write;
+  }
+  return chatter;
 }
 
 export async function fetchOpenRouterModels(fetchImpl = fetch) {

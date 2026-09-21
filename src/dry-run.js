@@ -67,7 +67,7 @@ const SCRIPTS = {
       },
     ],
   ],
-  reed: [
+  jules: [
     [
       { name: "read_file", arguments: { path: "requests.json" } },
       {

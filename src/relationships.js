@@ -5,9 +5,9 @@ export const SEED_PAIRS = [
   { a: "nova", b: "kessler", score: -1, note: "speed vs craft" },
   { a: "mira", b: "nova", score: 1, note: "wants the ship" },
   { a: "mira", b: "kessler", score: 0, note: "allies when quality blocks Friday" },
-  { a: "reed", b: "mira", score: 1, note: "keep the room usable" },
-  { a: "reed", b: "nova", score: 0, note: "standing-desk requests" },
-  { a: "reed", b: "kessler", score: 0, note: "lab stays tidy" },
+  { a: "jules", b: "nova", score: -1, note: "standing-desk request vs furniture budget" },
+  { a: "jules", b: "kessler", score: 1, note: "both gate quality and how the room looks" },
+  { a: "jules", b: "mira", score: 0, note: "pretty office vs ship spend" },
 ];
 
 export function emptyMatrix() {

@@ -11,11 +11,16 @@
   "budget": {
     "dailyCeilingUsd": 5
   },
+  "mode": {
+    "dryRun": true,
+    "localStubs": true
+  },
+  "chatterModel": "z-ai/glm-5.3-flash",
   "lottery": {
-    "nova": 4,
-    "mira": 2,
-    "kessler": 2,
-    "reed": 2
+    "nova": 45,
+    "kessler": 20,
+    "mira": 20,
+    "jules": 15
   },
   "employees": [
     {
@@ -23,12 +28,11 @@
       "name": "Mira Sol",
       "role": "producer",
       "color": "#F59E0B",
-      "modelFamily": "x-ai",
-      "preferredModels": [
-        "x-ai/grok-4-fast",
-        "x-ai/grok-3-mini",
-        "x-ai/grok-2-1212"
-      ],
+      "modelFamily": "z-ai",
+      "model": "z-ai/glm-5.3-flash",
+      "preferredModels": ["z-ai/glm-5.3-flash"],
+      "chatterModel": "z-ai/glm-5.3-flash",
+      "maxTokens": 500,
       "priorities": "One clear useful tool. Kill scope creep. Timezone Buddy stays paste-a-time, see-your-cities."
     },
     {
@@ -36,12 +40,11 @@
       "name": "Nova Chen",
       "role": "programmer",
       "color": "#F97316",
-      "modelFamily": "openai",
-      "preferredModels": [
-        "openai/gpt-4o-mini",
-        "openai/gpt-4.1-mini",
-        "openai/gpt-4o"
-      ],
+      "modelFamily": "qwen",
+      "model": "qwen/qwen3-coder-next",
+      "preferredModels": ["qwen/qwen3-coder-next"],
+      "chatterModel": "z-ai/glm-5.3-flash",
+      "maxTokens": 1500,
       "priorities": "Ship a usable tool tonight. Working beats pretty. One HTML file. Iterate in the open."
     },
     {
@@ -50,25 +53,23 @@
       "role": "qa",
       "color": "#14B8A6",
       "modelFamily": "nousresearch",
-      "preferredModels": [
-        "nousresearch/hermes-3-llama-3.1-70b",
-        "nousresearch/hermes-4-70b",
-        "nousresearch/hermes-2-pro-llama-3-8b"
-      ],
+      "model": "nousresearch/hermes-3-llama-3.1-70b",
+      "preferredModels": ["nousresearch/hermes-3-llama-3.1-70b"],
+      "chatterModel": "nousresearch/hermes-3-llama-3.1-70b",
+      "maxTokens": 400,
       "priorities": "No ugly or broken UX. Reject loose greens. Use the last green build, not Nova's desk."
     },
     {
-      "id": "reed",
-      "name": "Reed Park",
+      "id": "jules",
+      "name": "Jules Park",
       "role": "office_manager",
-      "color": "#8B5CF6",
-      "modelFamily": "google",
-      "preferredModels": [
-        "google/gemini-2.0-flash-001",
-        "google/gemini-2.5-flash",
-        "google/gemini-flash-1.5"
-      ],
-      "priorities": "The room stays usable. Furniture budget is real. Approve what helps Friday; deny vanity."
+      "color": "#6366F1",
+      "modelFamily": "meta-llama",
+      "model": "meta-llama/llama-4-scout",
+      "preferredModels": ["meta-llama/llama-4-scout"],
+      "chatterModel": "meta-llama/llama-4-scout",
+      "maxTokens": 400,
+      "priorities": "Office looks intentional. Thrift the furniture budget. Deny vanity requests until a green ship."
     }
   ]
 }

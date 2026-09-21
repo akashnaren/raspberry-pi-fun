@@ -4,6 +4,7 @@ import { createBudget } from "./budget.js";
 import { createEventLog } from "./event-log.js";
 import { createKillSwitch } from "./kill-switch.js";
 import { fetchOpenRouterModels, resolveEmployeeModels } from "./models.js";
+import { resolveStudioMode, runwayHours } from "./mode.js";
 import { createLlm } from "./openrouter.js";
 import { createOrchestrator } from "./orchestrator.js";
 import { createStudioServer } from "./server.js";
@@ -17,6 +18,7 @@ export async function loadConfig(root, env = process.env) {
   const minMs = Number(env.STUDIO_TICK_MIN_MS || raw.tick.minMs);
   const maxMs = Number(env.STUDIO_TICK_MAX_MS || raw.tick.maxMs);
   const dailyCeilingUsd = Number(env.DAILY_CEILING_USD || raw.budget.dailyCeilingUsd);
+  const mode = resolveStudioMode(env);
   return {
     ...raw,
     tick: { minMs, maxMs },
@@ -26,6 +28,7 @@ export async function loadConfig(root, env = process.env) {
     apiKey: env.OPENROUTER_API_KEY || "",
     referer: env.OPENROUTER_HTTP_REFERER || `http://127.0.0.1:${env.PORT || 8787}`,
     title: env.OPENROUTER_TITLE || "Meridian Desk",
+    mode,
   };
 }
 
@@ -61,7 +64,7 @@ export async function createStudio({
   const promoter = createPromoter({ workspaceRoot, distRoot });
 
   let available = [];
-  if (config.apiKey) {
+  if (config.apiKey && config.mode.live) {
     try {
       available = await fetchOpenRouterModels(fetchImpl);
     } catch {
@@ -187,6 +190,7 @@ export async function createStudio({
     referer: config.referer,
     title: config.title,
     fetchImpl,
+    forceDryRun: config.mode.dryRun,
   });
 
   const orchestrator = createOrchestrator({
@@ -199,20 +203,42 @@ export async function createStudio({
     llm,
     budget,
     killSwitch,
+    replay: config.mode.replay,
+    localStubs: config.mode.localStubs,
     now,
     random,
   });
 
   function getSnapshot() {
+    const budgetSnap = budget.snapshot();
+    const sleeping = Boolean(budgetSnap.exhausted);
+    const runway = runwayHours({
+      spentUsd: budgetSnap.spentUsd,
+      remainingUsd: budgetSnap.remainingUsd,
+      now: now(),
+    });
     return {
       studio: config.studio,
-      dryRun: llm.dryRun,
+      dryRun: llm.dryRun || config.mode.dryRun,
+      mode: config.mode.replay ? "replay" : config.mode.live ? "live" : "dry-run",
+      replay: config.mode.replay,
+      lite: config.mode.lite,
       paused: live.paused,
+      sleeping,
       office: live.office,
       backlog: live.backlog,
       relationships: live.relationships,
       acting: live.acting,
-      budget: budget.snapshot(),
+      budget: budgetSnap,
+      hud: {
+        staff: employees.length,
+        treasury: Number(live.office?.budget?.furniture ?? 0),
+        burnUsd: budgetSnap.spentUsd,
+        ceilingUsd: budgetSnap.ceilingUsd,
+        remainingUsd: budgetSnap.remainingUsd,
+        runwayHours: runway,
+        sleeping: Boolean(budgetSnap.exhausted),
+      },
       employees,
       events: events.recent(40),
       tick: config.tick,
@@ -239,11 +265,14 @@ export async function createStudio({
   await events.append({
     type: "world_started",
     actor: "system",
-    message: llm.dryRun
-      ? "Meridian Desk opened in dry-run (no OPENROUTER_API_KEY)"
-      : "Meridian Desk went live via OpenRouter",
+    message: config.mode.replay
+      ? "Meridian Desk opened in replay. Zero tokens."
+      : llm.dryRun
+        ? "Meridian Desk opened in dry-run (DRY_RUN default or no key)"
+        : "Meridian Desk went live via OpenRouter",
     data: {
       dryRun: llm.dryRun,
+      replay: config.mode.replay,
       ceilingUsd: config.budget.dailyCeilingUsd,
       employees: employees.map((employee) => ({
         id: employee.id,

@@ -5,26 +5,38 @@
   "accent": "#14B8A6",
   "priorities": ["no ugly or broken UX", "reject loose greens"],
   "aesthetics": {
-    "skin": "fair",
-    "hair": "wave-teal",
+    "skin": "cool_olive",
+    "hair": "cropped_silver",
     "outfit": {
-      "top": "cardigan",
-      "bottom": "chinos",
-      "shoes": "loafers",
+      "top": "tee",
+      "bottom": "trousers",
+      "shoes": "sneakers",
       "accessory": "glasses"
     },
-    "desk_style": "aligned sticky notes"
+    "desk_style": "minimal dual-note pad"
   },
   "wardrobe_unlocked": [
-    "cardigan",
+    "hoodie",
     "tee",
     "blazer",
-    "chinos",
+    "cardigan",
+    "flannel",
+    "turtleneck",
+    "jeans",
     "trousers",
-    "loafers",
+    "chinos",
+    "skirt",
+    "shorts",
     "sneakers",
+    "boots",
+    "loafers",
+    "sandals",
+    "none",
+    "earbuds",
     "glasses",
     "watch",
-    "none"
+    "keys",
+    "scarf",
+    "badge"
   ]
 }

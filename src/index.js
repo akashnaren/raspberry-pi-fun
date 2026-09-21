@@ -8,7 +8,12 @@ const host = typeof addr === "object" && addr ? addr.address : studio.config.hos
 const port = typeof addr === "object" && addr ? addr.port : studio.config.port;
 
 console.log(`Meridian Desk listening on http://${host}:${port}`);
-console.log(studio.llm.dryRun ? "Mode: dry-run (no OPENROUTER_API_KEY)" : "Mode: OpenRouter live");
+const modeLabel = studio.config.mode.replay
+  ? "Mode: replay (event log only, zero tokens)"
+  : studio.llm.dryRun
+    ? "Mode: dry-run (DRY_RUN default or no OPENROUTER_API_KEY)"
+    : "Mode: OpenRouter live";
+console.log(modeLabel);
 console.log(`Daily ceiling: $${studio.config.budget.dailyCeilingUsd.toFixed(2)}`);
 console.log(`Kill switch: http://${host}:${port}/kill`);
 console.log(

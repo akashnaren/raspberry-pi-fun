@@ -15,6 +15,7 @@ export async function tempStudioRoot() {
 export function testEnv(overrides = {}) {
   return {
     OPENROUTER_API_KEY: "",
+    DRY_RUN: "true",
     DAILY_CEILING_USD: "5",
     PORT: "0",
     HOST: "127.0.0.1",

@@ -18,16 +18,21 @@ export function openTasks(backlog) {
   return (backlog?.tasks || []).filter((task) => task.status === "open");
 }
 
+export function cachedConstitutionPrefix(constitution) {
+  return [
+    "Meridian Desk constitution (static prefix — cache this).",
+    constitution.trim() || "(none)",
+  ].join("\n");
+}
+
 export async function assembleContext({ workspaceRoot, employee, employees, events, constitution, strategy }) {
   const persona = await readOptional(workspaceRoot, `employees/${employee.id}/persona.md`);
-  const journal = await readOptional(workspaceRoot, `employees/${employee.id}/journal.md`);
-  const studio = await readOptional(workspaceRoot, "STUDIO.md");
   let backlogRaw = await readOptional(workspaceRoot, "backlog.json");
   let backlog = { tasks: [] };
   try {
     backlog = JSON.parse(backlogRaw || '{"tasks":[]}');
   } catch {
-    backlogRaw = '{"tasks":[]}';
+    backlog = { tasks: [] };
   }
   const recent = events.recent(10);
   const focusPath = inferFocusFile(employee, recent);
@@ -42,62 +47,44 @@ export async function assembleContext({ workspaceRoot, employee, employees, even
 
   let relationships = { pairs: [] };
   try {
-    relationships = JSON.parse(await readOptional(workspaceRoot, "relationships.json") || "{}");
+    relationships = JSON.parse((await readOptional(workspaceRoot, "relationships.json")) || "{}");
   } catch {
     relationships = { pairs: [] };
   }
   const opinions = opinionsFor(relationships, employee.id);
   const names = Object.fromEntries((employees || []).map((person) => [person.id, person.name]));
-  const roster = employees
-    .map((person) => `${person.name} (${person.id}) — ${person.role} — model ${person.model || person.modelFamily}. ${person.priorities}`)
-    .join("\n");
   const opinionLines = opinions.length
     ? opinions
         .map((item) => `${displayName(item.other, names)}: ${item.score > 0 ? "+" : ""}${item.score}${item.note ? ` — ${item.note}` : ""}`)
         .join("\n")
     : "(neutral)";
 
-  const system = [
-    `You are ${employee.name}, ${employee.role} at Meridian Desk, a private four-person studio.`,
+  const cached = cachedConstitutionPrefix(constitution);
+  const variable = [
+    `Role: ${employee.name}, ${employee.role} at Meridian Desk.`,
     "You take exactly one turn. Call tools. Do not write secrets. Do not touch machinery (src/, public/, config, env).",
     "The product panel shows dist/ — the last green build — never the working copy.",
-    "Keep Timezone Buddy a single-file browser tool. Paste a time and city; show 3–5 saved cities. No accounts, payments, uploads, or chat boxes.",
-    "For files under ~400 lines, rewrite the whole file rather than a patch.",
+    "Keep Timezone Buddy a single-file browser tool. Paste a time and city; show 3–5 saved cities.",
     "Speech is at most two short lines, in your own voice.",
-    "You may edit_self_aesthetics for your own look. Only Reed Park may edit_office. Ask Reed via request() for furniture.",
-    "",
-    persona.trim(),
-    "",
+    "You may edit_self_aesthetics for your own look. Only Jules Park may edit_office. Ask Jules via request() for furniture.",
+    "Treat people as reasonable professionals with conflicting priorities. Do not perform conflict.",
     `Your priorities: ${employee.priorities}`,
-    employee.aesthetics
-      ? `You are wearing ${employee.aesthetics.outfit?.top}, ${employee.aesthetics.outfit?.bottom}, ${employee.aesthetics.outfit?.shoes}. Hair: ${employee.aesthetics.hair}. Desk: ${employee.aesthetics.desk_style}.`
-      : "",
     "",
-    "People in the room. Treat them as reasonable professionals with conflicting priorities. Do not perform conflict.",
-    roster,
-  ].join("\n");
-
-  const user = [
-    "# Constitution",
-    constitution.trim() || "(none)",
+    "# Persona",
+    persona.trim() || "(none)",
     "",
     "# Strategy",
     strategy.trim() || "(none)",
     "",
-    "# STUDIO.md",
-    studio.trim() || "(none)",
+    "# Open backlog",
+    JSON.stringify(openTasks(backlog), null, 2),
     "",
     "# How you feel about people in the room (−2..+2, decays toward 0)",
     opinionLines,
     "",
-    "# Open backlog",
-    JSON.stringify(openTasks(backlog), null, 2),
-    "",
     "# Last ten events (the office is a rendering of these)",
-    recent.map((event) => `${event.id} ${event.actor} ${event.type}: ${event.headline || event.message}`).join("\n") || "(none yet)",
-    "",
-    `# Journal excerpt`,
-    journal.trim().split("\n").slice(-20).join("\n") || "(empty)",
+    recent.map((event) => `${event.id} ${event.actor} ${event.type}: ${event.headline || event.message}`).join("\n") ||
+      "(none yet)",
     "",
     focusPath ? `# File in hand: ${focusPath}` : "# No file in hand",
     focus || "",
@@ -105,9 +92,13 @@ export async function assembleContext({ workspaceRoot, employee, employees, even
 
   return {
     messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
+      {
+        role: "system",
+        content: [{ type: "text", text: cached, cache_control: { type: "ephemeral" } }],
+      },
+      { role: "user", content: variable },
     ],
+    cachedPrefix: cached,
     focusPath,
   };
 }
@@ -124,9 +115,7 @@ export function inferFocusFile(employee, recent) {
 export function repeatingPattern(events, windowSize = 8) {
   if (events.length < windowSize) return false;
   const slice = events.slice(-windowSize);
-  const actionable = slice.filter((event) =>
-    ["say", "journal", "task_added"].includes(event.type),
-  );
+  const actionable = slice.filter((event) => ["say", "journal", "task_added"].includes(event.type));
   if (actionable.length < 6) return false;
   const keys = actionable.map((event) => `${event.actor}:${event.type}:${normalize(event.message)}`);
   const unique = new Set(keys);

@@ -1,43 +1,30 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import vocab from "../wardrobe-vocab.json" with { type: "json" };
 
-export const SKIN = ["fair", "warm", "olive", "deep"];
-export const HAIR = ["short-black", "bun-amber", "wave-teal", "crop-violet", "ponytail"];
-export const TOPS = ["hoodie", "tee", "blazer", "cardigan", "henley"];
-export const BOTTOMS = ["jeans", "chinos", "skirt", "trousers"];
-export const SHOES = ["sneakers", "boots", "loafers"];
-export const ACCESSORIES = ["none", "earbuds", "glasses", "watch", "badge"];
+export const SKIN = vocab.enums.skin;
+export const HAIR = vocab.enums.hair;
+export const TOPS = vocab.enums.top;
+export const BOTTOMS = vocab.enums.bottom;
+export const SHOES = vocab.enums.shoes;
+export const ACCESSORIES = vocab.enums.accessory;
+export const DESK_STYLES = vocab.enums.desk_style;
 
 export const WARDROBE = new Set([...TOPS, ...BOTTOMS, ...SHOES, ...ACCESSORIES]);
 
 export function defaultAesthetics(id) {
-  const seeds = {
-    nova: {
-      skin: "warm",
-      hair: "short-black",
-      outfit: { top: "hoodie", bottom: "jeans", shoes: "sneakers", accessory: "earbuds" },
-      desk_style: "messy cables + stickers",
+  const seed = vocab.seed_outfits[id] || vocab.seed_outfits.nova;
+  return {
+    skin: seed.skin,
+    hair: seed.hair,
+    outfit: {
+      top: seed.top,
+      bottom: seed.bottom,
+      shoes: seed.shoes,
+      accessory: seed.accessory,
     },
-    kessler: {
-      skin: "fair",
-      hair: "wave-teal",
-      outfit: { top: "cardigan", bottom: "chinos", shoes: "loafers", accessory: "glasses" },
-      desk_style: "aligned sticky notes",
-    },
-    mira: {
-      skin: "olive",
-      hair: "bun-amber",
-      outfit: { top: "blazer", bottom: "trousers", shoes: "boots", accessory: "watch" },
-      desk_style: "one notebook, clear desk",
-    },
-    reed: {
-      skin: "deep",
-      hair: "crop-violet",
-      outfit: { top: "henley", bottom: "chinos", shoes: "sneakers", accessory: "badge" },
-      desk_style: "clipboard and floor-plan printouts",
-    },
+    desk_style: seed.desk_style,
   };
-  return seeds[id] || seeds.nova;
 }
 
 export function defaultWardrobe() {
@@ -57,8 +44,8 @@ export function validateAesthetics(value, wardrobe = defaultWardrobe()) {
   for (const piece of [outfit.top, outfit.bottom, outfit.shoes, outfit.accessory || "none"]) {
     if (piece !== "none" && !unlocked.has(piece)) return `${piece} is not in the unlocked wardrobe`;
   }
-  if (typeof value.desk_style !== "string" || !value.desk_style.trim()) {
-    return "desk_style required";
+  if (!DESK_STYLES.includes(value.desk_style)) {
+    return `unknown desk_style ${value.desk_style}`;
   }
   return null;
 }

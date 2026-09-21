@@ -25,7 +25,7 @@ export const TOOL_SCHEMAS = [
     function: {
       name: "write_file",
       description:
-        "Rewrite a workspace file in full. Product, backlog, strategy, journals. office.json is Reed only. employees/<id>.json aesthetics are self only.",
+        "Rewrite a workspace file in full. Product, backlog, strategy, journals. office.json is Jules only. employees/<id>.json aesthetics are self only.",
       parameters: {
         type: "object",
         properties: {
@@ -158,7 +158,7 @@ export function createToolRunner({
   const byId = new Map(employees.map((person) => [person.id, person]));
 
   function isOfficeManager(actor) {
-    return byId.get(actor)?.role === "office_manager" || actor === "reed";
+    return byId.get(actor)?.role === "office_manager" || actor === "jules";
   }
 
   const backlogPath = "backlog.json";

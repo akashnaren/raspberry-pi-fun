@@ -5,8 +5,8 @@
   "accent": "#F97316",
   "priorities": ["ship usable tonight", "working > pretty"],
   "aesthetics": {
-    "skin": "warm",
-    "hair": "short-black",
+    "skin": "warm_light",
+    "hair": "ponytail_dark",
     "outfit": {
       "top": "hoodie",
       "bottom": "jeans",
@@ -19,12 +19,24 @@
     "hoodie",
     "tee",
     "blazer",
+    "cardigan",
+    "flannel",
+    "turtleneck",
     "jeans",
+    "trousers",
     "chinos",
+    "skirt",
+    "shorts",
     "sneakers",
     "boots",
+    "loafers",
+    "sandals",
+    "none",
     "earbuds",
     "glasses",
-    "none"
+    "watch",
+    "keys",
+    "scarf",
+    "badge"
   ]
 }

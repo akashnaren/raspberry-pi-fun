@@ -15,16 +15,36 @@
           <span id="product-name">Timezone Buddy</span>
         </div>
       </div>
-      <div class="burn" title="Hard daily API ceiling">
-        <span>burn</span>
-        <div class="burn-track"><i id="burn-bar"></i></div>
-        <b id="budget">$0 / $5</b>
+      <div class="hud-meters" aria-label="studio meters">
+        <div class="meter" title="Furniture credits (treasury stub)">
+          <span>treasury</span>
+          <b id="treasury">2 credits</b>
+        </div>
+        <div class="meter burn" title="Hard daily API ceiling">
+          <span>burn</span>
+          <div class="burn-track"><i id="burn-bar"></i></div>
+          <b id="budget">$0 / $5</b>
+        </div>
+        <div class="meter" title="Hours left at today's burn">
+          <span>runway</span>
+          <b id="runway">full day</b>
+        </div>
+        <div class="meter" title="USD remaining under the $5 ceiling">
+          <span>ceiling left</span>
+          <b id="ceiling-left">$5.00</b>
+        </div>
+        <div class="meter">
+          <span>staff</span>
+          <b id="staff-count">4</b>
+        </div>
       </div>
       <p id="acting" class="acting">waiting for someone to act</p>
       <div class="hud-flags">
         <span id="on-air" class="on-air hidden">ON AIR</span>
         <span id="mode-badge" class="badge">dry-run</span>
         <span id="pause-badge" class="badge hidden">paused</span>
+        <span id="sleep-badge" class="badge sleep hidden">studio sleeping</span>
+        <button id="sound-btn" type="button" aria-pressed="false">sound off</button>
         <button id="pause-btn" type="button">Pause</button>
       </div>
     </header>
@@ -33,11 +53,18 @@
     </div>
     <main class="split">
       <section class="pane office-pane" aria-label="Office">
+        <div class="vignette" aria-hidden="true"></div>
         <canvas id="office" width="720" height="640"></canvas>
       </section>
       <section class="pane product-pane" aria-label="Last green build">
-        <div class="pane-label">last green build · dist/</div>
-        <iframe id="product" title="Timezone Buddy" src="/dist/index.html" sandbox="allow-scripts allow-same-origin"></iframe>
+        <div class="live-build">
+          <div class="live-build-bar">
+            <span class="rec" aria-hidden="true"></span>
+            <span>LIVE BUILD</span>
+            <span class="live-build-meta">last green · dist/</span>
+          </div>
+          <iframe id="product" title="Timezone Buddy" src="/dist/index.html" sandbox="allow-scripts allow-same-origin"></iframe>
+        </div>
       </section>
     </main>
     <iframe id="validator" class="hidden-frame" title="build validator" sandbox="allow-scripts allow-same-origin"></iframe>

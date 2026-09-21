@@ -5,8 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=pi
 WorkingDirectory=/home/pi/raspberry-pi-fun
-ExecStart=/usr/local/bin/node src/index.js
+# Prefer user-local Node 20.20.2 (no sudo). Fall back to /usr/local if the symlink exists.
+Environment=PATH=/home/pi/.local/node-v20.20.2/bin:/usr/local/bin:/usr/bin
+Environment=DRY_RUN=true
+ExecStart=/bin/bash -c 'NODE="$HOME/.local/node-v20.20.2/bin/node"; if [ ! -x "$NODE" ]; then NODE=/usr/local/bin/node; fi; exec "$NODE" src/index.js'
 Restart=always
 RestartSec=3
 # Secrets live outside the workspace. Bots cannot read this path.

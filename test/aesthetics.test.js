@@ -9,15 +9,15 @@ import { tempStudioRoot } from "./helpers.js";
 
 const roster = [
   { id: "nova", name: "Nova Chen", role: "programmer" },
-  { id: "reed", name: "Reed Park", role: "office_manager" },
+  { id: "jules", name: "Jules Park", role: "office_manager" },
   { id: "mira", name: "Mira Sol", role: "producer" },
 ];
 
 test("wardrobe allowlist rejects clothes you do not own", () => {
   const error = validateAesthetics(
     {
-      skin: "warm",
-      hair: "short-black",
+      skin: "warm_light",
+      hair: "ponytail_dark",
       outfit: { top: "hoodie", bottom: "jeans", shoes: "sneakers", accessory: "earbuds" },
       desk_style: "messy",
     },
@@ -26,13 +26,13 @@ test("wardrobe allowlist rejects clothes you do not own", () => {
   assert.match(error, /hoodie/);
 });
 
-test("only you can change your look; only Reed edits the office", async () => {
+test("only you can change your look; only Jules edits the office", async () => {
   const root = await tempStudioRoot();
   const workspaceRoot = join(root, "workspace");
   const events = await createEventLog({ filePath: join(root, "data", "events.jsonl") });
   const tools = createToolRunner({ workspaceRoot, events, employees: roster });
 
-  const peer = await tools.execute("reed", "write_file", {
+  const peer = await tools.execute("jules", "write_file", {
     path: "employees/nova.json",
     contents: "{}",
   });
@@ -56,7 +56,7 @@ test("only you can change your look; only Reed edits the office", async () => {
   });
   assert.equal(trespass.ok, false);
 
-  const moved = await tools.execute("reed", "edit_office", {
+  const moved = await tools.execute("jules", "edit_office", {
     office: {
       decor: JSON.parse(await readFile(join(workspaceRoot, "office.json"), "utf8")).decor.concat([
         { kind: "plant", x: 18, y: 8 },

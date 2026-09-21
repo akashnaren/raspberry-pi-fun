@@ -9,9 +9,9 @@ import { createToolRunner } from "../src/tools.js";
 import { tempStudioRoot } from "./helpers.js";
 
 const employees = [
-  { id: "mira", name: "Mira", role: "producer", model: "x-ai/grok-4-fast", priorities: "scope" },
-  { id: "nova", name: "Nova", role: "programmer", model: "openai/gpt-4o-mini", priorities: "ship" },
-  { id: "kessler", name: "Kessler", role: "qa", model: "nousresearch/hermes-3", priorities: "bugs" },
+  { id: "mira", name: "Mira", role: "producer", model: "z-ai/glm-5.3-flash", priorities: "scope" },
+  { id: "nova", name: "Nova", role: "programmer", model: "qwen/qwen3-coder-next", priorities: "ship" },
+  { id: "kessler", name: "Kessler", role: "qa", model: "nousresearch/hermes-3-llama-3.1-70b", priorities: "bugs" },
 ];
 
 test("lottery picks one employee and tick delay stays in 90–120s", () => {

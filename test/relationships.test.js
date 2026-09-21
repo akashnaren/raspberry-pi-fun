@@ -21,6 +21,12 @@ test("seed matrix and slow decay toward zero", () => {
   assert.equal(kessler.score, -1);
   const miraNova = opinionsFor(matrix, "mira").find((item) => item.other === "nova");
   assert.equal(miraNova.score, 1);
+  const julesNova = opinionsFor(matrix, "jules").find((item) => item.other === "nova");
+  assert.equal(julesNova.score, -1);
+  const julesKessler = opinionsFor(matrix, "jules").find((item) => item.other === "kessler");
+  assert.equal(julesKessler.score, 1);
+  const julesMira = opinionsFor(matrix, "jules").find((item) => item.other === "mira");
+  assert.equal(julesMira.score, 0);
   const decayed = decayTowardZero(matrix, 1);
   const after = opinionsFor(decayed, "nova").find((item) => item.other === "kessler");
   assert.ok(after.score > -1 && after.score < 0);
@@ -42,23 +48,30 @@ test("context assembly includes last opinions", async () => {
       name: "Nova Chen",
       role: "programmer",
       priorities: "ship tonight",
-      model: "openai/gpt-4o-mini",
-      modelFamily: "openai",
+      model: "qwen/qwen3-coder-next",
+      modelFamily: "qwen",
     },
     employees: [
-      { id: "nova", name: "Nova Chen", role: "programmer", priorities: "ship", modelFamily: "openai" },
+      { id: "nova", name: "Nova Chen", role: "programmer", priorities: "ship", modelFamily: "qwen" },
       { id: "kessler", name: "Kessler Holt", role: "qa", priorities: "reject loose greens", modelFamily: "nousresearch" },
-      { id: "mira", name: "Mira Sol", role: "producer", priorities: "kill scope", modelFamily: "x-ai" },
+      { id: "mira", name: "Mira Sol", role: "producer", priorities: "kill scope", modelFamily: "z-ai" },
     ],
     events,
     constitution: "c",
     strategy: "s",
   });
-  assert.match(messages[0].content, /Meridian Desk/);
-  assert.match(messages[0].content, /Timezone Buddy/);
-  assert.match(messages[1].content, /Kessler Holt: -1/);
-  assert.match(messages[0].content, /reasonable professionals/);
-  assert.equal(messages[0].content.includes("you are competitive"), false);
+  const cached = typeof messages[0].content === "string"
+    ? messages[0].content
+    : messages[0].content.map((part) => part.text).join("\n");
+  const variable = messages[1].content;
+  assert.match(cached, /Meridian Desk/);
+  assert.equal(messages[0].content[0].cache_control.type, "ephemeral");
+  assert.match(variable, /Timezone Buddy/);
+  assert.match(variable, /Kessler Holt: -1/);
+  assert.match(variable, /reasonable professionals/);
+  assert.equal(variable.includes("you are competitive"), false);
+  assert.equal(variable.includes("STUDIO.md"), false);
+  assert.equal(variable.includes("# Journal"), false);
 });
 
 test("relationships persist a decay day without breaking dry-run", async () => {

@@ -1,4 +1,5 @@
 import { createDryRunDriver } from "./dry-run.js";
+import { modelForTurn } from "./models.js";
 import { TOOL_SCHEMAS } from "./tools.js";
 
 const DEFAULT_RATES = {
@@ -32,17 +33,20 @@ export function createLlm({
   title,
   fetchImpl = fetch,
   dryRunDriver = createDryRunDriver(),
+  forceDryRun = false,
 }) {
-  const enabled = Boolean(apiKey);
+  const enabled = Boolean(apiKey) && !forceDryRun;
 
   return {
     get dryRun() {
       return !enabled;
     },
-    async complete({ employee, messages, tools = TOOL_SCHEMAS }) {
+    async complete({ employee, messages, tools = TOOL_SCHEMAS, kind = "auto" }) {
       if (!enabled) {
         return dryRunDriver.complete({ employee, messages });
       }
+      const model = modelForTurn(employee, { kind });
+      const maxTokens = Number(employee.maxTokens) || (employee.role === "programmer" ? 1500 : 400);
       const response = await fetchImpl("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -52,11 +56,13 @@ export function createLlm({
           "x-title": title || "Meridian Desk",
         },
         body: JSON.stringify({
-          model: employee.model,
+          model,
           messages,
           tools,
           tool_choice: "auto",
-          temperature: employee.role === "programmer" ? 0.4 : 0.7,
+          temperature: kind === "write" || employee.role === "programmer" ? 0.4 : 0.7,
+          max_tokens: maxTokens,
+          provider: { require_parameters: false },
         }),
       });
       if (!response.ok) {
@@ -73,7 +79,7 @@ export function createLlm({
         text: message.content || "",
         costUsd,
         dryRun: false,
-        model: body.model || employee.model,
+        model: body.model || model,
         usage: body.usage || {},
         id: body.id,
       };
