@@ -1,7 +1,7 @@
 import { appendFile, readFile } from "node:fs/promises";
 import { applyAestheticsPatch, loadEmployeeRecord, validateEmployeeRecord } from "./aesthetics.js";
 import { isProductPath, resolveWorkspacePath, assertWritableFile } from "./paths.js";
-import { emptyBacklog, validateBacklog, validateOffice } from "./schemas.js";
+import { applyOfficeTweak, emptyBacklog, isOfficeTweak, validateBacklog, validateOffice } from "./schemas.js";
 import { validateRelationships } from "./relationships.js";
 import { syntaxCheckFile, writeFileAtomic } from "./validator.js";
 
@@ -369,10 +369,15 @@ export function createToolRunner({
   async function sayTool(actor, args) {
     const message = filterSay(args.message);
     if (!message) throw new Error("empty say");
+    const to = String(args.to || "").toLowerCase();
+    const known = new Set(["nova", "kessler", "mira", "jules"]);
     const event = await events.append({
       type: "say",
       actor,
-      data: { text: message },
+      data: {
+        text: message,
+        ...(known.has(to) && to !== actor ? { to } : {}),
+      },
     });
     return { ok: true, text: message, event };
   }
@@ -426,35 +431,59 @@ export function createToolRunner({
     if (!isOfficeManager(actor)) throw new Error("edit_office is exclusive to the office manager");
     const current = await loadJson("office.json", null);
     if (!current) throw new Error("office.json missing");
-    const patch = args.office && typeof args.office === "object" ? args.office : args;
-    const next = {
-      ...current,
-      ...patch,
-      desks: patch.desks || current.desks,
-      rooms: patch.rooms || current.rooms,
-      decor: patch.decor || current.decor,
-      budget: { furniture: Number(current.budget?.furniture ?? 0), ...(patch.budget || {}) },
-    };
+    let next;
+    let changes = [];
+    if (isOfficeTweak(args)) {
+      const applied = applyOfficeTweak(current, args);
+      next = applied.office;
+      changes = applied.changes;
+    } else {
+      const patch = args.office && typeof args.office === "object" ? args.office : args;
+      const { move, whiteboard, deskItem, add, ...rest } = patch;
+      next = {
+        ...current,
+        ...rest,
+        desks: rest.desks || current.desks,
+        rooms: rest.rooms || current.rooms,
+        decor: rest.decor || current.decor,
+        budget: { furniture: Number(current.budget?.furniture ?? 0), ...(rest.budget || {}) },
+      };
+      if (move || whiteboard || deskItem || add) {
+        const applied = applyOfficeTweak(next, { move, whiteboard, deskItem, add });
+        next = applied.office;
+        changes = applied.changes;
+      }
+    }
     const error = validateOffice(next);
     if (error) {
-      await rejectOffice(actor, error, patch);
+      await rejectOffice(actor, error, args);
       throw new Error(error);
     }
     const added = Math.max(0, (next.decor?.length || 0) - (current.decor?.length || 0));
     const furniture = Number(next.budget?.furniture ?? 0);
     if (added > furniture) {
       const msg = `furniture budget ${furniture} cannot cover ${added} new props`;
-      await rejectOffice(actor, msg, patch);
+      await rejectOffice(actor, msg, args);
       throw new Error(msg);
     }
     if (added > 0) next.budget.furniture = furniture - added;
     await saveJson("office.json", next);
+    const primary = changes[0] || {};
     const event = await events.append({
       type: "office_edited",
       actor,
-      data: { added, furniture: next.budget.furniture },
+      data: {
+        added,
+        furniture: next.budget.furniture,
+        kind: primary.kind,
+        x: primary.x,
+        y: primary.y,
+        at: primary.at,
+        action: primary.action,
+        changes,
+      },
     });
-    return { ok: true, office: next, event };
+    return { ok: true, office: next, event, changes };
   }
 
   async function rejectOffice(actor, error, patch) {

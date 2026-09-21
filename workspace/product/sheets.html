@@ -15,17 +15,24 @@
       body { display: grid; grid-template-rows: auto 1fr; min-height: 100dvh; }
       header {
         display: flex; gap: 1.1rem; align-items: baseline;
-        padding: 0.65rem 1rem; border-bottom: 1px solid var(--line);
+        padding: 0.55rem 1rem; border-bottom: 1px solid var(--line);
       }
       .brand { font-size: 0.78rem; }
       nav { display: flex; gap: 0.85rem; font-size: 0.78rem; }
       nav a { color: #9a8f80; text-decoration: none; }
       nav a[aria-current="page"] { color: #f3ead7; }
-      main { padding: 2rem 1.2rem; background: var(--paper); color: var(--ink); }
-      h1 { font-size: 1.15rem; font-weight: 500; margin: 0 0 0.4rem; }
-      p { color: #5c5348; line-height: 1.5; max-width: 32rem; }
-      table { border-collapse: collapse; margin-top: 1.4rem; width: min(100%, 22rem); opacity: 0.4; }
-      td { border: 1px solid #d8cbb0; height: 1.7rem; width: 25%; }
+      main {
+        padding: 1.1rem 1.2rem 1.4rem;
+        background: var(--paper); color: var(--ink);
+        min-height: 0;
+      }
+      h1 { font-size: 1.05rem; font-weight: 500; margin: 0 0 0.3rem; }
+      p { color: #5c5348; line-height: 1.5; max-width: 34rem; margin: 0 0 1rem; font-size: 0.92rem; }
+      table { border-collapse: collapse; width: min(100%, 28rem); font-size: 0.82rem; }
+      th, td { border: 1px solid #d8cbb0; padding: 0.35rem 0.5rem; text-align: left; }
+      th { background: #efe6d2; color: #5c5348; font-weight: 500; }
+      td { background: #faf4e8; }
+      .later { color: #8a7d6b; }
     </style>
   </head>
   <body>
@@ -39,8 +46,18 @@
     </header>
     <main>
       <h1>Sheets later</h1>
-      <p>Numbers wait until Docs is something a person would actually keep open. No grid to fake, no accounts to collect.</p>
-      <table aria-hidden="true"><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></table>
+      <p>A labeled grid so the slot is not empty. Formulas wait until Docs is something a person would keep open. No accounts.</p>
+      <table>
+        <thead>
+          <tr><th></th><th>A</th><th>B</th><th>C</th></tr>
+        </thead>
+        <tbody>
+          <tr><th>1</th><td>Print</td><td>Docs</td><td>yes</td></tr>
+          <tr><th>2</th><td>Download</td><td>Docs</td><td>yes</td></tr>
+          <tr><th>3</th><td>Grid</td><td>Sheets</td><td class="later">later</td></tr>
+          <tr><th>4</th><td>Deck</td><td>Slides</td><td class="later">later</td></tr>
+        </tbody>
+      </table>
     </main>
   </body>
 </html>

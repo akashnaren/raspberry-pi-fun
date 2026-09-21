@@ -57,9 +57,34 @@ function atRoom(room, at) {
 
 function blob(event) {
   const data = event?.data || {};
-  return [event?.message, data.text, data.task?.text, data.path, data.item, data.reason]
+  return [event?.message, data.text, data.task?.text, data.path, data.item, data.reason, data.kind]
     .filter(Boolean)
     .join(" ");
+}
+
+const CAST_NAMES = [
+  ["nova", /\bnova\b/i],
+  ["kessler", /\bkessler\b/i],
+  ["mira", /\bmira\b/i],
+  ["jules", /\bjules\b/i],
+];
+
+/** Named person in a say() — they walk over. Event-driven chat, not a screensaver. */
+export function companionId(event) {
+  if (!event || event.actor === "system") return null;
+  const to = String(event.data?.to || "").toLowerCase();
+  if (CAST_NAMES.some(([id]) => id === to) && to !== event.actor) return to;
+  if (event.type !== "say") return null;
+  const text = blob(event);
+  for (const [id, re] of CAST_NAMES) {
+    if (id !== event.actor && re.test(text)) return id;
+  }
+  return null;
+}
+
+export function standBeside(target, dx = 1, dy = 0) {
+  if (!target) return null;
+  return { x: target.x + dx, y: target.y + dy, at: target.at };
 }
 
 /**
@@ -89,8 +114,17 @@ export function destinationFor(event, office) {
     case "request_filed":
     case "request_decided":
       return jules();
-    case "office_edited":
+    case "office_edited": {
+      if (event.data?.at === "whiteboard" || event.data?.kind === "whiteboard") return board() || desk();
+      if (Number.isFinite(Number(event.data?.x)) && Number.isFinite(Number(event.data?.y))) {
+        return {
+          x: Number(event.data.x),
+          y: Number(event.data.y),
+          at: event.data.at || event.data.kind || "coffee",
+        };
+      }
       return coffee() || board() || desk();
+    }
     case "aesthetics_changed":
     case "journal":
       return desk();
@@ -104,8 +138,8 @@ export function destinationFor(event, office) {
     case "say": {
       if (/coffee|mug|caffeine|espresso/i.test(text)) return coffee() || desk();
       if (/break|couch|hang out|sit/i.test(text)) return couch() || coffee() || desk();
+      if (/review|meeting|table|fail|reject|green build/i.test(text)) return meeting() || desk();
       if (/board|plan|ship|task|backlog|docs/i.test(text)) return board() || desk();
-      if (/review|meeting|fail|reject|green/i.test(text)) return meeting() || desk();
       return coffee() || couch() || desk();
     }
     case "turn_started": {
@@ -136,6 +170,9 @@ const PLACE = {
   coffee: "the coffee machine",
   couch: "the couch",
   meeting: "the meeting table",
+  plant: "the plant",
+  beanbag: "the beanbag",
+  lamp: "the lamp",
 };
 
 export function placeName(at) {

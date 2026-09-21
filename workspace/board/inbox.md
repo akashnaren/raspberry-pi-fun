@@ -30,5 +30,11 @@ Timezone Buddy stays in the catalogue as a shipped utility; weekly ships can sti
 - `events.jsonl` must skip/quarantine null-byte and torn lines after a power cut.
 - Office canvas must paint a room before the websocket — never wait on a socket to show floor, desks, people.
 
+## Overnight (2026-09-21)
+- Dry-run beats should walk and talk: coffee, whiteboard, couch, meeting table. Named say() pulls a second person over.
+- Jules must actually `edit_office` in dry-run. Small layout tweaks persist in `office.json`. Furniture budget stays two unless she adds a prop.
+- Docs should read as a small editor (page, four format keys, kept locally). Sheets/Slides stay stubs but not empty panes.
+- Chromium stays Pi-3 safe. No new npm deps. No OpenRouter top-up.
+
 ## Constraints
 DRY_RUN until greenlight · ~$10 OpenRouter · never top up · $5/day if live · Jules exclusive edit_office · event log is truth

@@ -8,11 +8,12 @@
       :root {
         color-scheme: dark;
         --chrome: #1c1916;
-        --paper: #f3ead7;
+        --paper: #f4ecd8;
         --ink: #2a2118;
         --muted: #8a7d6b;
         --line: #3a322b;
         --rule: #e0d4bc;
+        --desk: #c4b08a;
         font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Liberation Serif", Georgia, serif;
         --ui: system-ui, -apple-system, "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
       }
@@ -21,38 +22,53 @@
       body { display: grid; grid-template-rows: auto 1fr auto; min-height: 100dvh; }
       header {
         display: flex; align-items: baseline; gap: 1.1rem;
-        padding: 0.65rem 1rem; border-bottom: 1px solid var(--line);
+        padding: 0.55rem 1rem; border-bottom: 1px solid var(--line);
         font-family: var(--ui);
       }
       .brand { font-size: 0.78rem; letter-spacing: 0.02em; color: #e8dfd2; }
       nav { display: flex; gap: 0.85rem; font-size: 0.78rem; font-family: var(--ui); }
       nav a { color: #9a8f80; text-decoration: none; }
       nav a[aria-current="page"] { color: #f3ead7; }
-      .tools { margin-left: auto; display: flex; gap: 0.75rem; font-size: 0.72rem; font-family: var(--ui); }
+      .tools { margin-left: auto; display: flex; gap: 0.85rem; font-size: 0.72rem; font-family: var(--ui); }
       .tools button {
         border: 0; background: none; color: #f3ead7; font: inherit; cursor: pointer; padding: 0;
       }
       .tools button:hover { color: #c4b8a8; }
+      .stage {
+        min-height: 0; overflow: auto;
+        background:
+          linear-gradient(180deg, #2a241e 0%, #1c1916 18%, #1c1916 100%);
+        padding: 0.7rem 0 1.2rem;
+      }
       main {
-        display: grid; grid-template-rows: auto auto 1fr; min-height: 0;
+        display: grid; grid-template-rows: auto auto 1fr;
+        width: min(40rem, calc(100% - 1.6rem));
+        min-height: 22rem;
+        margin: 0 auto;
         background: var(--paper); color: var(--ink);
-        box-shadow: inset 0 0 0 1px #d8cbb0;
+        box-shadow: 0 0 0 1px #d8cbb0, 0 18px 40px rgba(0, 0, 0, 0.28);
       }
       .format {
-        display: flex; gap: 0.45rem; padding: 0.4rem 1.1rem 0.3rem;
-        border-bottom: 1px solid var(--rule); font-family: var(--ui); font-size: 0.7rem;
+        display: flex; align-items: center; gap: 0.15rem;
+        padding: 0.28rem 0.7rem;
+        border-bottom: 1px solid var(--rule);
+        font-family: var(--ui); font-size: 0.72rem;
+        background: #faf4e8;
       }
       .format button {
-        border: 1px solid #d8cbb0; background: #faf4e8; color: var(--ink);
-        font: inherit; padding: 0.15rem 0.45rem; cursor: pointer;
+        border: 0; background: transparent; color: var(--ink);
+        font: inherit; min-width: 1.6rem; height: 1.45rem;
+        padding: 0 0.35rem; cursor: pointer;
       }
+      .format button[aria-pressed="true"] { background: #e8dcc4; }
+      .format button:hover { background: #efe6d2; }
       #title {
         width: 100%; border: 0; border-bottom: 1px solid var(--rule);
-        padding: 0.9rem 1.3rem 0.45rem; font: inherit; font-size: 1.45rem;
+        padding: 0.85rem 1.35rem 0.4rem; font: inherit; font-size: 1.45rem;
         background: transparent; color: var(--ink);
       }
       #body {
-        padding: 0.7rem 1.3rem 1.6rem; outline: none; overflow: auto;
+        padding: 0.65rem 1.35rem 1.5rem; outline: none; overflow: auto;
         line-height: 1.55; min-height: 14rem; font-size: 1.02rem;
       }
       #body h2 { font-size: 1.05rem; margin: 1rem 0 0.35rem; }
@@ -60,12 +76,12 @@
       #body ul { margin: 0 0 0.7rem; padding-left: 1.2rem; }
       footer {
         display: flex; justify-content: space-between; gap: 1rem;
-        padding: 0.4rem 1rem; border-top: 1px solid var(--line);
+        padding: 0.35rem 1rem; border-top: 1px solid var(--line);
         color: #9a8f80; font-size: 0.7rem; font-family: var(--ui);
       }
       @media print {
-        header, .format, footer { display: none; }
-        body, main { background: #fff; color: #111; }
+        header, .format, footer, .stage { display: none; }
+        body, main { background: #fff; color: #111; box-shadow: none; width: auto; }
       }
     </style>
   </head>
@@ -83,34 +99,37 @@
         <button id="print" type="button">print</button>
       </div>
     </header>
-    <main>
-      <div class="format" aria-label="format">
-        <button type="button" data-cmd="bold"><b>B</b></button>
-        <button type="button" data-cmd="italic"><i>I</i></button>
-        <button type="button" data-cmd="insertUnorderedList">list</button>
-        <button type="button" data-heading="2">heading</button>
-      </div>
-      <input id="title" type="text" maxlength="140" value="Morning notes — Meridian Office" aria-label="Document title" />
-      <div id="body" contenteditable="true" role="textbox" aria-multiline="true">
-        <p>Write here. This tab keeps the page on this machine. Download when you want a file.</p>
-        <h2>What ships</h2>
-        <ul>
-          <li>Docs first: edit, keep, take with you as .html or .md.</li>
-          <li>Sheets and Slides wait. A fake grid is worse than a stub.</li>
-          <li>No accounts. Nothing is uploaded.</li>
-        </ul>
-        <h2>From the room</h2>
-        <p>Nova ships the working copy. Kessler only greens what a stranger can use. Mira cuts scope. Jules spends furniture credits like they are real.</p>
-      </div>
-    </main>
+    <div class="stage">
+      <main>
+        <div class="format" aria-label="format">
+          <button type="button" data-cmd="bold" aria-pressed="false"><b>B</b></button>
+          <button type="button" data-cmd="italic" aria-pressed="false"><i>I</i></button>
+          <button type="button" data-cmd="insertUnorderedList" aria-pressed="false">•</button>
+          <button type="button" data-heading="2" aria-pressed="false">H</button>
+        </div>
+        <input id="title" type="text" maxlength="140" value="Morning notes — Meridian Office" aria-label="Document title" />
+        <div id="body" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Document">
+          <p>Write here. This tab keeps the page on this machine. Download when you want a file.</p>
+          <h2>What ships</h2>
+          <ul>
+            <li>Docs first: edit, keep, take with you as .html or .md.</li>
+            <li>Sheets and Slides wait. A fake grid is worse than a stub.</li>
+            <li>No accounts. Nothing is uploaded.</li>
+          </ul>
+          <h2>From the room</h2>
+          <p>Nova ships the working copy. Kessler only greens what a stranger can use. Mira cuts scope. Jules spends furniture credits like they are real.</p>
+        </div>
+      </main>
+    </div>
     <footer>
       <span id="count">0 words</span>
-      <span>Local only. Last green build.</span>
+      <span id="kept">Local only. Last green build.</span>
     </footer>
     <script>
       const title = document.getElementById("title");
       const body = document.getElementById("body");
       const count = document.getElementById("count");
+      const kept = document.getElementById("kept");
       const KEY = "meridian-office-docs-v2";
 
       function words() {
@@ -121,22 +140,35 @@
         const n = words();
         count.textContent = n === 1 ? "1 word" : n + " words";
       }
+      function paintKept(when) {
+        if (!when) {
+          kept.textContent = "Kept locally. Last green build.";
+          return;
+        }
+        const delta = Date.now() - when;
+        const label = delta < 4000 ? "just now" : delta < 60000 ? Math.round(delta / 1000) + "s ago" : Math.round(delta / 60000) + "m ago";
+        kept.textContent = "Kept locally " + label + ".";
+      }
       function save() {
         try {
-          localStorage.setItem(KEY, JSON.stringify({ title: title.value, html: body.innerHTML }));
+          localStorage.setItem(KEY, JSON.stringify({ title: title.value, html: body.innerHTML, savedAt: Date.now() }));
         } catch (err) {}
         paintCount();
+        paintKept(Date.now());
+        paintPressed();
       }
       function load() {
         try {
           const raw = localStorage.getItem(KEY);
           if (!raw) {
             paintCount();
+            paintKept(0);
             return;
           }
           const data = JSON.parse(raw);
           if (data.title) title.value = data.title;
           if (data.html) body.innerHTML = data.html;
+          paintKept(data.savedAt || 0);
         } catch (err) {}
         paintCount();
       }
@@ -180,6 +212,15 @@
         walk(root);
         return out.replace(/\n{3,}/g, "\n\n").trim() + "\n";
       }
+      function paintPressed() {
+        const bar = document.querySelector(".format");
+        if (!bar) return;
+        for (const btn of bar.querySelectorAll("button[data-cmd]")) {
+          let on = false;
+          try { on = document.queryCommandState(btn.dataset.cmd); } catch (err) {}
+          btn.setAttribute("aria-pressed", on ? "true" : "false");
+        }
+      }
       document.getElementById("download-md").addEventListener("click", function () {
         const md = "# " + title.value.trim() + "\n\n" + htmlToMarkdown(body);
         download(fileBase() + ".md", "text/markdown;charset=utf-8", md);
@@ -202,8 +243,20 @@
         }
         save();
       });
+      document.addEventListener("keydown", function (event) {
+        const key = event.key.toLowerCase();
+        if (!(event.metaKey || event.ctrlKey)) return;
+        if (key === "b" || key === "i") {
+          event.preventDefault();
+          body.focus();
+          document.execCommand(key === "b" ? "bold" : "italic", false, null);
+          save();
+        }
+      });
       title.addEventListener("input", save);
       body.addEventListener("input", save);
+      body.addEventListener("keyup", paintPressed);
+      body.addEventListener("mouseup", paintPressed);
       load();
     </script>
   </body>
