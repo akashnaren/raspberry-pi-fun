@@ -85,8 +85,19 @@
       #body h2 { font-size: 1.05rem; margin: 1rem 0 0.35rem; }
       #body p { margin: 0 0 0.7rem; }
       #body ul, #body ol { margin: 0 0 0.7rem; padding-left: 1.25rem; }
+      #body table { border-collapse: collapse; width: 100%; margin: 0 0 0.7rem; font-size: 0.92rem; }
+      #body th, #body td { border: 1px solid var(--rule); padding: 0.25rem 0.4rem; min-width: 4rem; }
+      #body th { background: #efe6d2; font-weight: 500; }
       #body mark.find-hit { background: #f5d98a; color: inherit; }
       #body mark.find-hit.on { background: #e8b84a; }
+      #preview {
+        display: none; padding: 0.65rem 1.35rem 1.5rem; overflow: auto;
+        line-height: 1.55; min-height: 14rem; font-size: 0.95rem;
+        font-family: ui-monospace, "Liberation Mono", monospace; white-space: pre-wrap;
+      }
+      body.is-preview #body { display: none; }
+      body.is-preview #preview { display: block; }
+      body.is-preview .format button:not(#preview-toggle):not(#find-open) { opacity: 0.35; pointer-events: none; }
       footer {
         display: flex; justify-content: space-between; gap: 1rem;
         padding: 0.35rem 1rem; border-top: 1px solid var(--rule);
@@ -94,7 +105,8 @@
       }
       #save-md { color: #6b5d4d; }
       @media print {
-        .rail, header, .format, .find-box, footer { display: none !important; }
+        .rail, header, .format, .find-box, footer, #preview { display: none !important; }
+        body.is-preview #body { display: block; }
         body { display: block; background: #fff; }
         main { box-shadow: none; width: auto; margin: 0; }
       }
@@ -111,6 +123,8 @@
       <nav class="more" aria-label="Catalogue">
         <span>CATALOGUE</span>
         <a href="./paste-csv.html">Paste → CSV</a>
+        <a href="./invoice.html">Invoice</a>
+        <a href="./meeting-notes.html">Notes</a>
         <a href="./timezone-buddy.html">Timezone Buddy</a>
       </nav>
     </aside>
@@ -134,6 +148,9 @@
           <button type="button" data-cmd="insertUnorderedList" aria-pressed="false">•</button>
           <button type="button" data-cmd="insertOrderedList" aria-pressed="false">1.</button>
           <span class="gap" aria-hidden="true"></span>
+          <button type="button" id="insert-table">Table</button>
+          <button type="button" id="preview-toggle" aria-pressed="false">Preview</button>
+          <span class="gap" aria-hidden="true"></span>
           <button type="button" id="find-open">Find</button>
         </div>
         <div id="find-box" class="find-box" hidden>
@@ -145,14 +162,15 @@
           <button type="button" id="find-close">done</button>
         </div>
         <input id="title" type="text" maxlength="140" value="Morning notes — Meridian Office" aria-label="Document title" />
+        <div id="preview" aria-label="Markdown preview"></div>
         <div id="body" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Document">
           <h1>A page you can take with you</h1>
           <p>Write here. Ctrl+S writes a .md. Headings and lists stay when you come back. Ctrl+F finds a word. Print hides the rail.</p>
           <h2>What ships</h2>
           <ul>
-            <li>Docs: H1, H2, bullets, numbers, find, print.</li>
+            <li>Docs: H1, H2, bullets, numbers, a table, preview, find, print.</li>
             <li>Sheets: a local grid. Paste a column. Download .csv.</li>
-            <li>Slides: a short deck. Title and a thought.</li>
+            <li>Slides: a short deck. Title, a thought, notes.</li>
           </ul>
           <h2>What waits</h2>
           <ol>
@@ -175,8 +193,11 @@
       const findBox = document.getElementById("find-box");
       const findQ = document.getElementById("find-q");
       const findCount = document.getElementById("find-count");
+      const preview = document.getElementById("preview");
+      const previewBtn = document.getElementById("preview-toggle");
       const KEY = "meridian-office-docs-v3";
       let findIndex = 0;
+      let previewOn = false;
 
       function words() {
         const text = body.innerText.replace(/\s+/g, " ").trim();
@@ -256,6 +277,18 @@
           if (tag === "STRONG" || tag === "B") { out += "**"; kids(node); out += "**"; return; }
           if (tag === "EM" || tag === "I") { out += "*"; kids(node); out += "*"; return; }
           if (tag === "UL" || tag === "OL") { kids(node); out += "\n"; return; }
+          if (tag === "TABLE") {
+            const rows = node.querySelectorAll("tr");
+            for (let r = 0; r < rows.length; r += 1) {
+              const cells = rows[r].querySelectorAll("th,td");
+              const bits = [];
+              for (let c = 0; c < cells.length; c += 1) bits.push(cells[c].innerText.trim());
+              out += "| " + bits.join(" | ") + " |\n";
+              if (r === 0) out += "| " + bits.map(function () { return "---"; }).join(" | ") + " |\n";
+            }
+            out += "\n";
+            return;
+          }
           kids(node);
         }
         function kids(node) {
@@ -267,7 +300,7 @@
       function printReadyHtml(docTitle, docHtml) {
         const heading = escapeHtml(String(docTitle || "Untitled").trim() || "Untitled");
         return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" + heading +
-          "</title><style>body{margin:2.2rem auto;max-width:40rem;padding:0 1.2rem 3rem;color:#2a2118;background:#fff;font:1.05rem/1.55 Georgia,serif}h1{font-size:1.8rem;margin:0 0 0.9rem}h2{font-size:1.15rem;margin:1.3rem 0 0.4rem}p,ul,ol{margin:0 0 0.75rem}ul,ol{padding-left:1.3rem}</style></head><body><h1>" +
+          "</title><style>body{margin:2.2rem auto;max-width:40rem;padding:0 1.2rem 3rem;color:#2a2118;background:#fff;font:1.05rem/1.55 Georgia,serif}h1{font-size:1.8rem;margin:0 0 0.9rem}h2{font-size:1.15rem;margin:1.3rem 0 0.4rem}p,ul,ol,table{margin:0 0 0.75rem}ul,ol{padding-left:1.3rem}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d8cbb0;padding:0.25rem 0.45rem}</style></head><body><h1>" +
           heading + "</h1>" + cleanHtml(docHtml) + "</body></html>";
       }
       function paintPressed() {
@@ -282,6 +315,23 @@
       function downloadMarkdown() {
         const md = "# " + title.value.trim() + "\n\n" + htmlToMarkdown(body);
         download(fileBase() + ".md", "text/markdown;charset=utf-8", md);
+      }
+      function insertTable() {
+        body.focus();
+        document.execCommand(
+          "insertHTML",
+          false,
+          "<table><thead><tr><th></th><th></th></tr></thead><tbody><tr><td></td><td></td></tr></tbody></table><p></p>",
+        );
+        save();
+      }
+      function setPreview(on) {
+        previewOn = Boolean(on);
+        document.body.classList.toggle("is-preview", previewOn);
+        previewBtn.setAttribute("aria-pressed", previewOn ? "true" : "false");
+        if (previewOn) {
+          preview.textContent = "# " + title.value.trim() + "\n\n" + htmlToMarkdown(body);
+        }
       }
       function clearFind() {
         body.innerHTML = cleanHtml(body.innerHTML);
@@ -346,6 +396,8 @@
         download(fileBase() + ".html", "text/html;charset=utf-8", printReadyHtml(title.value, body.innerHTML));
       });
       document.getElementById("print").addEventListener("click", function () { window.print(); });
+      document.getElementById("insert-table").addEventListener("click", insertTable);
+      document.getElementById("preview-toggle").addEventListener("click", function () { setPreview(!previewOn); });
       document.getElementById("find-open").addEventListener("click", openFind);
       document.getElementById("find-close").addEventListener("click", closeFind);
       document.getElementById("find-next").addEventListener("click", function () { paintFind(findIndex + 1); });
@@ -353,7 +405,7 @@
       findQ.addEventListener("input", runFind);
       document.querySelector(".format").addEventListener("click", function (event) {
         const btn = event.target.closest("button");
-        if (!btn || btn.id === "find-open") return;
+        if (!btn || btn.id === "find-open" || btn.id === "insert-table" || btn.id === "preview-toggle") return;
         body.focus();
         if (btn.dataset.heading) {
           document.execCommand("formatBlock", false, "h" + btn.dataset.heading);

@@ -77,7 +77,28 @@
         width: 0.45rem; height: 0.45rem; border-radius: 50%;
         background: #5c5348; border: 0; padding: 0; cursor: pointer;
       }
-      .dot[aria-current="true"] { background: #f3ead7; }
+      .dot[aria-current="true"] { background: #2a2118; }
+      .themes { display: flex; gap: 0.4rem; align-items: center; }
+      .theme {
+        width: 0.7rem; height: 0.7rem; border-radius: 50%;
+        border: 1px solid #c4b08a; padding: 0; cursor: pointer;
+      }
+      .theme[data-theme="cream"] { background: #faf4e8; }
+      .theme[data-theme="slate"] { background: #3d465c; }
+      .theme[data-theme="ink"] { background: #1a1410; }
+      .theme[aria-pressed="true"] { box-shadow: 0 0 0 1px #2a2118; }
+      .deck[data-theme="slate"] { background: #2a3144; color: #e8ecf4; }
+      .deck[data-theme="slate"] #slide-title,
+      .deck[data-theme="slate"] #slide-body { color: #e8ecf4; border-color: #4a5568; }
+      .deck[data-theme="ink"] { background: #1a1410; color: #f3ead7; }
+      .deck[data-theme="ink"] #slide-title,
+      .deck[data-theme="ink"] #slide-body { color: #f3ead7; border-color: #3a2a20; }
+      .notes-label { display: block; margin: 0.75rem 0 0.25rem; color: var(--muted); font-size: 0.7rem; }
+      #slide-notes {
+        width: 100%; min-height: 3.2rem; resize: vertical;
+        border: 1px solid var(--rule); background: #fff8ea; color: var(--ink);
+        font: 0.8rem/1.4 var(--ui); padding: 0.4rem 0.5rem;
+      }
       footer {
         display: flex; justify-content: space-between; gap: 1rem;
         padding: 0.35rem 1rem; border-top: 1px solid var(--rule);
@@ -96,6 +117,8 @@
       <nav class="more" aria-label="Catalogue">
         <span>CATALOGUE</span>
         <a href="./paste-csv.html">Paste → CSV</a>
+        <a href="./invoice.html">Invoice</a>
+        <a href="./meeting-notes.html">Notes</a>
         <a href="./timezone-buddy.html">Timezone Buddy</a>
       </nav>
     </aside>
@@ -118,8 +141,15 @@
           <button id="prev" type="button">← prev</button>
           <span id="pos">1 / 3</span>
           <div class="dots" id="dots"></div>
+          <div class="themes" aria-label="Theme">
+            <button class="theme" type="button" data-theme="cream" aria-label="Cream"></button>
+            <button class="theme" type="button" data-theme="slate" aria-label="Slate"></button>
+            <button class="theme" type="button" data-theme="ink" aria-label="Ink"></button>
+          </div>
           <button id="next" type="button">next →</button>
         </div>
+        <label class="notes-label" for="slide-notes">Presenter notes</label>
+        <textarea id="slide-notes" aria-label="Presenter notes" placeholder="What you say. Not on the card."></textarea>
       </main>
     </div>
     <footer>
@@ -129,17 +159,20 @@
     <script>
       const KEY = "meridian-office-slides-v1";
       const seed = [
-        { title: "Meridian Office", body: "Docs, Sheets, Slides.\nLocal only. No accounts." },
-        { title: "Docs print", body: "Headings and lists stay.\nPrint hides the rail." },
-        { title: "Paste → CSV", body: "Messy columns in.\nA tidy file out. Catalogue only." },
+        { title: "Meridian Office", body: "Docs, Sheets, Slides.\nLocal only. No accounts.", notes: "Open Docs first. Catalogue is one click." },
+        { title: "Docs print", body: "Headings and lists stay.\nPrint hides the rail.", notes: "Table and preview are on the format bar." },
+        { title: "Invoice · Notes", body: "Paste lines. Print a page.\nPaste notes. Take a list.", notes: "Catalogue tools. No payments. No AI." },
       ];
       const title = document.getElementById("slide-title");
       const body = document.getElementById("slide-body");
+      const notes = document.getElementById("slide-notes");
+      const deck = document.querySelector(".deck");
       const pos = document.getElementById("pos");
       const dots = document.getElementById("dots");
       const kept = document.getElementById("kept");
-      let slides = seed.map(function (s) { return { title: s.title, body: s.body }; });
+      let slides = seed.map(function (s) { return { title: s.title, body: s.body, notes: s.notes || "" }; });
       let i = 0;
+      let theme = "cream";
 
       function fileBase() {
         const name = (slides[0] && slides[0].title || "deck").trim() || "deck";
@@ -152,6 +185,11 @@
         const slide = slides[i] || slides[0];
         title.value = slide.title;
         body.value = slide.body;
+        notes.value = slide.notes || "";
+        deck.setAttribute("data-theme", theme);
+        for (const btn of document.querySelectorAll(".theme")) {
+          btn.setAttribute("aria-pressed", btn.dataset.theme === theme ? "true" : "false");
+        }
         pos.textContent = (i + 1) + " / " + slides.length;
         dots.innerHTML = slides.map(function (_, n) {
           return "<button class=\"dot\" type=\"button\" data-i=\"" + n + "\" aria-current=\"" +
@@ -162,11 +200,12 @@
         if (!slides[i]) return;
         slides[i].title = title.value;
         slides[i].body = body.value;
+        slides[i].notes = notes.value;
       }
       function save() {
         pull();
         try {
-          localStorage.setItem(KEY, JSON.stringify({ slides: slides, i: i, savedAt: Date.now() }));
+          localStorage.setItem(KEY, JSON.stringify({ slides: slides, i: i, theme: theme, savedAt: Date.now() }));
         } catch (err) {}
         kept.textContent = "Kept locally just now.";
       }
@@ -177,9 +216,10 @@
             const data = JSON.parse(raw);
             if (Array.isArray(data.slides) && data.slides.length) {
               slides = data.slides.map(function (s) {
-                return { title: String(s.title || ""), body: String(s.body || "") };
+                return { title: String(s.title || ""), body: String(s.body || ""), notes: String(s.notes || "") };
               });
               i = Math.max(0, Math.min(slides.length - 1, Number(data.i) || 0));
+              if (data.theme === "slate" || data.theme === "ink" || data.theme === "cream") theme = data.theme;
             }
           }
         } catch (err) {}
@@ -202,7 +242,8 @@
       function toMarkdown() {
         pull();
         return slides.map(function (s) {
-          return "# " + s.title.trim() + "\n\n" + s.body.trim() + "\n";
+          const note = s.notes && s.notes.trim() ? "\n\n_Notes:_ " + s.notes.trim() : "";
+          return "# " + s.title.trim() + "\n\n" + s.body.trim() + note + "\n";
         }).join("\n---\n\n");
       }
       function toHtml() {
@@ -220,7 +261,7 @@
       document.getElementById("next").addEventListener("click", function () { go(i + 1); });
       document.getElementById("add").addEventListener("click", function () {
         pull();
-        slides.splice(i + 1, 0, { title: "Untitled", body: "" });
+        slides.splice(i + 1, 0, { title: "Untitled", body: "", notes: "" });
         i += 1;
         paint();
         save();
@@ -244,8 +285,16 @@
         if (!btn) return;
         go(Number(btn.dataset.i));
       });
+      document.querySelector(".themes").addEventListener("click", function (event) {
+        const btn = event.target.closest("[data-theme]");
+        if (!btn) return;
+        theme = btn.dataset.theme;
+        paint();
+        save();
+      });
       title.addEventListener("input", save);
       body.addEventListener("input", save);
+      notes.addEventListener("input", save);
       document.addEventListener("keydown", function (event) {
         const typing = event.target === title || event.target === body;
         if (event.key === "ArrowLeft" && !typing) go(i - 1);

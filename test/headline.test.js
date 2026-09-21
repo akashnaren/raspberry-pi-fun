@@ -27,6 +27,14 @@ test("headlines are plain English a stranger can read", () => {
     /Nova Chen wrote Paste → CSV/,
   );
   assert.match(
+    headlineFor({ type: "file_written", actor: "nova", data: { path: "product/invoice.html" } }, names),
+    /Nova Chen wrote Invoice/,
+  );
+  assert.match(
+    headlineFor({ type: "file_written", actor: "nova", data: { path: "product/meeting-notes.html" } }, names),
+    /Nova Chen wrote Notes/,
+  );
+  assert.match(
     headlineFor({ type: "say", actor: "mira", data: { text: "Kill the settings page." } }, names),
     /Mira Sol said/,
   );

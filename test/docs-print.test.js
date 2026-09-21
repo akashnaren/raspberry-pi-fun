@@ -3,10 +3,15 @@ import assert from "node:assert/strict";
 import { findHits, printReadyHtml, stripFindMarks } from "../src/docs-print.js";
 
 test("printReadyHtml is a clean page a stranger can read off-screen", () => {
-  const html = printReadyHtml("Morning notes", "<h2>What ships</h2><ul><li>print</li></ul>");
+  const html = printReadyHtml(
+    "Morning notes",
+    "<h2>What ships</h2><ul><li>print</li></ul><table><tr><th>a</th><td>1</td></tr></table>",
+  );
   assert.match(html, /<h1>Morning notes<\/h1>/);
   assert.match(html, /<h2>What ships<\/h2>/);
   assert.match(html, /<li>print<\/li>/);
+  assert.match(html, /<table>/);
+  assert.match(html, /border-collapse/);
   assert.doesNotMatch(html, /class="rail"|find-box|Meridian Desk/);
   assert.match(html, /max-width: 40rem/);
 });

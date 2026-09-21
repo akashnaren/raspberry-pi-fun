@@ -610,19 +610,23 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
   const py = oy + sprite.y * cell + cell * 0.15;
   const color = employee.accent || employee.color || "#f3ead7";
   const look = lookOf(employee);
+  const sitting = sprite.pose === "sit" || sprite.pose === "sit-type" || sprite.pose === "sit-talk";
+  const standing = sprite.pose === "stand" || sprite.pose === "stand-talk";
   const bounce =
     sprite.pose === "walk"
-      ? (sprite.frame ? cell * 0.08 : 0)
-      : sprite.pose === "idle"
-        ? Math.sin(now / 420 + sprite.x) * cell * 0.04
-        : 0;
-  const s = cell * 0.112;
+      ? (sprite.frame ? cell * 0.11 : 0)
+      : sitting || standing
+        ? 0
+        : sprite.pose === "idle"
+          ? Math.sin(now / 420 + sprite.x) * cell * 0.04
+          : 0;
+  const s = cell * 0.118;
 
   ctx.strokeStyle = color;
   ctx.globalAlpha = 0.55 + sprite.active * 0.35;
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.ellipse(px, py + cell * 0.98 + bounce, cell * 0.28, cell * 0.09, 0, 0, Math.PI * 2);
+  ctx.ellipse(px, py + cell * (sitting ? 0.82 : 0.98) + bounce, cell * (sitting ? 0.34 : 0.28), cell * 0.09, 0, 0, Math.PI * 2);
   ctx.stroke();
   ctx.globalAlpha = 1;
   ctx.lineWidth = 1;
@@ -639,20 +643,34 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
 
   ctx.fillStyle = "rgba(0,0,0,0.4)";
   ctx.beginPath();
-  ctx.ellipse(px, py + cell * 0.98 + bounce, cell * 0.36, cell * 0.12, 0, 0, Math.PI * 2);
+  ctx.ellipse(px, py + cell * (sitting ? 0.82 : 0.98) + bounce, cell * (sitting ? 0.42 : 0.36), cell * 0.12, 0, 0, Math.PI * 2);
   ctx.fill();
 
   const walk = sprite.pose === "walk" ? sprite.frame : 0;
-  const type = sprite.pose === "type" ? sprite.frame : 0;
-  const talk = sprite.pose === "talk";
+  const type = sprite.pose === "type" || sprite.pose === "sit-type" ? sprite.frame : 0;
+  const talk = sprite.pose === "talk" || sprite.pose === "sit-talk" || sprite.pose === "stand-talk";
   const blink = now < (sprite.blinkUntil || 0);
 
   ctx.save();
-  ctx.translate(px, py + bounce);
+  ctx.translate(px, py + bounce + (sitting ? cell * 0.18 : 0));
   ctx.scale((sprite.facing || 1) * s, s);
 
   ctx.fillStyle = look.bottom;
-  if (look.bottomKind === "skirt") {
+  if (sitting) {
+    if (look.bottomKind === "skirt") {
+      ctx.beginPath();
+      ctx.moveTo(-8, 12);
+      ctx.lineTo(8, 12);
+      ctx.lineTo(12, 20);
+      ctx.lineTo(-12, 20);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.fillRect(-9, 13, 18, 7);
+    }
+    ctx.fillRect(-9, 18, 5, 6);
+    ctx.fillRect(5, 18, 5, 6);
+  } else if (look.bottomKind === "skirt") {
     ctx.beginPath();
     ctx.moveTo(-7, 12);
     ctx.lineTo(7, 12);
@@ -661,8 +679,8 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
     ctx.closePath();
     ctx.fill();
   } else {
-    ctx.fillRect(-7, 13, 6, 12 + (walk ? 3 : 0));
-    ctx.fillRect(1, 13, 6, 12 + (walk ? 0 : 3));
+    ctx.fillRect(-7, 13, 6, 12 + (walk ? 3 : 0) + (standing ? 1 : 0));
+    ctx.fillRect(1, 13, 6, 12 + (walk ? 0 : 3) + (standing ? 1 : 0));
   }
 
   ctx.fillStyle = look.top;
@@ -702,8 +720,13 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
   if (talk) ctx.fillRect(9, -8, 4, 8);
 
   ctx.fillStyle = look.shoes;
-  ctx.fillRect(-7, 24, 6, 5);
-  ctx.fillRect(1, 24, 6, 5);
+  if (sitting) {
+    ctx.fillRect(-9, 22, 6, 4);
+    ctx.fillRect(5, 22, 6, 4);
+  } else {
+    ctx.fillRect(-7, 24, 6, 5);
+    ctx.fillRect(1, 24, 6, 5);
+  }
 
   ctx.fillStyle = look.skin;
   if (look.face === "square-crop") {

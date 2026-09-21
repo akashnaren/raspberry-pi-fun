@@ -20,7 +20,7 @@ test("fallback office paints a room before any socket", async () => {
   for (const person of FALLBACK_CAST) {
     const sprite = sprites.get(person.id);
     assert.ok(sprite, person.id);
-    assert.equal(sprite.pose, "idle");
+    assert.equal(sprite.pose, "sit");
     assert.equal(sprite.at, "desk");
     assert.doesNotMatch(sprite.pose, /think/i);
     const look = lookOf(person);
@@ -32,7 +32,7 @@ test("fallback office paints a room before any socket", async () => {
   assert.ok(FALLBACK_OFFICE.decor.some((item) => item.kind === "window"));
   const plants = FALLBACK_OFFICE.decor.filter((item) => item.kind === "plant");
   assert.ok(plants.length >= 5);
-  assert.match(FALLBACK_OFFICE.decor.find((item) => item.kind === "whiteboard").text, /print|paste-csv/);
+  assert.match(FALLBACK_OFFICE.decor.find((item) => item.kind === "whiteboard").text, /invoice|notes/);
   assert.ok(windowSky(false).top);
   assert.notEqual(windowSky(false).top, windowSky(true).top);
   const looks = Object.fromEntries(FALLBACK_CAST.map((person) => [person.id, lookOf(person)]));
@@ -79,6 +79,8 @@ test("workspace office and fallback stay aligned on the load-bearing bits", asyn
   assert.match(officeJs, /reconnectDelayMs/);
   assert.match(officeJs, /mergeStudioState/);
   assert.match(officeJs, /facePairs/);
+  assert.match(officeJs, /settlePose/);
+  assert.match(draw, /sitting|pose === "sit"/);
   assert.match(officeJs, /requestAnimationFrame\(loop\)/);
   const loopAt = officeJs.indexOf("requestAnimationFrame(loop)");
   const connectAt = officeJs.lastIndexOf("connect()");

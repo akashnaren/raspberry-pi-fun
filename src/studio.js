@@ -218,6 +218,13 @@ export async function createStudio({
           return "";
         }
       },
+      readInvoice() {
+        try {
+          return readFileSync(join(workspaceRoot, "product/invoice.html"), "utf8");
+        } catch {
+          return "";
+        }
+      },
     }),
   });
 

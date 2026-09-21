@@ -27,8 +27,10 @@ export function printReadyHtml(title, bodyHtml) {
   h1 { font-size: 1.8rem; margin: 0 0 0.9rem; font-weight: 600; }
   h2 { font-size: 1.15rem; margin: 1.3rem 0 0.4rem; font-weight: 600; }
   p { margin: 0 0 0.75rem; }
-  ul, ol { margin: 0 0 0.75rem; padding-left: 1.3rem; }
+  ul, ol, table { margin: 0 0 0.75rem; padding-left: 1.3rem; }
   li { margin: 0 0 0.25rem; }
+  table { border-collapse: collapse; width: 100%; padding-left: 0; }
+  th, td { border: 1px solid #d8cbb0; padding: 0.25rem 0.45rem; }
 </style>
 </head>
 <body>

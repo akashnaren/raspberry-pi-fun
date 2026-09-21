@@ -12,7 +12,9 @@ export function applyNovaDocsTweak(html) {
     src.includes(NOVA_DOCS_LEAP) &&
     src.includes("function printReadyHtml") &&
     src.includes('data-heading="1"') &&
-    src.includes("insertOrderedList")
+    src.includes("insertOrderedList") &&
+    src.includes('id="insert-table"') &&
+    src.includes('id="preview-toggle"')
   ) {
     return src;
   }
@@ -96,6 +98,13 @@ export function applyNovaDocsTweak(html) {
         '<div id="find-box" hidden><input id="find-q" type="search" /></div></footer>',
       );
     }
+  }
+
+  if (!next.includes('id="insert-table"') && next.includes('id="find-open"')) {
+    next = next.replace(
+      '<button type="button" id="find-open">Find</button>',
+      '<button type="button" id="insert-table">Table</button>\n          <button type="button" id="preview-toggle" aria-pressed="false">Preview</button>\n          <button type="button" id="find-open">Find</button>',
+    );
   }
 
   if (!next.includes("function printReadyHtml")) {
