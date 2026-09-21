@@ -6,35 +6,37 @@
     <title>Meridian Office — Slides</title>
     <style>
       :root {
-        color-scheme: light;
-        --bg: #f5f5f7; --ink: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7;
+        color-scheme: dark;
+        --chrome: #1c1916; --paper: #f3ead7; --ink: #2a2118; --line: #3a322b;
         font-family: system-ui, -apple-system, "Segoe UI", "Liberation Sans", sans-serif;
       }
       * { box-sizing: border-box; }
-      body { margin: 0; min-height: 100dvh; background: var(--bg); color: var(--ink); }
+      html, body { margin: 0; height: 100%; background: var(--chrome); color: #e8dfd2; }
+      body { display: grid; grid-template-rows: auto 1fr; min-height: 100dvh; }
       header {
         display: flex; gap: 1.1rem; align-items: baseline;
-        padding: 0.7rem 1.1rem; border-bottom: 1px solid var(--line);
+        padding: 0.65rem 1rem; border-bottom: 1px solid var(--line);
       }
-      nav { display: flex; gap: 0.9rem; font-size: 0.8rem; }
-      nav a { color: var(--muted); text-decoration: none; }
-      nav a[aria-current="page"] { color: var(--ink); }
-      main { padding: 2.2rem 1.2rem; max-width: 34rem; }
-      h1 { font-size: 1.2rem; font-weight: 500; margin: 0 0 0.4rem; }
-      p { color: var(--muted); line-height: 1.5; }
+      .brand { font-size: 0.78rem; }
+      nav { display: flex; gap: 0.85rem; font-size: 0.78rem; }
+      nav a { color: #9a8f80; text-decoration: none; }
+      nav a[aria-current="page"] { color: #f3ead7; }
+      main { padding: 2rem 1.2rem; background: var(--paper); color: var(--ink); }
+      h1 { font-size: 1.15rem; font-weight: 500; margin: 0 0 0.4rem; }
+      p { color: #5c5348; line-height: 1.5; max-width: 32rem; }
       .deck {
         margin-top: 1.4rem; aspect-ratio: 16/9; max-width: 22rem;
-        border: 1px solid var(--line); background: #fff; opacity: 0.5;
+        border: 1px solid #d8cbb0; background: #fff8ea; opacity: 0.55;
       }
     </style>
   </head>
   <body>
     <header>
+      <span class="brand">Meridian Office</span>
       <nav>
         <a href="./index.html">Docs</a>
         <a href="./sheets.html">Sheets</a>
         <a href="./slides.html" aria-current="page">Slides</a>
-        <a href="./timezone-buddy.html">Timezone Buddy</a>
       </nav>
     </header>
     <main>

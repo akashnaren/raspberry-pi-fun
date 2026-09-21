@@ -17,13 +17,13 @@ export function officeBounds(office) {
 }
 
 /** Fit the whole office in the pane. Origin is static. Never pans. */
-export function fitView(office, viewW, viewH, pad = 20) {
+export function fitView(office, viewW, viewH, pad = 8) {
   const bounds = officeBounds(office);
   const width = Math.max(1, viewW);
   const height = Math.max(1, viewH);
   const cell = Math.max(
-    10,
-    Math.min(32, Math.floor(Math.min((width - pad * 2) / bounds.w, (height - pad * 2) / bounds.h))),
+    14,
+    Math.min(56, Math.floor(Math.min((width - pad * 2) / bounds.w, (height - pad * 2) / bounds.h))),
   );
   const ox = Math.round((width - bounds.w * cell) / 2 - bounds.minX * cell);
   const oy = Math.round((height - bounds.h * cell) / 2 - bounds.minY * cell);

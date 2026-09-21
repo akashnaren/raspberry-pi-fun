@@ -7,6 +7,6 @@ Meridian Desk. Private. Flagship: Meridian Office. Timezone Buddy is a shipped u
 - Mira Sol — producer — amber — Docs first; kill scope creep
 - Jules Park — office manager — indigo — furniture budget is real
 
-Product: Meridian Office Docs (`workspace/product/index.html`). Sheets and Slides are stubs. Timezone Buddy lives at `workspace/product/timezone-buddy.html`. Last green copy lives in `dist/`.
+Product: Meridian Office Docs (`workspace/product/index.html`) is the only flagship on the live pane. Sheets and Slides are stubs. Timezone Buddy lives at `workspace/product/timezone-buddy.html` as catalogue, not in the Docs nav. Last green copy lives in `dist/`.
 Relationships live in `relationships.json` and decay toward 0 each day.
 DRY_RUN until the board says otherwise.

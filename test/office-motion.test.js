@@ -20,7 +20,7 @@ test("camera fit is locked — same origin if the actor moves", () => {
   assert.equal(a.ox, b.ox);
   assert.equal(a.oy, b.oy);
   assert.equal(a.cell, b.cell);
-  assert.ok(a.cell >= 10 && a.cell <= 32);
+  assert.ok(a.cell >= 14 && a.cell <= 56);
 });
 
 test("events walk to real objects, never 'thinking'", () => {

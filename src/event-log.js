@@ -7,7 +7,8 @@ const KEEP_ON_ROTATE = 2000;
 
 export async function createEventLog({ filePath, now = () => Date.now(), names = {} }) {
   await mkdir(dirname(filePath), { recursive: true });
-  let events = await load(filePath);
+  const loaded = await load(filePath);
+  let events = loaded.events;
   let seq = events.reduce((max, event) => Math.max(max, parseSeq(event.id)), 0);
   const listeners = new Set();
 
@@ -17,8 +18,8 @@ export async function createEventLog({ filePath, now = () => Date.now(), names =
 
   async function rotateIfNeeded() {
     try {
-      const raw = await readFile(filePath, "utf8");
-      if (Buffer.byteLength(raw, "utf8") < ROTATE_BYTES) return;
+      const raw = await readFile(filePath);
+      if (raw.length < ROTATE_BYTES) return;
       const kept = events.slice(-KEEP_ON_ROTATE);
       const tmp = `${filePath}.tmp`;
       await writeFile(tmp, kept.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
@@ -54,6 +55,9 @@ export async function createEventLog({ filePath, now = () => Date.now(), names =
     all() {
       return events.slice();
     },
+    quarantined() {
+      return loaded.quarantined.slice();
+    },
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
@@ -61,16 +65,48 @@ export async function createEventLog({ filePath, now = () => Date.now(), names =
   };
 }
 
+/**
+ * Split a JSONL buffer into good events and bad lines.
+ * Power cuts on a Pi often leave a trailing null-padded or half-written line.
+ * Those must never take down ai-studio.service.
+ */
+export function parseJsonl(raw) {
+  const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw ?? "");
+  const events = [];
+  const quarantined = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    if (line.includes("\u0000")) {
+      quarantined.push({ reason: "null-byte", line: line.replace(/\u0000/g, "") });
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(line);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        quarantined.push({ reason: "not-object", line });
+        continue;
+      }
+      events.push(parsed);
+    } catch {
+      quarantined.push({ reason: "json", line });
+    }
+  }
+  return { events, quarantined };
+}
+
 async function load(filePath) {
   try {
-    const raw = await readFile(filePath, "utf8");
-    return raw
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
+    const raw = await readFile(filePath);
+    const parsed = parseJsonl(raw);
+    if (parsed.quarantined.length) {
+      const dump = parsed.quarantined
+        .map((item) => JSON.stringify({ reason: item.reason, line: item.line, ts: Date.now() }))
+        .join("\n");
+      await appendFile(`${filePath}.corrupt`, `${dump}\n`, "utf8");
+    }
+    return parsed;
   } catch (error) {
-    if (error.code === "ENOENT") return [];
+    if (error.code === "ENOENT") return { events: [], quarantined: [] };
     throw error;
   }
 }

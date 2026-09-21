@@ -22,17 +22,19 @@ Stage 1 is in this repo. The full spec stays with the CTO handoff (`AI studio �
 
 One Node process is the world clock. Every 90–120 seconds it picks one employee, assembles a small context, makes at most one model call, runs a handful of tools, and appends events.
 
-The display is a quiet split screen. Thin chrome. The office canvas is the hero of the left pane. Sound stays optional — readable with it off.
+The display is a quiet split screen. Thin chrome. The office canvas is the hero of the left pane. The room paints from a local seed **before** the websocket connects, so HDMI is never a white or black void. Sound stays optional — readable with it off.
 
 | Zone | What you see |
 | --- | --- |
 | Top bar | Small type: **Day N · 4 people · $x / $5 · who’s acting**. No wordmark, no ON AIR, no ticker crawl. |
-| Left ~56% | Locked-frame office. Walk and speech bubble only when an event happens. One static event line under the room, faded in place. |
-| Right ~44% | Last **green** `dist/` iframe. Never black. Open-in-new-tab for Connect. |
+| Left ~56% | Locked-frame office: plank floors, windows, plants, four dressed people. Walk and speech bubble only when an event happens. One static event line under the room. |
+| Right ~44% | Last **green** `dist/` iframe — Meridian Office Docs. Cream paper, never Timezone Buddy. Open-in-new-tab for Connect. |
 
 A stranger should, after five minutes, name the people, Meridian Office, whether we are under $5, and whether they would leave it on.
 
-The office is a dollhouse of `office.json`: desks, break room, meeting table, coffee, couch, whiteboard. The camera is fixed to the room — no pan, no follow-cam. Sprites walk the A* path to a real object — never abstractly “thinking.” `say()` is a tailed bubble. Objects advertise (plan / hang out / break / review). Click a person or the board to inspect. Relationship scores move on reject and on a green ship.
+The office is a dollhouse of `office.json`: desks, break room, meeting table, coffee, couch, whiteboard, windows, plants. The camera is fixed to the room — no pan, no follow-cam. Sprites walk the A* path to a real object — never abstractly “thinking.” `say()` is a tailed bubble. Objects advertise (plan / hang out / break / review). Click a person or the board to inspect. Relationship scores move on reject and on a green ship.
+
+`data/events.jsonl` survives a dirty shutdown. Bad lines (null bytes, half-written JSON) are skipped and copied to `data/events.jsonl.corrupt` so `ai-studio.service` does not crash after a power cut.
 
 Four load-bearing rules, unchanged from the spec:
 
@@ -56,7 +58,7 @@ Model ids are locked in `studio.config.json` (Research IDs mapped onto the produ
 
 Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0, Jules↔Nova −1, Jules↔Kessler +1, Jules↔Mira 0. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
 
-Flagship: **Meridian Office** — Docs in `workspace/product/index.html` (the green build), Sheets and Slides as stubs, Timezone Buddy at `workspace/product/timezone-buddy.html`. Whiteboard: `SHIP: Meridian Office — Docs first`.
+Flagship: **Meridian Office** — Docs in `workspace/product/index.html` (the only green build on the live pane). Write, keep in `localStorage`, download `.html` or `.md`. Sheets and Slides are stubs. Timezone Buddy stays at `workspace/product/timezone-buddy.html` as a catalogue tool and is not linked from the live Docs/Sheets/Slides chrome. Whiteboard: `SHIP: Meridian Office — Docs first`.
 
 ## Tools
 
@@ -184,9 +186,17 @@ Pauses the world. Does not delete the log. The office dims and slowly **replays*
 
 The orchestrator records each turn's estimated USD cost in `data/spend.json`. When the UTC day hits `$5`, ticks stop, the burn bar fills, the lights dim, and the HUD says **studio sleeping**. The next UTC day resets the counter. This protects the card; it is independent of any later credit fiction.
 
-### Chromium kiosk + systemd
+### Chromium kiosk + systemd (Wayland / labwc)
 
 Units live in `deploy/ai-studio.service` and `deploy/chromium-kiosk.service`. Keep them. `deploy/start.sh` resolves Node from `$HOME/.local/node-v20.20.2` then the `~/.local/node` symlink. `/usr/local` is not required. The kiosk unit only launches Chromium.
+
+Raspberry Pi OS Bookworm+ on the HDMI stage is **labwc**, not X11. The kiosk unit sets:
+
+- `WAYLAND_DISPLAY=wayland-0`
+- `XDG_RUNTIME_DIR=/run/user/1000`
+- `--ozone-platform=wayland`
+
+Do not set `DISPLAY=:0`. That left the HDMI pane white/black.
 
 Disable screen blanking, then:
 
@@ -202,6 +212,25 @@ sudo systemctl enable --now chromium-kiosk.service
 The kiosk unit is sized for a Pi 3: `--disable-gpu --disable-dev-shm-usage --renderer-process-limit=2` and a small V8 heap. Do not forward a port; use Tailscale or a Cloudflare Tunnel if you need to look in from elsewhere.
 
 1080p, 2D canvas, no WebGL. Products stay 2D / HTML for the same reason. Fonts are local system faces (`Liberation Sans` / `DejaVu Sans`) — no CDN.
+
+### Pi: pull and restart (morning deploy)
+
+On the Pi, as `pi`, from the checkout:
+
+```bash
+cd /home/pi/raspberry-pi-fun
+git pull
+sudo cp deploy/ai-studio.service /etc/systemd/system/
+sudo cp deploy/chromium-kiosk.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart ai-studio.service
+sudo systemctl restart chromium-kiosk.service
+systemctl --user show-environment | grep -E 'WAYLAND|XDG_RUNTIME' || true
+journalctl -u ai-studio.service -n 40 --no-pager
+journalctl -u chromium-kiosk.service -n 40 --no-pager
+```
+
+`ai-studio.service` stays `DRY_RUN=true` unless `~/.secrets/fishbowl/openrouter.env` sets otherwise. After restart, HDMI should show the dark office (four people at desks) and cream Meridian Office Docs — not a blank pane.
 
 ### Fast local loop (not the Pi default)
 

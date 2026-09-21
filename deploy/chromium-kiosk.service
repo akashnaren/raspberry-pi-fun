@@ -1,16 +1,18 @@
 [Unit]
-Description=Meridian Desk Chromium kiosk
+Description=Meridian Desk Chromium kiosk (Wayland / labwc)
 After=ai-studio.service graphical.target
 Wants=ai-studio.service
 
 [Service]
 Type=simple
 User=pi
-# Browser only — Node lives in ai-studio.service via ~/.local/node*.
-Environment=XAUTHORITY=/home/pi/.Xauthority
-Environment=DISPLAY=:0
-# Pi 3 ~905MiB: no GPU compositor, tiny /dev/shm, cap renderer count.
-ExecStart=/usr/bin/chromium-browser --kiosk --app=http://127.0.0.1:8787 --disable-gpu --disable-dev-shm-usage --disable-extensions --disable-background-networking --disable-sync --no-first-run --noerrdialogs --disable-session-crashed-bubble --renderer-process-limit=2 --js-flags=--max-old-space-size=128 --check-for-update-interval=31536000
+# Raspberry Pi OS Bookworm+ kiosk is labwc, not X11.
+# An X11 DISPLAY left the HDMI pane white/black — Chromium needs ozone/wayland.
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_SESSION_TYPE=wayland
+# Pi 3 ~905MiB: software path, tiny /dev/shm, cap renderer count.
+ExecStart=/usr/bin/chromium-browser --kiosk --app=http://127.0.0.1:8787 --ozone-platform=wayland --ozone-platform-hint=wayland --disable-gpu --disable-dev-shm-usage --disable-extensions --disable-background-networking --disable-sync --no-first-run --noerrdialogs --disable-session-crashed-bubble --renderer-process-limit=2 --js-flags=--max-old-space-size=128 --check-for-update-interval=31536000
 Restart=always
 RestartSec=5
 

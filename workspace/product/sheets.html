@@ -6,33 +6,35 @@
     <title>Meridian Office — Sheets</title>
     <style>
       :root {
-        color-scheme: light;
-        --bg: #f5f5f7; --ink: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7;
+        color-scheme: dark;
+        --chrome: #1c1916; --paper: #f3ead7; --ink: #2a2118; --muted: #8a7d6b; --line: #3a322b;
         font-family: system-ui, -apple-system, "Segoe UI", "Liberation Sans", sans-serif;
       }
       * { box-sizing: border-box; }
-      body { margin: 0; min-height: 100dvh; background: var(--bg); color: var(--ink); }
+      html, body { margin: 0; height: 100%; background: var(--chrome); color: #e8dfd2; }
+      body { display: grid; grid-template-rows: auto 1fr; min-height: 100dvh; }
       header {
         display: flex; gap: 1.1rem; align-items: baseline;
-        padding: 0.7rem 1.1rem; border-bottom: 1px solid var(--line);
+        padding: 0.65rem 1rem; border-bottom: 1px solid var(--line);
       }
-      nav { display: flex; gap: 0.9rem; font-size: 0.8rem; }
-      nav a { color: var(--muted); text-decoration: none; }
-      nav a[aria-current="page"] { color: var(--ink); }
-      main { padding: 2.2rem 1.2rem; max-width: 34rem; }
-      h1 { font-size: 1.2rem; font-weight: 500; margin: 0 0 0.4rem; }
-      p { color: var(--muted); line-height: 1.5; }
-      table { border-collapse: collapse; margin-top: 1.4rem; width: 100%; opacity: 0.45; }
-      td { border: 1px solid var(--line); height: 1.7rem; }
+      .brand { font-size: 0.78rem; }
+      nav { display: flex; gap: 0.85rem; font-size: 0.78rem; }
+      nav a { color: #9a8f80; text-decoration: none; }
+      nav a[aria-current="page"] { color: #f3ead7; }
+      main { padding: 2rem 1.2rem; background: var(--paper); color: var(--ink); }
+      h1 { font-size: 1.15rem; font-weight: 500; margin: 0 0 0.4rem; }
+      p { color: #5c5348; line-height: 1.5; max-width: 32rem; }
+      table { border-collapse: collapse; margin-top: 1.4rem; width: min(100%, 22rem); opacity: 0.4; }
+      td { border: 1px solid #d8cbb0; height: 1.7rem; width: 25%; }
     </style>
   </head>
   <body>
     <header>
+      <span class="brand">Meridian Office</span>
       <nav>
         <a href="./index.html">Docs</a>
         <a href="./sheets.html" aria-current="page">Sheets</a>
         <a href="./slides.html">Slides</a>
-        <a href="./timezone-buddy.html">Timezone Buddy</a>
       </nav>
     </header>
     <main>
