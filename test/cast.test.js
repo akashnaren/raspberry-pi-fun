@@ -98,8 +98,8 @@ test("Meridian Desk cast lock: Nova, Kessler, Mira + Timezone Buddy", async () =
     const desk = office.desks.find((item) => item.owner === id);
     assert.ok(desk, `${id} desk`);
     assert.ok(desk.items.includes("monitor"));
-    assert.ok(desk.items.includes("coffee_mug"));
-    assert.ok(desk.items.includes("plant"));
+    assert.ok(desk.items.includes("mug") || desk.items.includes("coffee_mug"));
+    assert.ok(desk.items.includes("plant_small") || desk.items.includes("plant"));
   }
   assert.ok(office.decor.some((item) => item.kind === "whiteboard" && /Timezone Buddy/.test(item.text)));
   assert.ok(office.rooms.some((room) => /break/i.test(room.name)));

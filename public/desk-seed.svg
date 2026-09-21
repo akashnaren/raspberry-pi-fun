@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-label="Meridian Desk Stage 1 office seed">
+  <defs>
+    <radialGradient id="lamp" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFE08A" stop-opacity="0.55"/>
+      <stop offset="55%" stop-color="#F5B942" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#F5B942" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <!-- floor -->
+  <rect width="800" height="600" fill="#1A1F2E"/>
+  <g stroke="#232A3B" stroke-opacity="0.5" stroke-width="1">
+    <path d="M0 40H800M0 80H800M0 120H800M0 160H800M0 200H800M0 240H800M0 280H800M0 320H800M0 360H800M0 400H800M0 440H800M0 480H800M0 520H800M0 560H800"/>
+    <path d="M40 0V600M80 0V600M120 0V600M160 0V600M200 0V600M240 0V600M280 0V600M320 0V600M360 0V600M400 0V600M440 0V600M480 0V600M520 0V600M560 0V600M600 0V600M640 0V600M680 0V600M720 0V600M760 0V600"/>
+  </g>
+  <rect x="0" y="0" width="800" height="40" fill="#2C3348"/>
+  <text x="16" y="26" fill="#E8ECF4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="14" font-weight="700">Meridian Desk</text>
+  <text x="140" y="26" fill="#9AA3B5" font-family="ui-sans-serif,system-ui,sans-serif" font-size="12">Stage 1 · top-down seed</text>
+  <rect x="680" y="10" width="100" height="20" rx="10" fill="rgba(34,197,94,0.18)" stroke="#22C55E"/>
+  <text x="730" y="24" text-anchor="middle" fill="#22C55E" font-family="ui-sans-serif,system-ui,sans-serif" font-size="11" font-weight="700">LIVE · green</text>
+
+  <!-- break tint -->
+  <rect x="256" y="396" width="288" height="168" rx="16" fill="#232A3B" opacity="0.85"/>
+
+  <!-- whiteboard @ 0.12,0.78 -->
+  <g filter="url(#soft)" transform="translate(96,468)">
+    <rect width="120" height="72" rx="8" fill="#3D465C" stroke="#4A5568"/>
+    <rect x="8" y="8" width="104" height="48" rx="4" fill="#E8ECF4"/>
+    <text x="14" y="28" fill="#1A1F2E" font-family="ui-sans-serif,system-ui,sans-serif" font-size="9" font-weight="600">SHIP: Timezone Buddy</text>
+    <text x="14" y="42" fill="#4A5568" font-family="ui-sans-serif,system-ui,sans-serif" font-size="9">usable in &lt;1 min</text>
+  </g>
+
+  <!-- coffee @ 0.88,0.78 -->
+  <g filter="url(#soft)" transform="translate(704,468)">
+    <rect width="28" height="44" rx="4" fill="#3D465C" stroke="#4A5568"/>
+    <rect x="6" y="6" width="16" height="10" rx="2" fill="#F5B942" opacity="0.75"/>
+    <text y="58" x="14" text-anchor="middle" fill="#9AA3B5" font-family="ui-sans-serif,system-ui,sans-serif" font-size="9">coffee</text>
+  </g>
+
+  <!-- couch + table -->
+  <rect x="300" y="460" width="96" height="40" rx="12" fill="#3D465C" stroke="#4A5568" filter="url(#soft)"/>
+  <ellipse cx="440" cy="478" rx="36" ry="22" fill="#3D465C" stroke="#4A5568" filter="url(#soft)"/>
+
+  <!-- desk helper macro via groups: desk centers 0.22/0.50/0.78 × 0.38 → 176/400/624 , 228 -->
+  <!-- Nova -->
+  <ellipse cx="176" cy="210" rx="72" ry="42" fill="url(#lamp)"/>
+  <g filter="url(#soft)">
+    <rect x="128" y="200" width="96" height="56" rx="14" fill="#3D465C" stroke="#4A5568"/>
+    <rect x="148" y="208" width="40" height="28" rx="3" fill="#1A1F2E" stroke="#4A5568"/>
+    <rect x="150" y="242" width="44" height="8" rx="2" fill="#2A3144"/>
+    <circle cx="140" cy="236" r="7" fill="#C45C3E"/>
+    <path d="M210 236c3-8 10-13 16-11 2 6-1 14-8 18z" fill="#22C55E"/>
+  </g>
+  <circle cx="176" cy="288" r="14" fill="#F97316" stroke="rgba(255,255,255,.25)" stroke-width="1.5"/>
+  <text x="176" y="292" text-anchor="middle" fill="#0e1014" font-family="ui-sans-serif,system-ui,sans-serif" font-size="11" font-weight="700">N</text>
+  <rect x="148" y="306" width="56" height="18" rx="9" fill="rgba(26,31,46,.88)" stroke="#F97316" stroke-width="1.5"/>
+  <text x="176" y="319" text-anchor="middle" fill="#E8ECF4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="10" font-weight="600">Nova</text>
+
+  <!-- Kessler -->
+  <ellipse cx="400" cy="210" rx="72" ry="42" fill="url(#lamp)"/>
+  <g filter="url(#soft)">
+    <rect x="352" y="200" width="96" height="56" rx="14" fill="#3D465C" stroke="#4A5568"/>
+    <rect x="368" y="208" width="40" height="28" rx="3" fill="#1A1F2E" stroke="#4A5568"/>
+    <rect x="370" y="242" width="44" height="8" rx="2" fill="#2A3144"/>
+    <circle cx="430" cy="236" r="7" fill="#C45C3E"/>
+    <path d="M360 236c3-8 10-13 16-11 2 6-1 14-8 18z" fill="#22C55E"/>
+  </g>
+  <circle cx="400" cy="288" r="14" fill="#14B8A6" stroke="rgba(255,255,255,.25)" stroke-width="1.5"/>
+  <text x="400" y="292" text-anchor="middle" fill="#0e1014" font-family="ui-sans-serif,system-ui,sans-serif" font-size="11" font-weight="700">K</text>
+  <rect x="368" y="306" width="64" height="18" rx="9" fill="rgba(26,31,46,.88)" stroke="#14B8A6" stroke-width="1.5"/>
+  <text x="400" y="319" text-anchor="middle" fill="#E8ECF4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="10" font-weight="600">Kessler</text>
+
+  <!-- Mira -->
+  <ellipse cx="624" cy="210" rx="72" ry="42" fill="url(#lamp)"/>
+  <g filter="url(#soft)">
+    <rect x="576" y="200" width="96" height="56" rx="14" fill="#3D465C" stroke="#4A5568"/>
+    <rect x="592" y="208" width="40" height="28" rx="3" fill="#1A1F2E" stroke="#4A5568"/>
+    <rect x="594" y="242" width="44" height="8" rx="2" fill="#2A3144"/>
+    <circle cx="654" cy="236" r="7" fill="#C45C3E"/>
+    <path d="M584 236c3-8 10-13 16-11 2 6-1 14-8 18z" fill="#22C55E"/>
+    <rect x="640" y="248" width="9" height="9" rx="1" fill="#FDE68A"/>
+    <rect x="652" y="248" width="9" height="9" rx="1" fill="#FDE68A"/>
+  </g>
+  <circle cx="624" cy="288" r="14" fill="#F59E0B" stroke="rgba(255,255,255,.25)" stroke-width="1.5"/>
+  <text x="624" y="292" text-anchor="middle" fill="#0e1014" font-family="ui-sans-serif,system-ui,sans-serif" font-size="11" font-weight="700">M</text>
+  <rect x="598" y="306" width="52" height="18" rx="9" fill="rgba(26,31,46,.88)" stroke="#F59E0B" stroke-width="1.5"/>
+  <text x="624" y="319" text-anchor="middle" fill="#E8ECF4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="10" font-weight="600">Mira</text>
+
+  <text x="16" y="588" fill="#9AA3B5" font-family="ui-sans-serif,system-ui,sans-serif" font-size="11">Warm slate · amber lamps · coral / teal / amber cast · 40 props · no WebGL</text>
+</svg>

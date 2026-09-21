@@ -1,3 +1,5 @@
+import { deskOwner, drawNormOffice, isNorm, layout, standAtDesk as standDesk, toPx, TOKENS } from "./art.js";
+
 const canvas = document.getElementById("office");
 const ctx = canvas.getContext("2d");
 const tickerEl = document.getElementById("ticker");
@@ -207,16 +209,30 @@ function placeLabel(id) {
 }
 
 function deskFor(id) {
-  return (state.office?.desks || []).find((desk) => desk.owner === id);
+  return (state.office?.desks || []).find((desk) => deskOwner(desk) === id);
 }
 
 function standAtDesk(desk) {
-  if (!desk) return { x: 4, y: 6 };
-  return { x: desk.x + 1, y: desk.y + 2 };
+  return standDesk(desk, state.office);
 }
 
 function decor(kind) {
-  return (state.office?.decor || []).find((item) => item.kind === kind);
+  const aliases = {
+    coffee: ["coffee", "coffee_machine"],
+    whiteboard: ["whiteboard"],
+    couch: ["couch", "couch_2seat"],
+    table: ["table", "table_round"],
+  };
+  const names = aliases[kind] || [kind];
+  const surface = [...(state.office?.decor || []), ...(state.office?.objects || [])];
+  return surface.find((item) => names.includes(item.kind) || names.includes(item.prop));
+}
+
+function currentLayout() {
+  const lay = layout(canvas, DPR, state.office);
+  lay.ox += camera.x;
+  lay.oy += camera.y;
+  return lay;
 }
 
 function targetFor(event) {
@@ -232,15 +248,15 @@ function targetFor(event) {
   }
   if (event.type === "task_added" || event.type === "task_closed") {
     const board = decor("whiteboard");
-    if (board) return { x: board.x + 2, y: board.y + 2, at: "whiteboard" };
+    if (board) return { x: board.x, y: board.y, at: "whiteboard" };
   }
   if (event.type === "build_failed") {
     const meeting = (office.rooms || []).find((room) => /meeting|lab/i.test(room.name));
-    if (meeting) return { x: meeting.x + 3, y: meeting.y + 2, at: "meeting" };
+    if (meeting) return { x: meeting.x + 0.05, y: meeting.y + 0.05, at: "meeting" };
   }
   if (event.type === "say" && /coffee|break/i.test(event.data?.text || "")) {
     const coffee = decor("coffee");
-    if (coffee) return { x: coffee.x + 1, y: coffee.y + 1, at: "coffee" };
+    if (coffee) return { x: coffee.x, y: coffee.y, at: "coffee" };
   }
   const desk = deskFor(event.actor);
   const stand = standAtDesk(desk);
@@ -276,14 +292,16 @@ function react(event) {
   const sprite = state.sprites.get(event.actor);
   const target = targetFor(event);
   if (sprite && target) {
-    const path = findPath(state.office, { x: Math.round(sprite.x), y: Math.round(sprite.y) }, target);
+    const path = findPath(state.office, { x: sprite.x, y: sprite.y }, target);
     sprite.path = path;
     sprite.at = target.at;
     sprite.pose = path.length ? "walk" : poseFor(event);
     sprite.wantPose = poseFor(event);
     sprite.active = 1;
-    camera.tx = -(target.x * CELL - canvas.width / (2 * DPR) + 20);
-    camera.ty = -(target.y * CELL - canvas.height / (2 * DPR) + 16);
+    const lay = layout(canvas, DPR, state.office);
+    const focus = toPx(target.x, target.y, lay);
+    camera.tx = canvas.width / (2 * DPR) - focus.x;
+    camera.ty = canvas.height / (2 * DPR) - focus.y;
   }
   for (const [id, other] of state.sprites) {
     if (id !== event.actor) other.active = Math.max(0, other.active - 0.4);
@@ -317,39 +335,51 @@ function wrapTwo(text, width = 34) {
   return lines.slice(0, 2);
 }
 
+function toTile(nx, ny, office) {
+  if (isNorm(office)) return { x: Math.round(nx * 20), y: Math.round(ny * 15) };
+  return { x: Math.round(nx), y: Math.round(ny) };
+}
+
+function fromTile(tx, ty, office) {
+  if (isNorm(office)) return { x: tx / 20, y: ty / 15 };
+  return { x: tx, y: ty };
+}
+
 function blockedSet(office) {
   const blocked = new Set();
+  const mark = (nx, ny) => {
+    const tile = toTile(nx, ny, office);
+    blocked.add(`${tile.x},${tile.y}`);
+  };
   for (const desk of office.desks || []) {
-    blocked.add(`${desk.x},${desk.y}`);
-    blocked.add(`${desk.x + 1},${desk.y}`);
+    mark(desk.x, desk.y);
   }
-  for (const item of office.decor || []) {
-    if (item.kind === "rug") continue;
-    const w = item.w || (item.kind === "whiteboard" ? 4 : 1);
-    const h = item.h || 1;
-    for (let x = item.x; x < item.x + w; x += 1) {
-      for (let y = item.y; y < item.y + h; y += 1) {
-        blocked.add(`${x},${y}`);
-      }
-    }
+  for (const item of [...(office.decor || []), ...(office.objects || [])]) {
+    if (item.kind === "rug" || item.prop === "rug_round") continue;
+    mark(item.x, item.y);
   }
   return blocked;
 }
 
-function inRooms(office, x, y) {
-  return (office.rooms || []).some(
-    (room) => x >= room.x && y >= room.y && x < room.x + room.w && y < room.y + room.h,
+function inRooms(office, tx, ty) {
+  const pos = fromTile(tx, ty, office);
+  const rooms = office.rooms || [];
+  if (!rooms.length) return pos.x >= 0 && pos.x <= 1 && pos.y >= 0 && pos.y <= 1;
+  return rooms.some(
+    (room) => pos.x >= room.x && pos.y >= room.y && pos.x < room.x + room.w && pos.y < room.y + room.h,
   );
 }
 
 function findPath(office, start, goal) {
   if (!office) return [goal];
+  const a = toTile(start.x, start.y, office);
+  const b = toTile(goal.x, goal.y, office);
   const blocked = blockedSet(office);
-  const startKey = `${start.x},${start.y}`;
-  const goalKey = `${goal.x},${goal.y}`;
+  const startKey = `${a.x},${a.y}`;
+  const goalKey = `${b.x},${b.y}`;
   blocked.delete(goalKey);
   blocked.delete(startKey);
-  const open = [{ x: start.x, y: start.y, g: 0, f: 0, from: null }];
+  const open = [{ x: a.x, y: a.y, g: 0, f: 0, from: null }];
   const seen = new Set([startKey]);
   const dirs = [
     [1, 0],
@@ -358,13 +388,13 @@ function findPath(office, start, goal) {
     [0, -1],
   ];
   while (open.length) {
-    open.sort((a, b) => a.f - b.f);
+    open.sort((left, right) => left.f - right.f);
     const cur = open.shift();
-    if (cur.x === goal.x && cur.y === goal.y) {
+    if (cur.x === b.x && cur.y === b.y) {
       const path = [];
       let node = cur;
       while (node) {
-        path.push({ x: node.x, y: node.y });
+        path.push(fromTile(node.x, node.y, office));
         node = node.from;
       }
       return path.reverse().slice(1);
@@ -376,7 +406,7 @@ function findPath(office, start, goal) {
       if (seen.has(key)) continue;
       if (!inRooms(office, nx, ny) || blocked.has(key)) continue;
       seen.add(key);
-      const h = Math.abs(nx - goal.x) + Math.abs(ny - goal.y);
+      const h = Math.abs(nx - b.x) + Math.abs(ny - b.y);
       open.push({ x: nx, y: ny, g: cur.g + 1, f: cur.g + 1 + h, from: cur });
     }
   }
@@ -422,7 +452,7 @@ function resize() {
 function stepSprites(now) {
   const dt = Math.min(0.05, (now - (lastStep || now)) / 1000);
   lastStep = now;
-  const speed = 4.4;
+  const speed = isNorm(state.office) ? 0.35 : 4.4;
   let walking = false;
   for (const sprite of state.sprites.values()) {
     if (sprite.path?.length) {
@@ -431,7 +461,7 @@ function stepSprites(now) {
       const dx = next.x - sprite.x;
       const dy = next.y - sprite.y;
       const dist = Math.hypot(dx, dy);
-      if (dist < 0.06) {
+      if (dist < (isNorm(state.office) ? 0.012 : 0.06)) {
         sprite.x = next.x;
         sprite.y = next.y;
         sprite.path.shift();
@@ -474,6 +504,11 @@ function drawOffice(ox, oy) {
   const office = state.office;
   if (!office) return;
   const dim = state.paused || state.sleeping || state.budget?.exhausted;
+  if (isNorm(office)) {
+    const lay = currentLayout();
+    drawNormOffice(ctx, office, lay, dim, getComputedStyle(document.body).fontFamily);
+    return;
+  }
   const bounds = office.rooms?.reduce(
     (acc, room) => ({ w: Math.max(acc.w, room.x + room.w), h: Math.max(acc.h, room.y + room.h) }),
     { w: 22, h: 16 },
@@ -749,8 +784,10 @@ function lookOf(employee) {
 }
 
 function drawPerson(ox, oy, employee, sprite, now) {
-  const px = ox + sprite.x * CELL;
-  const py = oy + sprite.y * CELL;
+  const lay = currentLayout();
+  const p = toPx(sprite.x, sprite.y, lay);
+  const px = p.x;
+  const py = p.y;
   const bob = sprite.pose === "idle" ? Math.sin(now / 400 + sprite.x) * 1.2 : 0;
   const color = employee.accent || employee.color || "#F97316";
   const look = lookOf(employee);
@@ -933,8 +970,10 @@ function drawBubble(ox, oy, now) {
   }
   const sprite = state.sprites.get(bubble.actor);
   if (!sprite) return true;
-  const x = ox + sprite.x * CELL + 18;
-  const y = oy + sprite.y * CELL - 36;
+  const lay = currentLayout();
+  const p = toPx(sprite.x, sprite.y, lay);
+  const x = p.x + 18;
+  const y = p.y - 36;
   ctx.save();
   ctx.globalAlpha = Math.max(0, alpha);
   ctx.translate(x, y);
@@ -1017,14 +1056,12 @@ canvas.addEventListener("mousemove", (event) => {
   const x = ((event.clientX - rect.left) / rect.width) * (canvas.width / DPR);
   const y = ((event.clientY - rect.top) / rect.height) * (canvas.height / DPR);
   hoverId = null;
-  const ox = 20 + camera.x;
-  const oy = 16 + camera.y;
+  const lay = currentLayout();
   for (const employee of state.employees || []) {
     const sprite = state.sprites.get(employee.id);
     if (!sprite) continue;
-    const px = ox + sprite.x * CELL;
-    const py = oy + sprite.y * CELL;
-    if (Math.hypot(x - px - 8, y - py) < 22) hoverId = employee.id;
+    const p = toPx(sprite.x, sprite.y, lay);
+    if (Math.hypot(x - p.x - 8, y - p.y) < 22) hoverId = employee.id;
   }
 });
 canvas.addEventListener("mouseleave", () => {

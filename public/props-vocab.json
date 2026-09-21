@@ -1,0 +1,308 @@
+{
+  "$schema_note": "Meridian Desk Stage 1 prop vocabulary \u2014 fixed set; sizes are 1\u00d7 CSS/canvas px",
+  "version": 1,
+  "coord_space": "topdown_norm",
+  "props": [
+    {
+      "id": "floor_slate",
+      "category": "floor",
+      "w": 800,
+      "h": 600,
+      "bots_may_request": false
+    },
+    {
+      "id": "floor_break_tint",
+      "category": "floor",
+      "w": 280,
+      "h": 140,
+      "bots_may_request": false
+    },
+    {
+      "id": "rug_round",
+      "category": "floor",
+      "w": 72,
+      "h": 48,
+      "bots_may_request": true
+    },
+    {
+      "id": "carpet_runner",
+      "category": "floor",
+      "w": 160,
+      "h": 28,
+      "bots_may_request": true
+    },
+    {
+      "id": "wall_panel",
+      "category": "wall",
+      "w": 800,
+      "h": 24,
+      "bots_may_request": false
+    },
+    {
+      "id": "wall_window",
+      "category": "wall",
+      "w": 80,
+      "h": 40,
+      "bots_may_request": false
+    },
+    {
+      "id": "door_frame",
+      "category": "wall",
+      "w": 36,
+      "h": 48,
+      "bots_may_request": false
+    },
+    {
+      "id": "whiteboard",
+      "category": "wall",
+      "w": 100,
+      "h": 64,
+      "bots_may_request": true
+    },
+    {
+      "id": "poster_ship",
+      "category": "wall",
+      "w": 36,
+      "h": 48,
+      "bots_may_request": true
+    },
+    {
+      "id": "divider_low",
+      "category": "wall",
+      "w": 120,
+      "h": 12,
+      "bots_may_request": true
+    },
+    {
+      "id": "desk_pad",
+      "category": "desk",
+      "w": 96,
+      "h": 56,
+      "bots_may_request": true
+    },
+    {
+      "id": "desk_corner_l",
+      "category": "desk",
+      "w": 112,
+      "h": 72,
+      "bots_may_request": true
+    },
+    {
+      "id": "chair",
+      "category": "desk",
+      "w": 28,
+      "h": 28,
+      "bots_may_request": true
+    },
+    {
+      "id": "monitor",
+      "category": "prop",
+      "w": 36,
+      "h": 22,
+      "bots_may_request": true
+    },
+    {
+      "id": "keyboard",
+      "category": "prop",
+      "w": 32,
+      "h": 12,
+      "bots_may_request": true
+    },
+    {
+      "id": "laptop",
+      "category": "prop",
+      "w": 28,
+      "h": 18,
+      "bots_may_request": true
+    },
+    {
+      "id": "mouse",
+      "category": "prop",
+      "w": 10,
+      "h": 14,
+      "bots_may_request": true
+    },
+    {
+      "id": "mug",
+      "category": "prop",
+      "w": 14,
+      "h": 14,
+      "bots_may_request": true
+    },
+    {
+      "id": "plant_small",
+      "category": "prop",
+      "w": 18,
+      "h": 20,
+      "bots_may_request": true
+    },
+    {
+      "id": "plant_tall",
+      "category": "decor",
+      "w": 22,
+      "h": 40,
+      "bots_may_request": true
+    },
+    {
+      "id": "lamp_desk",
+      "category": "prop",
+      "w": 16,
+      "h": 20,
+      "bots_may_request": true
+    },
+    {
+      "id": "notebook",
+      "category": "prop",
+      "w": 16,
+      "h": 20,
+      "bots_may_request": true
+    },
+    {
+      "id": "sticky_stack",
+      "category": "prop",
+      "w": 14,
+      "h": 14,
+      "bots_may_request": true
+    },
+    {
+      "id": "headphones",
+      "category": "prop",
+      "w": 20,
+      "h": 14,
+      "bots_may_request": true
+    },
+    {
+      "id": "phone",
+      "category": "prop",
+      "w": 10,
+      "h": 16,
+      "bots_may_request": true
+    },
+    {
+      "id": "trash_bin",
+      "category": "prop",
+      "w": 18,
+      "h": 22,
+      "bots_may_request": true
+    },
+    {
+      "id": "filing_cabinet",
+      "category": "prop",
+      "w": 28,
+      "h": 40,
+      "bots_may_request": true
+    },
+    {
+      "id": "bookshelf",
+      "category": "decor",
+      "w": 40,
+      "h": 48,
+      "bots_may_request": true
+    },
+    {
+      "id": "coffee_machine",
+      "category": "social",
+      "w": 36,
+      "h": 40,
+      "bots_may_request": true
+    },
+    {
+      "id": "water_cooler",
+      "category": "social",
+      "w": 24,
+      "h": 44,
+      "bots_may_request": true
+    },
+    {
+      "id": "couch_2seat",
+      "category": "social",
+      "w": 80,
+      "h": 36,
+      "bots_may_request": true
+    },
+    {
+      "id": "table_round",
+      "category": "social",
+      "w": 44,
+      "h": 44,
+      "bots_may_request": true
+    },
+    {
+      "id": "meeting_table",
+      "category": "social",
+      "w": 100,
+      "h": 40,
+      "bots_may_request": true
+    },
+    {
+      "id": "break_snack",
+      "category": "social",
+      "w": 20,
+      "h": 14,
+      "bots_may_request": true
+    },
+    {
+      "id": "lamp_floor",
+      "category": "decor",
+      "w": 20,
+      "h": 48,
+      "bots_may_request": true
+    },
+    {
+      "id": "clock_wall",
+      "category": "decor",
+      "w": 24,
+      "h": 24,
+      "bots_may_request": true
+    },
+    {
+      "id": "frame_art",
+      "category": "decor",
+      "w": 28,
+      "h": 28,
+      "bots_may_request": true
+    },
+    {
+      "id": "crate_storage",
+      "category": "decor",
+      "w": 32,
+      "h": 28,
+      "bots_may_request": true
+    },
+    {
+      "id": "plant_pot",
+      "category": "decor",
+      "w": 16,
+      "h": 14,
+      "bots_may_request": true
+    },
+    {
+      "id": "nameplate_stand",
+      "category": "desk",
+      "w": 40,
+      "h": 10,
+      "bots_may_request": false
+    }
+  ],
+  "studio": "Meridian Desk",
+  "cast": [
+    {
+      "id": "nova",
+      "name": "Nova Chen",
+      "accent": "#F97316",
+      "color": "coral"
+    },
+    {
+      "id": "kessler",
+      "name": "Kessler Holt",
+      "accent": "#14B8A6",
+      "color": "teal"
+    },
+    {
+      "id": "mira",
+      "name": "Mira Sol",
+      "accent": "#F59E0B",
+      "color": "amber"
+    }
+  ]
+}

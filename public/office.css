@@ -1,16 +1,16 @@
 :root {
   color-scheme: dark;
-  --bg: #14120f;
-  --slate: #1b1916;
-  --ink: #f3efe6;
-  --muted: #b4a693;
-  --line: #32281f;
-  --amber: #F59E0B;
-  --coral: #F97316;
-  --teal: #14B8A6;
+  --bg: var(--fb-floor, #1A1F2E);
+  --slate: var(--fb-floor-mid, #232A3B);
+  --ink: var(--fb-text, #E8ECF4);
+  --muted: var(--fb-text-mute, #9AA3B5);
+  --line: var(--fb-desk-edge, #4A5568);
+  --amber: var(--fb-mira, #F59E0B);
+  --coral: var(--fb-nova, #F97316);
+  --teal: var(--fb-kessler, #14B8A6);
   --indigo: #6366F1;
   --cream: #fffaf2;
-  --font: "Liberation Sans", "DejaVu Sans", "Nimbus Sans L", "FreeSans", "Segoe UI", sans-serif;
+  --font: var(--fb-font, ui-sans-serif, system-ui, "Segoe UI", sans-serif);
   --mono: "Liberation Mono", "DejaVu Sans Mono", ui-monospace, monospace;
 }
 

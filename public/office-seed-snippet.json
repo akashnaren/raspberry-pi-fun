@@ -2,9 +2,6 @@
   "studio": "Meridian Desk",
   "coord_space": "topdown_norm",
   "canvas": { "w": 800, "h": 600 },
-  "walls": "#2C3348",
-  "floor": "#1A1F2E",
-  "budget": { "furniture": 2 },
   "zones": [
     { "id": "floor", "prop": "floor_slate", "x": 0, "y": 0, "w": 1, "h": 1 },
     { "id": "break_room", "prop": "floor_break_tint", "x": 0.32, "y": 0.66, "w": 0.36, "h": 0.28 }
@@ -12,13 +9,11 @@
   "desks": [
     {
       "id": "desk_nova",
-      "owner": "nova",
       "employee": "nova",
       "accent": "#F97316",
       "x": 0.22,
       "y": 0.38,
       "prop": "desk_pad",
-      "items": ["monitor", "keyboard", "mug", "plant_small", "lamp_desk"],
       "props": [
         { "id": "monitor", "dx": 0, "dy": -14 },
         { "id": "keyboard", "dx": 0, "dy": 10 },
@@ -31,13 +26,11 @@
     },
     {
       "id": "desk_kessler",
-      "owner": "kessler",
       "employee": "kessler",
       "accent": "#14B8A6",
       "x": 0.5,
       "y": 0.38,
       "prop": "desk_pad",
-      "items": ["monitor", "notebook", "mug", "plant_small", "lamp_desk"],
       "props": [
         { "id": "monitor", "dx": 0, "dy": -14 },
         { "id": "notebook", "dx": -18, "dy": 12 },
@@ -50,13 +43,11 @@
     },
     {
       "id": "desk_mira",
-      "owner": "mira",
       "employee": "mira",
       "accent": "#F59E0B",
       "x": 0.78,
       "y": 0.38,
       "prop": "desk_pad",
-      "items": ["monitor", "sticky_stack", "mug", "plant_small", "lamp_desk"],
       "props": [
         { "id": "monitor", "dx": 0, "dy": -14 },
         { "id": "sticky_stack", "dx": 16, "dy": 12 },
@@ -66,84 +57,39 @@
       ],
       "chair": { "dx": 0, "dy": 42 },
       "sprite": { "x": 0.78, "y": 0.48, "initial": "M", "label": "Mira" }
-    },
-    {
-      "id": "desk_jules",
-      "owner": "jules",
-      "employee": "jules",
-      "accent": "#6366F1",
-      "x": 0.9,
-      "y": 0.22,
-      "prop": "desk_pad",
-      "items": ["monitor", "mug", "plant_small", "lamp_desk"],
-      "props": [
-        { "id": "monitor", "dx": 0, "dy": -14 },
-        { "id": "mug", "dx": -28, "dy": 8 },
-        { "id": "plant_small", "dx": 30, "dy": 6 },
-        { "id": "lamp_desk", "dx": 36, "dy": -10 }
-      ],
-      "chair": { "dx": 0, "dy": 42 },
-      "sprite": { "x": 0.9, "y": 0.32, "initial": "J", "label": "Jules" }
     }
   ],
   "objects": [
     {
       "id": "wb_strategy",
       "prop": "whiteboard",
-      "kind": "whiteboard",
       "x": 0.12,
       "y": 0.78,
-      "text": "SHIP: Timezone Buddy — usable in <1 min",
-      "advertises": "plan"
+      "text": "SHIP: Timezone Buddy — usable in <1 min"
     },
     {
       "id": "coffee",
       "prop": "coffee_machine",
-      "kind": "coffee",
       "x": 0.88,
-      "y": 0.78,
-      "advertises": "hang out"
+      "y": 0.78
     },
     {
       "id": "break_couch",
       "prop": "couch_2seat",
-      "kind": "couch",
       "x": 0.42,
-      "y": 0.8,
-      "advertises": "break"
+      "y": 0.8
     },
     {
       "id": "break_table",
       "prop": "table_round",
-      "kind": "table",
       "x": 0.55,
-      "y": 0.78,
-      "advertises": "review"
+      "y": 0.78
     },
     {
       "id": "cooler",
       "prop": "water_cooler",
-      "kind": "water_cooler",
       "x": 0.7,
       "y": 0.82
     }
-  ],
-  "rooms": [
-    { "name": "bullpen", "x": 0, "y": 0, "w": 1, "h": 0.66 },
-    { "name": "break room", "x": 0.32, "y": 0.66, "w": 0.36, "h": 0.28 }
-  ],
-  "decor": [
-    {
-      "kind": "whiteboard",
-      "prop": "whiteboard",
-      "x": 0.12,
-      "y": 0.78,
-      "text": "SHIP: Timezone Buddy — usable in <1 min",
-      "advertises": "plan"
-    },
-    { "kind": "coffee", "prop": "coffee_machine", "x": 0.88, "y": 0.78, "advertises": "hang out" },
-    { "kind": "couch", "prop": "couch_2seat", "x": 0.42, "y": 0.8, "advertises": "break" },
-    { "kind": "table", "prop": "table_round", "x": 0.55, "y": 0.78, "advertises": "review" },
-    { "kind": "water_cooler", "prop": "water_cooler", "x": 0.7, "y": 0.82 }
   ]
 }

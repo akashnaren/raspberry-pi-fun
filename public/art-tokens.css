@@ -1,0 +1,195 @@
+/**
+ * Meridian Desk — Fishbowl Stage 1 art tokens
+ * Drop into GUI; no proprietary syntax. 2026-09-20 PT
+ */
+
+:root {
+  /* Surfaces */
+  --fb-floor: #1a1f2e;
+  --fb-floor-mid: #232a3b;
+  --fb-wall: #2c3348;
+  --fb-desk: #3d465c;
+  --fb-desk-edge: #4a5568;
+  --fb-sprite-fill: #2a3144;
+
+  /* Light */
+  --fb-lamp-amber: #f5b942;
+  --fb-lamp-core: #ffe08a;
+  --fb-lamp-glow-alpha: 0.22;
+
+  /* Text */
+  --fb-text: #e8ecf4;
+  --fb-text-mute: #9aa3b5;
+
+  /* Employee accents (cast lock) */
+  --fb-emp-a: #f97316; /* Nova Chen — coral */
+  --fb-emp-b: #14b8a6; /* Kessler Holt — teal */
+  --fb-emp-c: #f59e0b; /* Mira Sol — amber */
+  --fb-nova: var(--fb-emp-a);
+  --fb-kessler: var(--fb-emp-b);
+  --fb-mira: var(--fb-emp-c);
+  --fb-emp-accent: var(--fb-emp-a); /* override per employee */
+
+  /* HUD / status */
+  --fb-live: #22c55e;
+  --fb-fail: #ef4444;
+  --fb-budget-fill: #f59e0b;
+  --fb-budget-track: #2a3144;
+  --fb-chip-bg: rgba(26, 31, 46, 0.92);
+  --fb-chip-border: #3d465c;
+  --fb-bubble-bg: rgba(36, 42, 58, 0.94);
+  --fb-nametag-bg: rgba(26, 31, 46, 0.88);
+
+  /* Shadows */
+  --fb-shadow-soft: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --fb-shadow-desk: 0 6px 16px rgba(0, 0, 0, 0.4);
+  --fb-shadow-sprite: 0 2px 6px rgba(0, 0, 0, 0.45);
+
+  /* Type */
+  --fb-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+}
+
+/* —— Utility classes —— */
+
+.fb-desk {
+  background: var(--fb-desk);
+  border: 1px solid var(--fb-desk-edge);
+  border-radius: 12px;
+  box-shadow: var(--fb-shadow-desk);
+  width: 96px;
+  height: 56px;
+}
+
+.fb-nametag {
+  max-width: 96px;
+  padding: 2px 8px;
+  font-family: var(--fb-font);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  color: var(--fb-text);
+  background: var(--fb-nametag-bg);
+  border: 1.5px solid var(--fb-emp-accent);
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--fb-shadow-soft);
+}
+
+.fb-bubble {
+  max-width: 140px;
+  padding: 6px 10px;
+  font-family: var(--fb-font);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--fb-text);
+  background: var(--fb-bubble-bg);
+  border: 1.5px solid var(--fb-emp-accent);
+  border-radius: 10px;
+  box-shadow: var(--fb-shadow-soft);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.fb-sprite {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--fb-sprite-fill);
+  border: 2.5px solid var(--fb-emp-accent);
+  color: var(--fb-text);
+  font-family: var(--fb-font);
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--fb-shadow-sprite);
+  user-select: none;
+}
+
+.fb-lamp-glow {
+  pointer-events: none;
+  width: 120px;
+  height: 72px;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--fb-lamp-core) 55%, transparent) 0%,
+    color-mix(in srgb, var(--fb-lamp-amber) 35%, transparent) 35%,
+    transparent 70%
+  );
+  opacity: 0.85;
+  mix-blend-mode: screen;
+}
+
+/* Fallback if color-mix unsupported */
+@supports not (color-mix(in srgb, red 50%, blue)) {
+  .fb-lamp-glow {
+    background: radial-gradient(
+      ellipse at center,
+      rgba(255, 224, 138, 0.45) 0%,
+      rgba(245, 185, 66, 0.22) 40%,
+      transparent 70%
+    );
+  }
+}
+
+/* Per-employee accent helpers */
+.fb-emp-nova {
+  --fb-emp-accent: var(--fb-emp-a);
+}
+.fb-emp-kessler {
+  --fb-emp-accent: var(--fb-emp-b);
+}
+.fb-emp-mira {
+  --fb-emp-accent: var(--fb-emp-c);
+}
+
+/* HUD chips */
+.fb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-family: var(--fb-font);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fb-text);
+  background: var(--fb-chip-bg);
+  border: 1px solid var(--fb-chip-border);
+  border-radius: 999px;
+}
+
+.fb-chip-live {
+  border-color: var(--fb-live);
+  color: var(--fb-live);
+}
+
+.fb-chip-fail {
+  border-color: var(--fb-fail);
+  color: var(--fb-fail);
+}
+
+.fb-budget-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--fb-budget-track);
+  overflow: hidden;
+}
+
+.fb-budget-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--fb-budget-fill);
+  border-radius: 3px;
+}
