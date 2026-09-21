@@ -71,7 +71,7 @@ test("workspace office and fallback stay aligned on the load-bearing bits", asyn
   assert.match(draw, /drawKeyboard/);
   assert.match(draw, /255,224,138/);
   assert.match(draw, /oval-pony|square-crop|long-part|round-wave/);
-  assert.match(draw, /cell \* 0\.72/);
+  assert.match(draw, /whiteboardPx/);
   const officeJs = await readFile(join(REPO, "public/office.js"), "utf8");
   assert.match(officeJs, /FALLBACK_OFFICE/);
   assert.match(officeJs, /hydrateFromHttp/);

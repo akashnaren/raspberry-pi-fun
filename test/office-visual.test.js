@@ -125,6 +125,107 @@ test("floor seams are batched and desk clutter has a TV-scale minimum", () => {
   assert.ok(counts.stroke < 48, `strokes ${counts.stroke}`);
 });
 
+test("painted diorama: upright billboards, pose library, quiet floor, soft lamps", async () => {
+  const draw = await import("../public/office-draw.js");
+  assert.deepEqual(draw.HUMAN_LAYERS, ["body", "hair", "bottom", "top", "shoes", "accessory"]);
+  assert.equal(draw.dioramaPose("sit-type", 0, "desk"), "sit_type");
+  assert.equal(draw.dioramaPose("type", 1, "desk"), "sit_type");
+  assert.equal(draw.dioramaPose("sit", 0, "desk"), "sit_think_hand");
+  assert.equal(draw.dioramaPose("sit-talk", 0, "couch"), "sit_think_hand");
+  assert.equal(draw.dioramaPose("walk", 0, "desk"), "walk_1");
+  assert.equal(draw.dioramaPose("walk", 1, "coffee"), "walk_2");
+  assert.equal(draw.dioramaPose("stand", 0, "coffee"), "stand_coffee");
+  assert.equal(draw.dioramaPose("stand-talk", 0, "coffee"), "stand_coffee");
+  assert.equal(draw.dioramaPose("stand", 0, "whiteboard"), "stand_whiteboard");
+  assert.equal(draw.dioramaPose("talk", 1, "whiteboard"), "stand_whiteboard");
+  assert.equal(draw.dioramaPose("stand-talk", 0, "meeting"), "stand_point");
+  assert.equal(draw.dioramaPose("stand", 0, "desk"), "stand_point");
+  assert.ok(draw.LAMP_POOL_ALPHA <= 0.25);
+  assert.ok(draw.lampColor(false).includes("255,224,138"));
+  const lampAlpha = Number(draw.lampColor(false).match(/[\d.]+\)/)[0].replace(")", ""));
+  assert.ok(lampAlpha <= 0.25 && lampAlpha > 0);
+  assert.ok(draw.lampColor(true).length > 0);
+  assert.equal(draw.FLOOR_GRID_ALPHA, 0);
+  assert.ok(draw.FLOOR_GRID_ALPHA <= 0.2);
+  assert.equal(draw.floorMaterial("bullpen"), "wood");
+  assert.equal(draw.floorMaterial("break room"), "wood");
+  assert.equal(draw.floorMaterial("meeting"), "concrete");
+  const plate = draw.deskPlate(40, "jules");
+  assert.ok(plate.side >= 40 * 0.28, "desk has a thick side face");
+  assert.ok(plate.top > 0, "desk has a top");
+  assert.ok(plate.wide > draw.deskPlate(40, "nova").wide);
+  assert.ok(draw.whiteboardPx(32) >= 34);
+  assert.ok(draw.whiteboardPx(48) > 48 * 0.72);
+  const bill = draw.billboardMetrics(40);
+  assert.equal(bill.upright, true);
+  assert.ok(bill.height > bill.width * 1.35, "billboard is upright, not a pancake");
+  assert.ok(bill.height > 40 * 2);
+  const order = draw.depthOrder([
+    { id: "back", sprite: { y: 9, x: 2 } },
+    { id: "front", sprite: { y: 4, x: 8 } },
+    { id: "front-right", sprite: { y: 4, x: 3 } },
+  ]);
+  assert.deepEqual(
+    order.map((row) => row.id),
+    ["front-right", "front", "back"],
+  );
+  const layers = [];
+  const ctx = mockCtx();
+  ctx.markLayer = (name) => layers.push(name);
+  draw.drawPerson(ctx, {
+    employee: FALLBACK_CAST[0],
+    sprite: { x: 4, y: 6, pose: "sit-type", frame: 1, facing: 1, at: "desk", active: 0, blinkUntil: 0 },
+    ox: 10,
+    oy: 10,
+    cell: 36,
+    now: 0,
+    hover: false,
+  });
+  assert.deepEqual(layers, draw.HUMAN_LAYERS);
+  const src = await readFile(join(REPO, "public/office-draw.js"), "utf8");
+  assert.doesNotMatch(src, /function drawTiles|drawPlanks/);
+  assert.match(src, /softShadow/);
+  const office = await readFile(join(REPO, "public/office.js"), "utf8");
+  assert.match(office, /dioramaPose/);
+  assert.match(office, /depthOrder/);
+  assert.match(office, /staticRoomKey/);
+  assert.match(office, /frameGapMs/);
+});
+
+function mockCtx() {
+  const gradient = () => ({ addColorStop() {} });
+  return {
+    fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 1,
+    font: "",
+    globalAlpha: 1,
+    beginPath() {},
+    closePath() {},
+    moveTo() {},
+    lineTo() {},
+    arc() {},
+    arcTo() {},
+    ellipse() {},
+    quadraticCurveTo() {},
+    fill() {},
+    stroke() {},
+    fillRect() {},
+    strokeRect() {},
+    fillText() {},
+    measureText(text) {
+      return { width: String(text).length * 8 };
+    },
+    createLinearGradient: gradient,
+    createRadialGradient: gradient,
+    save() {},
+    restore() {},
+    translate() {},
+    scale() {},
+    rotate() {},
+  };
+}
+
 test("renderer stays 2D, cached, and event-driven — no WebGL, no worker", async () => {
   const draw = await readFile(join(REPO, "public/office-draw.js"), "utf8");
   const office = await readFile(join(REPO, "public/office.js"), "utf8");

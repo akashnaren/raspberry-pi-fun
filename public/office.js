@@ -10,7 +10,7 @@ import {
   verbFor,
 } from "./office-motion.js";
 import { FALLBACK_CAST, FALLBACK_OFFICE, seedSprites } from "./office-seed.js";
-import { drawBubble, drawOffice, drawPerson, fillVoid, staticRoomKey } from "./office-draw.js";
+import { depthOrder, dioramaPose, drawBubble, drawOffice, drawPerson, fillVoid, staticRoomKey } from "./office-draw.js";
 import { dprFor, dueBlink, frameGapMs, hotKind } from "./office-perf.js";
 import { mergeStudioState, parseSocketMessage, reconnectDelayMs } from "./office-net.js";
 
@@ -213,6 +213,11 @@ function syncSprites() {
   }
 }
 
+function stampPose(sprite) {
+  if (!sprite) return;
+  sprite.poseId = dioramaPose(sprite.pose, sprite.frame || 0, sprite.at);
+}
+
 function enqueueWalk(sprite, target) {
   if (!sprite || !target) return;
   const from = sprite.path?.length
@@ -221,12 +226,14 @@ function enqueueWalk(sprite, target) {
   if (from.x === target.x && from.y === target.y) {
     sprite.at = target.at;
     if (!sprite.path?.length) sprite.pose = settlePose(target.at, sprite.wantPose || "idle");
+    stampPose(sprite);
     return;
   }
   const next = findPath(state.office, from, target);
   sprite.path = [...(sprite.path || []), ...next];
   sprite.at = target.at;
   sprite.pose = sprite.path.length ? "walk" : settlePose(target.at, sprite.wantPose || "idle");
+  stampPose(sprite);
 }
 
 function react(event) {
@@ -424,6 +431,7 @@ function stepSprites(now) {
     } else if (sprite.pose === "type" || sprite.pose === "sit-type") {
       sprite.frame = Math.floor(now / 220) % 2;
     }
+    stampPose(sprite);
   }
   return walking;
 }
@@ -543,13 +551,13 @@ function draw(now) {
   paintRoom(w, h, dim);
   const walking = stepSprites(now);
   facePairs();
-  const people = [...(state.employees || FALLBACK_CAST)].sort(
-    (a, b) => (state.sprites.get(a.id)?.y || 0) - (state.sprites.get(b.id)?.y || 0),
+  const people = depthOrder(
+    (state.employees || FALLBACK_CAST)
+      .map((employee) => ({ employee, sprite: state.sprites.get(employee.id) }))
+      .filter((row) => row.sprite),
   );
   if (dim) ctx.globalAlpha = 0.78;
-  for (const employee of people) {
-    const sprite = state.sprites.get(employee.id);
-    if (!sprite) continue;
+  for (const { employee, sprite } of people) {
     drawPerson(ctx, {
       employee,
       sprite,
@@ -715,6 +723,7 @@ if (new URLSearchParams(location.search).get("bench") === "walk") {
       sprite.pose = "walk";
       sprite.at = "desk";
       sprite.wantPose = "sit";
+      stampPose(sprite);
     }
     wake();
   };
