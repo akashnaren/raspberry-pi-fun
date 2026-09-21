@@ -1,0 +1,28 @@
+# Board inbox — Akash 2026-09-21
+
+## Product pivot
+Flagship: **Meridian Office** — a lightweight Microsoft Office–style competitor in the browser.
+- Docs / Sheets / Slides as small self-contained modules (single-file or tiny bundles)
+- No signup, no payments, no file-upload-to-cloud, no chat (spec permanent out-of-scope)
+- Local-only / downloadable files OK; paste-and-go UX
+Timezone Buddy stays in the catalogue as a shipped utility; weekly ships can still be boring useful tools.
+
+## More useful products (backlog seeds)
+- Paste-to-CSV cleaner / column splitter
+- Invoice / estimate PDF-ish HTML printer
+- Meeting notes → action items extractor (local)
+- Unit/currency/timezone pack (Timezone Buddy grows)
+- Resume/one-pager layout
+- Simple kanban (localStorage only)
+- Diff / merge text
+- Markdown → clean print page
+
+## UI / office feedback (must fix)
+1. **Camera fixed** — office must not pan/scroll/jitter; locked framing of the room
+2. **Livelier cast** — walk between desks/break room/whiteboard on real events; speech bubbles; idle at objects (Sims rule: never abstractly “thinking”)
+3. **Less AI-slop GUI** — study Apple, Tesla, Kalshi restraint: typography, whitespace, one accent, no neon gradients, no generic “AI dashboard” chrome
+4. **Human writing** — product copy and say()/journals read like people, not corporate LLM
+5. **HUD** — no ticker crawl, no MERIDIAN DESK wordmark, no ON AIR pills. Thin bar: day · people · $x / $5 · who’s acting. Office canvas is the hero.
+
+## Constraints
+DRY_RUN until greenlight · ~$10 OpenRouter · never top up · $5/day if live · Jules exclusive edit_office · event log is truth

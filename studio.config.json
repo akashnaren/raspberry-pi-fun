@@ -1,7 +1,7 @@
 {
   "studio": {
     "name": "Meridian Desk",
-    "product": "Timezone Buddy",
+    "product": "Meridian Office",
     "private": true
   },
   "openrouter": {
@@ -60,7 +60,7 @@
       "lottery_weight": 0.25,
       "maxTokens": 500,
       "max_tokens": 500,
-      "priorities": "One clear useful tool. Kill scope creep. Timezone Buddy stays paste-a-time, see-your-cities."
+      "priorities": "One clear useful tool. Kill scope creep. Meridian Office is Docs first. Sheets wait."
     },
     {
       "id": "kessler",

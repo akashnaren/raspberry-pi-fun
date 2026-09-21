@@ -1,28 +1,31 @@
+import {
+  destinationFor,
+  fitView,
+  hudStatus,
+  latestEventLine,
+  poseFor,
+  verbFor,
+} from "./office-motion.js";
+
 const canvas = document.getElementById("office");
 const ctx = canvas.getContext("2d");
-const tickerEl = document.getElementById("ticker");
 const product = document.getElementById("product");
 const validator = document.getElementById("validator");
 const pauseBtn = document.getElementById("pause-btn");
 const pauseBadge = document.getElementById("pause-badge");
 const modeBadge = document.getElementById("mode-badge");
-const onAir = document.getElementById("on-air");
 const actingEl = document.getElementById("acting");
 const budgetEl = document.getElementById("budget");
-const burnBar = document.getElementById("burn-bar");
 const staffEl = document.getElementById("staff-count");
 const sleepBadge = document.getElementById("sleep-badge");
 const soundBtn = document.getElementById("sound-btn");
 const dayEl = document.getElementById("day-n");
-const taskEl = document.getElementById("current-task");
-const shipEl = document.getElementById("ship-line");
 const productTitle = document.getElementById("product-title");
-const spotAvatar = document.getElementById("spot-avatar");
-const spotTool = document.getElementById("spot-tool");
 const officePane = document.getElementById("office-pane");
 const buildingPulse = document.getElementById("building-pulse");
+const eventLine = document.getElementById("event-line");
 
-const CELL = 30;
+let CELL = 30;
 const DPR = 1;
 const ENTER = 220;
 const HOLD = 4200;
@@ -45,13 +48,14 @@ let state = {
   relationships: null,
   startedAt: Date.now(),
 };
+let view = { ox: 24, oy: 20, cell: 30, locked: true };
 let bubble = null;
 let hoverId = null;
 let lastDraw = 0;
 let lastStep = 0;
 let replayIndex = 0;
 let lastReplay = 0;
-const camera = { x: 0, y: 0, tx: 0, ty: 0 };
+let lastEventText = "";
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -71,46 +75,35 @@ function applyState(next, event) {
   const sprites = state.sprites;
   const startedAt = state.startedAt;
   state = { ...state, ...next, sprites, startedAt };
-  if (next.studio) {
-    document.getElementById("studio-name").textContent = next.studio.name;
-    document.getElementById("product-name").textContent = next.studio.product;
-  }
   const hud = next.hud || {};
   const used = next.budget?.spentUsd ?? hud.burnUsd ?? 0;
   const cap = next.budget?.ceilingUsd || hud.ceilingUsd || 5;
-  budgetEl.textContent = `$${used.toFixed(2)} / $${cap.toFixed(0)}`;
-  burnBar.style.width = `${Math.min(100, (used / cap) * 100)}%`;
   const staff = hud.staff || (next.employees || []).length || 4;
-  staffEl.textContent = `${staff} staff`;
-  const cast = document.getElementById("cast-line");
-  if (cast) {
-    const named = (next.employees || [])
-      .filter((person) => ["nova", "kessler", "mira"].includes(person.id))
-      .map((person) => person.name.split(" ")[0]);
-    if (named.length) cast.textContent = named.join(" · ");
-  }
-  paintModelChips(next.employees || next.hud?.models || []);
-  dayEl.textContent = `Day ${hud.dayN || 1}`;
-  taskEl.textContent = hud.currentTask || currentTaskFrom(next) || "waiting for a task";
-  shipEl.textContent = hud.shipLine || "shipping when green";
-  const productName = next.studio?.product || "Timezone Buddy";
+  const sleeping = Boolean(next.sleeping || next.budget?.exhausted || hud.sleeping);
+  const status = hudStatus({
+    dayN: hud.dayN || 1,
+    staff,
+    spentUsd: used,
+    ceilingUsd: cap,
+    actingName: next.acting?.name,
+    sleeping,
+    paused: next.paused,
+    replay: next.replay,
+  });
+  dayEl.textContent = status.day;
+  staffEl.textContent = status.people;
+  budgetEl.textContent = status.burn;
+  actingEl.textContent = status.who;
+  const productName = next.studio?.product || "Meridian Office";
   productTitle.textContent = productName;
-  document.getElementById("product-name").textContent = productName;
   const mode = next.mode || (next.dryRun ? "dry-run" : "live");
   modeBadge.textContent = mode;
-  modeBadge.classList.toggle("live", mode === "live");
-  const sleeping = Boolean(next.sleeping || next.budget?.exhausted || hud.sleeping);
   document.body.classList.toggle("sleeping", sleeping);
   document.body.classList.toggle("lite", Boolean(next.lite) || new URLSearchParams(location.search).has("lite"));
-  const air = mode === "live" && !next.paused && !sleeping;
-  onAir.classList.toggle("hidden", !air);
-  officePane.classList.toggle("live", air);
   pauseBadge.classList.toggle("hidden", !next.paused || sleeping);
   sleepBadge.classList.toggle("hidden", !sleeping);
-  pauseBtn.textContent = next.paused ? "Resume" : "Pause";
-  paintTicker(next.events || []);
-  paintActing(next, sleeping);
-  paintSpotlight(next);
+  pauseBtn.textContent = next.paused ? "resume" : "pause";
+  paintEventLine(next.events || []);
   if (event) react(event);
   if (event?.type === "build_passed") product.src = `/dist/index.html?t=${event.ts}`;
   if (event?.type === "file_written" && event.data?.product) showBuilding(true);
@@ -119,29 +112,18 @@ function applyState(next, event) {
   }
   if (event?.type === "build_failed" || event?.type === "turn_failed") failFlash();
   syncSprites();
+  refit();
 }
 
-function paintModelChips(employees) {
-  const row = document.getElementById("model-chips");
-  if (!row) return;
-  row.replaceChildren();
-  for (const person of employees) {
-    const chip = document.createElement("span");
-    chip.className = "model-chip";
-    chip.dataset.id = person.id;
-    chip.style.borderLeftColor = person.accent || person.color || "#F59E0B";
-    const name = document.createElement("b");
-    name.textContent = (person.name || person.id).split(" ")[0];
-    const model = document.createElement("code");
-    model.textContent = person.model || person.family || person.modelFamily || "—";
-    chip.append(name, model);
-    row.append(chip);
-  }
-}
-
-function currentTaskFrom(next) {
-  const open = (next.backlog?.tasks || []).find((task) => task.status === "open");
-  return open?.text || "";
+function paintEventLine(events) {
+  const text = latestEventLine(events);
+  if (text === lastEventText) return;
+  lastEventText = text;
+  eventLine.classList.add("is-swap");
+  window.setTimeout(() => {
+    eventLine.textContent = text;
+    eventLine.classList.remove("is-swap");
+  }, 140);
 }
 
 function showBuilding(on) {
@@ -152,57 +134,7 @@ function failFlash() {
   officePane.classList.remove("fail-flash");
   void officePane.offsetWidth;
   officePane.classList.add("fail-flash");
-  setTimeout(() => officePane.classList.remove("fail-flash"), 800);
-}
-
-function paintSpotlight(next) {
-  const acting = next.acting;
-  const employee = (next.employees || []).find((person) => person.id === acting?.id);
-  const color = employee?.accent || employee?.color || "#F59E0B";
-  const initial = (acting?.name || "?").slice(0, 1);
-  spotAvatar.textContent = initial;
-  spotAvatar.style.background = color;
-  spotTool.textContent = acting?.tool || "—";
-}
-
-function paintTicker(events) {
-  const lines = events
-    .filter((item) => !["model_resolved", "turn_finished"].includes(item.type))
-    .map((item) => item.headline || item.message)
-    .filter((line) => line && !/^\s*\{/.test(line));
-  const crawl = lines.slice(-5).join("     ·     ");
-  tickerEl.textContent = crawl ? `${crawl}     ·     ${crawl}` : "the office is quiet";
-}
-
-function paintActing(next, sleeping) {
-  if (sleeping) {
-    actingEl.textContent = "token ceiling — world paused";
-    return;
-  }
-  if (next.replay) {
-    actingEl.textContent = "replay — walking the event log, zero tokens";
-    return;
-  }
-  if (next.paused) {
-    actingEl.textContent = "paused — replaying the last hour of events";
-    return;
-  }
-  const acting = next.acting;
-  if (!acting) {
-    actingEl.textContent = "waiting for someone to act";
-    return;
-  }
-  actingEl.textContent = `${acting.name} is acting — ${placeLabel(acting.id)}`;
-}
-
-function placeLabel(id) {
-  const sprite = state.sprites.get(id);
-  if (!sprite?.at) return "at their desk";
-  if (sprite.at === "whiteboard") return "at the whiteboard";
-  if (sprite.at === "coffee") return "at the coffee machine";
-  if (sprite.at === "lab" || sprite.at === "meeting") return "in the meeting room";
-  if (sprite.at === "couch") return "on the break-room couch";
-  return "at their desk";
+  setTimeout(() => officePane.classList.remove("fail-flash"), 600);
 }
 
 function deskFor(id) {
@@ -216,40 +148,6 @@ function standAtDesk(desk) {
 
 function decor(kind) {
   return (state.office?.decor || []).find((item) => item.kind === kind);
-}
-
-function targetFor(event) {
-  const office = state.office;
-  if (!office || event.actor === "system") return null;
-  if (event.type === "request_filed") {
-    const jules = deskFor("jules");
-    if (jules) return { ...standAtDesk(jules), at: "desk" };
-  }
-  if (event.type === "office_edited" || event.type === "aesthetics_changed") {
-    const desk = deskFor(event.actor);
-    if (desk) return { ...standAtDesk(desk), at: "desk" };
-  }
-  if (event.type === "task_added" || event.type === "task_closed") {
-    const board = decor("whiteboard");
-    if (board) return { x: board.x + 2, y: board.y + 2, at: "whiteboard" };
-  }
-  if (event.type === "build_failed") {
-    const meeting = (office.rooms || []).find((room) => /meeting|lab/i.test(room.name));
-    if (meeting) return { x: meeting.x + 3, y: meeting.y + 2, at: "meeting" };
-  }
-  if (event.type === "say" && /coffee|break/i.test(event.data?.text || "")) {
-    const coffee = decor("coffee");
-    if (coffee) return { x: coffee.x + 1, y: coffee.y + 1, at: "coffee" };
-  }
-  const desk = deskFor(event.actor);
-  const stand = standAtDesk(desk);
-  return { ...stand, at: "desk" };
-}
-
-function poseFor(event) {
-  if (event.type === "file_written" || event.type === "file_read" || event.type === "journal") return "type";
-  if (event.type === "say") return "talk";
-  return "idle";
 }
 
 function syncSprites() {
@@ -273,7 +171,7 @@ function syncSprites() {
 
 function react(event) {
   const sprite = state.sprites.get(event.actor);
-  const target = targetFor(event);
+  const target = destinationFor(event, state.office);
   if (sprite && target) {
     const path = findPath(state.office, { x: Math.round(sprite.x), y: Math.round(sprite.y) }, target);
     sprite.path = path;
@@ -281,8 +179,6 @@ function react(event) {
     sprite.pose = path.length ? "walk" : poseFor(event);
     sprite.wantPose = poseFor(event);
     sprite.active = 1;
-    camera.tx = -(target.x * CELL - canvas.width / (2 * DPR) + 20);
-    camera.ty = -(target.y * CELL - canvas.height / (2 * DPR) + 16);
   }
   for (const [id, other] of state.sprites) {
     if (id !== event.actor) other.active = Math.max(0, other.active - 0.4);
@@ -293,7 +189,7 @@ function react(event) {
       actor: event.actor,
       lines: wrapTwo(event.data.text),
       born: Date.now(),
-      color: who?.accent || who?.color || "#d7b07a",
+      color: who?.accent || who?.color || "#6e6e73",
     };
   }
 }
@@ -416,6 +312,12 @@ function resize() {
   canvas.width = Math.max(320, Math.floor(pane.clientWidth * DPR));
   canvas.height = Math.max(240, Math.floor(pane.clientHeight * DPR));
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  refit();
+}
+
+function refit() {
+  view = fitView(state.office, canvas.width / DPR, canvas.height / DPR);
+  CELL = view.cell;
 }
 
 function stepSprites(now) {
@@ -448,13 +350,11 @@ function stepSprites(now) {
     } else {
       sprite.frame = Math.floor(now / 700) % 2;
     }
-    if (sprite.pose === "idle" && now > sprite.blinkUntil + 2400 + (sprite.x * 400) % 1800) {
+    if (sprite.pose === "idle" && now > sprite.blinkUntil + 2400 + ((sprite.x * 400) % 1800)) {
       sprite.blinkUntil = now + 120;
     }
     sprite.active *= 0.992;
   }
-  camera.x += (camera.tx - camera.x) * 0.06;
-  camera.y += (camera.ty - camera.y) * 0.06;
   return walking;
 }
 
@@ -477,93 +377,79 @@ function drawOffice(ox, oy) {
     (acc, room) => ({ w: Math.max(acc.w, room.x + room.w), h: Math.max(acc.h, room.y + room.h) }),
     { w: 22, h: 16 },
   ) || { w: 22, h: 16 };
-  ctx.fillStyle = office.walls || "#2a2118";
-  ctx.fillRect(ox - 14, oy - 14, bounds.w * CELL + 28, bounds.h * CELL + 28);
+  ctx.fillStyle = office.walls || "#c8c4bc";
+  ctx.fillRect(ox - 10, oy - 10, bounds.w * CELL + 20, bounds.h * CELL + 20);
   for (const room of office.rooms || []) {
     const rx = ox + room.x * CELL;
     const ry = oy + room.y * CELL;
     const rw = room.w * CELL;
     const rh = room.h * CELL;
-    const base = /break/i.test(room.name) ? "#2a2018" : /meeting|lab/i.test(room.name) ? "#1c1b20" : "#221c16";
+    const base = /break/i.test(room.name) ? "#d8d2c8" : /meeting|lab/i.test(room.name) ? "#d5d6d8" : "#e4e0d8";
     ctx.fillStyle = base;
     ctx.fillRect(rx, ry, rw, rh);
     for (let y = 0; y < room.h; y += 1) {
       for (let x = 0; x < room.w; x += 1) {
         const plank = (x + y) % 2 === 0;
-        ctx.fillStyle = plank ? "rgba(90,64,40,0.16)" : "rgba(0,0,0,0.08)";
+        ctx.fillStyle = plank ? "rgba(90,80,70,0.06)" : "rgba(255,255,255,0.18)";
         ctx.fillRect(rx + x * CELL, ry + y * CELL, CELL, CELL);
       }
     }
-    ctx.strokeStyle = "#4a3b2c";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(rx + 1.5, ry + 1.5, rw - 3, rh - 3);
+    ctx.strokeStyle = "#b7b1a6";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(rx + 1, ry + 1, rw - 2, rh - 2);
     ctx.lineWidth = 1;
-    ctx.fillStyle = "#c9b59a";
-    ctx.font = "11px sans-serif";
-    ctx.fillText(room.name, rx + 8, ry + 16);
+    ctx.fillStyle = "#6e6e73";
+    ctx.font = `${Math.max(9, Math.round(CELL * 0.36))}px ${getComputedStyle(document.body).fontFamily}`;
+    ctx.fillText(room.name, rx + 8, ry + 15);
   }
 
   for (const lamp of office.decor || []) {
     if (lamp.kind !== "lamp") continue;
     const lx = ox + lamp.x * CELL + 10;
     const ly = oy + lamp.y * CELL + 8;
-    const glow = ctx.createRadialGradient(lx, ly, 2, lx, ly, 90);
-    glow.addColorStop(0, dim ? "rgba(245,158,11,0.12)" : "rgba(245,158,11,0.38)");
-    glow.addColorStop(1, "rgba(245,158,11,0)");
+    const glow = ctx.createRadialGradient(lx, ly, 2, lx, ly, 54);
+    glow.addColorStop(0, dim ? "rgba(255,244,214,0.10)" : "rgba(255,244,214,0.22)");
+    glow.addColorStop(1, "rgba(255,244,214,0)");
     ctx.fillStyle = glow;
-    ctx.fillRect(lx - 90, ly - 60, 180, 150);
-  }
-  for (const desk of office.desks || []) {
-    const lamp = { x: ox + (desk.x + 1) * CELL, y: oy + desk.y * CELL };
-    const glow = ctx.createRadialGradient(lamp.x, lamp.y, 4, lamp.x, lamp.y, 86);
-    glow.addColorStop(0, dim ? "rgba(245,158,11,0.10)" : "rgba(245,158,11,0.30)");
-    glow.addColorStop(1, "rgba(245,158,11,0)");
-    ctx.fillStyle = glow;
-    ctx.fillRect(lamp.x - 86, lamp.y - 48, 172, 140);
+    ctx.fillRect(lx - 54, ly - 36, 108, 90);
   }
 
   for (const item of office.decor || []) drawDecor(ox, oy, item);
   for (const desk of office.desks || []) drawDesk(ox, oy, desk);
 
   if (dim) {
-    ctx.fillStyle = "rgba(8,6,4,0.48)";
-    ctx.fillRect(ox - 14, oy - 14, bounds.w * CELL + 28, bounds.h * CELL + 28);
+    ctx.fillStyle = "rgba(245,245,247,0.28)";
+    ctx.fillRect(ox - 10, oy - 10, bounds.w * CELL + 20, bounds.h * CELL + 20);
   }
 }
 
 function drawDesk(ox, oy, desk) {
   const x = ox + desk.x * CELL;
   const y = oy + desk.y * CELL;
-  ctx.fillStyle = "rgba(0,0,0,0.32)";
+  ctx.fillStyle = "rgba(0,0,0,0.08)";
   ctx.beginPath();
-  ctx.ellipse(x + CELL * 1.05, y + CELL * 1.45, CELL * 1.1, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + CELL * 1.05, y + CELL * 1.45, CELL * 1.1, 6, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#3a2a20";
-  roundRect(x + 10, y + CELL * 1.05, 16, 14, 4);
+  ctx.fillStyle = "#8a7b68";
+  roundRect(x, y, CELL * 2.15, CELL * 1.28, 5);
   ctx.fill();
-  ctx.fillStyle = "#5c4332";
-  roundRect(x, y, CELL * 2.15, CELL * 1.28, 7);
-  ctx.fill();
-  ctx.fillStyle = "#6d5240";
-  ctx.fillRect(x + 4, y + 3, CELL * 2.15 - 8, 4);
-  ctx.fillStyle = "#3d2b20";
-  ctx.fillRect(x + 3, y + CELL * 1.18, 8, 8);
-  ctx.fillRect(x + CELL * 1.75, y + CELL * 1.18, 8, 8);
+  ctx.fillStyle = "#9a8b76";
+  ctx.fillRect(x + 4, y + 3, CELL * 2.15 - 8, 3);
   const items = desk.items || [];
   if (items.includes("monitor") || items.includes("second_monitor")) {
-    ctx.fillStyle = "#1a1f24";
+    ctx.fillStyle = "#2c2c2e";
     ctx.fillRect(x + 8, y + 4, 22, 14);
-    ctx.fillStyle = "#7ec8c0";
+    ctx.fillStyle = "#d2d2d7";
     ctx.fillRect(x + 10, y + 6, 18, 10);
     if (items.includes("second_monitor")) {
-      ctx.fillStyle = "#1a1f24";
+      ctx.fillStyle = "#2c2c2e";
       ctx.fillRect(x + 32, y + 6, 16, 12);
-      ctx.fillStyle = "#d7b07a";
+      ctx.fillStyle = "#e5e5ea";
       ctx.fillRect(x + 34, y + 8, 12, 8);
     }
   }
   if (items.includes("plant")) {
-    ctx.fillStyle = "#2f6b3a";
+    ctx.fillStyle = "#3d6b46";
     ctx.beginPath();
     ctx.arc(x + CELL * 1.75, y + 10, 5, 0, Math.PI * 2);
     ctx.fill();
@@ -571,33 +457,31 @@ function drawDesk(ox, oy, desk) {
     ctx.fillRect(x + CELL * 1.75 - 2, y + 14, 4, 5);
   }
   if (items.includes("coffee_mug")) {
-    ctx.fillStyle = "#c45c1a";
+    ctx.fillStyle = "#6e6e73";
     ctx.fillRect(x + 6, y + 18, 7, 6);
   }
   if (items.includes("notebook") || items.includes("sticky_notes")) {
-    ctx.fillStyle = items.includes("sticky_notes") ? "#e6d36a" : "#efe6d4";
+    ctx.fillStyle = items.includes("sticky_notes") ? "#e6d36a" : "#f2efe8";
     ctx.fillRect(x + 40, y + 18, 10, 8);
   }
   const owner = (state.employees || []).find((person) => person.id === desk.owner);
   const style = owner?.aesthetics?.desk_style || owner?.desk_style || "";
   if (/messy|cable|sticker/i.test(style)) {
-    ctx.strokeStyle = "#2a2a2a";
+    ctx.strokeStyle = "#8e8e93";
     ctx.beginPath();
     ctx.moveTo(x + 8, y + 20);
     ctx.lineTo(x + 28, y + 24);
     ctx.stroke();
-    ctx.fillStyle = "#F97316";
+    ctx.fillStyle = "#8e8e93";
     ctx.fillRect(x + 30, y + 20, 5, 5);
   }
   const tag = (owner?.name || desk.owner).split(" ")[0];
   ctx.font = "9px sans-serif";
   const tw = ctx.measureText(tag).width;
-  ctx.fillStyle = "#1b140e";
-  roundRect(x + 4, y - 12, tw + 10, 11, 3);
+  ctx.fillStyle = "#1d1d1f";
+  roundRect(x + 4, y - 12, tw + 10, 11, 2);
   ctx.fill();
-  ctx.fillStyle = owner?.accent || owner?.color || INDIGO;
-  ctx.fillRect(x + 4, y - 12, 3, 11);
-  ctx.fillStyle = "#f3eadc";
+  ctx.fillStyle = "#f5f5f7";
   ctx.fillText(tag, x + 10, y - 4);
 }
 
@@ -606,9 +490,11 @@ function drawDecor(ox, oy, item) {
   const y = oy + item.y * CELL;
   if (item.kind === "whiteboard") {
     const w = (item.w || 6) * CELL;
-    ctx.fillStyle = "#e8e0d2";
+    ctx.fillStyle = "#f7f6f2";
     ctx.fillRect(x, y, w, CELL * 1.05);
-    ctx.fillStyle = "#2b2418";
+    ctx.strokeStyle = "#c7c4bb";
+    ctx.strokeRect(x, y, w, CELL * 1.05);
+    ctx.fillStyle = "#1d1d1f";
     ctx.font = "10px sans-serif";
     const words = String(item.text || "SHIP").split(" ");
     let line = "";
@@ -626,80 +512,75 @@ function drawDecor(ox, oy, item) {
     }
     if (line && row < 2) ctx.fillText(line, x + 6, y + 14 + row * 12);
   } else if (item.kind === "coffee") {
-    ctx.fillStyle = "#3b2a22";
+    ctx.fillStyle = "#3a3a3c";
     ctx.fillRect(x, y, CELL * 1.1, CELL * 1.1);
-    ctx.fillStyle = "#d7b07a";
+    ctx.fillStyle = "#d2d2d7";
     ctx.fillRect(x + 6, y + 4, 16, 8);
-    ctx.fillStyle = "rgba(230,220,200,0.35)";
-    ctx.fillRect(x + 10, y - 6, 3, 8);
   } else if (item.kind === "couch") {
-    ctx.fillStyle = "#6a3a32";
+    ctx.fillStyle = "#6b6258";
     ctx.fillRect(x, y, CELL * 2.4, CELL * 1.1);
-    ctx.fillStyle = "#4a2822";
+    ctx.fillStyle = "#4e4840";
     ctx.fillRect(x, y, 8, CELL * 1.1);
     ctx.fillRect(x + CELL * 2.1, y, 8, CELL * 1.1);
   } else if (item.kind === "plant") {
-    ctx.fillStyle = "#2f6b3a";
+    ctx.fillStyle = "#3d6b46";
     ctx.beginPath();
     ctx.arc(x + 10, y + 8, 8, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#6b3a22";
     ctx.fillRect(x + 7, y + 14, 6, 7);
   } else if (item.kind === "lamp") {
-    ctx.fillStyle = "#f3c66b";
+    ctx.fillStyle = "#e6d39a";
     ctx.beginPath();
-    ctx.arc(x + 8, y + 6, 5, 0, Math.PI * 2);
+    ctx.arc(x + 8, y + 6, 4, 0, Math.PI * 2);
     ctx.fill();
   } else if (item.kind === "rug") {
-    ctx.fillStyle = "#4a2d22";
+    ctx.fillStyle = "#c9c2b6";
     ctx.fillRect(x, y, CELL * 5, CELL * 3);
   } else if (item.kind === "shelf") {
-    ctx.fillStyle = "#4a3428";
+    ctx.fillStyle = "#8a7b68";
     ctx.fillRect(x, y, CELL * 2, 8);
   } else if (item.kind === "clock") {
-    ctx.fillStyle = "#efe6d4";
+    ctx.fillStyle = "#f7f6f2";
     ctx.beginPath();
     ctx.arc(x + 8, y + 8, 7, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "#2b2418";
+    ctx.strokeStyle = "#1d1d1f";
     ctx.stroke();
   } else if (item.kind === "filing_cabinet") {
-    ctx.fillStyle = "#4a4a55";
+    ctx.fillStyle = "#8e8e93";
     ctx.fillRect(x, y, CELL * 1.1, CELL * 1.4);
-    ctx.fillStyle = "#2a2a33";
+    ctx.fillStyle = "#636366";
     ctx.fillRect(x + 4, y + 6, CELL * 0.8, 6);
     ctx.fillRect(x + 4, y + 16, CELL * 0.8, 6);
   } else if (item.kind === "standing_desk") {
-    ctx.fillStyle = "#6a5340";
+    ctx.fillStyle = "#8a7b68";
     ctx.fillRect(x, y, CELL * 2, 8);
     ctx.fillRect(x + 2, y + 8, 4, 16);
     ctx.fillRect(x + CELL * 1.7, y + 8, 4, 16);
   } else if (item.kind === "beanbag") {
-    ctx.fillStyle = "#4338ca";
+    ctx.fillStyle = "#636366";
     ctx.beginPath();
     ctx.ellipse(x + 14, y + 12, 16, 10, 0, 0, Math.PI * 2);
     ctx.fill();
   } else if (item.kind === "minifridge") {
-    ctx.fillStyle = "#dfe4ea";
+    ctx.fillStyle = "#e5e5ea";
     ctx.fillRect(x, y, 16, 22);
-    ctx.fillStyle = "#8aa";
+    ctx.fillStyle = "#8e8e93";
     ctx.fillRect(x + 12, y + 8, 2, 6);
   } else if (item.kind === "table") {
-    ctx.fillStyle = "#5a4030";
-    roundRect(x, y, CELL * 3.2, CELL * 1.6, 6);
+    ctx.fillStyle = "#8a7b68";
+    roundRect(x, y, CELL * 3.2, CELL * 1.6, 5);
     ctx.fill();
-    ctx.fillStyle = "#3d2b20";
-    ctx.fillRect(x + 6, y + CELL * 1.5, 6, 10);
-    ctx.fillRect(x + CELL * 2.8, y + CELL * 1.5, 6, 10);
   }
   const ad = item.advertises;
   if (ad) {
-    ctx.fillStyle = "rgba(27,20,14,0.72)";
+    ctx.fillStyle = "rgba(29,29,31,0.72)";
     ctx.font = "9px sans-serif";
     const label = ad;
     const tw = ctx.measureText(label).width;
     ctx.fillRect(x, y - 12, tw + 8, 11);
-    ctx.fillStyle = "#e8d7b8";
+    ctx.fillStyle = "#f5f5f7";
     ctx.fillText(label, x + 4, y - 3);
   }
 }
@@ -751,19 +632,19 @@ function drawPerson(ox, oy, employee, sprite, now) {
   const px = ox + sprite.x * CELL;
   const py = oy + sprite.y * CELL;
   const bob = sprite.pose === "idle" ? Math.sin(now / 400 + sprite.x) * 1.2 : 0;
-  const color = employee.accent || employee.color || "#F97316";
+  const color = employee.accent || employee.color || "#1d1d1f";
   const look = lookOf(employee);
   if (sprite.active > 0.08) {
     ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.35 + sprite.active * 0.5;
-    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.22 + sprite.active * 0.35;
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(px + 8, py + 4 + bob, 16, 0, Math.PI * 2);
     ctx.stroke();
     ctx.globalAlpha = 1;
     ctx.lineWidth = 1;
   }
-  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.fillStyle = "rgba(0,0,0,0.12)";
   ctx.beginPath();
   ctx.ellipse(px + 8, py + 22, 8, 3, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -863,42 +744,32 @@ function drawPerson(ox, oy, employee, sprite, now) {
   ctx.restore();
 
   const first = employee.name.split(" ")[0];
-  const at = sprite.at || "desk";
-  const verb =
-    sprite.pose === "walk"
-      ? `walking to ${at}`
-      : sprite.pose === "type"
-        ? `at ${at} · typing`
-        : sprite.pose === "talk"
-          ? `at ${at}`
-          : `at ${at}`;
+  const verb = verbFor(sprite.pose, sprite.at);
   ctx.font = "10px sans-serif";
   const plate = `${first}  ${employee.role}`;
   const tw = ctx.measureText(plate).width;
-  ctx.fillStyle = "#1b140e";
+  ctx.fillStyle = "#1d1d1f";
   ctx.fillRect(px + 8 - tw / 2 - 4, py + 28, tw + 8, 12);
-  ctx.fillStyle = color;
-  ctx.fillRect(px + 8 - tw / 2 - 4, py + 28, 3, 12);
-  ctx.fillStyle = "#f3eadc";
+  ctx.fillStyle = "#f5f5f7";
   ctx.fillText(plate, px + 8 - tw / 2 + 2, py + 37);
   ctx.font = "9px sans-serif";
   const vw = ctx.measureText(verb).width;
-  ctx.fillStyle = "rgba(27,20,14,0.78)";
+  ctx.fillStyle = "rgba(29,29,31,0.78)";
   ctx.fillRect(px + 8 - vw / 2 - 3, py - 18, vw + 6, 11);
-  ctx.fillStyle = "#e8d7b8";
+  ctx.fillStyle = "#f5f5f7";
   ctx.fillText(verb, px + 8 - vw / 2, py - 9);
 
   if (hoverId === employee.id) {
     const chip = `${employee.name.split(" ")[0]} · ${employee.model || employee.modelFamily}`;
     ctx.font = "10px sans-serif";
     const cw = ctx.measureText(chip).width;
-    ctx.fillStyle = "#22180f";
+    ctx.fillStyle = "#1d1d1f";
     ctx.fillRect(px - 4, py - 28, cw + 10, 14);
-    ctx.fillStyle = "#f3eadc";
+    ctx.fillStyle = "#f5f5f7";
     ctx.fillText(chip, px, py - 18);
     const rel = feelLine(employee.id);
     if (rel) {
-      ctx.fillStyle = "#c9b59a";
+      ctx.fillStyle = "#6e6e73";
       ctx.fillText(rel, px - 4, py - 32);
     }
   }
@@ -942,17 +813,17 @@ function drawBubble(ox, oy, now) {
   ctx.font = "11px sans-serif";
   const w = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 16;
   const h = 12 + lines.length * 12;
-  ctx.fillStyle = "#2a2118";
-  roundRect(0, 0, w, h, 6);
+  ctx.fillStyle = "#ffffff";
+  roundRect(0, 0, w, h, 5);
   ctx.fill();
-  ctx.strokeStyle = bubble.color || "#d7b07a";
+  ctx.strokeStyle = "#d2d2d7";
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(8, h);
   ctx.lineTo(4, h + 7);
   ctx.lineTo(16, h);
   ctx.fill();
-  ctx.fillStyle = "#f3eadc";
+  ctx.fillStyle = "#1d1d1f";
   lines.forEach((line, i) => ctx.fillText(line, 8, 14 + i * 12));
   ctx.restore();
   return true;
@@ -973,10 +844,10 @@ function draw(now) {
   const w = canvas.width / DPR;
   const h = canvas.height / DPR;
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "#120e0b";
+  ctx.fillStyle = "#ececee";
   ctx.fillRect(0, 0, w, h);
-  const ox = 20 + camera.x;
-  const oy = 16 + camera.y;
+  const ox = view.ox;
+  const oy = view.oy;
   drawOffice(ox, oy);
   const walking = stepSprites(now);
   for (const employee of state.employees || []) {
@@ -1007,7 +878,6 @@ function stepNeed(ts) {
   if ((state.paused || state.sleeping || state.replay || state.budget?.exhausted) && ts - lastReplay > 5500) {
     return true;
   }
-  if (Math.abs(camera.x - camera.tx) > 0.4 || Math.abs(camera.y - camera.ty) > 0.4) return true;
   return false;
 }
 
@@ -1016,8 +886,8 @@ canvas.addEventListener("mousemove", (event) => {
   const x = ((event.clientX - rect.left) / rect.width) * (canvas.width / DPR);
   const y = ((event.clientY - rect.top) / rect.height) * (canvas.height / DPR);
   hoverId = null;
-  const ox = 20 + camera.x;
-  const oy = 16 + camera.y;
+  const ox = view.ox;
+  const oy = view.oy;
   for (const employee of state.employees || []) {
     const sprite = state.sprites.get(employee.id);
     if (!sprite) continue;
@@ -1030,7 +900,7 @@ canvas.addEventListener("mouseleave", () => {
   hoverId = null;
 });
 
-canvas.addEventListener("click", (event) => {
+canvas.addEventListener("click", () => {
   const inspect = document.getElementById("inspect");
   const title = document.getElementById("inspect-title");
   const body = document.getElementById("inspect-body");

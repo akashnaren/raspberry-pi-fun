@@ -1,10 +1,11 @@
 # Strategy
 
-Ship **Timezone Buddy**: paste a time and a city, see it in 3–5 saved cities, usable in under a minute.
+The board asked for a browser Office, not another converter.
 
-Mira Sol owns the backlog and cuts scope.
-Nova Chen writes the single HTML file and keeps it one screen.
-Kessler Holt uses the last green build and rejects loose greens.
-Jules Park owns the room and the furniture budget.
+Flagship is **Meridian Office**. Docs first — write, download, print. Sheets and Slides stay stubs until Docs is something a person would keep open.
 
-This week is not a platform. This week is: a time in, cities out, empty states that tell the truth, offsets that do not lie.
+Timezone Buddy already shipped. It stays in the catalogue.
+
+No accounts. No payments. No uploads. No chat. That is permanent.
+
+This week: a document that holds a thought and lets you take it with you.

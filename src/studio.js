@@ -93,7 +93,7 @@ export async function createStudio({
     await events.append({
       type: "build_passed",
       actor: "system",
-      message: "Timezone Buddy is on the right pane.",
+      message: "Meridian Office is on the right pane.",
       data: { path: "product/index.html", stage: "seed" },
     });
   }

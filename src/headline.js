@@ -16,7 +16,8 @@ export function firstName(id, names = {}) {
 
 export function prettyPath(path) {
   const rel = String(path || "").replace(/^\/+/, "");
-  if (rel === "product/index.html") return "Timezone Buddy";
+  if (rel === "product/index.html") return "Meridian Office";
+  if (rel === "product/timezone-buddy.html") return "Timezone Buddy";
   if (rel.startsWith("product/")) return "the working copy";
   if (rel === "backlog.json") return "the backlog";
   if (rel === "office.json") return "the office layout";
@@ -41,12 +42,12 @@ export function headlineFor(event, names = {}) {
   switch (event.type) {
     case "world_started":
       return data.dryRun
-        ? "Meridian Desk opened in dry-run. The lights are on; nobody is spending."
-        : "Meridian Desk went live. The clock is running.";
+        ? "The office opened in dry-run. Lights on, nobody spending."
+        : "The office went live. The clock is running.";
     case "world_paused":
-      return "Meridian Desk paused. The room holds still.";
+      return "The office paused. The room holds still.";
     case "world_resumed":
-      return "Meridian Desk resumed. Someone will move.";
+      return "The office resumed. Someone will move.";
     case "budget_paused":
       return "token ceiling — world paused";
     case "turn_started":
@@ -72,7 +73,7 @@ export function headlineFor(event, names = {}) {
       return `${who}'s write did not go green.`;
     case "build_passed":
       return data.stage === "seed"
-        ? "Timezone Buddy is on the right pane."
+        ? "Meridian Office is on the right pane."
         : `${who} shipped a green build to the floor.`;
     case "model_resolved":
       return `${who} is provisioned on ${data.model || "a hosted model"}.`;

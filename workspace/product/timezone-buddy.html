@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Timezone Buddy</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f5f7;
+        --ink: #1d1d1f;
+        --muted: #6e6e73;
+        --card: #ffffff;
+        --line: #d2d2d7;
+        font-family: system-ui, -apple-system, "Segoe UI", "Liberation Sans", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100dvh; background: var(--bg); color: var(--ink); }
+      header {
+        display: flex; gap: 1.1rem; align-items: baseline;
+        padding: 0.7rem 1.1rem; border-bottom: 1px solid var(--line);
+      }
+      nav { display: flex; gap: 0.9rem; font-size: 0.8rem; }
+      nav a { color: var(--muted); text-decoration: none; }
+      nav a[aria-current="page"] { color: var(--ink); }
+      main { max-width: 40rem; margin: 0 auto; padding: 1.4rem 1.1rem 2rem; }
+      h1 { font-size: 1.25rem; font-weight: 500; margin: 0 0 0.25rem; }
+      .lede { color: var(--muted); margin: 0 0 1.1rem; }
+      label { display: block; font-size: 0.72rem; color: var(--muted); margin-bottom: 0.3rem; }
+      input, button {
+        font: inherit; width: 100%; padding: 0.55rem 0.6rem;
+        border: 1px solid var(--line); background: var(--card); color: var(--ink);
+      }
+      button { cursor: pointer; width: auto; }
+      button.ghost { background: transparent; }
+      .row { display: grid; gap: 0.7rem; margin-bottom: 0.85rem; }
+      @media (min-width: 640px) { .when { grid-template-columns: 1fr 1fr; } }
+      .pair { display: flex; gap: 0.4rem; }
+      .err { color: #9b1d1d; min-height: 1.15rem; margin: 0 0 0.6rem; }
+      .cards { display: grid; gap: 0.5rem; }
+      article {
+        background: var(--card); border: 1px solid var(--line);
+        padding: 0.7rem 0.8rem; display: grid; grid-template-columns: 1fr auto;
+        gap: 0.4rem; align-items: baseline;
+      }
+      article strong { font-size: 0.92rem; font-weight: 500; }
+      article span { color: var(--muted); font-size: 0.78rem; }
+      article b { font-variant-numeric: tabular-nums; font-weight: 500; }
+      footer { margin-top: 1.2rem; color: var(--muted); font-size: 0.78rem; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="./index.html">Docs</a>
+        <a href="./sheets.html">Sheets</a>
+        <a href="./slides.html">Slides</a>
+        <a href="./timezone-buddy.html" aria-current="page">Timezone Buddy</a>
+      </nav>
+    </header>
+    <main>
+      <h1>Timezone Buddy</h1>
+      <p class="lede">Paste a time and a city. See it in five saved places. Cities stay in this tab.</p>
+      <div class="row when">
+        <div>
+          <label for="when">Time</label>
+          <input id="when" type="text" placeholder="2026-09-21 09:30 or now" autocomplete="off" />
+        </div>
+        <div>
+          <label for="city">From city</label>
+          <input id="city" type="text" list="cities" placeholder="London, Tokyo, New York…" autocomplete="off" />
+          <datalist id="cities"></datalist>
+        </div>
+      </div>
+      <div class="pair">
+        <button id="now" class="ghost" type="button">Use now</button>
+        <button id="go" type="button">Convert</button>
+      </div>
+      <p id="err" class="err"></p>
+      <div id="cards" class="cards"></div>
+      <footer>Shipped earlier. Still here if you need it.</footer>
+    </main>
+    <script>
+      const ZONES = {
+        "utc": "UTC",
+        "london": "Europe/London",
+        "new york": "America/New_York",
+        "nyc": "America/New_York",
+        "los angeles": "America/Los_Angeles",
+        "la": "America/Los_Angeles",
+        "tokyo": "Asia/Tokyo",
+        "kolkata": "Asia/Kolkata",
+        "mumbai": "Asia/Kolkata",
+        "berlin": "Europe/Berlin",
+        "sydney": "Australia/Sydney",
+      };
+      const SAVED = [
+        { name: "London", tz: "Europe/London" },
+        { name: "New York", tz: "America/New_York" },
+        { name: "Tokyo", tz: "Asia/Tokyo" },
+        { name: "Kolkata", tz: "Asia/Kolkata" },
+        { name: "Los Angeles", tz: "America/Los_Angeles" },
+      ];
+      const when = document.getElementById("when");
+      const city = document.getElementById("city");
+      const err = document.getElementById("err");
+      const cards = document.getElementById("cards");
+      const list = document.getElementById("cities");
+      for (const name of Object.keys(ZONES)) {
+        const opt = document.createElement("option");
+        opt.value = name.replace(/\b\w/g, (ch) => ch.toUpperCase());
+        list.appendChild(opt);
+      }
+
+      function resolveZone(name) {
+        const key = String(name || "").trim().toLowerCase();
+        if (!key) return { error: "Type a city. Empty city is not UTC." };
+        if (!ZONES[key]) return { error: "Unknown city. Will not invent an offset." };
+        return { tz: ZONES[key] };
+      }
+
+      function parseWhen(value) {
+        const text = String(value || "").trim();
+        if (!text) return { error: "Paste a time, or press Use now." };
+        if (/^now$/i.test(text)) return { date: new Date() };
+        const normalized = text.includes("T") ? text : text.replace(" ", "T");
+        const date = new Date(normalized);
+        if (Number.isNaN(date.getTime())) return { error: "Could not read that time." };
+        return { date };
+      }
+
+      function fmt(date, tz) {
+        return new Intl.DateTimeFormat("en-GB", {
+          timeZone: tz,
+          weekday: "short",
+          day: "2-digit",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23",
+          timeZoneName: "shortOffset",
+        }).format(date);
+      }
+
+      function convert() {
+        cards.replaceChildren();
+        const parsed = parseWhen(when.value);
+        if (parsed.error) { err.textContent = parsed.error; return; }
+        const zone = resolveZone(city.value);
+        if (zone.error) { err.textContent = zone.error; return; }
+        err.textContent = "";
+        const source = fmt(parsed.date, zone.tz);
+        for (const place of SAVED) {
+          const article = document.createElement("article");
+          const left = document.createElement("div");
+          const strong = document.createElement("strong");
+          strong.textContent = place.name;
+          const span = document.createElement("span");
+          span.textContent = place.tz;
+          left.append(strong, document.createElement("br"), span);
+          const b = document.createElement("b");
+          b.textContent = fmt(parsed.date, place.tz);
+          article.append(left, b);
+          cards.appendChild(article);
+        }
+        const note = document.createElement("p");
+        note.style.color = "#6e6e73";
+        note.style.fontSize = "0.8rem";
+        note.textContent = "From " + city.value.trim() + " as " + source + ".";
+        cards.appendChild(note);
+      }
+
+      document.getElementById("go").addEventListener("click", convert);
+      document.getElementById("now").addEventListener("click", () => {
+        when.value = "now";
+        if (!city.value.trim()) city.value = "London";
+        convert();
+      });
+      when.addEventListener("keydown", (event) => { if (event.key === "Enter") convert(); });
+      city.addEventListener("keydown", (event) => { if (event.key === "Enter") convert(); });
+    </script>
+  </body>
+</html>

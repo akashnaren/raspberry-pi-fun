@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { opinionsFor, emptyMatrix } from "../src/relationships.js";
 import { REPO } from "./helpers.js";
 
-test("Meridian Desk cast lock: Nova, Kessler, Mira + Timezone Buddy", async () => {
+test("cast lock: Nova, Kessler, Mira, Jules — product is Meridian Office", async () => {
   const config = JSON.parse(await readFile(join(REPO, "studio.config.json"), "utf8"));
   assert.equal(config.studio.name, "Meridian Desk");
-  assert.equal(config.studio.product, "Timezone Buddy");
+  assert.equal(config.studio.product, "Meridian Office");
   const byId = Object.fromEntries(config.employees.map((person) => [person.id, person]));
   assert.equal(byId.nova.name, "Nova Chen");
   assert.equal(byId.nova.role, "programmer");
@@ -25,6 +25,8 @@ test("Meridian Desk cast lock: Nova, Kessler, Mira + Timezone Buddy", async () =
   assert.equal(byId.mira.accent || byId.mira.color, "#F59E0B");
   assert.equal(byId.mira.modelTier, "cheap-capable");
   assert.match(byId.mira.priorities, /scope creep/i);
+  assert.equal(byId.jules.name, "Jules Park");
+  assert.equal(byId.jules.role, "office_manager");
 
   assert.equal(byId.river, undefined);
   assert.equal(config.employees.some((person) => person.id === "river"), false);
@@ -55,29 +57,32 @@ test("Meridian Desk cast lock: Nova, Kessler, Mira + Timezone Buddy", async () =
   assert.equal(new Set([byId.nova.modelFamily, byId.mira.modelFamily, byId.kessler.modelFamily]).size, 3);
 
   const hud = await readFile(join(REPO, "public/index.html"), "utf8");
-  assert.match(hud, /id="model-chips"/);
-  assert.match(hud, /qwen\/qwen3-coder-next/);
-  assert.match(hud, /z-ai\/glm-5.3-flash/);
-  assert.match(hud, /nousresearch\/hermes-3-llama-3.1-70b/);
+  assert.match(hud, /id="event-line"/);
+  assert.match(hud, /id="acting"/);
+  assert.doesNotMatch(hud, /ticker-track|ticker-wrap|on-air|ON AIR|model-chips|Meridian Desk/);
   const officeJs = await readFile(join(REPO, "public/office.js"), "utf8");
-  assert.match(officeJs, /paintModelChips/);
   assert.match(officeJs, /employee\.model \|\| employee\.modelFamily/);
+  assert.match(officeJs, /destinationFor/);
+  assert.doesNotMatch(officeJs, /camera\.tx|tickerEl|onAir|paintModelChips|paintTicker/);
+  const css = await readFile(join(REPO, "public/office.css"), "utf8");
+  assert.doesNotMatch(css, /@keyframes crawl|ON AIR|\.on-air|\.ticker-track/);
 
   const office = JSON.parse(await readFile(join(REPO, "workspace/office.json"), "utf8"));
-  for (const id of ["nova", "kessler", "mira"]) {
+  for (const id of ["nova", "kessler", "mira", "jules"]) {
     const desk = office.desks.find((item) => item.owner === id);
     assert.ok(desk, `${id} desk`);
     assert.ok(desk.items.includes("monitor"));
     assert.ok(desk.items.includes("coffee_mug"));
     assert.ok(desk.items.includes("plant"));
   }
-  assert.ok(office.decor.some((item) => item.kind === "whiteboard" && /Timezone Buddy/.test(item.text)));
+  assert.ok(office.decor.some((item) => item.kind === "whiteboard" && /Meridian Office/.test(item.text)));
   assert.ok(office.rooms.some((room) => /break/i.test(room.name)));
   assert.ok(office.decor.some((item) => item.kind === "coffee"));
 
   const product = await readFile(join(REPO, "workspace/product/index.html"), "utf8");
-  assert.match(product, /Timezone Buddy/);
-  assert.doesNotMatch(product, /untitled|Stamp/i);
+  assert.match(product, /Meridian Office/);
+  assert.match(product, /contenteditable/);
+  assert.doesNotMatch(product, /sign up|create an account|checkout|stripe|chat box|live chat/i);
 
   const matrix = emptyMatrix();
   assert.equal(opinionsFor(matrix, "nova").find((item) => item.other === "kessler").score, -1);
