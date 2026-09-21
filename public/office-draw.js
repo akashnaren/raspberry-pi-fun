@@ -735,13 +735,14 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
     ctx.fill();
     ctx.fillRect(-8.4, -15, 16.8, 4.2);
     ctx.beginPath();
-    ctx.moveTo(6.2, -13);
-    ctx.quadraticCurveTo(16, -8, 14, 8);
-    ctx.quadraticCurveTo(10, 2, 7, -8);
+    ctx.moveTo(5.4, -14);
+    ctx.quadraticCurveTo(18, -10, 17, 10);
+    ctx.quadraticCurveTo(12, 12, 9, 6);
+    ctx.quadraticCurveTo(8, -2, 6, -10);
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = "#2a1a12";
-    ctx.fillRect(-6.4, -15.6, 5.2, 2.4);
+    ctx.fillRect(-6.8, -16, 6.4, 3);
   } else if (look.hairStyle === "shoulder_brown" || look.hairStyle === "long_wave" || look.face === "long-part") {
     ctx.beginPath();
     ctx.ellipse(0, -13.6, 8.8, 6.4, 0, Math.PI, 0);
