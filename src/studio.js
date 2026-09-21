@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createBudget } from "./budget.js";
@@ -5,6 +6,7 @@ import { createEventLog } from "./event-log.js";
 import { createKillSwitch } from "./kill-switch.js";
 import { fetchOpenRouterModels, resolveEmployeeModels } from "./models.js";
 import { resolveStudioMode, runwayHours } from "./mode.js";
+import { createDryRunDriver } from "./dry-run.js";
 import { createLlm } from "./openrouter.js";
 import { createOrchestrator } from "./orchestrator.js";
 import { createStudioServer } from "./server.js";
@@ -201,6 +203,15 @@ export async function createStudio({
     baseUrl: config.openrouter.base_url,
     fetchImpl,
     forceDryRun: config.mode.dryRun,
+    dryRunDriver: createDryRunDriver({
+      readProduct() {
+        try {
+          return readFileSync(join(workspaceRoot, "product/index.html"), "utf8");
+        } catch {
+          return "";
+        }
+      },
+    }),
   });
 
   const orchestrator = createOrchestrator({

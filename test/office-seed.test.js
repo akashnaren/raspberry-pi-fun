@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { FALLBACK_CAST, FALLBACK_OFFICE, seedSprites } from "../public/office-seed.js";
-import { lookOf } from "../public/office-draw.js";
+import { lookOf, windowSky } from "../public/office-draw.js";
+import { reconnectDelayMs } from "../public/office-net.js";
 import { validateOffice } from "../src/schemas.js";
 import { REPO } from "./helpers.js";
 
@@ -30,6 +31,8 @@ test("fallback office paints a room before any socket", async () => {
   }
   assert.ok(FALLBACK_OFFICE.decor.some((item) => item.kind === "window"));
   assert.ok(FALLBACK_OFFICE.decor.some((item) => item.kind === "plant"));
+  assert.ok(windowSky(false).top);
+  assert.notEqual(windowSky(false).top, windowSky(true).top);
   const looks = Object.fromEntries(FALLBACK_CAST.map((person) => [person.id, lookOf(person)]));
   assert.equal(looks.nova.topKind, "hoodie");
   assert.equal(looks.kessler.accessory, "glasses");
@@ -52,13 +55,19 @@ test("workspace office and fallback stay aligned on the load-bearing bits", asyn
   const hud = await readFile(join(REPO, "public/index.html"), "utf8");
   assert.match(hud, /Day 1/);
   assert.match(hud, /4 people/);
+  assert.match(hud, /id="pause-btn"/);
+  assert.match(hud, /class="kill"/);
+  assert.match(hud, /id="pause-note"/);
   assert.doesNotMatch(hud, /ticker|ON AIR|Meridian Desk/);
   const officeJs = await readFile(join(REPO, "public/office.js"), "utf8");
   assert.match(officeJs, /FALLBACK_OFFICE/);
   assert.match(officeJs, /hydrateFromHttp/);
   assert.match(officeJs, /\/api\/state/);
+  assert.match(officeJs, /reconnectDelayMs/);
+  assert.match(officeJs, /mergeStudioState/);
   assert.match(officeJs, /requestAnimationFrame\(loop\)/);
   const loopAt = officeJs.indexOf("requestAnimationFrame(loop)");
   const connectAt = officeJs.lastIndexOf("connect()");
   assert.ok(loopAt > 0 && connectAt > loopAt, "paint loop starts before websocket connect");
+  assert.equal(reconnectDelayMs(0) < reconnectDelayMs(3), true);
 });

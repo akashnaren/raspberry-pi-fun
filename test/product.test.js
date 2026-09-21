@@ -22,6 +22,9 @@ test("Meridian Office Docs is a green seed; Sheets/Slides are stubs; Timezone Bu
   assert.match(docs, /\.md/);
   assert.match(docs, /Morning notes/);
   assert.match(docs, /id="kept"/);
+  assert.match(docs, /id="save-md"/);
+  assert.match(docs, /function downloadMarkdown/);
+  assert.match(docs, /Ctrl\+S downloads \.md/);
   assert.match(docs, /Kept locally/);
   assert.doesNotMatch(docs, /AI assistant|auto-?write|generate copy|magic wand/i);
   const formatCmds = (docs.match(/data-cmd=|data-heading=/g) || []).length;

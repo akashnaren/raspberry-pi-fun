@@ -26,13 +26,15 @@ The display is a quiet split screen. Thin chrome. The office canvas is the hero 
 
 | Zone | What you see |
 | --- | --- |
-| Top bar | Small type: **Day N · 4 people · $x / $5 · who’s acting**. No wordmark, no ON AIR, no ticker crawl. |
+| Top bar | Small type: **Day N · 4 people · $x / $5 · who’s acting**. **pause** is the one underlined control. No wordmark, no ON AIR, no ticker crawl. |
 | Left ~56% | Locked-frame office: plank floors, windows, plants, four dressed people. Walk and speech bubble only when an event happens. One static event line under the room. |
 | Right ~44% | Last **green** `dist/` iframe — Meridian Office Docs. Cream paper, never Timezone Buddy. Open-in-new-tab for Connect. |
 
 A stranger should, after five minutes, name the people, Meridian Office, whether we are under $5, and whether they would leave it on.
 
-The office is a dollhouse of `office.json`: desks, break room, meeting table, coffee, couch, whiteboard, windows, plants. The camera is fixed to the room — no pan, no follow-cam. Sprites walk the A* path to a real object — never abstractly “thinking.” `say()` is a tailed bubble. Objects advertise (plan / hang out / break / review). Click a person or the board to inspect. Relationship scores move on reject and on a green ship.
+The office is a dollhouse of `office.json`: desks, break room, meeting table, coffee, couch, whiteboard, windows with light on the floor, shadows, a little desk clutter. The camera is fixed to the room — no pan, no follow-cam. Sprites walk the A* path to a real object — never abstractly “thinking.” `say()` is a tailed bubble. Objects advertise (plan / hang out / break / review). Click a person or the board to inspect. Relationship scores move on reject and on a green ship.
+
+Dry-run is a short day, not a loop of the same line: Nova ships a Docs tweak (`Ctrl+S` downloads `.md`) into the green seed, Kessler files a bug note, Mira sets the backlog, Jules tidies a plant / the board / Mira's stickies. Soundtrack stays **off** — no sample files on a 905MiB Pi.
 
 `data/events.jsonl` survives a dirty shutdown. Bad lines (null bytes, half-written JSON) are skipped and copied to `data/events.jsonl.corrupt` so `ai-studio.service` does not crash after a power cut.
 
@@ -176,9 +178,11 @@ Nothing in `workspace/` may read these. Employees never see the key. Production 
 Pauses the world. Does not delete the log. The office dims and slowly **replays** the last events so Connect still looks like a room.
 
 - Phone / bookmark: `http://127.0.0.1:8787/kill`
-- Button on the HUD
+- Underlined **pause** on the quiet HUD (becomes **resume**; a small “paused — replay” note sits on the room)
 - `POST /api/pause` and `POST /api/resume`
 - Presence of `data/PAUSED`
+
+If `/api/state` fails, the seed office still paints. The websocket reconnects with exponential backoff (1s, 2s, 4s… cap 30s).
 
 `say()` is stripped of markup and capped to two short lines before it becomes a canvas bubble. Combined with the kill switch that is the Stage 1 output filter.
 

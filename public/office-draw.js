@@ -126,27 +126,64 @@ function drawTiles(ctx, rx, ry, rw, rh, cell, tone) {
   }
 }
 
+export function windowSky(dim) {
+  return dim
+    ? { top: "#2a3340", mid: "#3d4a3a", bottom: "#4a3a28" }
+    : { top: "#8eb4c8", mid: "#c5d8c8", bottom: "#f0d2a0" };
+}
+
 function drawWindow(ctx, x, y, w, h, dim) {
-    const glow = ctx.createLinearGradient(x, y, x, y + h + 80);
-  glow.addColorStop(0, dim ? "rgba(255,196,110,0.16)" : "rgba(255,210,130,0.42)");
-  glow.addColorStop(1, "rgba(255,196,110,0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(x - 10, y, w + 20, h + 88);
-  ctx.fillStyle = "#1a2230";
+  const sky = windowSky(dim);
+  const glass = ctx.createLinearGradient(x, y, x, y + h);
+  glass.addColorStop(0, sky.top);
+  glass.addColorStop(0.45, sky.mid);
+  glass.addColorStop(1, sky.bottom);
+  ctx.fillStyle = "#3a2a1c";
+  roundRect(ctx, x - 3, y - 3, w + 6, h + 8, 3);
+  ctx.fill();
+  ctx.fillStyle = glass;
   roundRect(ctx, x, y, w, h, 2);
   ctx.fill();
-  ctx.fillStyle = dim ? "#3d4a3a" : "#6b8a6a";
-  ctx.fillRect(x + 3, y + 3, w / 2 - 5, h - 6);
-  ctx.fillStyle = dim ? "#2e3a48" : "#7a9aaa";
-  ctx.fillRect(x + w / 2 + 1, y + 3, w / 2 - 5, h - 6);
+  ctx.fillStyle = dim ? "rgba(20,16,12,0.28)" : "rgba(255,236,200,0.16)";
+  ctx.fillRect(x + 3, y + 3, w / 2 - 5, h * 0.42);
   ctx.strokeStyle = "#c4b08a";
   ctx.lineWidth = 2;
   ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
   ctx.beginPath();
   ctx.moveTo(x + w / 2, y + 2);
   ctx.lineTo(x + w / 2, y + h - 2);
+  ctx.moveTo(x + 2, y + h / 2);
+  ctx.lineTo(x + w - 2, y + h / 2);
   ctx.stroke();
+  ctx.fillStyle = "#6b5340";
+  ctx.fillRect(x - 2, y + h - 2, w + 4, 5);
   ctx.lineWidth = 1;
+}
+
+function drawWindowLight(ctx, ox, oy, cell, item, dim) {
+  const x = ox + item.x * cell;
+  const y = oy + item.y * cell;
+  const w = (item.w || 2) * cell;
+  const tall = (item.h || 1) > 1;
+  const reach = cell * (tall ? 3.2 : 4.4);
+  const wash = ctx.createLinearGradient(x, y, x, y + reach);
+  wash.addColorStop(0, dim ? "rgba(255,196,110,0.1)" : "rgba(255,220,150,0.28)");
+  wash.addColorStop(1, "rgba(255,196,110,0)");
+  ctx.fillStyle = wash;
+  ctx.beginPath();
+  ctx.moveTo(x + 4, y + 6);
+  ctx.lineTo(x + w - 4, y + 6);
+  ctx.lineTo(x + w + cell * 0.55, y + reach);
+  ctx.lineTo(x - cell * 0.35, y + reach);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawFloorShadow(ctx, x, y, rx, ry) {
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawPlant(ctx, x, y, scale, sway = 0) {
@@ -204,6 +241,10 @@ export function drawOffice(ctx, { office, employees, ox, oy, cell, dim }) {
     ctx.fillText(room.name, rx + 10, ry + 20);
   }
 
+  for (const item of office.decor || []) {
+    if (item.kind === "window") drawWindowLight(ctx, ox, oy, cell, item, dim);
+  }
+
   for (const lamp of office.decor || []) {
     if (lamp.kind !== "lamp") continue;
     const lx = ox + lamp.x * cell + cell * 0.35;
@@ -238,10 +279,7 @@ function drawDesk(ctx, ox, oy, cell, desk, employees) {
   const y = oy + desk.y * cell;
   const west = desk.facing === "west";
   const u = cell;
-  ctx.fillStyle = "rgba(0,0,0,0.32)";
-  ctx.beginPath();
-  ctx.ellipse(x + u * 1.1, y + u * 1.62, u * 1.2, u * 0.18, 0, 0, Math.PI * 2);
-  ctx.fill();
+  drawFloorShadow(ctx, x + u * 1.1, y + u * 1.64, u * 1.28, u * 0.2);
 
   ctx.fillStyle = "#3a2a20";
   ctx.fillRect(x + u * 0.12, y + u * 1.12, u * 0.14, u * 0.4);
@@ -303,6 +341,20 @@ function drawDesk(ctx, ox, oy, cell, desk, employees) {
   }
   const owner = (employees || []).find((person) => person.id === desk.owner);
   const style = owner?.aesthetics?.desk_style || "";
+  ctx.fillStyle = "#efe6d2";
+  ctx.fillRect(x + u * 1.52, y + u * 0.86, u * 0.42, u * 0.3);
+  ctx.fillStyle = "#e4d4b4";
+  ctx.fillRect(x + u * 1.58, y + u * 0.9, u * 0.36, u * 0.26);
+  ctx.fillStyle = "#3a2a20";
+  ctx.fillRect(x + u * 0.48, y + u * 0.86, u * 0.28, u * 0.05);
+  if (items.includes("sticky_notes") || /kanban|sticky/i.test(style)) {
+    ctx.fillStyle = "#e6d36a";
+    ctx.fillRect(x + u * 1.22, y + u * 0.7, u * 0.2, u * 0.18);
+    ctx.fillStyle = "#f97316";
+    ctx.fillRect(x + u * 1.38, y + u * 0.64, u * 0.18, u * 0.16);
+    ctx.fillStyle = "#14B8A6";
+    ctx.fillRect(x + u * 1.3, y + u * 0.82, u * 0.16, u * 0.14);
+  }
   if (/messy|cable|sticker/i.test(style)) {
     ctx.strokeStyle = "#8e8e93";
     ctx.lineWidth = Math.max(1, u * 0.04);
@@ -312,6 +364,10 @@ function drawDesk(ctx, ox, oy, cell, desk, employees) {
     ctx.stroke();
     ctx.fillStyle = "#F97316";
     ctx.fillRect(x + u * 1.05, y + u * 0.72, u * 0.16, u * 0.14);
+  }
+  if (/neat|label/i.test(style)) {
+    ctx.fillStyle = "#e8e0d2";
+    ctx.fillRect(x + u * 1.7, y + u * 0.7, u * 0.28, u * 0.1);
   }
   const tag = (owner?.name || desk.owner).split(" ")[0];
   ctx.font = `600 ${Math.max(11, Math.round(u * 0.32))}px system-ui, sans-serif`;
@@ -355,6 +411,7 @@ function drawDecor(ctx, ox, oy, cell, item, dim) {
     }
     if (line && row < 2) ctx.fillText(line, x + 6, y + 16 + row * 13);
   } else if (item.kind === "coffee") {
+    drawFloorShadow(ctx, x + cell * 0.6, y + cell * 1.28, cell * 0.62, cell * 0.12);
     ctx.fillStyle = "#2c2c2e";
     roundRect(ctx, x, y, cell * 1.2, cell * 1.25, 4);
     ctx.fill();
@@ -365,6 +422,7 @@ function drawDecor(ctx, ox, oy, cell, item, dim) {
     ctx.fillStyle = "#e8dfd2";
     ctx.fillRect(x + cell * 0.72, y + cell * 0.72, cell * 0.22, cell * 0.28);
   } else if (item.kind === "couch") {
+    drawFloorShadow(ctx, x + cell * 1.28, y + cell * 1.22, cell * 1.35, cell * 0.16);
     ctx.fillStyle = "#4a3f36";
     roundRect(ctx, x, y, cell * 2.55, cell * 1.2, 6);
     ctx.fill();
@@ -418,10 +476,7 @@ function drawDecor(ctx, ox, oy, cell, item, dim) {
     ctx.fillStyle = "#d4af37";
     ctx.fillRect(x + cell * 0.88, y + cell * 0.24, cell * 0.1, cell * 0.1);
   } else if (item.kind === "table") {
-    ctx.fillStyle = "rgba(0,0,0,0.22)";
-    ctx.beginPath();
-    ctx.ellipse(x + cell * 1.6, y + cell * 1.75, cell * 1.5, cell * 0.18, 0, 0, Math.PI * 2);
-    ctx.fill();
+    drawFloorShadow(ctx, x + cell * 1.6, y + cell * 1.78, cell * 1.55, cell * 0.2);
     ctx.fillStyle = "#8a6d4e";
     roundRect(ctx, x, y, cell * 3.2, cell * 1.7, 6);
     ctx.fill();

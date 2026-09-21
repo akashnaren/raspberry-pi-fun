@@ -10,6 +10,7 @@ import {
 } from "./office-motion.js";
 import { FALLBACK_CAST, FALLBACK_OFFICE, seedSprites } from "./office-seed.js";
 import { drawBubble, drawOffice, drawPerson, fillVoid } from "./office-draw.js";
+import { mergeStudioState, parseSocketMessage, reconnectDelayMs } from "./office-net.js";
 
 const canvas = document.getElementById("office");
 const ctx = canvas.getContext("2d");
@@ -28,6 +29,7 @@ const productTitle = document.getElementById("product-title");
 const officePane = document.getElementById("office-pane");
 const buildingPulse = document.getElementById("building-pulse");
 const eventLine = document.getElementById("event-line");
+const pauseNote = document.getElementById("pause-note");
 
 let CELL = 30;
 const DPR = 1;
@@ -61,26 +63,41 @@ let replayIndex = 0;
 let lastReplay = 0;
 let lastEventText = "";
 
+let wsAttempt = 0;
+let httpAttempt = 0;
+
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${proto}://${location.host}/ws`);
+  socket.addEventListener("open", () => {
+    wsAttempt = 0;
+  });
   socket.addEventListener("message", (event) => {
-    const msg = JSON.parse(event.data);
+    const msg = parseSocketMessage(event.data);
+    if (!msg) return;
     if (msg.type === "hello" || msg.type === "event" || msg.type === "replay") {
       applyState(msg.state, msg.event);
     }
     if (msg.type === "validate") runValidation(socket, msg);
   });
-  socket.addEventListener("close", () => setTimeout(connect, 1500));
+  socket.addEventListener("close", () => {
+    const wait = reconnectDelayMs(wsAttempt);
+    wsAttempt += 1;
+    setTimeout(connect, wait);
+  });
 }
 
 async function hydrateFromHttp() {
   try {
     const res = await fetch("/api/state");
-    if (!res.ok) return;
+    if (!res.ok) throw new Error(`state ${res.status}`);
     applyState(await res.json());
+    httpAttempt = 0;
   } catch {
-    // Room already exists from FALLBACK_OFFICE. Socket can catch up.
+    // Room already exists from FALLBACK_OFFICE. Retry with backoff.
+    const wait = reconnectDelayMs(httpAttempt);
+    httpAttempt += 1;
+    setTimeout(hydrateFromHttp, wait);
   }
 }
 
@@ -88,9 +105,9 @@ function applyState(next, event) {
   if (!next) return;
   const sprites = state.sprites;
   const startedAt = state.startedAt;
-  state = { ...state, ...next, sprites, startedAt };
-  if (!state.office) state.office = FALLBACK_OFFICE;
-  if (!state.employees?.length) state.employees = FALLBACK_CAST;
+  state = mergeStudioState({ ...state, sprites, startedAt }, next, FALLBACK_OFFICE, FALLBACK_CAST);
+  state.sprites = sprites;
+  state.startedAt = startedAt;
   const hud = next.hud || {};
   const used = next.budget?.spentUsd ?? hud.burnUsd ?? 0;
   const cap = next.budget?.ceilingUsd || hud.ceilingUsd || 5;
@@ -114,10 +131,13 @@ function applyState(next, event) {
   const mode = next.mode || (next.dryRun ? "dry-run" : "live");
   modeBadge.textContent = mode;
   document.body.classList.toggle("sleeping", sleeping);
+  document.body.classList.toggle("paused", Boolean(next.paused) && !sleeping);
   document.body.classList.toggle("lite", Boolean(next.lite) || new URLSearchParams(location.search).has("lite"));
   pauseBadge.classList.toggle("hidden", !next.paused || sleeping);
   sleepBadge.classList.toggle("hidden", !sleeping);
+  if (pauseNote) pauseNote.classList.toggle("hidden", !next.paused || sleeping);
   pauseBtn.textContent = next.paused ? "resume" : "pause";
+  pauseBtn.setAttribute("aria-label", next.paused ? "Resume the office" : "Pause the office");
   paintEventLine(next.events || []);
   if (event) react(event);
   if (event?.type === "build_passed") product.src = `/dist/index.html?t=${event.ts}`;

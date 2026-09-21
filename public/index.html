@@ -19,15 +19,16 @@
       </p>
       <div class="hud-tools">
         <span id="mode-badge">dry-run</span>
-        <span id="pause-badge" class="hidden">paused</span>
         <span id="sleep-badge" class="hidden">asleep</span>
-        <button id="sound-btn" type="button" aria-pressed="false">sound off</button>
-        <button id="pause-btn" type="button">pause</button>
+        <button id="sound-btn" type="button" aria-pressed="false" title="Optional. Off by default.">sound off</button>
+        <span id="pause-badge" class="hidden" aria-live="polite">paused</span>
+        <button id="pause-btn" type="button" class="kill" title="Pause the world. Does not delete the log." aria-label="Pause the office">pause</button>
       </div>
     </header>
     <main class="split">
       <section class="pane office-pane" id="office-pane" aria-label="Office">
         <p id="building-pulse" class="note hidden">writing</p>
+        <p id="pause-note" class="note hidden">paused — replay</p>
         <aside id="inspect" class="inspect hidden">
           <strong id="inspect-title"></strong>
           <code id="inspect-model" class="inspect-model"></code>

@@ -77,6 +77,19 @@ body.sleeping { filter: saturate(0.82) brightness(0.88); }
 
 .hud-tools button:hover { color: var(--muted); }
 
+#pause-btn.kill {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+#pause-btn.kill:hover { color: var(--muted); }
+
+#pause-badge:not(.hidden) {
+  color: var(--ink);
+}
+
 .hidden { display: none; }
 
 .split {
@@ -111,6 +124,11 @@ body.sleeping { filter: saturate(0.82) brightness(0.88); }
   margin: 0;
   font-size: 0.7rem;
   color: var(--muted);
+}
+
+#pause-note {
+  left: auto;
+  right: 1rem;
 }
 
 .inspect {

@@ -79,6 +79,7 @@
         padding: 0.35rem 1rem; border-top: 1px solid var(--line);
         color: #9a8f80; font-size: 0.7rem; font-family: var(--ui);
       }
+      #save-md { color: #c4b8a8; }
       @media print {
         header, .format, footer, .stage { display: none; }
         body, main { background: #fff; color: #111; box-shadow: none; width: auto; }
@@ -109,7 +110,7 @@
         </div>
         <input id="title" type="text" maxlength="140" value="Morning notes — Meridian Office" aria-label="Document title" />
         <div id="body" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Document">
-          <p>Write here. This tab keeps the page on this machine. Download when you want a file.</p>
+          <p>Write here. Ctrl+S writes a .md. Download is a file, not a tab.</p>
           <h2>What ships</h2>
           <ul>
             <li>Docs first: edit, keep, take with you as .html or .md.</li>
@@ -123,6 +124,7 @@
     </div>
     <footer>
       <span id="count">0 words</span>
+      <span id="save-md">Ctrl+S downloads .md</span>
       <span id="kept">Local only. Last green build.</span>
     </footer>
     <script>
@@ -221,9 +223,12 @@
           btn.setAttribute("aria-pressed", on ? "true" : "false");
         }
       }
-      document.getElementById("download-md").addEventListener("click", function () {
+      function downloadMarkdown() {
         const md = "# " + title.value.trim() + "\n\n" + htmlToMarkdown(body);
         download(fileBase() + ".md", "text/markdown;charset=utf-8", md);
+      }
+      document.getElementById("download-md").addEventListener("click", function () {
+        downloadMarkdown();
       });
       document.getElementById("download-html").addEventListener("click", function () {
         const html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>" +
@@ -246,6 +251,11 @@
       document.addEventListener("keydown", function (event) {
         const key = event.key.toLowerCase();
         if (!(event.metaKey || event.ctrlKey)) return;
+        if (key === "s") {
+          event.preventDefault();
+          downloadMarkdown();
+          return;
+        }
         if (key === "b" || key === "i") {
           event.preventDefault();
           body.focus();
