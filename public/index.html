@@ -3,38 +3,41 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Fishbowl — AI Studio</title>
+    <title>Meridian Desk</title>
     <link rel="stylesheet" href="/office.css" />
   </head>
   <body>
     <header class="hud">
       <div class="hud-brand">
-        <span class="mark">FB</span>
+        <span class="mark">MD</span>
         <div>
-          <strong id="studio-name">Fishbowl</strong>
-          <span id="product-name">Stamp</span>
+          <strong id="studio-name">Meridian Desk</strong>
+          <span id="product-name">Timezone Buddy</span>
         </div>
       </div>
-      <dl class="hud-stats">
-        <div><dt>day</dt><dd id="day-num">1</dd></div>
-        <div><dt>staff</dt><dd id="headcount">3</dd></div>
-        <div><dt>today</dt><dd id="budget">$5.00 left</dd></div>
-      </dl>
+      <div class="burn" title="Hard daily API ceiling">
+        <span>burn</span>
+        <div class="burn-track"><i id="burn-bar"></i></div>
+        <b id="budget">$0 / $5</b>
+      </div>
+      <p id="acting" class="acting">waiting for someone to act</p>
       <div class="hud-flags">
+        <span id="on-air" class="on-air hidden">ON AIR</span>
         <span id="mode-badge" class="badge">dry-run</span>
         <span id="pause-badge" class="badge hidden">paused</span>
         <button id="pause-btn" type="button">Pause</button>
       </div>
     </header>
-    <p id="ticker" class="ticker">waiting for the first event</p>
+    <div class="ticker-wrap" aria-label="studio ticker">
+      <div id="ticker" class="ticker-track">waiting for the first event</div>
+    </div>
     <main class="split">
       <section class="pane office-pane" aria-label="Office">
         <canvas id="office" width="720" height="640"></canvas>
-        <aside id="speech" class="speech" hidden></aside>
       </section>
       <section class="pane product-pane" aria-label="Last green build">
         <div class="pane-label">last green build · dist/</div>
-        <iframe id="product" title="Stamp" src="/dist/index.html" sandbox="allow-scripts allow-same-origin"></iframe>
+        <iframe id="product" title="Timezone Buddy" src="/dist/index.html" sandbox="allow-scripts allow-same-origin"></iframe>
       </section>
     </main>
     <iframe id="validator" class="hidden-frame" title="build validator" sandbox="allow-scripts allow-same-origin"></iframe>

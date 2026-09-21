@@ -1,17 +1,22 @@
 const canvas = document.getElementById("office");
 const ctx = canvas.getContext("2d");
-const ticker = document.getElementById("ticker");
-const speech = document.getElementById("speech");
+const tickerEl = document.getElementById("ticker");
 const product = document.getElementById("product");
 const validator = document.getElementById("validator");
 const pauseBtn = document.getElementById("pause-btn");
 const pauseBadge = document.getElementById("pause-badge");
 const modeBadge = document.getElementById("mode-badge");
-const dayNum = document.getElementById("day-num");
-const headcount = document.getElementById("headcount");
+const onAir = document.getElementById("on-air");
+const actingEl = document.getElementById("acting");
 const budgetEl = document.getElementById("budget");
+const burnBar = document.getElementById("burn-bar");
 
-const CELL = 28;
+const CELL = 26;
+const DPR = 1;
+const ENTER = 220;
+const HOLD = 4200;
+const FADE = 700;
+
 let state = {
   office: null,
   employees: [],
@@ -19,9 +24,16 @@ let state = {
   sprites: new Map(),
   dryRun: true,
   paused: false,
+  budget: null,
+  acting: null,
+  relationships: null,
   startedAt: Date.now(),
 };
-let bubbles = [];
+let bubble = null;
+let hoverId = null;
+let lastDraw = 0;
+let replayIndex = 0;
+let lastReplay = 0;
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -43,78 +55,224 @@ function applyState(next, event) {
     document.getElementById("studio-name").textContent = next.studio.name;
     document.getElementById("product-name").textContent = next.studio.product;
   }
-  headcount.textContent = String((next.employees || []).length);
   if (next.budget) {
-    const left = next.budget.remainingUsd;
-    budgetEl.textContent = `$${left.toFixed(2)} left`;
+    const used = next.budget.spentUsd;
+    const cap = next.budget.ceilingUsd || 5;
+    budgetEl.textContent = `$${used.toFixed(2)} / $${cap.toFixed(0)}`;
+    burnBar.style.width = `${Math.min(100, (used / cap) * 100)}%`;
   }
   modeBadge.textContent = next.dryRun ? "dry-run" : "live";
   modeBadge.classList.toggle("live", !next.dryRun);
-  pauseBadge.classList.toggle("hidden", !next.paused);
+  onAir.classList.toggle("hidden", Boolean(next.dryRun) || Boolean(next.paused) || Boolean(next.budget?.exhausted));
+  pauseBadge.classList.toggle("hidden", !next.paused && !next.budget?.exhausted);
+  pauseBadge.textContent = next.budget?.exhausted ? "ceiling" : "paused";
   pauseBtn.textContent = next.paused ? "Resume" : "Pause";
-  if (next.events?.length) {
-    ticker.textContent = next.events
-      .slice()
-      .reverse()
-      .map((item) => item.message)
-      .slice(0, 4)
-      .join("  ·  ");
-  }
+  paintTicker(next.events || []);
+  paintActing(next);
   if (event) react(event);
-  if (event?.type === "build_passed") {
-    product.src = `/dist/index.html?t=${event.ts}`;
-  }
+  if (event?.type === "build_passed") product.src = `/dist/index.html?t=${event.ts}`;
   syncSprites();
+}
+
+function paintTicker(events) {
+  const lines = events
+    .filter((item) => !["model_resolved", "turn_finished"].includes(item.type))
+    .map((item) => item.headline || item.message)
+    .filter(Boolean);
+  const crawl = lines.slice(-12).join("     ·     ");
+  tickerEl.textContent = crawl ? `${crawl}     ·     ${crawl}` : "the office is quiet";
+}
+
+function paintActing(next) {
+  if (next.budget?.exhausted) {
+    actingEl.textContent = "daily ceiling hit — lights down until tomorrow";
+    return;
+  }
+  if (next.paused) {
+    actingEl.textContent = "paused — replaying the last hour of events";
+    return;
+  }
+  const acting = next.acting;
+  if (!acting) {
+    actingEl.textContent = "waiting for someone to act";
+    return;
+  }
+  const where = placeLabel(acting.id);
+  actingEl.textContent = `${acting.name} is acting — ${where}`;
+}
+
+function placeLabel(id) {
+  const sprite = state.sprites.get(id);
+  if (!sprite?.at) return "at their desk";
+  if (sprite.at === "whiteboard") return "at the whiteboard";
+  if (sprite.at === "coffee") return "at the coffee machine";
+  if (sprite.at === "lab") return "in the lab";
+  if (sprite.at === "couch") return "on the break-room couch";
+  return "at their desk";
 }
 
 function deskFor(id) {
   return (state.office?.desks || []).find((desk) => desk.owner === id);
 }
 
-function syncSprites() {
-  for (const employee of state.employees || []) {
-    const desk = deskFor(employee.id);
-    if (!state.sprites.has(employee.id)) {
-      state.sprites.set(employee.id, {
-        x: (desk?.x ?? 4) + 0.4,
-        y: (desk?.y ?? 4) + 1.2,
-        tx: (desk?.x ?? 4) + 0.4,
-        ty: (desk?.y ?? 4) + 1.2,
-        pulse: 0,
-      });
-    }
-  }
+function standAtDesk(desk) {
+  if (!desk) return { x: 4, y: 6 };
+  return { x: desk.x + 1, y: desk.y + 2 };
+}
+
+function decor(kind) {
+  return (state.office?.decor || []).find((item) => item.kind === kind);
 }
 
 function targetFor(event) {
   const office = state.office;
-  if (!office) return null;
+  if (!office || event.actor === "system") return null;
   if (event.type === "task_added" || event.type === "task_closed") {
-    const board = (office.decor || []).find((item) => item.kind === "whiteboard");
-    if (board) return { x: board.x + 0.4, y: board.y + 1.2 };
+    const board = decor("whiteboard");
+    if (board) return { x: board.x + 2, y: board.y + 2, at: "whiteboard" };
+  }
+  if (event.type === "build_failed") {
+    const lab = (office.rooms || []).find((room) => room.name === "lab");
+    if (lab) return { x: lab.x + 3, y: lab.y + 2, at: "lab" };
+  }
+  if (event.type === "say" && /coffee|break/i.test(event.data?.text || "")) {
+    const coffee = decor("coffee");
+    if (coffee) return { x: coffee.x + 1, y: coffee.y + 1, at: "coffee" };
   }
   const desk = deskFor(event.actor);
-  if (desk) return { x: desk.x + 0.4, y: desk.y + 1.2 };
-  return null;
+  const stand = standAtDesk(desk);
+  return { ...stand, at: "desk" };
+}
+
+function poseFor(event) {
+  if (event.type === "file_written" || event.type === "file_read" || event.type === "journal") return "type";
+  if (event.type === "say") return "talk";
+  return "idle";
+}
+
+function syncSprites() {
+  for (const employee of state.employees || []) {
+    const stand = standAtDesk(deskFor(employee.id));
+    if (!state.sprites.has(employee.id)) {
+      state.sprites.set(employee.id, {
+        x: stand.x,
+        y: stand.y,
+        path: [],
+        pose: "idle",
+        facing: 1,
+        frame: 0,
+        at: "desk",
+        active: 0,
+      });
+    }
+  }
 }
 
 function react(event) {
   const sprite = state.sprites.get(event.actor);
   const target = targetFor(event);
   if (sprite && target) {
-    sprite.tx = target.x;
-    sprite.ty = target.y;
-    sprite.pulse = 1;
+    const path = findPath(state.office, { x: Math.round(sprite.x), y: Math.round(sprite.y) }, target);
+    sprite.path = path;
+    sprite.at = target.at;
+    sprite.pose = path.length ? "walk" : poseFor(event);
+    sprite.wantPose = poseFor(event);
+    sprite.active = 1;
+  }
+  for (const [id, other] of state.sprites) {
+    if (id !== event.actor) other.active = Math.max(0, other.active - 0.4);
   }
   if (event.type === "say" && event.data?.text) {
-    bubbles = [
-      { actor: event.actor, text: event.data.text, until: Date.now() + 8000 },
-      ...bubbles.filter((item) => item.actor !== event.actor),
-    ].slice(0, 3);
-    const who = (state.employees || []).find((person) => person.id === event.actor);
-    speech.hidden = false;
-    speech.textContent = `${who?.name || event.actor}: ${event.data.text}`;
+    bubble = {
+      actor: event.actor,
+      lines: wrapTwo(event.data.text),
+      born: Date.now(),
+    };
   }
+}
+
+function wrapTwo(text, width = 34) {
+  const words = String(text).split(/\s+/);
+  const lines = [""];
+  for (const word of words) {
+    const next = lines[lines.length - 1] ? `${lines[lines.length - 1]} ${word}` : word;
+    if (next.length > width) {
+      if (lines.length === 2) {
+        lines[1] = `${lines[1].slice(0, width - 1)}…`;
+        break;
+      }
+      lines.push(word);
+    } else {
+      lines[lines.length - 1] = next;
+    }
+  }
+  return lines.slice(0, 2);
+}
+
+function blockedSet(office) {
+  const blocked = new Set();
+  for (const desk of office.desks || []) {
+    blocked.add(`${desk.x},${desk.y}`);
+    blocked.add(`${desk.x + 1},${desk.y}`);
+  }
+  for (const item of office.decor || []) {
+    if (item.kind === "rug") continue;
+    const w = item.w || (item.kind === "whiteboard" ? 4 : 1);
+    const h = item.h || 1;
+    for (let x = item.x; x < item.x + w; x += 1) {
+      for (let y = item.y; y < item.y + h; y += 1) {
+        blocked.add(`${x},${y}`);
+      }
+    }
+  }
+  return blocked;
+}
+
+function inRooms(office, x, y) {
+  return (office.rooms || []).some(
+    (room) => x >= room.x && y >= room.y && x < room.x + room.w && y < room.y + room.h,
+  );
+}
+
+function findPath(office, start, goal) {
+  if (!office) return [goal];
+  const blocked = blockedSet(office);
+  const startKey = `${start.x},${start.y}`;
+  const goalKey = `${goal.x},${goal.y}`;
+  blocked.delete(goalKey);
+  blocked.delete(startKey);
+  const open = [{ x: start.x, y: start.y, g: 0, f: 0, from: null }];
+  const seen = new Set([startKey]);
+  const dirs = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ];
+  while (open.length) {
+    open.sort((a, b) => a.f - b.f);
+    const cur = open.shift();
+    if (cur.x === goal.x && cur.y === goal.y) {
+      const path = [];
+      let node = cur;
+      while (node) {
+        path.push({ x: node.x, y: node.y });
+        node = node.from;
+      }
+      return path.reverse().slice(1);
+    }
+    for (const [dx, dy] of dirs) {
+      const nx = cur.x + dx;
+      const ny = cur.y + dy;
+      const key = `${nx},${ny}`;
+      if (seen.has(key)) continue;
+      if (!inRooms(office, nx, ny) || blocked.has(key)) continue;
+      seen.add(key);
+      const h = Math.abs(nx - goal.x) + Math.abs(ny - goal.y);
+      open.push({ x: nx, y: ny, g: cur.g + 1, f: cur.g + 1 + h, from: cur });
+    }
+  }
+  return [goal];
 }
 
 function runValidation(socket, msg) {
@@ -130,15 +288,8 @@ function runValidation(socket, msg) {
   validator.onload = () => {
     try {
       const doc = validator.contentDocument;
-      if (!doc || !doc.documentElement) {
-        finish(false, "empty document");
-        return;
-      }
-      const err = doc.querySelector("parsererror");
-      if (err) {
-        finish(false, "parsererror");
-        return;
-      }
+      if (!doc || !doc.documentElement) return finish(false, "empty document");
+      if (doc.querySelector("parsererror")) return finish(false, "parsererror");
       finish(true, "");
     } catch (error) {
       finish(false, error.message);
@@ -150,118 +301,370 @@ function runValidation(socket, msg) {
     clearTimeout(timer);
     finish(false, "load error");
   };
-  window.addEventListener(
-    "message",
-    (event) => {
-      if (event.data?.type === "build_error") {
-        clearTimeout(timer);
-        finish(false, event.data.message || "runtime error");
-      }
-    },
-    { once: true },
-  );
   validator.src = msg.url;
 }
 
 function resize() {
   const pane = canvas.parentElement;
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.floor(pane.clientWidth * dpr);
-  canvas.height = Math.floor(pane.clientHeight * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.width = Math.max(320, Math.floor(pane.clientWidth * DPR));
+  canvas.height = Math.max(240, Math.floor(pane.clientHeight * DPR));
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 }
 
-function draw() {
-  const w = canvas.width / (window.devicePixelRatio || 1);
-  const h = canvas.height / (window.devicePixelRatio || 1);
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "#14141b";
-  ctx.fillRect(0, 0, w, h);
+function stepSprites(now) {
+  let walking = false;
+  for (const sprite of state.sprites.values()) {
+    if (sprite.path?.length) {
+      walking = true;
+      const next = sprite.path[0];
+      const dx = next.x - sprite.x;
+      const dy = next.y - sprite.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 0.08) {
+        sprite.x = next.x;
+        sprite.y = next.y;
+        sprite.path.shift();
+        if (!sprite.path.length) sprite.pose = sprite.wantPose || "idle";
+      } else {
+        sprite.x += dx * 0.18;
+        sprite.y += dy * 0.18;
+        sprite.facing = dx < 0 ? -1 : 1;
+        sprite.pose = "walk";
+        sprite.frame = Math.floor(now / 160) % 2;
+      }
+    } else if (sprite.pose === "type") {
+      sprite.frame = Math.floor(now / 220) % 2;
+    } else {
+      sprite.frame = Math.floor(now / 700) % 2;
+    }
+    sprite.active *= 0.992;
+  }
+  return walking;
+}
 
+function drawOffice(ox, oy, now) {
   const office = state.office;
-  const ox = 24;
-  const oy = 20;
-  if (office) {
-    ctx.fillStyle = office.walls || "#1e1e26";
-    const bounds = office.rooms?.reduce(
-      (acc, room) => ({
-        w: Math.max(acc.w, room.x + room.w),
-        h: Math.max(acc.h, room.y + room.h),
-      }),
-      { w: 22, h: 16 },
-    ) || { w: 22, h: 16 };
-    ctx.fillRect(ox, oy, bounds.w * CELL, bounds.h * CELL);
-    ctx.fillStyle = "#20202a";
-    for (let x = 0; x < bounds.w; x += 1) {
-      for (let y = 0; y < bounds.h; y += 1) {
-        if ((x + y) % 2 === 0) ctx.fillRect(ox + x * CELL, oy + y * CELL, CELL, CELL);
+  if (!office) return;
+  const dim = state.paused || state.budget?.exhausted;
+  ctx.fillStyle = office.walls || "#2a2118";
+  const bounds = office.rooms?.reduce(
+    (acc, room) => ({ w: Math.max(acc.w, room.x + room.w), h: Math.max(acc.h, room.y + room.h) }),
+    { w: 22, h: 16 },
+  ) || { w: 22, h: 16 };
+  ctx.fillRect(ox - 8, oy - 8, bounds.w * CELL + 16, bounds.h * CELL + 16);
+  for (const room of office.rooms || []) {
+    const rx = ox + room.x * CELL;
+    const ry = oy + room.y * CELL;
+    const rw = room.w * CELL;
+    const rh = room.h * CELL;
+    ctx.fillStyle = room.name === "break room" ? "#2a2218" : room.name === "lab" ? "#1d1c20" : "#241c16";
+    ctx.fillRect(rx, ry, rw, rh);
+    ctx.fillStyle = "#2e241c";
+    for (let x = 0; x < room.w; x += 1) {
+      for (let y = 0; y < room.h; y += 1) {
+        if ((x + y) % 2 === 0) ctx.fillRect(rx + x * CELL, ry + y * CELL, CELL, CELL);
       }
     }
-    for (const room of office.rooms || []) {
-      ctx.strokeStyle = "#3a3a46";
-      ctx.strokeRect(ox + room.x * CELL, oy + room.y * CELL, room.w * CELL, room.h * CELL);
-      ctx.fillStyle = "#8d877c";
-      ctx.font = "11px sans-serif";
-      ctx.fillText(room.name, ox + room.x * CELL + 6, oy + room.y * CELL + 14);
-    }
-    for (const decor of office.decor || []) {
-      ctx.fillStyle = decor.kind === "whiteboard" ? "#d9d3c5" : "#6b4a2f";
-      ctx.fillRect(ox + decor.x * CELL, oy + decor.y * CELL, CELL * 2.2, CELL * 0.8);
-      ctx.fillStyle = "#2b2418";
-      ctx.font = "10px sans-serif";
-      ctx.fillText(decor.text || decor.kind, ox + decor.x * CELL + 6, oy + decor.y * CELL + 14);
-    }
-    for (const desk of office.desks || []) {
-      ctx.fillStyle = "#3b2e22";
-      ctx.fillRect(ox + desk.x * CELL, oy + desk.y * CELL, CELL * 2.2, CELL * 1.4);
-      ctx.fillStyle = "#6d5a45";
-      ctx.fillRect(ox + desk.x * CELL + 6, oy + desk.y * CELL + 6, CELL * 0.9, CELL * 0.45);
-    }
+    ctx.strokeStyle = "#4a3b2c";
+    ctx.strokeRect(rx + 0.5, ry + 0.5, rw - 1, rh - 1);
+    ctx.fillStyle = "#c9b59a";
+    ctx.font = "11px sans-serif";
+    ctx.fillText(room.name, rx + 6, ry + 14);
   }
 
-  const now = Date.now();
+  for (const desk of office.desks || []) {
+    const lamp = { x: ox + (desk.x + 1) * CELL, y: oy + desk.y * CELL };
+    const glow = ctx.createRadialGradient(lamp.x, lamp.y, 4, lamp.x, lamp.y, 70);
+    glow.addColorStop(0, dim ? "rgba(245,158,11,0.10)" : "rgba(245,158,11,0.28)");
+    glow.addColorStop(1, "rgba(245,158,11,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(lamp.x - 70, lamp.y - 40, 140, 120);
+  }
+
+  for (const item of office.decor || []) drawDecor(ox, oy, item);
+  for (const desk of office.desks || []) drawDesk(ox, oy, desk);
+
+  if (dim) {
+    ctx.fillStyle = "rgba(8,6,4,0.42)";
+    ctx.fillRect(ox - 8, oy - 8, bounds.w * CELL + 16, bounds.h * CELL + 16);
+  }
+}
+
+function drawDesk(ox, oy, desk) {
+  const x = ox + desk.x * CELL;
+  const y = oy + desk.y * CELL;
+  ctx.fillStyle = "#5a4030";
+  ctx.fillRect(x, y, CELL * 2.1, CELL * 1.25);
+  ctx.fillStyle = "#3d2b20";
+  ctx.fillRect(x + 2, y + CELL * 1.15, 8, 8);
+  ctx.fillRect(x + CELL * 1.7, y + CELL * 1.15, 8, 8);
+  const items = desk.items || [];
+  if (items.includes("monitor") || items.includes("second_monitor")) {
+    ctx.fillStyle = "#1a1f24";
+    ctx.fillRect(x + 8, y + 4, 22, 14);
+    ctx.fillStyle = "#7ec8c0";
+    ctx.fillRect(x + 10, y + 6, 18, 10);
+    if (items.includes("second_monitor")) {
+      ctx.fillStyle = "#1a1f24";
+      ctx.fillRect(x + 32, y + 6, 16, 12);
+      ctx.fillStyle = "#d7b07a";
+      ctx.fillRect(x + 34, y + 8, 12, 8);
+    }
+  }
+  if (items.includes("plant")) {
+    ctx.fillStyle = "#2f6b3a";
+    ctx.beginPath();
+    ctx.arc(x + CELL * 1.75, y + 10, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#6b3a22";
+    ctx.fillRect(x + CELL * 1.75 - 2, y + 14, 4, 5);
+  }
+  if (items.includes("coffee_mug")) {
+    ctx.fillStyle = "#c45c1a";
+    ctx.fillRect(x + 6, y + 18, 7, 6);
+  }
+  if (items.includes("notebook") || items.includes("sticky_notes")) {
+    ctx.fillStyle = items.includes("sticky_notes") ? "#e6d36a" : "#efe6d4";
+    ctx.fillRect(x + 40, y + 18, 10, 8);
+  }
+}
+
+function drawDecor(ox, oy, item) {
+  const x = ox + item.x * CELL;
+  const y = oy + item.y * CELL;
+  if (item.kind === "whiteboard") {
+    const w = (item.w || 6) * CELL;
+    ctx.fillStyle = "#e8e0d2";
+    ctx.fillRect(x, y, w, CELL * 0.9);
+    ctx.fillStyle = "#2b2418";
+    ctx.font = "10px sans-serif";
+    ctx.fillText(item.text || "SHIP", x + 6, y + 16);
+  } else if (item.kind === "coffee") {
+    ctx.fillStyle = "#3b2a22";
+    ctx.fillRect(x, y, CELL * 1.1, CELL * 1.1);
+    ctx.fillStyle = "#d7b07a";
+    ctx.fillRect(x + 6, y + 4, 16, 8);
+    ctx.fillStyle = "rgba(230,220,200,0.35)";
+    ctx.fillRect(x + 10, y - 6, 3, 8);
+  } else if (item.kind === "couch") {
+    ctx.fillStyle = "#6a3a32";
+    ctx.fillRect(x, y, CELL * 2.4, CELL * 1.1);
+    ctx.fillStyle = "#4a2822";
+    ctx.fillRect(x, y, 8, CELL * 1.1);
+    ctx.fillRect(x + CELL * 2.1, y, 8, CELL * 1.1);
+  } else if (item.kind === "plant") {
+    ctx.fillStyle = "#2f6b3a";
+    ctx.beginPath();
+    ctx.arc(x + 10, y + 8, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#6b3a22";
+    ctx.fillRect(x + 7, y + 14, 6, 7);
+  } else if (item.kind === "lamp") {
+    ctx.fillStyle = "#f3c66b";
+    ctx.beginPath();
+    ctx.arc(x + 8, y + 6, 5, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (item.kind === "rug") {
+    ctx.fillStyle = "#4a2d22";
+    ctx.fillRect(x, y, CELL * 5, CELL * 3);
+  } else if (item.kind === "shelf") {
+    ctx.fillStyle = "#4a3428";
+    ctx.fillRect(x, y, CELL * 2, 8);
+  } else if (item.kind === "clock") {
+    ctx.fillStyle = "#efe6d4";
+    ctx.beginPath();
+    ctx.arc(x + 8, y + 8, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#2b2418";
+    ctx.stroke();
+  }
+}
+
+function drawPerson(ox, oy, employee, sprite, now) {
+  const px = ox + sprite.x * CELL;
+  const py = oy + sprite.y * CELL;
+  const bob = sprite.pose === "idle" ? Math.sin(now / 400 + sprite.x) * 1.2 : 0;
+  const color = employee.color || "#F97316";
+  if (sprite.active > 0.08) {
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.35 + sprite.active * 0.5;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px + 8, py + 4 + bob, 16, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 1;
+  }
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath();
+  ctx.ellipse(px + 8, py + 22, 8, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  const walk = sprite.pose === "walk" ? sprite.frame : 0;
+  const type = sprite.pose === "type" ? sprite.frame : 0;
+  ctx.save();
+  ctx.translate(px + 8, py + 4 + bob);
+  ctx.scale(sprite.facing || 1, 1);
+  ctx.fillStyle = "#f0d2b0";
+  ctx.fillRect(-5, -10, 10, 8);
+  ctx.fillStyle = color;
+  ctx.fillRect(-6, -14, 12, 6);
+  ctx.fillStyle = color;
+  ctx.fillRect(-6, -2, 12, 10);
+  ctx.fillStyle = "#f0d2b0";
+  const arm = sprite.pose === "type" ? -4 - type * 2 : sprite.pose === "walk" ? walk * 3 - 1 : 1;
+  ctx.fillRect(-8, 0, 3, 7 + (sprite.pose === "talk" ? 1 : 0));
+  ctx.fillRect(5, arm, 3, 7);
+  ctx.fillStyle = "#2c241c";
+  ctx.fillRect(-5, 8, 4, 7 + (walk ? 1 : 0));
+  ctx.fillRect(1, 8, 4, 7 + (walk ? 0 : 1));
+  ctx.restore();
+
+  const plate = `${employee.name.split(" ")[0]}  ${employee.role}`;
+  ctx.font = "10px sans-serif";
+  const tw = ctx.measureText(plate).width;
+  ctx.fillStyle = "#1b140e";
+  ctx.fillRect(px + 8 - tw / 2 - 4, py + 26, tw + 8, 12);
+  ctx.fillStyle = color;
+  ctx.fillRect(px + 8 - tw / 2 - 4, py + 26, 3, 12);
+  ctx.fillStyle = "#f3eadc";
+  ctx.fillText(plate, px + 8 - tw / 2 + 2, py + 35);
+
+  if (hoverId === employee.id) {
+    const chip = `${employee.name.split(" ")[0]} · ${employee.model || employee.modelFamily}`;
+    ctx.font = "10px sans-serif";
+    const cw = ctx.measureText(chip).width;
+    ctx.fillStyle = "#22180f";
+    ctx.fillRect(px - 4, py - 28, cw + 10, 14);
+    ctx.fillStyle = "#f3eadc";
+    ctx.fillText(chip, px, py - 18);
+    const rel = feelLine(employee.id);
+    if (rel) {
+      ctx.fillStyle = "#c9b59a";
+      ctx.fillText(rel, px - 4, py - 32);
+    }
+  }
+}
+
+function feelLine(id) {
+  const pairs = state.relationships?.pairs || [];
+  const hit = pairs.find((pair) => pair.a === id || pair.b === id);
+  if (!hit) return "";
+  const other = hit.a === id ? hit.b : hit.a;
+  const who = (state.employees || []).find((person) => person.id === other);
+  const sign = hit.score > 0 ? "+" : "";
+  return `feels about ${who?.name.split(" ")[0] || other}: ${sign}${hit.score} ${hit.note || ""}`;
+}
+
+function drawBubble(ox, oy, now) {
+  if (!bubble) return false;
+  const age = now - bubble.born;
+  const life = ENTER + HOLD + FADE;
+  if (age > life) {
+    bubble = null;
+    return false;
+  }
+  let alpha = 1;
+  let scale = 1;
+  if (age < ENTER) {
+    scale = 0.85 + 0.15 * (age / ENTER);
+    alpha = age / ENTER;
+  } else if (age > ENTER + HOLD) {
+    alpha = 1 - (age - ENTER - HOLD) / FADE;
+  }
+  const sprite = state.sprites.get(bubble.actor);
+  if (!sprite) return true;
+  const x = ox + sprite.x * CELL + 18;
+  const y = oy + sprite.y * CELL - 36;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, alpha);
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  const lines = bubble.lines;
+  const w = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 16;
+  const h = 12 + lines.length * 12;
+  ctx.fillStyle = "#2a2118";
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#d7b07a";
+  ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  ctx.fillStyle = "#f3eadc";
+  ctx.font = "11px sans-serif";
+  lines.forEach((line, i) => ctx.fillText(line, 8, 14 + i * 12));
+  ctx.restore();
+  return true;
+}
+
+function maybeReplay(now) {
+  if (!(state.paused || state.budget?.exhausted)) return;
+  if (now - lastReplay < 6000) return;
+  const replayable = (state.events || []).filter((event) => event.actor && event.actor !== "system");
+  if (!replayable.length) return;
+  lastReplay = now;
+  const event = replayable[replayIndex % replayable.length];
+  replayIndex += 1;
+  react(event);
+}
+
+function busy(walking, talking) {
+  return walking || talking || Boolean(hoverId);
+}
+
+function draw(now) {
+  const w = canvas.width / DPR;
+  const h = canvas.height / DPR;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#120e0b";
+  ctx.fillRect(0, 0, w, h);
+  const ox = 20;
+  const oy = 16;
+  drawOffice(ox, oy, now);
+  const walking = stepSprites(now);
+  for (const employee of state.employees || []) {
+    const sprite = state.sprites.get(employee.id);
+    if (sprite) drawPerson(ox, oy, employee, sprite, now);
+  }
+  const talking = drawBubble(ox, oy, now);
+  maybeReplay(now);
+  return walking || talking;
+}
+
+function loop(ts) {
+  const walkingTalking = stepNeed(ts);
+  const interval = walkingTalking ? 33 : 120;
+  if (ts - lastDraw >= interval) {
+    draw(ts);
+    lastDraw = ts;
+  }
+  requestAnimationFrame(loop);
+}
+
+function stepNeed(ts) {
+  if (hoverId) return true;
+  if (bubble && ts - bubble.born < ENTER + HOLD + FADE) return true;
+  for (const sprite of state.sprites.values()) {
+    if (sprite.path?.length || sprite.active > 0.05) return true;
+  }
+  if ((state.paused || state.budget?.exhausted) && ts - lastReplay > 5500) return true;
+  return false;
+}
+
+canvas.addEventListener("mousemove", (event) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) / rect.width) * (canvas.width / DPR);
+  const y = ((event.clientY - rect.top) / rect.height) * (canvas.height / DPR);
+  hoverId = null;
+  const ox = 20;
+  const oy = 16;
   for (const employee of state.employees || []) {
     const sprite = state.sprites.get(employee.id);
     if (!sprite) continue;
-    sprite.x += (sprite.tx - sprite.x) * 0.08;
-    sprite.y += (sprite.ty - sprite.y) * 0.08;
-    sprite.pulse *= 0.96;
-    const x = ox + sprite.x * CELL;
-    const y = oy + sprite.y * CELL;
-    ctx.fillStyle = employee.color || "#888";
-    ctx.fillRect(x, y, 22, 22);
-    if (sprite.pulse > 0.05) {
-      ctx.strokeStyle = employee.color || "#888";
-      ctx.globalAlpha = sprite.pulse;
-      ctx.strokeRect(x - 3, y - 3, 28, 28);
-      ctx.globalAlpha = 1;
-    }
-    ctx.fillStyle = "#f3eee4";
-    ctx.font = "11px sans-serif";
-    ctx.fillText(employee.name, x - 2, y + 36);
-    ctx.fillStyle = "#9a9488";
-    ctx.font = "9px sans-serif";
-    ctx.fillText(employee.role, x - 2, y + 48);
+    const px = ox + sprite.x * CELL;
+    const py = oy + sprite.y * CELL;
+    if (Math.hypot(x - px - 8, y - py) < 22) hoverId = employee.id;
   }
-
-  bubbles = bubbles.filter((item) => item.until > now);
-  for (const bubble of bubbles) {
-    const sprite = state.sprites.get(bubble.actor);
-    if (!sprite) continue;
-    const x = ox + sprite.x * CELL + 26;
-    const y = oy + sprite.y * CELL - 28;
-    ctx.fillStyle = "#2a2a34";
-    ctx.fillRect(x, y, 160, 24);
-    ctx.fillStyle = "#ece7dc";
-    ctx.font = "10px sans-serif";
-    ctx.fillText(bubble.text.slice(0, 28), x + 6, y + 16);
-  }
-
-  if (!speech.hidden && bubbles.length === 0) speech.hidden = true;
-  const start = state.startedAt || now;
-  dayNum.textContent = String(1 + Math.floor((now - start) / 86_400_000));
-  requestAnimationFrame(draw);
-}
+});
+canvas.addEventListener("mouseleave", () => {
+  hoverId = null;
+});
 
 pauseBtn.addEventListener("click", async () => {
   const path = state.paused ? "/api/resume" : "/api/pause";
@@ -272,4 +675,4 @@ window.addEventListener("resize", resize);
 resize();
 syncSprites();
 connect();
-draw();
+requestAnimationFrame(loop);
