@@ -94,7 +94,6 @@ body.sleeping { filter: saturate(0.7) brightness(0.74); }
   display: inline-flex;
   align-items: baseline;
   gap: 0.3rem;
-  max-width: 16rem;
   padding: 0.08rem 0.4rem 0.08rem 0.35rem;
   border: 1px solid #3b3228;
   border-left-width: 3px;
@@ -103,8 +102,6 @@ body.sleeping { filter: saturate(0.7) brightness(0.74); }
   color: var(--muted);
   font-size: 0.68rem;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .model-chip b {

@@ -129,6 +129,7 @@ function paintModelChips(employees) {
     const chip = document.createElement("span");
     chip.className = "model-chip";
     chip.dataset.id = person.id;
+    chip.title = person.model || person.family || person.modelFamily || "";
     chip.style.borderLeftColor = person.accent || person.color || "#F59E0B";
     const name = document.createElement("b");
     name.textContent = (person.name || person.id).split(" ")[0];
