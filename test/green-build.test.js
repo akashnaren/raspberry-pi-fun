@@ -15,7 +15,7 @@ test("green-build promotes only a passing product and leaves dist on failure", a
   });
 
   const before = await readFile(join(root, "dist/index.html"), "utf8");
-  assert.match(before, /Timezone Buddy/);
+  assert.match(before, /Meridian Office/);
 
   const broken = await studio.tools.execute("nova", "write_file", {
     path: "product/index.html",
@@ -28,14 +28,14 @@ test("green-build promotes only a passing product and leaves dist on failure", a
   assert.equal(afterFail, before);
   assert.equal(studio.events.all().some((event) => event.type === "build_failed"), true);
 
-  const good = `<!doctype html><html><head><title>Timezone Buddy</title></head><body><h1>Timezone Buddy v2</h1></body></html>`;
+  const good = `<!doctype html><html><head><title>Meridian Office</title></head><body><h1>Meridian Office v2</h1></body></html>`;
   const passed = await studio.tools.execute("nova", "write_file", {
     path: "product/index.html",
     contents: good,
   });
   assert.equal(passed.ok, true);
   const afterPass = await readFile(join(root, "dist/index.html"), "utf8");
-  assert.match(afterPass, /Timezone Buddy v2/);
+  assert.match(afterPass, /Meridian Office v2/);
   assert.equal(studio.events.all().some((event) => event.type === "build_passed"), true);
 
   await studio.stop();
@@ -51,7 +51,7 @@ test("dry-run tick works without an API key", async () => {
   });
   assert.equal(studio.llm.dryRun, true);
   assert.equal(studio.config.studio.name, "Meridian Desk");
-  assert.equal(studio.config.studio.product, "Timezone Buddy");
+  assert.equal(studio.config.studio.product, "Meridian Office");
   const families = new Set(studio.employees.map((employee) => employee.modelFamily));
   assert.equal(families.size, 4);
   assert.equal(studio.employees.some((person) => person.id === "jules" && person.role === "office_manager"), true);
@@ -59,7 +59,7 @@ test("dry-run tick works without an API key", async () => {
   assert.equal(studio.employees.find((person) => person.id === "jules").color, "#6366F1");
   const snap = await studio.snapshot();
   assert.equal(snap.hud.dayN, 1);
-  assert.match(snap.hud.currentTask, /Timezone Buddy/);
+  assert.match(snap.hud.currentTask, /Docs first/);
   assert.equal(snap.hud.shipLine, "shipping when green");
   assert.equal(studio.config.tick.midMs, 105000);
   assert.equal(studio.config.budget.dailyCeilingUsd, 5);

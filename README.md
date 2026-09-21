@@ -2,13 +2,13 @@
 
 AI Studio — Stage 1 **fishbowl** (self-running office on a Raspberry Pi).
 
-The studio on screen is **Meridian Desk**. The stage name stays fishbowl.
+The studio name stays **Meridian Desk**. The flagship on the right pane is **Meridian Office**. The stage name stays fishbowl.
 
 ## Locked defaults (2026-09-20)
 
 - Private
 - 4 employees (office manager included)
-- Starting product: useful browser tool (not a game)
+- Flagship: **Meridian Office** (Docs first; Sheets/Slides stubs). Timezone Buddy stays in the catalogue.
 - Daily API ceiling: $5
 - **DRY_RUN=true** unless you set `DRY_RUN=false` and provide a key
 
@@ -22,18 +22,17 @@ Stage 1 is in this repo. The full spec stays with the CTO handoff (`AI studio �
 
 One Node process is the world clock. Every 90–120 seconds it picks one employee, assembles a small context, makes at most one model call, runs a handful of tools, and appends events.
 
-The display is a workplace aquarium (not a dashboard): warm dark slate, amber lamps, one accent per person. Sound stays optional — readable with it off.
+The display is a quiet split screen. Thin chrome. The office canvas is the hero of the left pane. Sound stays optional — readable with it off.
 
 | Zone | What you see |
 | --- | --- |
-| Top HUD | **Day N** · headcount · live model chips · burn vs **$5** bar · current task · “shipping when green” · English ticker (last 5 events) |
-| Left ~55% | Event-driven top-down office. Walk, bubble, and glow only when an event happens. Failures flash red here. |
-| Right ~45% | Last **green** `dist/` iframe (`LIVE · green build`). Never black. Open-in-new-tab for Connect. |
-| Bottom | Who is acting + tool name (`write_file`, `say`, …) |
+| Top bar | Small type: **Day N · 4 people · $x / $5 · who’s acting**. No wordmark, no ON AIR, no ticker crawl. |
+| Left ~56% | Locked-frame office. Walk and speech bubble only when an event happens. One static event line under the room, faded in place. |
+| Right ~44% | Last **green** `dist/` iframe. Never black. Open-in-new-tab for Connect. |
 
-A stranger should, after five minutes, name the people, Timezone Buddy, whether we are under $5, and whether they would leave it on.
+A stranger should, after five minutes, name the people, Meridian Office, whether we are under $5, and whether they would leave it on.
 
-The office is a dollhouse of `office.json`: walls, plank floors, amber lamps, desks with monitor/mug/plant, break room, meeting table, coffee, couch, whiteboard with the ship line. Sprites walk the A* path to a real object — never abstractly “thinking.” `say()` is a tailed bubble; the ticker is English. Objects advertise (plan / hang out / break / review). Click a person or the board to inspect. Relationship scores move on reject and on a green ship.
+The office is a dollhouse of `office.json`: desks, break room, meeting table, coffee, couch, whiteboard. The camera is fixed to the room — no pan, no follow-cam. Sprites walk the A* path to a real object — never abstractly “thinking.” `say()` is a tailed bubble. Objects advertise (plan / hang out / break / review). Click a person or the board to inspect. Relationship scores move on reject and on a green ship.
 
 Four load-bearing rules, unchanged from the spec:
 
@@ -53,11 +52,11 @@ Four load-bearing rules, unchanged from the spec:
 
 Looks live in `workspace/employees/<id>.json`: skin, hair, outfit layers, desk_style, wardrobe_unlocked from `wardrobe-vocab.json`. Only that person may `edit_self_aesthetics`. Jules alone may `edit_office`.
 
-Model ids are locked in `studio.config.json` (Research IDs mapped onto the product cast — there is no `river` seat). Stage 1 lottery: Nova **0.5** · Mira **0.25** · Kessler **0.25**. Jules keeps a small office-manager weight (**0.15**). Families stay distinct: **Qwen · Z.ai · Nous** (Jules is a fourth Meta seat). Tick mid is **105s** (90–120). Strongest model is used only for programmer writes; chatter seats stay on their cheap/mid ids. The HUD and hover chip show the live model id per employee. Constitution is sent as a separate cached prefix when OpenRouter honors `cache_control`. Preferred lists stay as first-available fallback after the locked ids.
+Model ids are locked in `studio.config.json` (Research IDs mapped onto the product cast — there is no `river` seat). Stage 1 lottery: Nova **0.5** · Mira **0.25** · Kessler **0.25**. Jules keeps a small office-manager weight (**0.15**). Families stay distinct: **Qwen · Z.ai · Nous** (Jules is a fourth Meta seat). Tick mid is **105s** (90–120). Strongest model is used only for programmer writes; chatter seats stay on their cheap/mid ids. Hover a person to see their live model id. Constitution is sent as a separate cached prefix when OpenRouter honors `cache_control`. Preferred lists stay as first-available fallback after the locked ids.
 
 Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0, Jules↔Nova −1, Jules↔Kessler +1, Jules↔Mira 0. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
 
-Starting product: **Timezone Buddy**, a single-file “paste a time + city → 3–5 saved cities” converter in `workspace/product/index.html`. Whiteboard: `SHIP: Timezone Buddy — usable in <1 min`.
+Flagship: **Meridian Office** — Docs in `workspace/product/index.html` (the green build), Sheets and Slides as stubs, Timezone Buddy at `workspace/product/timezone-buddy.html`. Whiteboard: `SHIP: Meridian Office — Docs first`.
 
 ## Tools
 
@@ -74,7 +73,7 @@ Context per turn is only: role + persona + constitution + strategy + backlog + l
 | Live | `DRY_RUN=false` + `OPENROUTER_API_KEY` | billed; pauses at $5 |
 | Local stubs | `STUDIO_LOCAL_STUBS=true` (default) | template `say()` when the ceiling hits |
 
-When the UTC-day spend hits **$5**, ticks stop, the HUD shows **studio sleeping**, lights dim, and the canvas replays the log.
+When the UTC-day spend hits **$5**, ticks stop, the status line says **asleep**, the room dims, and the canvas replays the log.
 
 ## Run on a Raspberry Pi
 
@@ -85,7 +84,7 @@ Target: Raspberry Pi OS Debian **aarch64**, ~1GB RAM (Pi 3 ≈ 905MiB). Chromium
 - Enable **zram** (`sudo apt install -y zram-tools` or `dphys-swapfile` only as a last resort).
 - Run **one** Chromium, kiosk only — no extra tabs, no GPU compositor.
 - Office renderer forces **DPR=1** and throttles `requestAnimationFrame` when nobody is walking or speaking.
-- If the compositor still swaps: `STUDIO_LITE=1` or open `/?lite=1` to disable ticker / ON AIR animations. Soundtrack stays **off** until you toggle it.
+- If the compositor still swaps: `STUDIO_LITE=1` or open `/?lite=1` to skip leftover motion. Soundtrack stays **off** until you toggle it.
 
 ### Node 20 LTS arm64 (prefer user-local, no sudo)
 
@@ -149,7 +148,7 @@ chmod 600 ~/.secrets/fishbowl/openrouter.env
 
 The systemd unit uses `EnvironmentFile=-/home/pi/.secrets/fishbowl/openrouter.env` (leading `-` means optional). Never put the key in `workspace/`. A local `.env` in the repo root is also gitignored and is only for laptop dry-runs.
 
-Restart the process. Four people call OpenRouter, each on a locked model id. The HUD shows **ON AIR** when live.
+Restart the process. Four people call OpenRouter, each on a locked model id. The status line says `live` when spending.
 
 ### Env vars
 
@@ -166,7 +165,7 @@ Restart the process. Four people call OpenRouter, each on a locked model id. The
 | `STUDIO_TICK_MIN_MS` | `90000` | Lower bound of the tick lottery. |
 | `STUDIO_TICK_MAX_MS` | `120000` | Upper bound. |
 | `OPENROUTER_HTTP_REFERER` | local URL | Optional OpenRouter header. |
-| `OPENROUTER_TITLE` | `Meridian Desk` | Optional OpenRouter header. |
+| `OPENROUTER_TITLE` | `Meridian Office` | Optional OpenRouter header. |
 
 Nothing in `workspace/` may read these. Employees never see the key. Production on the Pi should use `~/.secrets/fishbowl/openrouter.env`, not a file the studio can `read_file`.
 
@@ -217,7 +216,7 @@ After a write under `workspace/product/`:
 1. The orchestrator syntax-checks HTML/JS (no `eval`, no employee code on the host).
 2. If a display client is connected, a hidden iframe loads `/candidate/` and reports pass/fail over the websocket.
 3. On pass, the product directory is copied to `dist/` and a `build_passed` event fires.
-4. On fail, `dist/` does not move. QA gets a `build_failed` event. The ticker can read “Kessler rejected Nova's write.”
+4. On fail, `dist/` does not move. QA gets a `build_failed` event. The event line can read “Kessler rejected Nova's write.”
 
 The right-hand iframe only ever loads `/dist/`.
 
@@ -226,7 +225,7 @@ The right-hand iframe only ever loads `/dist/`.
 ```
 src/                 machinery — orchestrator, tools, server (not writable by bots)
 public/              machinery — split-screen office
-workspace/           data — office.json, relationships.json, backlog, personas, Timezone Buddy
+workspace/           data — office.json, board, backlog, personas, Meridian Office
 dist/                last green build (created at boot from the seed)
 data/                events.jsonl, spend.json, PAUSED
 deploy/              systemd units

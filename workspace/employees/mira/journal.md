@@ -1,3 +1,3 @@
 # mira journal
 
-Day zero. Three desks. If Timezone Buddy still converts a pasted time on Friday, that is a week.
+Board wants an Office. Docs first. If Nova starts a spreadsheet I cut it.

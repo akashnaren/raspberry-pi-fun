@@ -10,7 +10,7 @@ test("seed office is a dollhouse the renderer can draw", async () => {
   assert.equal(validateOffice(office), null);
   assert.ok(office.rooms.some((room) => room.name === "break room"));
   assert.ok(office.rooms.some((room) => room.name === "meeting"));
-  assert.ok(office.decor.some((item) => item.kind === "whiteboard" && /Timezone Buddy/.test(item.text)));
+  assert.ok(office.decor.some((item) => item.kind === "whiteboard" && /Meridian Office/.test(item.text)));
   assert.ok(office.decor.some((item) => item.kind === "coffee"));
   assert.equal(office.desks.length, 4);
   assert.ok(office.desks.some((desk) => desk.owner === "jules"));

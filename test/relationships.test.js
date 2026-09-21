@@ -76,7 +76,7 @@ test("context assembly includes last opinions", async () => {
   const variable = messages[1].content;
   assert.match(cached, /Meridian Desk/);
   assert.equal(messages[0].content[0].cache_control.type, "ephemeral");
-  assert.match(variable, /Timezone Buddy/);
+  assert.match(variable, /Meridian Office/);
   assert.match(variable, /Kessler Holt: -1/);
   assert.match(variable, /reasonable professionals/);
   assert.equal(variable.includes("you are competitive"), false);

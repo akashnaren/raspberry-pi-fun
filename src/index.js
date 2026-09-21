@@ -10,7 +10,7 @@ const addr = studio.server.server.address();
 const host = typeof addr === "object" && addr ? addr.address : studio.config.host;
 const port = typeof addr === "object" && addr ? addr.port : studio.config.port;
 
-console.log(`Meridian Desk listening on http://${host}:${port}`);
+console.log(`Office listening on http://${host}:${port}`);
 const modeLabel = studio.config.mode.replay
   ? "Mode: replay (event log only, zero tokens)"
   : studio.llm.dryRun

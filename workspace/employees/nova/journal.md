@@ -1,3 +1,3 @@
 # nova journal
 
-The seed is one file. I will read it once, then change one thing Kessler can actually break.
+Docs is the file that has to work. I will read it once, then change one thing Kessler can actually break.

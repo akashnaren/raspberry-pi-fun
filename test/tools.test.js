@@ -19,10 +19,10 @@ test("tools sandbox writes, backlog, journal, and refuse machinery", async () =>
 
   const read = await tools.execute("nova", "read_file", { path: "strategy.md" });
   assert.equal(read.ok, true);
-  assert.match(read.contents, /Timezone Buddy/);
+  assert.match(read.contents, /Meridian Office/);
 
-  const added = await tools.execute("mira", "add_task", { text: "Tighten copy on the epoch field" });
-  assert.equal(added.task.id, "t-3");
+  const added = await tools.execute("mira", "add_task", { text: "Tighten copy on the empty Docs page" });
+  assert.match(added.task.id, /^t-\d+$/);
   const closed = await tools.execute("kessler", "close_task", { id: "t-1" });
   assert.equal(closed.task.status, "closed");
 

@@ -4,19 +4,19 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "One tool. Paste a time, see five cities. If it grows a settings page I cut it.",
+          message: "Docs first. If it grows a spreadsheet this week I cut it.",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Saved-city list stays at five. No add-city form this week." },
+        arguments: { text: "Print from Docs has to work. No extra chrome." },
       },
     ],
     [
       {
         name: "journal",
         arguments: {
-          text: "Nova will ship tonight. Kessler will reject a loose green. I will keep the backlog to one screen.",
+          text: "Nova will ship tonight. Kessler will reject a loose green. Backlog stays Docs.",
         },
       },
     ],
@@ -27,7 +27,7 @@ const SCRIPTS = {
       {
         name: "journal",
         arguments: {
-          text: "Seed converts. Next: clearer empty-city copy. Working beats pretty.",
+          text: "Docs writes. Next: make download obvious. Working beats pretty.",
         },
       },
     ],
@@ -49,12 +49,12 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Using the last green build, not Nova's desk. Unknown cities still fail quietly.",
+          message: "Using the last green build, not Nova's desk. I'll review Docs at the table.",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Unknown city must say so. Do not invent an offset." },
+        arguments: { text: "Download must give you a file. A dead button is a fail." },
       },
     ],
     [
@@ -62,7 +62,7 @@ const SCRIPTS = {
       {
         name: "journal",
         arguments: {
-          text: "I will file empty-city and bad-offset before I close anything. A lying clock is worse than late.",
+          text: "I will click download before I close anything. A lying export is worse than late.",
         },
       },
     ],
@@ -73,7 +73,7 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Two furniture credits. A standing desk waits. I can offer a plant.",
+          message: "Two furniture credits. Coffee stays. I can offer a plant, not a standing desk.",
         },
       },
     ],
@@ -100,7 +100,7 @@ export function createDryRunDriver() {
         step.unshift({
           name: "journal",
           arguments: {
-            text: `Dry-run turn ${n + 1}. Still watching Timezone Buddy. Changing the note.`,
+            text: `Dry-run turn ${n + 1}. Still watching Docs. Changing the note.`,
           },
         });
       }

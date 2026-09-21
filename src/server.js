@@ -87,7 +87,7 @@ export function createStudioServer({
     if (url.pathname === "/kill") {
       await killSwitch.pause("phone");
       res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-      res.end("Meridian Desk paused. Open / or POST /api/resume to start again.\n");
+      res.end("Office paused. Open / or POST /api/resume to start again.\n");
       return;
     }
     if (url.pathname === "/health") {
