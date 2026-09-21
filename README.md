@@ -123,7 +123,7 @@ npm install
 npm start
 ```
 
-First boot needs **no API key**. Dry-run: scripted turns, real events, real walks, $0 spent. Replay for visitors:
+First boot needs **no API key**. Dry-run: scripted turns, real events, real walks and chats, $0 spent. Jules uses `edit_office` on those turns (moves a plant, rewrites the board) and the change stays in `office.json`. Replay for visitors:
 
 ```bash
 STUDIO_MODE=replay npm start
@@ -209,7 +209,7 @@ sudo systemctl enable --now ai-studio.service
 sudo systemctl enable --now chromium-kiosk.service
 ```
 
-The kiosk unit is sized for a Pi 3: `--disable-gpu --disable-dev-shm-usage --renderer-process-limit=2` and a small V8 heap. Do not forward a port; use Tailscale or a Cloudflare Tunnel if you need to look in from elsewhere.
+The kiosk unit is sized for a Pi 3 (~905MiB): `--disable-gpu --disable-dev-shm-usage --renderer-process-limit=2`, `--max-old-space-size=128`, no component-update, 8MB disk cache. Do not add `--single-process`. Do not forward a port; use Tailscale or a Cloudflare Tunnel if you need to look in from elsewhere.
 
 1080p, 2D canvas, no WebGL. Products stay 2D / HTML for the same reason. Fonts are local system faces (`Liberation Sans` / `DejaVu Sans`) — no CDN.
 

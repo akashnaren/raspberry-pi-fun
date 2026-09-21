@@ -21,8 +21,17 @@ test("Meridian Office Docs is a green seed; Sheets/Slides are stubs; Timezone Bu
   assert.match(docs, /localStorage/);
   assert.match(docs, /\.md/);
   assert.match(docs, /Morning notes/);
+  assert.match(docs, /id="kept"/);
+  assert.match(docs, /Kept locally/);
+  assert.doesNotMatch(docs, /AI assistant|auto-?write|generate copy|magic wand/i);
+  const formatCmds = (docs.match(/data-cmd=|data-heading=/g) || []).length;
+  assert.ok(formatCmds <= 4, "toolbar stays four commands");
   assert.match(sheets, /Sheets later/);
+  assert.match(sheets, /<thead/);
+  assert.match(sheets, /Print/);
   assert.match(slides, /Slides after/);
+  assert.match(slides, /Docs first/);
+  assert.match(slides, /Meridian Office/);
   assert.match(buddy, /Timezone Buddy/);
   assert.match(buddy, /catalogue/);
   assert.doesNotMatch(docs, /timezone-buddy\.html/);

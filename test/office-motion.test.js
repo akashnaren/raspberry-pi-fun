@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  companionId,
   destinationFor,
   fitView,
   hudStatus,
   latestEventLine,
+  standBeside,
   verbFor,
 } from "../public/office-motion.js";
 import { REPO } from "./helpers.js";
@@ -42,6 +44,18 @@ test("events walk to real objects, never 'thinking'", () => {
   assert.match(verbFor("walk", "coffee"), /walking to the coffee machine/);
   assert.doesNotMatch(verbFor("idle", "whiteboard"), /think/i);
   assert.doesNotMatch(latestEventLine([{ type: "say", headline: "Mira said, “Docs first.”" }]), /think/i);
+  const moved = destinationFor(
+    { type: "office_edited", actor: "jules", data: { kind: "plant", x: 19, y: 10, at: "plant" } },
+    office,
+  );
+  assert.equal(moved.at, "plant");
+  assert.equal(moved.x, 19);
+  assert.equal(companionId({ type: "say", actor: "mira", data: { text: "Kessler, walk the board.", to: "kessler" } }), "kessler");
+  assert.equal(companionId({ type: "say", actor: "jules", data: { text: "Plant by the clock.", to: "nova" } }), "nova");
+  assert.equal(companionId({ type: "say", actor: "system", data: { text: "Nova" } }), null);
+  const beside = standBeside({ x: 3, y: 15, at: "coffee" }, 1, 0);
+  assert.equal(beside.x, 4);
+  assert.equal(beside.at, "coffee");
 });
 
 test("HUD status is a quiet static line", () => {

@@ -85,8 +85,15 @@ export function headlineFor(event, names = {}) {
       return `${who} asked Jules for ${clip(data.item, 40)}.`;
     case "request_decided":
       return `${who} ${data.decision || "answered"} a request for ${clip(data.item, 40)}.`;
-    case "office_edited":
+    case "office_edited": {
+      if (data.action === "whiteboard" || data.kind === "whiteboard") {
+        return `${who} rewrote the whiteboard.`;
+      }
+      if (data.kind) {
+        return `${who} moved the ${String(data.kind).replace(/_/g, " ")}.`;
+      }
       return `${who} moved the furniture.`;
+    }
     case "office_edit_rejected":
       return `${who}'s office change was refused: ${clip(data.error, 48)}`;
     case "aesthetics_changed":

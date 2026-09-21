@@ -12,6 +12,14 @@ test("kiosk unit is Wayland / labwc with ozone, not X11 DISPLAY=:0", async () =>
   assert.match(unit, /labwc|Wayland/);
   assert.doesNotMatch(unit, /Environment=DISPLAY=/);
   assert.match(unit, /127\.0\.0\.1:8787/);
+  assert.match(unit, /--disable-gpu/);
+  assert.match(unit, /--disable-dev-shm-usage/);
+  assert.match(unit, /--renderer-process-limit=2/);
+  assert.match(unit, /max-old-space-size=128/);
+  assert.match(unit, /--disable-component-update/);
+  assert.match(unit, /--disk-cache-size=8388608/);
+  assert.doesNotMatch(unit, /--single-process/);
+  assert.doesNotMatch(unit, /--in-process-gpu/);
   const readme = await readFile(join(REPO, "README.md"), "utf8");
   assert.match(readme, /git pull/);
   assert.match(readme, /systemctl restart ai-studio\.service/);

@@ -1,9 +1,11 @@
 import {
+  companionId,
   destinationFor,
   fitView,
   hudStatus,
   latestEventLine,
   poseFor,
+  standBeside,
   verbFor,
 } from "./office-motion.js";
 import { FALLBACK_CAST, FALLBACK_OFFICE, seedSprites } from "./office-seed.js";
@@ -182,19 +184,41 @@ function syncSprites() {
   }
 }
 
+function enqueueWalk(sprite, target) {
+  if (!sprite || !target) return;
+  const from = sprite.path?.length
+    ? sprite.path[sprite.path.length - 1]
+    : { x: Math.round(sprite.x), y: Math.round(sprite.y) };
+  if (from.x === target.x && from.y === target.y) {
+    sprite.at = target.at;
+    if (!sprite.path?.length) sprite.pose = sprite.wantPose || "idle";
+    return;
+  }
+  const next = findPath(state.office, from, target);
+  sprite.path = [...(sprite.path || []), ...next];
+  sprite.at = target.at;
+  sprite.pose = sprite.path.length ? "walk" : sprite.wantPose || "idle";
+}
+
 function react(event) {
   const sprite = state.sprites.get(event.actor);
   const target = destinationFor(event, state.office);
   if (sprite && target) {
-    const path = findPath(state.office, { x: Math.round(sprite.x), y: Math.round(sprite.y) }, target);
-    sprite.path = path;
-    sprite.at = target.at;
-    sprite.pose = path.length ? "walk" : poseFor(event);
     sprite.wantPose = poseFor(event);
     sprite.active = 1;
+    enqueueWalk(sprite, target);
+  }
+  const otherId = companionId(event);
+  if (otherId && target && otherId !== event.actor) {
+    const buddy = state.sprites.get(otherId);
+    if (buddy) {
+      buddy.wantPose = "talk";
+      buddy.active = 1;
+      enqueueWalk(buddy, standBeside(target, 1, 0));
+    }
   }
   for (const [id, other] of state.sprites) {
-    if (id !== event.actor) other.active = Math.max(0, other.active - 0.4);
+    if (id !== event.actor && id !== otherId) other.active = Math.max(0, other.active - 0.4);
   }
   if (event.type === "say" && event.data?.text) {
     const who = (state.employees || []).find((person) => person.id === event.actor);

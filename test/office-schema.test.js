@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { validateOffice } from "../src/schemas.js";
+import { applyOfficeTweak, isOfficeTweak, validateOffice } from "../src/schemas.js";
 import { REPO } from "./helpers.js";
 
 test("seed office is a dollhouse the renderer can draw", async () => {
@@ -22,6 +22,25 @@ test("seed office is a dollhouse the renderer can draw", async () => {
     assert.ok(desk.items.includes("coffee_mug"));
     assert.ok(desk.items.includes("plant"));
   }
+});
+
+test("Jules tweaks move a plant without spending furniture credits", async () => {
+  const office = JSON.parse(await readFile(join(REPO, "workspace/office.json"), "utf8"));
+  const before = office.decor.find((item) => item.kind === "plant" && item.x === 8 && item.y === 9);
+  assert.ok(before);
+  assert.equal(isOfficeTweak({ move: { kind: "plant", from: { x: 8, y: 9 }, x: 19, y: 10 } }), true);
+  assert.equal(isOfficeTweak({ office: { walls: "#000" } }), false);
+  const { office: next, changes } = applyOfficeTweak(office, {
+    move: { kind: "plant", from: { x: 8, y: 9 }, x: 19, y: 10 },
+  });
+  assert.equal(validateOffice(next), null);
+  assert.equal(next.budget.furniture, 2);
+  assert.equal(next.decor.length, office.decor.length);
+  assert.ok(next.decor.some((item) => item.kind === "plant" && item.x === 19 && item.y === 10));
+  assert.equal(next.decor.some((item) => item.kind === "plant" && item.x === 8 && item.y === 9), false);
+  assert.equal(changes[0].kind, "plant");
+  const board = applyOfficeTweak(office, { whiteboard: "SHIP: Docs. Print. Download." });
+  assert.match(board.office.decor.find((item) => item.kind === "whiteboard").text, /Print/);
 });
 
 test("office schema rejects a missing break room", () => {

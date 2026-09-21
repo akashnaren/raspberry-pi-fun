@@ -26,8 +26,9 @@ test("tools sandbox writes, backlog, journal, and refuse machinery", async () =>
   const closed = await tools.execute("kessler", "close_task", { id: "t-1" });
   assert.equal(closed.task.status, "closed");
 
-  const said = await tools.execute("mira", "say", { message: "Keep it one screen." });
+  const said = await tools.execute("mira", "say", { message: "Keep it one screen.", to: "nova" });
   assert.equal(said.ok, true);
+  assert.equal(said.event.data.to, "nova");
   const note = await tools.execute("nova", "journal", { text: "Read the seed." });
   assert.equal(note.ok, true);
   const journal = await readFile(join(workspaceRoot, "employees/nova/journal.md"), "utf8");
