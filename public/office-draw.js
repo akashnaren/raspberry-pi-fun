@@ -68,14 +68,23 @@ export function roundRect(ctx, x, y, w, h, r) {
 }
 
 export function fillVoid(ctx, w, h) {
-  ctx.fillStyle = ROOM_VOID;
+  const wash = ctx.createRadialGradient(w * 0.36, h * 0.32, 20, w * 0.4, h * 0.4, Math.max(w, h) * 0.75);
+  wash.addColorStop(0, "#2a2118");
+  wash.addColorStop(1, ROOM_VOID);
+  ctx.fillStyle = wash;
   ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = "rgba(255,196,110,0.04)";
+  for (let i = 0; i < 18; i += 1) {
+    ctx.beginPath();
+    ctx.arc(40 + (i * 97) % w, 30 + (i * 53) % h, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function floorTone(room) {
-  if (/break/i.test(room.name)) return { a: "#5a4636", b: "#4a3a2c", grout: "#3a2c22" };
-  if (/meeting|lab/i.test(room.name)) return { a: "#4a4e55", b: "#3f4349", grout: "#2c3036" };
-  return { a: "#6b5340", b: "#5a4534", grout: "#3d2e22" };
+  if (/break/i.test(room.name)) return { a: "#7a5a40", b: "#624832", grout: "#3a2c22" };
+  if (/meeting|lab/i.test(room.name)) return { a: "#5c6168", b: "#4a4f56", grout: "#2c3036" };
+  return { a: "#8a6a48", b: "#73563a", grout: "#3d2e22" };
 }
 
 function drawPlanks(ctx, rx, ry, rw, rh, cell, tone) {
@@ -117,11 +126,11 @@ function drawTiles(ctx, rx, ry, rw, rh, cell, tone) {
 }
 
 function drawWindow(ctx, x, y, w, h, dim) {
-  const glow = ctx.createLinearGradient(x, y, x, y + h + 40);
-  glow.addColorStop(0, dim ? "rgba(255,196,110,0.10)" : "rgba(255,196,110,0.28)");
+    const glow = ctx.createLinearGradient(x, y, x, y + h + 80);
+  glow.addColorStop(0, dim ? "rgba(255,196,110,0.16)" : "rgba(255,210,130,0.42)");
   glow.addColorStop(1, "rgba(255,196,110,0)");
   ctx.fillStyle = glow;
-  ctx.fillRect(x - 6, y, w + 12, h + 48);
+  ctx.fillRect(x - 10, y, w + 20, h + 88);
   ctx.fillStyle = "#1a2230";
   roundRect(ctx, x, y, w, h, 2);
   ctx.fill();
@@ -163,9 +172,13 @@ export function drawOffice(ctx, { office, employees, ox, oy, cell, dim }) {
   );
   const wall = office.walls || "#2a2118";
   ctx.fillStyle = "#0e0b09";
-  ctx.fillRect(ox - 18, oy - 18, bounds.w * cell + 36, bounds.h * cell + 36);
+  ctx.fillRect(ox - 28, oy - 36, bounds.w * cell + 56, bounds.h * cell + 64);
+  ctx.fillStyle = "#3a2a1c";
+  ctx.fillRect(ox - 16, oy - 28, bounds.w * cell + 32, 18);
   ctx.fillStyle = wall;
-  ctx.fillRect(ox - 10, oy - 14, bounds.w * cell + 20, bounds.h * cell + 28);
+  ctx.fillRect(ox - 12, oy - 14, bounds.w * cell + 24, bounds.h * cell + 32);
+  ctx.fillStyle = "#4a3424";
+  ctx.fillRect(ox - 12, oy - 14, bounds.w * cell + 24, 8);
 
   for (const room of rooms) {
     const rx = ox + room.x * cell;
@@ -441,11 +454,11 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
   const look = lookOf(employee);
   const bounce =
     sprite.pose === "walk"
-      ? (sprite.frame ? 2 : 0)
+      ? (sprite.frame ? 3 : 0)
       : sprite.pose === "idle"
-        ? Math.sin(now / 420 + sprite.x) * 1.1
+        ? Math.sin(now / 420 + sprite.x) * 1.4
         : 0;
-  const s = Math.max(0.85, cell / 28);
+  const s = Math.max(1.35, cell / 16);
 
   if (sprite.active > 0.08) {
     ctx.strokeStyle = color;
@@ -616,16 +629,16 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
   ctx.restore();
 
   const first = employee.name.split(" ")[0];
-  ctx.font = "11px system-ui, sans-serif";
+  ctx.font = "bold 12px system-ui, sans-serif";
   const plate = `${first}  ${employee.role}`;
   const tw = ctx.measureText(plate).width;
   ctx.fillStyle = "#1a1410";
-  roundRect(ctx, px + 9 - tw / 2 - 6, py + 32, tw + 12, 13, 3);
+  roundRect(ctx, px + 9 - tw / 2 - 8, py + 36, tw + 16, 15, 3);
   ctx.fill();
   ctx.fillStyle = color;
-  ctx.fillRect(px + 9 - tw / 2 - 6, py + 32, 3, 13);
+  ctx.fillRect(px + 9 - tw / 2 - 8, py + 36, 4, 15);
   ctx.fillStyle = "#f3ead7";
-  ctx.fillText(plate, px + 9 - tw / 2, py + 42);
+  ctx.fillText(plate, px + 9 - tw / 2, py + 47);
 
   if (verb) {
     ctx.font = "9px system-ui, sans-serif";
