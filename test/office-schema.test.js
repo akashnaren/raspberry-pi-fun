@@ -32,6 +32,22 @@ test("seed office is a dollhouse the renderer can draw", async () => {
   assert.equal(office.desks.find((desk) => desk.owner === "mira").accent, "#F59E0B");
 });
 
+test("office chrome uses Imagine tokens and system UI fonts", async () => {
+  const css = await readFile(join(REPO, "public/office.css"), "utf8");
+  const tokens = await readFile(join(REPO, "public/art-tokens.css"), "utf8");
+  const html = await readFile(join(REPO, "public/index.html"), "utf8");
+  assert.match(html, /art-tokens\.css/);
+  assert.match(tokens, /--fb-nova: var\(--fb-emp-a\)/);
+  assert.match(tokens, /#f97316/);
+  assert.match(tokens, /#14b8a6/);
+  assert.match(tokens, /#f59e0b/);
+  assert.match(tokens, /#1a1f2e/);
+  assert.match(css, /var\(--fb-floor\)/);
+  assert.match(css, /var\(--fb-budget-fill\)/);
+  assert.doesNotMatch(css, /fonts\.google|cdn\.jsdelivr|fonts\.gstatic/i);
+  assert.match(tokens, /ui-sans-serif, system-ui/);
+});
+
 test("office schema rejects a prop id outside Imagine vocab", () => {
   const office = {
     coord_space: "topdown_norm",

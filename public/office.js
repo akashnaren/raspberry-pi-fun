@@ -910,33 +910,34 @@ function drawPerson(ox, oy, employee, sprite, now) {
         : sprite.pose === "talk"
           ? `at ${at}`
           : `at ${at}`;
-  ctx.font = "10px sans-serif";
-  const plate = `${first}  ${employee.role}`;
+  ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif";
+  const plate = first;
   const tw = ctx.measureText(plate).width;
-  ctx.fillStyle = "#1b140e";
-  ctx.fillRect(px + 8 - tw / 2 - 4, py + 28, tw + 8, 12);
-  ctx.fillStyle = color;
-  ctx.fillRect(px + 8 - tw / 2 - 4, py + 28, 3, 12);
-  ctx.fillStyle = "#f3eadc";
-  ctx.fillText(plate, px + 8 - tw / 2 + 2, py + 37);
-  ctx.font = "9px sans-serif";
+  ctx.fillStyle = "rgba(26, 31, 46, 0.88)";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.fillRect(px + 8 - tw / 2 - 8, py + 22, tw + 16, 16);
+  ctx.strokeRect(px + 8 - tw / 2 - 8, py + 22, tw + 16, 16);
+  ctx.fillStyle = TOKENS.text;
+  ctx.fillText(plate, px + 8 - tw / 2, py + 34);
+  ctx.font = "9px ui-sans-serif, system-ui, sans-serif";
   const vw = ctx.measureText(verb).width;
-  ctx.fillStyle = "rgba(27,20,14,0.78)";
+  ctx.fillStyle = "rgba(26, 31, 46, 0.78)";
   ctx.fillRect(px + 8 - vw / 2 - 3, py - 18, vw + 6, 11);
-  ctx.fillStyle = "#e8d7b8";
+  ctx.fillStyle = TOKENS.mute;
   ctx.fillText(verb, px + 8 - vw / 2, py - 9);
 
   if (hoverId === employee.id) {
     const chip = `${employee.name.split(" ")[0]} · ${employee.model || employee.modelFamily}`;
-    ctx.font = "10px sans-serif";
+    ctx.font = "10px ui-sans-serif, system-ui, sans-serif";
     const cw = ctx.measureText(chip).width;
-    ctx.fillStyle = "#22180f";
+    ctx.fillStyle = "rgba(26, 31, 46, 0.92)";
     ctx.fillRect(px - 4, py - 28, cw + 10, 14);
-    ctx.fillStyle = "#f3eadc";
+    ctx.fillStyle = TOKENS.text;
     ctx.fillText(chip, px, py - 18);
     const rel = feelLine(employee.id);
     if (rel) {
-      ctx.fillStyle = "#c9b59a";
+      ctx.fillStyle = TOKENS.mute;
       ctx.fillText(rel, px - 4, py - 32);
     }
   }
@@ -979,20 +980,20 @@ function drawBubble(ox, oy, now) {
   ctx.translate(x, y);
   ctx.scale(scale, scale);
   const lines = bubble.lines;
-  ctx.font = "11px sans-serif";
+  ctx.font = "500 12px ui-sans-serif, system-ui, sans-serif";
   const w = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 16;
   const h = 12 + lines.length * 12;
-  ctx.fillStyle = "#2a2118";
-  roundRect(0, 0, w, h, 6);
+  ctx.fillStyle = "rgba(36, 42, 58, 0.94)";
+  roundRect(0, 0, w, h, 10);
   ctx.fill();
-  ctx.strokeStyle = bubble.color || "#d7b07a";
+  ctx.strokeStyle = bubble.color || TOKENS.mira;
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(8, h);
   ctx.lineTo(4, h + 7);
   ctx.lineTo(16, h);
   ctx.fill();
-  ctx.fillStyle = "#f3eadc";
+  ctx.fillStyle = TOKENS.text;
   lines.forEach((line, i) => ctx.fillText(line, 8, 14 + i * 12));
   ctx.restore();
   return true;
