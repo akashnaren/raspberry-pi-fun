@@ -10,11 +10,12 @@ import {
   verbFor,
 } from "./office-motion.js";
 import { FALLBACK_CAST, FALLBACK_OFFICE, seedSprites } from "./office-seed.js";
-import { drawBubble, drawOffice, drawPerson, fillVoid } from "./office-draw.js";
+import { drawBubble, drawOffice, drawPerson, fillVoid, staticRoomKey } from "./office-draw.js";
+import { dprFor, dueBlink, frameGapMs, hotKind } from "./office-perf.js";
 import { mergeStudioState, parseSocketMessage, reconnectDelayMs } from "./office-net.js";
 
 const canvas = document.getElementById("office");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
 const product = document.getElementById("product");
 const validator = document.getElementById("validator");
 const pauseBtn = document.getElementById("pause-btn");
@@ -33,7 +34,7 @@ const eventLine = document.getElementById("event-line");
 const pauseNote = document.getElementById("pause-note");
 
 let CELL = 30;
-const DPR = 1;
+const DPR = dprFor();
 const ENTER = 220;
 const HOLD = 4200;
 const FADE = 700;
@@ -63,6 +64,12 @@ let lastStep = 0;
 let replayIndex = 0;
 let lastReplay = 0;
 let lastEventText = "";
+let rafId = 0;
+let idleTimer = 0;
+let lastFrameMs = 0;
+let roomCanvas = null;
+let roomCtx = null;
+let roomKey = "";
 
 let wsAttempt = 0;
 let httpAttempt = 0;
@@ -149,6 +156,7 @@ function applyState(next, event) {
   if (event?.type === "build_failed" || event?.type === "turn_failed") failFlash();
   syncSprites();
   refit();
+  wake();
 }
 
 function paintEventLine(events) {
@@ -415,16 +423,7 @@ function stepSprites(now) {
       }
     } else if (sprite.pose === "type" || sprite.pose === "sit-type") {
       sprite.frame = Math.floor(now / 220) % 2;
-    } else {
-      sprite.frame = Math.floor(now / 700) % 2;
     }
-    if (
-      (sprite.pose === "idle" || sprite.pose === "sit" || sprite.pose === "stand") &&
-      now > sprite.blinkUntil + 2400 + ((sprite.x * 400) % 1800)
-    ) {
-      sprite.blinkUntil = now + 120;
-    }
-    sprite.active *= 0.992;
   }
   return walking;
 }
@@ -455,25 +454,100 @@ function maybeReplay(now) {
   react(event);
 }
 
-function draw(now) {
-  const w = canvas.width / DPR;
-  const h = canvas.height / DPR;
-  ctx.clearRect(0, 0, w, h);
-  fillVoid(ctx, w, h);
-  const ox = view.ox;
-  const oy = view.oy;
-  const dim = state.paused || state.sleeping || state.budget?.exhausted;
-  drawOffice(ctx, {
-    office: state.office || FALLBACK_OFFICE,
-    employees: state.employees || FALLBACK_CAST,
-    ox,
-    oy,
+function viewSize() {
+  return { w: canvas.width / DPR, h: canvas.height / DPR };
+}
+
+function currentHot(now) {
+  const alive = bubble && now - bubble.born < ENTER + HOLD + FADE;
+  return hotKind({
+    hover: Boolean(hoverId),
+    bubble: alive ? { born: bubble.born, life: ENTER + HOLD + FADE } : null,
+    now,
+    sprites: state.sprites,
+  });
+}
+
+function clearIdle() {
+  if (!idleTimer) return;
+  clearTimeout(idleTimer);
+  idleTimer = 0;
+}
+
+function wake() {
+  clearIdle();
+  if (!rafId) rafId = requestAnimationFrame(loop);
+}
+
+function scheduleIdle(now) {
+  clearIdle();
+  const kind = currentHot(now);
+  if (frameGapMs(kind, lastFrameMs) > 0) {
+    wake();
+    return;
+  }
+  if (state.paused || state.sleeping || state.replay || state.budget?.exhausted) {
+    const remain = Math.max(250, 6000 - (now - lastReplay));
+    idleTimer = setTimeout(() => {
+      idleTimer = 0;
+      maybeReplay(performance.now());
+      wake();
+    }, remain);
+    return;
+  }
+  const due = dueBlink(now, state.sprites);
+  idleTimer = setTimeout(() => {
+    idleTimer = 0;
+    const list = [...state.sprites.values()];
+    const sprite = list[dueBlink(performance.now(), state.sprites).index];
+    if (sprite && sprite.pose !== "walk") sprite.blinkUntil = performance.now() + 130;
+    wake();
+  }, due.delay);
+}
+
+function paintRoom(w, h, dim) {
+  const office = state.office || FALLBACK_OFFICE;
+  const employees = state.employees || FALLBACK_CAST;
+  const key = staticRoomKey({
+    office,
     cell: CELL,
     dim,
+    w,
+    h,
+    ox: view.ox,
+    oy: view.oy,
+    employees,
   });
+  if (!roomCanvas) {
+    roomCanvas = document.createElement("canvas");
+    roomCtx = roomCanvas.getContext("2d", { alpha: false });
+  }
+  if (roomKey !== key) {
+    roomCanvas.width = Math.max(1, canvas.width);
+    roomCanvas.height = Math.max(1, canvas.height);
+    roomCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    fillVoid(roomCtx, w, h);
+    drawOffice(roomCtx, { office, employees, ox: view.ox, oy: view.oy, cell: CELL, dim });
+    roomKey = key;
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(roomCanvas, 0, 0);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+
+function draw(now) {
+  const { w, h } = viewSize();
+  const ox = view.ox;
+  const oy = view.oy;
+  const dim = Boolean(state.paused || state.sleeping || state.budget?.exhausted);
+  paintRoom(w, h, dim);
   const walking = stepSprites(now);
   facePairs();
-  for (const employee of state.employees || FALLBACK_CAST) {
+  const people = [...(state.employees || FALLBACK_CAST)].sort(
+    (a, b) => (state.sprites.get(a.id)?.y || 0) - (state.sprites.get(b.id)?.y || 0),
+  );
+  if (dim) ctx.globalAlpha = 0.78;
+  for (const employee of people) {
     const sprite = state.sprites.get(employee.id);
     if (!sprite) continue;
     drawPerson(ctx, {
@@ -485,9 +559,10 @@ function draw(now) {
       now,
       hover: hoverId === employee.id,
       feel: feelLine(employee.id),
-      verb: verbFor(sprite.pose, sprite.at),
+      verb: hoverId === employee.id ? verbFor(sprite.pose, sprite.at) : "",
     });
   }
+  ctx.globalAlpha = 1;
   const talking = drawBubble(ctx, {
     bubble,
     sprite: bubble ? state.sprites.get(bubble.actor) : null,
@@ -500,36 +575,46 @@ function draw(now) {
     fade: FADE,
   });
   if (bubble && !talking) bubble = null;
-  maybeReplay(now);
   return walking || talking;
 }
 
 function loop(ts) {
-  const walkingTalking = stepNeed(ts);
-  const interval = walkingTalking ? 33 : 120;
-  if (ts - lastDraw >= interval) {
-    draw(ts);
-    lastDraw = ts;
+  const started = performance.now();
+  rafId = 0;
+  const kind = currentHot(ts);
+  const gap = frameGapMs(kind, lastFrameMs);
+  if (gap > 0 && lastDraw && ts - lastDraw < gap) {
+    rafId = requestAnimationFrame(loop);
+    return;
   }
-  requestAnimationFrame(loop);
-}
-
-function stepNeed(ts) {
-  if (hoverId) return true;
-  if (bubble && ts - bubble.born < ENTER + HOLD + FADE) return true;
+  draw(ts);
+  lastDraw = ts;
+  lastFrameMs = performance.now() - started;
+  const again = frameGapMs(currentHot(performance.now()), lastFrameMs);
+  if (again > 0) {
+    rafId = requestAnimationFrame(loop);
+    return;
+  }
+  let blinkLeft = 0;
   for (const sprite of state.sprites.values()) {
-    if (sprite.path?.length || sprite.active > 0.05) return true;
+    if (sprite.blinkUntil > ts) blinkLeft = Math.max(blinkLeft, sprite.blinkUntil - ts);
   }
-  if ((state.paused || state.sleeping || state.replay || state.budget?.exhausted) && ts - lastReplay > 5500) {
-    return true;
+  if (blinkLeft > 0) {
+    clearIdle();
+    idleTimer = setTimeout(() => {
+      idleTimer = 0;
+      wake();
+    }, blinkLeft + 16);
+    return;
   }
-  return false;
+  scheduleIdle(ts);
 }
 
 canvas.addEventListener("mousemove", (event) => {
   const rect = canvas.getBoundingClientRect();
   const x = ((event.clientX - rect.left) / rect.width) * (canvas.width / DPR);
   const y = ((event.clientY - rect.top) / rect.height) * (canvas.height / DPR);
+  const prev = hoverId;
   hoverId = null;
   const ox = view.ox;
   const oy = view.oy;
@@ -540,9 +625,12 @@ canvas.addEventListener("mousemove", (event) => {
     const py = oy + sprite.y * CELL + CELL * 0.15;
     if (Math.hypot(x - px, y - py) < CELL * 0.85) hoverId = employee.id;
   }
+  if (hoverId !== prev) wake();
 });
 canvas.addEventListener("mouseleave", () => {
+  if (!hoverId) return;
   hoverId = null;
+  wake();
 });
 
 canvas.addEventListener("click", () => {
@@ -610,7 +698,27 @@ function toggleSound() {
 }
 soundBtn.addEventListener("click", toggleSound);
 
-window.addEventListener("resize", resize);
+if (new URLSearchParams(location.search).get("bench") === "walk") {
+  window.__benchWalk = () => {
+    for (const sprite of state.sprites.values()) {
+      const x = Math.round(sprite.x);
+      const y = Math.round(sprite.y);
+      sprite.path = [
+        { x, y: y + 1 },
+        { x: x + 1, y: y + 2 },
+        { x, y: y + 3 },
+      ];
+      sprite.pose = "walk";
+      sprite.at = "coffee";
+    }
+    wake();
+  };
+}
+
+window.addEventListener("resize", () => {
+  resize();
+  wake();
+});
 resize();
 syncSprites();
 requestAnimationFrame(loop);
