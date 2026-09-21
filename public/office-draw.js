@@ -41,13 +41,22 @@ const SHOE_COLOR = {
   sandals: "#c4a574",
 };
 
+const FACE = {
+  ponytail_dark: "oval-pony",
+  cropped_silver: "square-crop",
+  shoulder_brown: "long-part",
+  short_black_wavy: "round-wave",
+};
+
 export function lookOf(employee) {
   const aesthetics = employee.aesthetics || {};
   const outfit = aesthetics.outfit || {};
+  const hairStyle = aesthetics.hair || "short_black_wavy";
   return {
     skin: SKIN[aesthetics.skin] || SKIN.warm_medium,
-    hair: HAIR_COLOR[aesthetics.hair] || employee.color || "#1b1b1b",
-    hairStyle: aesthetics.hair || "short_black_wavy",
+    hair: HAIR_COLOR[hairStyle] || employee.color || "#1b1b1b",
+    hairStyle,
+    face: FACE[hairStyle] || "round-wave",
     top: TOP_COLOR[outfit.top] || employee.color || "#888",
     topKind: outfit.top || "tee",
     bottom: BOTTOM_COLOR[outfit.bottom] || "#314e73",
@@ -462,27 +471,27 @@ function drawDecor(ctx, ox, oy, cell, item, dim) {
     drawWindow(ctx, x, y, (item.w || 2) * cell, (item.h || 1) * cell * 0.85, dim);
   } else if (item.kind === "whiteboard") {
     const w = (item.w || 6) * cell;
-    const h = cell * 1.28;
+    const h = Math.max(cell * 1.85, (item.h || 1) * cell * 1.15);
     ctx.fillStyle = "#1a1410";
-    ctx.fillRect(x - 5, y - 5, w + 10, h + 10);
+    ctx.fillRect(x - 6, y - 6, w + 12, h + 12);
     ctx.fillStyle = "#f7f1e4";
     ctx.fillRect(x, y, w, h);
     ctx.fillStyle = "#d8cbb0";
-    ctx.fillRect(x, y + h - 8, w, 8);
+    ctx.fillRect(x, y + h - 10, w, 10);
     ctx.fillStyle = "#2a2118";
-    ctx.fillRect(x + 10, y + h - 6, 10, 4);
-    ctx.fillRect(x + 24, y + h - 6, 10, 4);
+    ctx.fillRect(x + 12, y + h - 7, 12, 5);
+    ctx.fillRect(x + 28, y + h - 7, 12, 5);
     ctx.fillStyle = "#1a1410";
-    const size = Math.max(14, Math.round(cell * 0.46));
-    ctx.font = `700 ${size}px system-ui, sans-serif`;
+    const size = Math.max(22, Math.round(cell * 0.72));
+    ctx.font = `800 ${size}px system-ui, sans-serif`;
     const words = String(item.text || "SHIP").split(" ");
     let line = "";
     let row = 0;
-    const lineH = size + 4;
+    const lineH = size + 8;
     for (const word of words) {
       const next = line ? `${line} ${word}` : word;
-      if (ctx.measureText(next).width > w - 16) {
-        ctx.fillText(line, x + 8, y + size + 6 + row * lineH);
+      if (ctx.measureText(next).width > w - 20) {
+        ctx.fillText(line, x + 10, y + size + 10 + row * lineH);
         line = word;
         row += 1;
         if (row > 2) break;
@@ -490,7 +499,7 @@ function drawDecor(ctx, ox, oy, cell, item, dim) {
         line = next;
       }
     }
-    if (line && row < 3) ctx.fillText(line, x + 8, y + size + 6 + row * lineH);
+    if (line && row < 3) ctx.fillText(line, x + 10, y + size + 10 + row * lineH);
   } else if (item.kind === "coffee") {
     drawFloorShadow(ctx, x + cell * 0.6, y + cell * 1.28, cell * 0.62, cell * 0.12);
     ctx.fillStyle = "#2c2c2e";
@@ -697,9 +706,22 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
   ctx.fillRect(1, 24, 6, 5);
 
   ctx.fillStyle = look.skin;
-  ctx.beginPath();
-  ctx.arc(0, -9, 8.4, 0, Math.PI * 2);
-  ctx.fill();
+  if (look.face === "square-crop") {
+    roundRect(ctx, -8.2, -17.2, 16.4, 16.6, 3.2);
+    ctx.fill();
+  } else if (look.face === "long-part") {
+    ctx.beginPath();
+    ctx.ellipse(0, -9.4, 7.2, 9.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (look.face === "oval-pony") {
+    ctx.beginPath();
+    ctx.ellipse(0, -9.2, 7.6, 8.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.arc(0, -8.6, 9, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   ctx.fillStyle = look.hair;
   if (look.hairStyle === "bun") {
@@ -707,22 +729,42 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
     ctx.arc(0, -16, 4.5, 0, Math.PI * 2);
     ctx.arc(0, -11, 8, Math.PI, 0);
     ctx.fill();
-  } else if (look.hairStyle === "ponytail_dark") {
+  } else if (look.hairStyle === "ponytail_dark" || look.face === "oval-pony") {
     ctx.beginPath();
-    ctx.arc(0, -11, 8, Math.PI, 0.15);
+    ctx.ellipse(0, -14.2, 8.6, 6.2, 0, Math.PI, 0.2);
     ctx.fill();
-    ctx.fillRect(6, -13, 5, 14);
-  } else if (look.hairStyle === "shoulder_brown" || look.hairStyle === "long_wave") {
+    ctx.fillRect(-8.4, -15, 16.8, 4.2);
     ctx.beginPath();
-    ctx.arc(0, -11, 8.6, Math.PI, 0);
+    ctx.moveTo(5.4, -14);
+    ctx.quadraticCurveTo(18, -10, 17, 10);
+    ctx.quadraticCurveTo(12, 12, 9, 6);
+    ctx.quadraticCurveTo(8, -2, 6, -10);
+    ctx.closePath();
     ctx.fill();
-    ctx.fillRect(-9, -11, 4, 12);
-    ctx.fillRect(5, -11, 4, 12);
-  } else if (look.hairStyle === "short_black_wavy") {
+    ctx.fillStyle = "#2a1a12";
+    ctx.fillRect(-6.8, -16, 6.4, 3);
+  } else if (look.hairStyle === "shoulder_brown" || look.hairStyle === "long_wave" || look.face === "long-part") {
     ctx.beginPath();
-    ctx.arc(0, -11, 8.6, Math.PI, 0.2);
+    ctx.ellipse(0, -13.6, 8.8, 6.4, 0, Math.PI, 0);
     ctx.fill();
-    ctx.fillRect(-9, -10, 4, 6);
+    ctx.beginPath();
+    ctx.ellipse(-8.4, -2, 4.4, 12, -0.18, 0, Math.PI * 2);
+    ctx.ellipse(8.4, -2, 4.4, 12, 0.18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#4a2a16";
+    ctx.fillRect(-1.2, -16.2, 2.2, 5);
+  } else if (look.hairStyle === "short_black_wavy" || look.face === "round-wave") {
+    ctx.beginPath();
+    ctx.arc(-5.2, -14.6, 4.4, 0, Math.PI * 2);
+    ctx.arc(0.4, -16.2, 4.8, 0, Math.PI * 2);
+    ctx.arc(5.6, -14.2, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(-9.4, -12, 5.2, 7);
+    ctx.fillRect(4.6, -12, 5.2, 6);
+  } else if (look.face === "square-crop") {
+    ctx.fillRect(-8.6, -18.4, 17.2, 6.4);
+    ctx.fillRect(-8.6, -16, 3.2, 5);
+    ctx.fillRect(5.4, -16, 3.2, 5);
   } else {
     ctx.beginPath();
     ctx.arc(0, -12, 7.6, Math.PI, 0);
@@ -731,12 +773,24 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
 
   if (blink) {
     ctx.strokeStyle = "#1b1b1b";
+    ctx.lineWidth = 1.4;
     ctx.beginPath();
-    ctx.moveTo(-3.5, -9);
-    ctx.lineTo(-1, -9);
-    ctx.moveTo(1, -9);
-    ctx.lineTo(3.5, -9);
+    ctx.moveTo(-4.2, -9.2);
+    ctx.lineTo(-1.2, -9.2);
+    ctx.moveTo(1.2, -9.2);
+    ctx.lineTo(4.2, -9.2);
     ctx.stroke();
+    ctx.lineWidth = 1;
+  } else if (look.face === "square-crop") {
+    ctx.fillStyle = "#1b1b1b";
+    ctx.fillRect(-4.4, -10.6, 3.2, 2.8);
+    ctx.fillRect(1.2, -10.6, 3.2, 2.8);
+  } else if (look.face === "long-part") {
+    ctx.fillStyle = "#3a2418";
+    ctx.beginPath();
+    ctx.ellipse(-2.8, -9.6, 1.5, 2.1, 0, 0, Math.PI * 2);
+    ctx.ellipse(2.8, -9.6, 1.5, 2.1, 0, 0, Math.PI * 2);
+    ctx.fill();
   } else {
     ctx.fillStyle = "#1b1b1b";
     ctx.fillRect(-3.5, -10, 2.4, 2.4);

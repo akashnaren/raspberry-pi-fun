@@ -23,6 +23,11 @@ export function usableCast(value) {
   return Array.isArray(value) && value.length > 0;
 }
 
+export function sanitizeEvents(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => item && typeof item === "object" && !Array.isArray(item));
+}
+
 /** Keep seed office/cast if /api/state is empty, 500, or missing rooms. */
 export function mergeStudioState(current, next, fallbackOffice, fallbackCast) {
   const base = current && typeof current === "object" ? current : {};
@@ -43,7 +48,11 @@ export function mergeStudioState(current, next, fallbackOffice, fallbackCast) {
     : usableCast(base.employees)
       ? base.employees
       : fallbackCast;
-  return { ...base, ...next, office, employees };
+  const merged = { ...base, ...next, office, employees };
+  if (next.events !== undefined || base.events !== undefined) {
+    merged.events = sanitizeEvents(next.events ?? base.events);
+  }
+  return merged;
 }
 
 export function parseSocketMessage(raw) {

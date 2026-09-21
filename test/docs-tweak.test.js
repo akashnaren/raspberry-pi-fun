@@ -11,6 +11,10 @@ test("Nova Docs tweak is already in the seed and stays idempotent", async () => 
   assert.match(seed, new RegExp(NOVA_DOCS_MARK));
   assert.match(seed, /function downloadMarkdown/);
   assert.match(seed, /Ctrl\+S writes a \.md/);
+  assert.match(seed, /id="find-box"/);
+  assert.match(seed, /function printReadyHtml/);
+  assert.match(seed, /data-heading="1"/);
+  assert.match(seed, /insertOrderedList/);
   assert.equal(applyNovaDocsTweak(seed), seed);
   assert.equal(syntaxCheckHtml(applyNovaDocsTweak(seed)).ok, true);
 });
@@ -33,5 +37,7 @@ test("Nova Docs tweak upgrades an older Docs page", () => {
   assert.match(next, /function downloadMarkdown/);
   assert.match(next, /key === "s"/);
   assert.match(next, /Ctrl\+S writes a \.md/);
+  assert.match(next, /id="find-box"/);
+  assert.match(next, /function printReadyHtml/);
   assert.equal(applyNovaDocsTweak(next), next);
 });

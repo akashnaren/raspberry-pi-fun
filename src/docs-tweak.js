@@ -1,11 +1,21 @@
-/** Nova's dry-run Docs ship. Idempotent. Never invents a second flagship. */
+/** Nova's dry-run Docs ship. Headings, lists, find, print. Idempotent. */
 
 export const NOVA_DOCS_MARK = 'id="save-md"';
+export const NOVA_DOCS_LEAP = 'id="find-box"';
 
 export function applyNovaDocsTweak(html) {
   const src = String(html || "");
   if (!src.includes("<html")) return src;
-  if (src.includes(NOVA_DOCS_MARK) && src.includes("function downloadMarkdown")) return src;
+  if (
+    src.includes(NOVA_DOCS_MARK) &&
+    src.includes("function downloadMarkdown") &&
+    src.includes(NOVA_DOCS_LEAP) &&
+    src.includes("function printReadyHtml") &&
+    src.includes('data-heading="1"') &&
+    src.includes("insertOrderedList")
+  ) {
+    return src;
+  }
 
   let next = src;
   if (!next.includes(NOVA_DOCS_MARK)) {
@@ -53,6 +63,54 @@ export function applyNovaDocsTweak(html) {
       "Write here. This tab keeps the page on this machine. Download when you want a file.",
       "Write here. Ctrl+S writes a .md. Download is a file, not a tab.",
     );
+  }
+
+  if (!next.includes('data-heading="1"') && next.includes('data-heading="2"')) {
+    next = next.replace(
+      '<button type="button" data-heading="2"',
+      '<button type="button" data-heading="1" aria-pressed="false">H1</button>\n          <button type="button" data-heading="2"',
+    );
+  }
+
+  if (!next.includes("insertOrderedList") && next.includes('data-cmd="insertUnorderedList"')) {
+    next = next.replace(
+      '<button type="button" data-cmd="insertUnorderedList" aria-pressed="false">•</button>',
+      '<button type="button" data-cmd="insertUnorderedList" aria-pressed="false">•</button>\n          <button type="button" data-cmd="insertOrderedList" aria-pressed="false">1.</button>',
+    );
+  }
+
+  if (!next.includes(NOVA_DOCS_LEAP)) {
+    if (next.includes("</header>")) {
+      next = next.replace(
+        "</header>",
+        `</header>
+    <div id="find-box" class="find-box" hidden>
+      <label for="find-q">Find</label>
+      <input id="find-q" type="search" />
+      <span id="find-count">0</span>
+    </div>`,
+      );
+    } else if (next.includes("</footer>")) {
+      next = next.replace(
+        "</footer>",
+        '<div id="find-box" hidden><input id="find-q" type="search" /></div></footer>',
+      );
+    }
+  }
+
+  if (!next.includes("function printReadyHtml")) {
+    const helper = `function printReadyHtml(docTitle, docHtml) {
+        const heading = String(docTitle || "Untitled").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return "<!doctype html><html><head><meta charset=\\"utf-8\\"><title>" + heading +
+          "</title><style>body{margin:2rem auto;max-width:40rem;color:#2a2118;font:1.05rem/1.55 Georgia,serif}h1{font-size:1.8rem}h2{font-size:1.15rem}</style></head><body><h1>" +
+          heading + "</h1>" + String(docHtml || "") + "</body></html>";
+      }
+      `;
+    if (next.includes("function download(")) {
+      next = next.replace("function download(", `${helper}function download(`);
+    } else if (next.includes("</script>")) {
+      next = next.replace("</script>", `${helper}</script>`);
+    }
   }
 
   return next;

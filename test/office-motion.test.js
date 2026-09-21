@@ -29,8 +29,10 @@ test("events walk to real objects, never 'thinking'", () => {
   const write = destinationFor({ type: "file_written", actor: "nova", data: { path: "product/index.html" } }, office);
   assert.equal(write.at, "desk");
   const plan = destinationFor({ type: "task_added", actor: "mira", data: { task: { text: "Docs first" } } }, office);
-  const sheetsTalk = destinationFor({ type: "say", actor: "nova", data: { text: "I shipped the grid." } }, office);
+  const sheetsTalk = destinationFor({ type: "say", actor: "nova", data: { text: "Headings and lists ship." } }, office);
   assert.equal(sheetsTalk.at, "whiteboard");
+  const printTalk = destinationFor({ type: "say", actor: "nova", data: { text: "Print hides the rail." } }, office);
+  assert.equal(printTalk.at, "whiteboard");
   assert.equal(plan.at, "whiteboard");
   const coffee = destinationFor({ type: "say", actor: "jules", data: { text: "Coffee stays." } }, office);
   assert.equal(coffee.at, "coffee");

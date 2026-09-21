@@ -1,6 +1,6 @@
-/** Scripted day. $0. Walks, Sheets ship, backlog, and furniture still hit the event log. */
+/** Scripted day. $0. Docs print, paste-csv, pair walks, and furniture still hit the event log. */
 
-import { applyNovaSheetsTweak } from "./sheets-tweak.js";
+import { applyNovaDocsTweak } from "./docs-tweak.js";
 
 const SCRIPTS = {
   mira: [
@@ -8,30 +8,30 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Sheets first. Kessler, walk the board with me.",
+          message: "Headings first. Kessler, walk the board with me.",
           to: "kessler",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Paste-to-grid ships. Formulas wait. A one-cell paste is a fail." },
+        arguments: { text: "Docs: H1, lists, find, print. No formulas. No AI write." },
       },
     ],
     [
       {
         name: "say",
         arguments: {
-          message: "Backlog is set. Invoice waits. Coffee, then I cut formulas.",
+          message: "No formulas. No AI. Coffee, then I cut the rest.",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Invoice print page only after a stranger can paste a column." },
+        arguments: { text: "Paste-to-CSV stays a catalogue tool. Not in the rail." },
       },
       {
         name: "journal",
         arguments: {
-          text: "Backlog: paste-to-grid, then invoice. Formulas wait. Nova ships the grid. Kessler greens a real paste.",
+          text: "Cut: formulas, AI write, slide animation. Keep print and tidy CSV.",
         },
       },
     ],
@@ -39,18 +39,18 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Take a break on the couch. Slides stay a short deck.",
+          message: "Take a break on the couch. Scope stays cut.",
         },
       },
     ],
   ],
   nova: [
     [
-      { name: "read_file", arguments: { path: "product/sheets.html" } },
+      { name: "read_file", arguments: { path: "product/index.html" } },
       {
         name: "say",
         arguments: {
-          message: "I shipped the grid. Mira, paste a column.",
+          message: "Headings and lists ship. Mira, print the page.",
           to: "mira",
         },
       },
@@ -72,13 +72,13 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Need caffeine. Paste has to fill more than one cell.",
+          message: "Need caffeine. Print has to hide the rail.",
         },
       },
       {
         name: "journal",
         arguments: {
-          text: "Sheets writes. Paste fills from the selected cell. Working beats formulas.",
+          text: "H1, lists, find, print. Working beats AI.",
         },
       },
     ],
@@ -88,18 +88,18 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Using the last green build. Mira, paste only filled one cell at the table.",
+          message: "Using the last green. Mira, find skipped the second heading at the table.",
           to: "mira",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Bug: paste must fill a block from the selected cell, not one square." },
+        arguments: { text: "Bug: find must hit every heading, then print." },
       },
       {
         name: "journal",
         arguments: {
-          text: "Bug note: a one-cell paste is a fail. Quoted commas have to stay in one cell.",
+          text: "Bug: find misses H2. Print still dumps the rail. Paste-csv must tidy spaces.",
         },
       },
     ],
@@ -107,7 +107,7 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Board stays a grid you can paste into. I'll download the csv before I close it.",
+          message: "I'll try paste-csv after I print. Board stays honest.",
         },
       },
       { name: "read_file", arguments: { path: "backlog.json" } },
@@ -116,7 +116,7 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Coffee with Jules. A one-cell paste is a fail.",
+          message: "Coffee with Jules. Find has to hit every heading.",
           to: "jules",
         },
       },
@@ -141,13 +141,13 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Board is the plan. Tidied Mira's stickies. Coffee stays. Two furniture credits.",
+          message: "Board is the plan. Docs print and paste-csv.",
         },
       },
       {
         name: "edit_office",
         arguments: {
-          whiteboard: "SHIP: Docs · Sheets. Paste a grid.",
+          whiteboard: "SHIP: Docs print · paste-csv",
           deskItem: { owner: "mira", item: "sticky_notes" },
         },
       },
@@ -176,13 +176,13 @@ const SCRIPTS = {
         name: "edit_office",
         arguments: {
           move: { kind: "plant", from: { x: 19, y: 10 }, x: 8, y: 9 },
-          whiteboard: "SHIP: Meridian Office — Docs · Sheets",
+          whiteboard: "SHIP: Docs print · paste-csv",
         },
       },
       {
         name: "journal",
         arguments: {
-          text: "Tidied. Nova will ask again. Budget stays two until the grid ships.",
+          text: "Tidied. Board says print and paste-csv. Standing desk still no.",
         },
       },
     ],
@@ -191,10 +191,10 @@ const SCRIPTS = {
 
 const WRAP_BEATS = [
   { name: "say", arguments: { message: "Coffee. Checking the floor again." } },
-  { name: "say", arguments: { message: "Back to the whiteboard. Sheets still first." } },
+  { name: "say", arguments: { message: "Back to the whiteboard. Print still first." } },
   {
     name: "journal",
-    arguments: { text: "Dry-run turn. Still watching the grid. Changing the note." },
+    arguments: { text: "Dry-run turn. Still watching Docs print. Changing the note." },
   },
 ];
 
@@ -207,8 +207,8 @@ function novaShipCalls(html) {
     step.push({
       name: "write_file",
       arguments: {
-        path: "product/sheets.html",
-        contents: applyNovaSheetsTweak(html),
+        path: "product/index.html",
+        contents: applyNovaDocsTweak(html),
       },
     });
   }
@@ -220,7 +220,7 @@ export function dryRunCalls(employeeId, turnIndex, ctx = {}) {
   const sequence = SCRIPTS[employeeId] || SCRIPTS.mira;
   let step;
   if (employeeId === "nova" && n % sequence.length === 0) {
-    step = novaShipCalls(ctx.sheetsHtml || ctx.productHtml);
+    step = novaShipCalls(ctx.productHtml || ctx.docsHtml);
   } else {
     step = sequence[n % sequence.length].map((call) => ({
       name: call.name,
@@ -234,7 +234,7 @@ export function dryRunCalls(employeeId, turnIndex, ctx = {}) {
       arguments: {
         ...extra.arguments,
         ...(extra.name === "journal"
-          ? { text: `Dry-run turn ${n + 1}. Still watching the grid. Changing the note.` }
+          ? { text: `Dry-run turn ${n + 1}. Still watching Docs print. Changing the note.` }
           : {}),
       },
     });

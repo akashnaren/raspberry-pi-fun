@@ -377,6 +377,16 @@ function refit() {
   CELL = view.cell;
 }
 
+function facePairs() {
+  const list = [...state.sprites.entries()];
+  for (const [id, sprite] of list) {
+    if (!sprite.at || sprite.at === "desk") continue;
+    const other = list.find(([, mate]) => mate !== sprite && mate.at === sprite.at);
+    if (!other) continue;
+    sprite.facing = other[1].x >= sprite.x ? 1 : -1;
+  }
+}
+
 function stepSprites(now) {
   const dt = Math.min(0.05, (now - (lastStep || now)) / 1000);
   lastStep = now;
@@ -458,6 +468,7 @@ function draw(now) {
     dim,
   });
   const walking = stepSprites(now);
+  facePairs();
   for (const employee of state.employees || FALLBACK_CAST) {
     const sprite = state.sprites.get(employee.id);
     if (!sprite) continue;
