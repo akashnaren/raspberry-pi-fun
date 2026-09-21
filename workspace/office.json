@@ -50,7 +50,7 @@
       "y": 1,
       "w": 8,
       "h": 1,
-      "text": "SHIP: Meridian Office — Docs first",
+      "text": "SHIP: Meridian Office — Docs · Sheets",
       "advertises": "plan"
     },
     { "kind": "window", "x": 11, "y": 1, "w": 2, "h": 1 },
@@ -63,6 +63,8 @@
     { "kind": "lamp", "x": 21, "y": 6 },
     { "kind": "plant", "x": 21, "y": 2 },
     { "kind": "plant", "x": 8, "y": 9 },
+    { "kind": "plant", "x": 1, "y": 8 },
+    { "kind": "plant", "x": 12, "y": 9 },
     { "kind": "clock", "x": 21, "y": 9 },
     { "kind": "shelf", "x": 14, "y": 1 },
     { "kind": "filing_cabinet", "x": 20, "y": 5 },
@@ -70,6 +72,8 @@
     { "kind": "couch", "x": 4, "y": 15, "advertises": "break" },
     { "kind": "rug", "x": 2, "y": 13 },
     { "kind": "plant", "x": 7, "y": 13 },
+    { "kind": "lamp", "x": 16, "y": 13 },
+    { "kind": "plant", "x": 22, "y": 15 },
     { "kind": "minifridge", "x": 7, "y": 15 },
     { "kind": "table", "x": 14, "y": 14, "advertises": "review" },
     { "kind": "beanbag", "x": 10, "y": 13 }

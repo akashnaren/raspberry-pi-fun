@@ -8,7 +8,7 @@ const LINES = {
 const NOTES = {
   nova: "Over budget. Tomorrow: smallest change that still lets someone download a page.",
   kessler: "Over budget. Recheck download and the empty Docs page before the next green.",
-  mira: "Over budget. Do not start Sheets while the studio sleeps.",
+  mira: "Over budget. Do not invent formulas while the studio sleeps.",
   jules: "Over budget. Two furniture credits stay two.",
 };
 

@@ -30,7 +30,9 @@ test("fallback office paints a room before any socket", async () => {
     assert.ok(look.bottomKind);
   }
   assert.ok(FALLBACK_OFFICE.decor.some((item) => item.kind === "window"));
-  assert.ok(FALLBACK_OFFICE.decor.some((item) => item.kind === "plant"));
+  const plants = FALLBACK_OFFICE.decor.filter((item) => item.kind === "plant");
+  assert.ok(plants.length >= 5);
+  assert.match(FALLBACK_OFFICE.decor.find((item) => item.kind === "whiteboard").text, /Sheets/);
   assert.ok(windowSky(false).top);
   assert.notEqual(windowSky(false).top, windowSky(true).top);
   const looks = Object.fromEntries(FALLBACK_CAST.map((person) => [person.id, lookOf(person)]));
@@ -59,6 +61,10 @@ test("workspace office and fallback stay aligned on the load-bearing bits", asyn
   assert.match(hud, /class="kill"/);
   assert.match(hud, /id="pause-note"/);
   assert.doesNotMatch(hud, /ticker|ON AIR|Meridian Desk/);
+  const draw = await readFile(join(REPO, "public/office-draw.js"), "utf8");
+  assert.match(draw, /drawDeskLamp/);
+  assert.match(draw, /drawKeyboard/);
+  assert.match(draw, /255,224,138/);
   const officeJs = await readFile(join(REPO, "public/office.js"), "utf8");
   assert.match(officeJs, /FALLBACK_OFFICE/);
   assert.match(officeJs, /hydrateFromHttp/);

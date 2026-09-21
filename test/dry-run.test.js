@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { applyNovaDocsTweak } from "../src/docs-tweak.js";
+import { applyNovaSheetsTweak } from "../src/sheets-tweak.js";
 import { createDryRunDriver, dryRunCalls } from "../src/dry-run.js";
 import { createEventLog } from "../src/event-log.js";
 import { createBudget } from "../src/budget.js";
@@ -15,18 +15,20 @@ import { tempStudioRoot, testEnv } from "./helpers.js";
 
 const office = JSON.parse(await readFile(new URL("../workspace/office.json", import.meta.url), "utf8"));
 
-test("dry-run day: Nova ships Docs, Kessler files a bug, Mira sets backlog, Jules tidies", async () => {
-  const seed = await readFile(new URL("../workspace/product/index.html", import.meta.url), "utf8");
-  const nova0 = dryRunCalls("nova", 0, { productHtml: seed });
-  assert.ok(nova0.some((call) => call.name === "read_file" && call.arguments.path === "product/index.html"));
-  assert.ok(nova0.some((call) => call.name === "write_file" && call.arguments.path === "product/index.html"));
+test("dry-run day: Nova ships Sheets, Kessler files a paste bug, Mira sets backlog, Jules tidies", async () => {
+  const seed = await readFile(new URL("../workspace/product/sheets.html", import.meta.url), "utf8");
+  const nova0 = dryRunCalls("nova", 0, { sheetsHtml: seed });
+  assert.ok(nova0.some((call) => call.name === "read_file" && call.arguments.path === "product/sheets.html"));
+  assert.ok(nova0.some((call) => call.name === "write_file" && call.arguments.path === "product/sheets.html"));
   const shipped = nova0.find((call) => call.name === "write_file");
-  assert.equal(shipped.arguments.contents, applyNovaDocsTweak(seed));
-  assert.match(shipped.arguments.contents, /Ctrl\+S downloads \.md/);
+  assert.equal(shipped.arguments.contents, applyNovaSheetsTweak(seed));
+  assert.match(shipped.arguments.contents, /Paste fills from the selected cell/);
+  assert.ok(nova0.some((call) => call.name === "say" && call.arguments.to === "mira"));
 
   const kessler0 = dryRunCalls("kessler", 0);
-  assert.ok(kessler0.some((call) => call.name === "add_task" && /Bug: download \.md/.test(call.arguments.text)));
+  assert.ok(kessler0.some((call) => call.name === "add_task" && /Bug: paste/.test(call.arguments.text)));
   assert.ok(kessler0.some((call) => call.name === "journal" && /Bug note/.test(call.arguments.text)));
+  assert.ok(kessler0.some((call) => call.name === "say" && call.arguments.to === "mira"));
 
   const mira1 = dryRunCalls("mira", 1);
   assert.ok(mira1.some((call) => call.name === "add_task" && /Invoice print page/.test(call.arguments.text)));
@@ -36,6 +38,7 @@ test("dry-run day: Nova ships Docs, Kessler files a bug, Mira sets backlog, Jule
   const tidy = jules1.find((call) => call.name === "edit_office");
   assert.equal(tidy.arguments.deskItem.owner, "mira");
   assert.equal(tidy.arguments.deskItem.item, "sticky_notes");
+  assert.match(tidy.arguments.whiteboard, /Sheets/);
 });
 
 test("dry-run scripts walk to coffee, board, couch, and table", () => {
@@ -82,11 +85,11 @@ test("Jules dry-run uses edit_office and it persists in office.json", async () =
     assert.equal(result.ok, true, result.error);
   }
   const signed = JSON.parse(await readFile(join(workspaceRoot, "office.json"), "utf8"));
-  assert.match(signed.decor.find((item) => item.kind === "whiteboard").text, /Print/);
+  assert.match(signed.decor.find((item) => item.kind === "whiteboard").text, /Paste/);
   assert.ok(signed.desks.find((desk) => desk.owner === "mira").items.includes("sticky_notes"));
 });
 
-test("Nova dry-run ship writes Docs and promotes the green seed to dist", async () => {
+test("Nova dry-run ship writes Sheets and promotes the green seed to dist", async () => {
   const root = await tempStudioRoot();
   const studio = await createStudio({
     root,
@@ -94,19 +97,25 @@ test("Nova dry-run ship writes Docs and promotes the green seed to dist", async 
     listen: false,
     random: () => 0,
   });
-  const seed = await readFile(join(root, "dist/index.html"), "utf8");
-  assert.match(seed, /id="save-md"/);
+  const seedDocs = await readFile(join(root, "dist/index.html"), "utf8");
+  const seedSheets = await readFile(join(root, "dist/sheets.html"), "utf8");
+  const seedSlides = await readFile(join(root, "dist/slides.html"), "utf8");
+  assert.match(seedDocs, /id="save-md"/);
+  assert.match(seedSheets, /id="paste-from"/);
+  assert.match(seedSlides, /id="slide-title"/);
   const result = await studio.orchestrator.tickOnce();
   assert.equal(result.employee.id, "nova");
   assert.equal(result.result.dryRun, true);
-  assert.ok(result.result.toolCalls.some((call) => call.name === "write_file"));
+  assert.ok(result.result.toolCalls.some((call) => call.name === "write_file" && call.arguments.path === "product/sheets.html"));
   assert.equal(
-    studio.events.all().some((event) => event.type === "file_written" && event.data?.path === "product/index.html"),
+    studio.events.all().some((event) => event.type === "file_written" && event.data?.path === "product/sheets.html"),
     true,
   );
   assert.equal(studio.events.all().some((event) => event.type === "build_passed" && event.actor === "nova"), true);
-  const after = await readFile(join(root, "dist/index.html"), "utf8");
-  assert.match(after, /Ctrl\+S writes a \.md/);
+  const after = await readFile(join(root, "dist/sheets.html"), "utf8");
+  assert.match(after, /Paste fills from the selected cell/);
+  const docsAfter = await readFile(join(root, "dist/index.html"), "utf8");
+  assert.match(docsAfter, /id="save-md"/);
   await studio.stop();
 });
 

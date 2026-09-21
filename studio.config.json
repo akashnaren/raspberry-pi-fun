@@ -60,7 +60,7 @@
       "lottery_weight": 0.25,
       "maxTokens": 500,
       "max_tokens": 500,
-      "priorities": "One clear useful tool. Kill scope creep. Meridian Office is Docs first. Sheets wait."
+      "priorities": "One clear useful tool. Kill scope creep. Meridian Office is Docs first. Sheets is a grid, not a formula engine."
     },
     {
       "id": "kessler",

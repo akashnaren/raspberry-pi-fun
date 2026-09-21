@@ -139,7 +139,7 @@ export function destinationFor(event, office) {
       if (/coffee|mug|caffeine|espresso/i.test(text)) return coffee() || desk();
       if (/break|couch|hang out|sit/i.test(text)) return couch() || coffee() || desk();
       if (/review|meeting|table|fail|reject|green build/i.test(text)) return meeting() || desk();
-      if (/board|plan|ship|task|backlog|docs/i.test(text)) return board() || desk();
+      if (/board|plan|ship|task|backlog|docs|sheets|slides|grid/i.test(text)) return board() || desk();
       return coffee() || couch() || desk();
     }
     case "turn_started": {
