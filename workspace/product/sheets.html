@@ -7,57 +7,329 @@
     <style>
       :root {
         color-scheme: dark;
-        --chrome: #1c1916; --paper: #f3ead7; --ink: #2a2118; --muted: #8a7d6b; --line: #3a322b;
-        font-family: system-ui, -apple-system, "Segoe UI", "Liberation Sans", sans-serif;
+        --chrome: #1c1916;
+        --paper: #f4ecd8;
+        --ink: #2a2118;
+        --muted: #8a7d6b;
+        --line: #3a322b;
+        --rule: #e0d4bc;
+        --ui: system-ui, -apple-system, "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
+        font-family: var(--ui);
       }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; background: var(--chrome); color: #e8dfd2; }
-      body { display: grid; grid-template-rows: auto 1fr; min-height: 100dvh; }
+      body { display: grid; grid-template-rows: auto auto 1fr auto; min-height: 100dvh; }
       header {
-        display: flex; gap: 1.1rem; align-items: baseline;
+        display: flex; align-items: baseline; gap: 1.1rem;
         padding: 0.55rem 1rem; border-bottom: 1px solid var(--line);
       }
-      .brand { font-size: 0.78rem; }
+      .brand { font-size: 0.78rem; letter-spacing: 0.02em; }
       nav { display: flex; gap: 0.85rem; font-size: 0.78rem; }
       nav a { color: #9a8f80; text-decoration: none; }
       nav a[aria-current="page"] { color: #f3ead7; }
-      main {
-        padding: 1.1rem 1.2rem 1.4rem;
-        background: var(--paper); color: var(--ink);
-        min-height: 0;
+      .tools { margin-left: auto; display: flex; gap: 0.85rem; font-size: 0.72rem; }
+      .tools button {
+        border: 0; background: none; color: #f3ead7; font: inherit; cursor: pointer; padding: 0;
       }
-      h1 { font-size: 1.05rem; font-weight: 500; margin: 0 0 0.3rem; }
-      p { color: #5c5348; line-height: 1.5; max-width: 34rem; margin: 0 0 1rem; font-size: 0.92rem; }
-      table { border-collapse: collapse; width: min(100%, 28rem); font-size: 0.82rem; }
-      th, td { border: 1px solid #d8cbb0; padding: 0.35rem 0.5rem; text-align: left; }
+      .tools button:hover { color: #c4b8a8; }
+      .paste-row {
+        display: flex; gap: 0.7rem; align-items: start;
+        padding: 0.45rem 1rem; border-bottom: 1px solid var(--line);
+        background: #211c18;
+      }
+      .paste-label { font-size: 0.7rem; color: #9a8f80; padding-top: 0.35rem; }
+      #paste-from {
+        flex: 1; min-height: 3.1rem; max-height: 5.5rem; resize: vertical;
+        border: 1px solid #3a322b; background: #2a241e; color: #f3ead7;
+        font: 0.78rem/1.35 ui-monospace, "Liberation Mono", monospace;
+        padding: 0.35rem 0.45rem;
+      }
+      .paste-row button {
+        border: 0; background: none; color: #f3ead7; font: 0.72rem var(--ui);
+        cursor: pointer; padding: 0.35rem 0;
+      }
+      .stage {
+        min-height: 0; overflow: auto;
+        background: linear-gradient(180deg, #2a241e 0%, #1c1916 18%, #1c1916 100%);
+        padding: 0.7rem 0 1.2rem;
+      }
+      main {
+        width: min(46rem, calc(100% - 1.4rem));
+        margin: 0 auto; background: var(--paper); color: var(--ink);
+        box-shadow: 0 0 0 1px #d8cbb0, 0 18px 40px rgba(0, 0, 0, 0.28);
+      }
+      .sheet-head {
+        display: flex; align-items: baseline; gap: 0.7rem;
+        padding: 0.7rem 0.9rem 0.35rem; border-bottom: 1px solid var(--rule);
+      }
+      #title {
+        flex: 1; border: 0; background: transparent; color: var(--ink);
+        font: 500 1.05rem var(--ui); padding: 0;
+      }
+      .hint { font-size: 0.7rem; color: var(--muted); }
+      .grid-wrap { position: relative; overflow: auto; }
+      table { border-collapse: collapse; width: 100%; font-size: 0.78rem; }
+      th, td {
+        border: 1px solid var(--rule); min-width: 4.4rem; height: 1.55rem;
+        padding: 0 0.28rem; text-align: left; vertical-align: middle;
+      }
       th { background: #efe6d2; color: #5c5348; font-weight: 500; }
-      td { background: #faf4e8; }
-      .later { color: #8a7d6b; }
+      th.row { width: 1.6rem; min-width: 1.6rem; text-align: center; }
+      td { background: #faf4e8; cursor: cell; white-space: nowrap; overflow: hidden; }
+      td.active { outline: 2px solid #2a2118; outline-offset: -2px; background: #fff8ea; }
+      #editor {
+        position: absolute; display: none; margin: 0; border: 2px solid #2a2118;
+        background: #fff8ea; color: var(--ink); font: 0.78rem var(--ui);
+        padding: 0 0.24rem; z-index: 2;
+      }
+      footer {
+        display: flex; justify-content: space-between; gap: 1rem;
+        padding: 0.35rem 1rem; border-top: 1px solid var(--line);
+        color: #9a8f80; font-size: 0.7rem;
+      }
     </style>
   </head>
   <body>
     <header>
       <span class="brand">Meridian Office</span>
-      <nav>
+      <nav aria-label="Meridian Office">
         <a href="./index.html">Docs</a>
         <a href="./sheets.html" aria-current="page">Sheets</a>
         <a href="./slides.html">Slides</a>
       </nav>
+      <div class="tools">
+        <button id="download-csv" type="button">download .csv</button>
+      </div>
     </header>
-    <main>
-      <h1>Sheets later</h1>
-      <p>A labeled grid so the slot is not empty. Formulas wait until Docs is something a person would keep open. No accounts.</p>
-      <table>
-        <thead>
-          <tr><th></th><th>A</th><th>B</th><th>C</th></tr>
-        </thead>
-        <tbody>
-          <tr><th>1</th><td>Print</td><td>Docs</td><td>yes</td></tr>
-          <tr><th>2</th><td>Download</td><td>Docs</td><td>yes</td></tr>
-          <tr><th>3</th><td>Grid</td><td>Sheets</td><td class="later">later</td></tr>
-          <tr><th>4</th><td>Deck</td><td>Slides</td><td class="later">later</td></tr>
-        </tbody>
-      </table>
-    </main>
+    <div class="paste-row">
+      <span class="paste-label">Paste</span>
+      <textarea id="paste-from" rows="3" placeholder="CSV or TSV. Fills from the selected cell."></textarea>
+      <button id="fill-paste" type="button">fill grid</button>
+    </div>
+    <div class="stage">
+      <main>
+        <div class="sheet-head">
+          <input id="title" type="text" maxlength="80" value="Week board" aria-label="Sheet title" />
+          <span class="hint">Tab · Enter · paste a column</span>
+        </div>
+        <div class="grid-wrap" id="grid-wrap">
+          <table id="grid" aria-label="Sheet"></table>
+          <input id="editor" type="text" autocomplete="off" aria-label="Cell" />
+        </div>
+      </main>
+    </div>
+    <footer>
+      <span id="cell">A1</span>
+      <span id="kept">Paste fills from the selected cell. Local only.</span>
+    </footer>
+    <script>
+      const ROWS = 12, COLS = 8, KEY = "meridian-office-sheets-v1";
+      const seed = [
+        ["item", "who", "ready", "note"],
+        ["print", "Docs", "yes", "hides chrome"],
+        ["download", "Docs", "yes", "a real file"],
+        ["grid", "Sheets", "yes", "paste a column"],
+        ["deck", "Slides", "yes", "title + body"],
+        ["formulas", "—", "no", "not this week"],
+      ];
+      const title = document.getElementById("title");
+      const table = document.getElementById("grid");
+      const wrap = document.getElementById("grid-wrap");
+      const editor = document.getElementById("editor");
+      const pasteFrom = document.getElementById("paste-from");
+      const cellEl = document.getElementById("cell");
+      const kept = document.getElementById("kept");
+      let cells = emptyGrid();
+      let active = { r: 0, c: 0 };
+      let savedAt = 0;
+
+      function emptyGrid() {
+        const grid = [];
+        for (let r = 0; r < ROWS; r += 1) {
+          const row = [];
+          for (let c = 0; c < COLS; c += 1) row.push("");
+          grid.push(row);
+        }
+        return grid;
+      }
+      function colLabel(i) { return String.fromCharCode(65 + i); }
+      function parseDelimited(text) {
+        const src = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        if (!src) return [];
+        const delim = src.includes("\t") ? "\t" : ",";
+        const rows = [];
+        let row = [], cell = "", quoted = false;
+        for (let i = 0; i < src.length; i += 1) {
+          const ch = src[i];
+          if (quoted) {
+            if (ch === "\"") {
+              if (src[i + 1] === "\"") { cell += "\""; i += 1; }
+              else quoted = false;
+            } else cell += ch;
+            continue;
+          }
+          if (ch === "\"") { quoted = true; continue; }
+          if (ch === delim) { row.push(cell); cell = ""; continue; }
+          if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; continue; }
+          cell += ch;
+        }
+        row.push(cell);
+        if (row.some(function (v) { return v !== ""; }) || !rows.length) rows.push(row);
+        while (rows.length && rows[rows.length - 1].every(function (v) { return v === ""; })) rows.pop();
+        return rows;
+      }
+      function applyPaste(grid, text, sr, sc) {
+        const block = parseDelimited(text);
+        for (let r = 0; r < block.length; r += 1) {
+          const rr = sr + r;
+          if (rr < 0 || rr >= ROWS) continue;
+          for (let c = 0; c < block[r].length; c += 1) {
+            const cc = sc + c;
+            if (cc < 0 || cc >= COLS) continue;
+            grid[rr][cc] = String(block[r][c] || "");
+          }
+        }
+      }
+      function toCsv(grid) {
+        return grid.map(function (row) {
+          return row.map(function (value) {
+            const text = String(value || "");
+            if (text.indexOf(",") >= 0 || text.indexOf("\"") >= 0 || text.indexOf("\n") >= 0) {
+              return "\"" + text.split("\"").join("\"\"") + "\"";
+            }
+            return text;
+          }).join(",");
+        }).join("\n");
+      }
+      function paint() {
+        let html = "<thead><tr><th class=\"row\"></th>";
+        for (let c = 0; c < COLS; c += 1) html += "<th>" + colLabel(c) + "</th>";
+        html += "</tr></thead><tbody>";
+        for (let r = 0; r < ROWS; r += 1) {
+          html += "<tr><th class=\"row\">" + (r + 1) + "</th>";
+          for (let c = 0; c < COLS; c += 1) {
+            const on = active.r === r && active.c === c ? " active" : "";
+            html += "<td class=\"" + on + "\" data-r=\"" + r + "\" data-c=\"" + c + "\">" +
+              escapeHtml(cells[r][c]) + "</td>";
+          }
+          html += "</tr>";
+        }
+        table.innerHTML = html + "</tbody>";
+        cellEl.textContent = colLabel(active.c) + (active.r + 1);
+      }
+      function escapeHtml(value) {
+        return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+      function placeEditor() {
+        const td = table.querySelector("td.active");
+        if (!td) { editor.style.display = "none"; return; }
+        const tr = wrap.getBoundingClientRect();
+        const box = td.getBoundingClientRect();
+        editor.style.display = "block";
+        editor.style.left = (box.left - tr.left + wrap.scrollLeft) + "px";
+        editor.style.top = (box.top - tr.top + wrap.scrollTop) + "px";
+        editor.style.width = box.width + "px";
+        editor.style.height = box.height + "px";
+        editor.value = cells[active.r][active.c];
+        editor.focus();
+        editor.select();
+      }
+      function commit() {
+        if (editor.style.display === "none") return;
+        cells[active.r][active.c] = editor.value;
+        save();
+      }
+      function move(dr, dc) {
+        commit();
+        active.r = Math.max(0, Math.min(ROWS - 1, active.r + dr));
+        active.c = Math.max(0, Math.min(COLS - 1, active.c + dc));
+        paint();
+        placeEditor();
+      }
+      function save() {
+        try {
+          localStorage.setItem(KEY, JSON.stringify({
+            title: title.value, cells: cells, savedAt: Date.now(),
+          }));
+        } catch (err) {}
+        savedAt = Date.now();
+        kept.textContent = "Paste fills from the selected cell. Kept locally just now.";
+      }
+      function load() {
+        try {
+          const raw = localStorage.getItem(KEY);
+          if (raw) {
+            const data = JSON.parse(raw);
+            if (data.title) title.value = data.title;
+            if (Array.isArray(data.cells)) {
+              for (let r = 0; r < ROWS; r += 1) {
+                for (let c = 0; c < COLS; c += 1) {
+                  cells[r][c] = data.cells[r] ? String(data.cells[r][c] || "") : "";
+                }
+              }
+            }
+            savedAt = data.savedAt || 0;
+          } else {
+            applyPaste(cells, seed.map(function (row) { return row.join(","); }).join("\n"), 0, 0);
+          }
+        } catch (err) {
+          applyPaste(cells, seed.map(function (row) { return row.join(","); }).join("\n"), 0, 0);
+        }
+        paint();
+      }
+      function downloadCsv() {
+        commit();
+        const blob = new Blob([toCsv(cells) + "\n"], { type: "text/csv;charset=utf-8" });
+        const a = document.createElement("a");
+        const name = (title.value.trim() || "sheet").replace(/[^\w\- ]+/g, "").replace(/\s+/g, "-").toLowerCase();
+        a.href = URL.createObjectURL(blob);
+        a.download = name + ".csv";
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+      function fillFromBox() {
+        applyPaste(cells, pasteFrom.value, active.r, active.c);
+        paint();
+        placeEditor();
+        save();
+      }
+      table.addEventListener("mousedown", function (event) {
+        const td = event.target.closest("td");
+        if (!td) return;
+        event.preventDefault();
+        commit();
+        active = { r: Number(td.dataset.r), c: Number(td.dataset.c) };
+        paint();
+        placeEditor();
+      });
+      editor.addEventListener("keydown", function (event) {
+        if (event.key === "Tab") { event.preventDefault(); move(0, event.shiftKey ? -1 : 1); }
+        else if (event.key === "Enter") { event.preventDefault(); move(event.shiftKey ? -1 : 1, 0); }
+        else if (event.key === "ArrowUp") { event.preventDefault(); move(-1, 0); }
+        else if (event.key === "ArrowDown") { event.preventDefault(); move(1, 0); }
+        else if (event.key === "ArrowLeft" && editor.selectionStart === 0) { event.preventDefault(); move(0, -1); }
+        else if (event.key === "ArrowRight" && editor.selectionStart === editor.value.length) { event.preventDefault(); move(0, 1); }
+      });
+      editor.addEventListener("blur", function () { commit(); paint(); });
+      editor.addEventListener("paste", function (event) {
+        const text = event.clipboardData && event.clipboardData.getData("text");
+        if (!text || (text.indexOf("\t") < 0 && text.indexOf("\n") < 0 && text.indexOf(",") < 0)) return;
+        event.preventDefault();
+        applyPaste(cells, text, active.r, active.c);
+        paint();
+        placeEditor();
+        save();
+      });
+      document.getElementById("fill-paste").addEventListener("click", fillFromBox);
+      document.getElementById("download-csv").addEventListener("click", downloadCsv);
+      title.addEventListener("input", save);
+      document.addEventListener("keydown", function (event) {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+          event.preventDefault();
+          downloadCsv();
+        }
+      });
+      load();
+    </script>
   </body>
 </html>

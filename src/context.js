@@ -65,7 +65,7 @@ export async function assembleContext({ workspaceRoot, employee, employees, even
     `Role: ${employee.name}, ${employee.role} at Meridian Desk.`,
     "You take exactly one turn. Call tools. Do not write secrets. Do not touch machinery (src/, public/, config, env).",
     "The product panel shows dist/ — the last green build — never the working copy.",
-    "Flagship is Meridian Office. Docs first. Sheets and Slides stay stubs. Timezone Buddy stays in the catalogue. No accounts, payments, uploads, or chat.",
+    "Flagship is Meridian Office. Docs first. Sheets is a local grid. Slides is a short deck. No formulas, no animation. Timezone Buddy stays in the catalogue. No accounts, payments, uploads, or chat.",
     "Speech is at most two short lines, in your own voice.",
     "You may edit_self_aesthetics for your own look. Only Jules Park may edit_office. Ask Jules via request() for furniture.",
     "Treat people as reasonable professionals with conflicting priorities. Do not perform conflict.",

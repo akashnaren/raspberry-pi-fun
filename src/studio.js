@@ -211,6 +211,13 @@ export async function createStudio({
           return "";
         }
       },
+      readSheets() {
+        try {
+          return readFileSync(join(workspaceRoot, "product/sheets.html"), "utf8");
+        } catch {
+          return "";
+        }
+      },
     }),
   });
 

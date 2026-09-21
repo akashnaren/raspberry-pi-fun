@@ -7,56 +7,240 @@
     <style>
       :root {
         color-scheme: dark;
-        --chrome: #1c1916; --paper: #f3ead7; --ink: #2a2118; --line: #3a322b;
-        font-family: system-ui, -apple-system, "Segoe UI", "Liberation Sans", sans-serif;
+        --chrome: #1c1916;
+        --paper: #f4ecd8;
+        --ink: #2a2118;
+        --muted: #8a7d6b;
+        --line: #3a322b;
+        --rule: #e0d4bc;
+        --ui: system-ui, -apple-system, "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
+        font-family: var(--ui);
       }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; background: var(--chrome); color: #e8dfd2; }
-      body { display: grid; grid-template-rows: auto 1fr; min-height: 100dvh; }
+      body { display: grid; grid-template-rows: auto 1fr auto; min-height: 100dvh; }
       header {
-        display: flex; gap: 1.1rem; align-items: baseline;
+        display: flex; align-items: baseline; gap: 1.1rem;
         padding: 0.55rem 1rem; border-bottom: 1px solid var(--line);
       }
-      .brand { font-size: 0.78rem; }
+      .brand { font-size: 0.78rem; letter-spacing: 0.02em; }
       nav { display: flex; gap: 0.85rem; font-size: 0.78rem; }
       nav a { color: #9a8f80; text-decoration: none; }
       nav a[aria-current="page"] { color: #f3ead7; }
-      main { padding: 1.1rem 1.2rem 1.4rem; background: var(--paper); color: var(--ink); }
-      h1 { font-size: 1.05rem; font-weight: 500; margin: 0 0 0.3rem; }
-      p { color: #5c5348; line-height: 1.5; max-width: 34rem; margin: 0 0 1rem; font-size: 0.92rem; }
-      .row { display: flex; gap: 0.7rem; flex-wrap: wrap; }
-      .deck {
-        aspect-ratio: 16/9; width: min(100%, 18rem);
-        border: 1px solid #d8cbb0; background: #fff8ea;
-        padding: 1rem 1.1rem; color: #2a2118;
+      .tools { margin-left: auto; display: flex; gap: 0.85rem; font-size: 0.72rem; flex-wrap: wrap; }
+      .tools button {
+        border: 0; background: none; color: #f3ead7; font: inherit; cursor: pointer; padding: 0;
       }
-      .deck strong { display: block; font-size: 1.05rem; font-weight: 500; margin-bottom: 0.35rem; }
-      .deck span { color: #5c5348; font-size: 0.82rem; }
-      .deck.ghost { opacity: 0.55; }
+      .tools button:hover { color: #c4b8a8; }
+      .stage {
+        min-height: 0; overflow: auto;
+        background: linear-gradient(180deg, #2a241e 0%, #1c1916 18%, #1c1916 100%);
+        padding: 0.8rem 0 1.2rem;
+      }
+      main {
+        width: min(40rem, calc(100% - 1.6rem));
+        margin: 0 auto;
+      }
+      .deck {
+        aspect-ratio: 16/9; background: var(--paper); color: var(--ink);
+        box-shadow: 0 0 0 1px #d8cbb0, 0 18px 40px rgba(0, 0, 0, 0.28);
+        padding: 1.2rem 1.35rem 1rem;
+        display: grid; grid-template-rows: auto 1fr; min-height: 14rem;
+      }
+      #slide-title {
+        width: 100%; border: 0; border-bottom: 1px solid var(--rule);
+        background: transparent; color: var(--ink);
+        font: 500 1.45rem "Iowan Old Style", Palatino, "Liberation Serif", Georgia, serif;
+        padding: 0 0 0.4rem;
+      }
+      #slide-body {
+        width: 100%; border: 0; background: transparent; color: var(--ink);
+        font: 1.02rem/1.5 "Iowan Old Style", Palatino, "Liberation Serif", Georgia, serif;
+        resize: none; padding: 0.7rem 0 0; min-height: 0;
+      }
+      .bar {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 0.7rem; margin-top: 0.7rem; color: #c4b8a8; font-size: 0.72rem;
+      }
+      .bar button {
+        border: 0; background: none; color: #f3ead7; font: inherit; cursor: pointer; padding: 0;
+      }
+      .dots { display: flex; gap: 0.35rem; }
+      .dot {
+        width: 0.45rem; height: 0.45rem; border-radius: 50%;
+        background: #5c5348; border: 0; padding: 0; cursor: pointer;
+      }
+      .dot[aria-current="true"] { background: #f3ead7; }
+      footer {
+        display: flex; justify-content: space-between; gap: 1rem;
+        padding: 0.35rem 1rem; border-top: 1px solid var(--line);
+        color: #9a8f80; font-size: 0.7rem;
+      }
     </style>
   </head>
   <body>
     <header>
       <span class="brand">Meridian Office</span>
-      <nav>
+      <nav aria-label="Meridian Office">
         <a href="./index.html">Docs</a>
         <a href="./sheets.html">Sheets</a>
         <a href="./slides.html" aria-current="page">Slides</a>
       </nav>
-    </header>
-    <main>
-      <h1>Slides after the page can hold a thought</h1>
-      <p>One title card so the pane is not a blank rectangle. A deck waits until Docs is done. No accounts.</p>
-      <div class="row">
-        <div class="deck" aria-hidden="true">
-          <strong>Meridian Office</strong>
-          <span>Docs first. Local only.</span>
-        </div>
-        <div class="deck ghost" aria-hidden="true">
-          <strong>Next</strong>
-          <span>One thought per page. After Docs.</span>
-        </div>
+      <div class="tools">
+        <button id="add" type="button">add slide</button>
+        <button id="remove" type="button">remove</button>
+        <button id="download-md" type="button">download .md</button>
+        <button id="download-html" type="button">download .html</button>
       </div>
-    </main>
+    </header>
+    <div class="stage">
+      <main>
+        <div class="deck">
+          <input id="slide-title" type="text" maxlength="120" aria-label="Slide title" />
+          <textarea id="slide-body" aria-label="Slide body"></textarea>
+        </div>
+        <div class="bar">
+          <button id="prev" type="button">← prev</button>
+          <span id="pos">1 / 3</span>
+          <div class="dots" id="dots"></div>
+          <button id="next" type="button">next →</button>
+        </div>
+      </main>
+    </div>
+    <footer>
+      <span>Title and a thought. No animation.</span>
+      <span id="kept">Local only. Last green build.</span>
+    </footer>
+    <script>
+      const KEY = "meridian-office-slides-v1";
+      const seed = [
+        { title: "Meridian Office", body: "Docs, Sheets, Slides.\nLocal only. No accounts." },
+        { title: "Paste a grid", body: "CSV in. CSV out.\nNo formulas this week." },
+        { title: "A short deck", body: "Title and a thought.\nArrows move. Download when you want a file." },
+      ];
+      const title = document.getElementById("slide-title");
+      const body = document.getElementById("slide-body");
+      const pos = document.getElementById("pos");
+      const dots = document.getElementById("dots");
+      const kept = document.getElementById("kept");
+      let slides = seed.map(function (s) { return { title: s.title, body: s.body }; });
+      let i = 0;
+
+      function fileBase() {
+        const name = (slides[0] && slides[0].title || "deck").trim() || "deck";
+        return name.replace(/[^\w\- ]+/g, "").replace(/\s+/g, "-").toLowerCase() || "deck";
+      }
+      function escapeHtml(value) {
+        return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+      function paint() {
+        const slide = slides[i] || slides[0];
+        title.value = slide.title;
+        body.value = slide.body;
+        pos.textContent = (i + 1) + " / " + slides.length;
+        dots.innerHTML = slides.map(function (_, n) {
+          return "<button class=\"dot\" type=\"button\" data-i=\"" + n + "\" aria-current=\"" +
+            (n === i ? "true" : "false") + "\" aria-label=\"Slide " + (n + 1) + "\"></button>";
+        }).join("");
+      }
+      function pull() {
+        if (!slides[i]) return;
+        slides[i].title = title.value;
+        slides[i].body = body.value;
+      }
+      function save() {
+        pull();
+        try {
+          localStorage.setItem(KEY, JSON.stringify({ slides: slides, i: i, savedAt: Date.now() }));
+        } catch (err) {}
+        kept.textContent = "Kept locally just now.";
+      }
+      function load() {
+        try {
+          const raw = localStorage.getItem(KEY);
+          if (raw) {
+            const data = JSON.parse(raw);
+            if (Array.isArray(data.slides) && data.slides.length) {
+              slides = data.slides.map(function (s) {
+                return { title: String(s.title || ""), body: String(s.body || "") };
+              });
+              i = Math.max(0, Math.min(slides.length - 1, Number(data.i) || 0));
+            }
+          }
+        } catch (err) {}
+        paint();
+      }
+      function go(n) {
+        pull();
+        i = Math.max(0, Math.min(slides.length - 1, n));
+        paint();
+        save();
+      }
+      function download(name, type, text) {
+        const blob = new Blob([text], { type: type });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+      function toMarkdown() {
+        pull();
+        return slides.map(function (s) {
+          return "# " + s.title.trim() + "\n\n" + s.body.trim() + "\n";
+        }).join("\n---\n\n");
+      }
+      function toHtml() {
+        pull();
+        const cards = slides.map(function (s) {
+          return "<section><h1>" + escapeHtml(s.title) + "</h1><p>" +
+            escapeHtml(s.body).replace(/\n/g, "<br>") + "</p></section>";
+        }).join("");
+        return "<!doctype html><html><head><meta charset=\"utf-8\"><title>" +
+          escapeHtml(slides[0].title || "deck") +
+          "</title><style>body{font:1.1rem/1.45 Georgia,serif;margin:2rem;color:#2a2118}section{min-height:60vh;padding:2rem 0;border-bottom:1px solid #e0d4bc}</style></head><body>" +
+          cards + "</body></html>";
+      }
+      document.getElementById("prev").addEventListener("click", function () { go(i - 1); });
+      document.getElementById("next").addEventListener("click", function () { go(i + 1); });
+      document.getElementById("add").addEventListener("click", function () {
+        pull();
+        slides.splice(i + 1, 0, { title: "Untitled", body: "" });
+        i += 1;
+        paint();
+        save();
+        title.focus();
+      });
+      document.getElementById("remove").addEventListener("click", function () {
+        if (slides.length <= 1) return;
+        slides.splice(i, 1);
+        i = Math.min(i, slides.length - 1);
+        paint();
+        save();
+      });
+      document.getElementById("download-md").addEventListener("click", function () {
+        download(fileBase() + ".md", "text/markdown;charset=utf-8", toMarkdown());
+      });
+      document.getElementById("download-html").addEventListener("click", function () {
+        download(fileBase() + ".html", "text/html;charset=utf-8", toHtml());
+      });
+      dots.addEventListener("click", function (event) {
+        const btn = event.target.closest("[data-i]");
+        if (!btn) return;
+        go(Number(btn.dataset.i));
+      });
+      title.addEventListener("input", save);
+      body.addEventListener("input", save);
+      document.addEventListener("keydown", function (event) {
+        const typing = event.target === title || event.target === body;
+        if (event.key === "ArrowLeft" && !typing) go(i - 1);
+        if (event.key === "ArrowRight" && !typing) go(i + 1);
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+          event.preventDefault();
+          download(fileBase() + ".md", "text/markdown;charset=utf-8", toMarkdown());
+        }
+      });
+      load();
+    </script>
   </body>
 </html>

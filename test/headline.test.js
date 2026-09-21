@@ -19,6 +19,10 @@ test("headlines are plain English a stranger can read", () => {
     /Nova Chen wrote Meridian Office/,
   );
   assert.match(
+    headlineFor({ type: "file_written", actor: "nova", data: { path: "product/sheets.html" } }, names),
+    /Nova Chen wrote Meridian Sheets/,
+  );
+  assert.match(
     headlineFor({ type: "say", actor: "mira", data: { text: "Kill the settings page." } }, names),
     /Mira Sol said/,
   );

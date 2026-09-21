@@ -17,6 +17,8 @@ export function firstName(id, names = {}) {
 export function prettyPath(path) {
   const rel = String(path || "").replace(/^\/+/, "");
   if (rel === "product/index.html") return "Meridian Office";
+  if (rel === "product/sheets.html") return "Meridian Sheets";
+  if (rel === "product/slides.html") return "Meridian Slides";
   if (rel === "product/timezone-buddy.html") return "Timezone Buddy";
   if (rel.startsWith("product/")) return "the working copy";
   if (rel === "backlog.json") return "the backlog";
