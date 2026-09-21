@@ -703,13 +703,18 @@ if (new URLSearchParams(location.search).get("bench") === "walk") {
     for (const sprite of state.sprites.values()) {
       const x = Math.round(sprite.x);
       const y = Math.round(sprite.y);
-      sprite.path = [
-        { x, y: y + 1 },
-        { x: x + 1, y: y + 2 },
-        { x, y: y + 3 },
-      ];
+      const path = [];
+      const toward = x > 12 ? -1 : 1;
+      for (let lap = 0; lap < 2; lap += 1) {
+        for (let i = 1; i <= 4; i += 1) path.push({ x, y: y + i });
+        for (let i = 1; i <= 3; i += 1) path.push({ x: x + toward * i, y: y + 4 });
+        for (let i = 3; i >= 1; i -= 1) path.push({ x: x + toward * i, y: y + 4 });
+        for (let i = 3; i >= 0; i -= 1) path.push({ x, y: y + i });
+      }
+      sprite.path = path;
       sprite.pose = "walk";
-      sprite.at = "coffee";
+      sprite.at = "desk";
+      sprite.wantPose = "sit";
     }
     wake();
   };
@@ -722,5 +727,6 @@ window.addEventListener("resize", () => {
 resize();
 syncSprites();
 requestAnimationFrame(loop);
+if (window.__benchWalk) setTimeout(() => window.__benchWalk(), 600);
 hydrateFromHttp();
 connect();
