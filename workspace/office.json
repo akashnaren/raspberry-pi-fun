@@ -41,7 +41,7 @@
   "rooms": [
     { "name": "bullpen", "x": 1, "y": 1, "w": 22, "h": 10 },
     { "name": "break room", "x": 1, "y": 12, "w": 8, "h": 5 },
-    { "name": "lab", "x": 10, "y": 12, "w": 13, "h": 5 }
+    { "name": "meeting", "x": 10, "y": 12, "w": 13, "h": 5 }
   ],
   "decor": [
     {
@@ -50,7 +50,8 @@
       "y": 1,
       "w": 8,
       "h": 1,
-      "text": "SHIP: Timezone Buddy — usable in <1 min"
+      "text": "SHIP: Timezone Buddy — usable in <1 min",
+      "advertises": "plan"
     },
     { "kind": "lamp", "x": 5, "y": 3 },
     { "kind": "lamp", "x": 11, "y": 3 },
@@ -60,9 +61,10 @@
     { "kind": "clock", "x": 21, "y": 9 },
     { "kind": "shelf", "x": 14, "y": 1 },
     { "kind": "filing_cabinet", "x": 20, "y": 5 },
-    { "kind": "coffee", "x": 2, "y": 14 },
-    { "kind": "couch", "x": 4, "y": 15 },
+    { "kind": "coffee", "x": 2, "y": 14, "advertises": "hang out" },
+    { "kind": "couch", "x": 4, "y": 15, "advertises": "break" },
     { "kind": "rug", "x": 2, "y": 13 },
-    { "kind": "plant", "x": 7, "y": 13 }
+    { "kind": "plant", "x": 7, "y": 13 },
+    { "kind": "table", "x": 14, "y": 14, "advertises": "review" }
   ]
 }

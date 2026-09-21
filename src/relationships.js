@@ -82,7 +82,10 @@ export function applyRelationshipEvent(matrix, event) {
     return bumpPair(matrix, "kessler", "nova", -0.2);
   }
   if (event.type === "build_passed" && event.data?.stage !== "seed") {
-    return bumpPair(matrix, "mira", "nova", 0.1);
+    return bumpPair(matrix, "mira", "nova", 0.15);
+  }
+  if (event.type === "file_written" && event.data?.product) {
+    return bumpPair(matrix, "mira", "nova", 0.05);
   }
   return matrix;
 }

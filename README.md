@@ -33,6 +33,8 @@ The display is a workplace aquarium (not a dashboard): warm dark slate, amber la
 
 A stranger should, after five minutes, name the people, Timezone Buddy, whether we are under $5, and whether they would leave it on.
 
+The office is a dollhouse of `office.json`: walls, plank floors, amber lamps, desks with monitor/mug/plant, break room, meeting table, coffee, couch, whiteboard with the ship line. Sprites walk the A* path to a real object — never abstractly “thinking.” `say()` is a tailed bubble; the ticker is English. Objects advertise (plan / hang out / break / review). Click a person or the board to inspect. Relationship scores move on reject and on a green ship.
+
 Four load-bearing rules, unchanged from the spec:
 
 1. **The event log is the truth.** A sprite walks because an event happened. The office is `data/events.jsonl` plus `office.json`, not a screensaver.

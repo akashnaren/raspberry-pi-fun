@@ -22,7 +22,7 @@ const spotTool = document.getElementById("spot-tool");
 const officePane = document.getElementById("office-pane");
 const buildingPulse = document.getElementById("building-pulse");
 
-const CELL = 26;
+const CELL = 30;
 const DPR = 1;
 const ENTER = 220;
 const HOLD = 4200;
@@ -48,6 +48,7 @@ let state = {
 let bubble = null;
 let hoverId = null;
 let lastDraw = 0;
+let lastStep = 0;
 let replayIndex = 0;
 let lastReplay = 0;
 const camera = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -93,7 +94,9 @@ function applyState(next, event) {
   const sleeping = Boolean(next.sleeping || next.budget?.exhausted || hud.sleeping);
   document.body.classList.toggle("sleeping", sleeping);
   document.body.classList.toggle("lite", Boolean(next.lite) || new URLSearchParams(location.search).has("lite"));
-  onAir.classList.toggle("hidden", mode !== "live" || Boolean(next.paused) || sleeping);
+  const air = mode === "live" && !next.paused && !sleeping;
+  onAir.classList.toggle("hidden", !air);
+  officePane.classList.toggle("live", air);
   pauseBadge.classList.toggle("hidden", !next.paused || sleeping);
   sleepBadge.classList.toggle("hidden", !sleeping);
   pauseBtn.textContent = next.paused ? "Resume" : "Pause";
@@ -171,7 +174,7 @@ function placeLabel(id) {
   if (!sprite?.at) return "at their desk";
   if (sprite.at === "whiteboard") return "at the whiteboard";
   if (sprite.at === "coffee") return "at the coffee machine";
-  if (sprite.at === "lab") return "in the lab";
+  if (sprite.at === "lab" || sprite.at === "meeting") return "in the meeting room";
   if (sprite.at === "couch") return "on the break-room couch";
   return "at their desk";
 }
@@ -205,8 +208,8 @@ function targetFor(event) {
     if (board) return { x: board.x + 2, y: board.y + 2, at: "whiteboard" };
   }
   if (event.type === "build_failed") {
-    const lab = (office.rooms || []).find((room) => room.name === "lab");
-    if (lab) return { x: lab.x + 3, y: lab.y + 2, at: "lab" };
+    const meeting = (office.rooms || []).find((room) => /meeting|lab/i.test(room.name));
+    if (meeting) return { x: meeting.x + 3, y: meeting.y + 2, at: "meeting" };
   }
   if (event.type === "say" && /coffee|break/i.test(event.data?.text || "")) {
     const coffee = decor("coffee");
@@ -390,6 +393,9 @@ function resize() {
 }
 
 function stepSprites(now) {
+  const dt = Math.min(0.05, (now - (lastStep || now)) / 1000);
+  lastStep = now;
+  const speed = 4.4;
   let walking = false;
   for (const sprite of state.sprites.values()) {
     if (sprite.path?.length) {
@@ -398,17 +404,18 @@ function stepSprites(now) {
       const dx = next.x - sprite.x;
       const dy = next.y - sprite.y;
       const dist = Math.hypot(dx, dy);
-      if (dist < 0.08) {
+      if (dist < 0.06) {
         sprite.x = next.x;
         sprite.y = next.y;
         sprite.path.shift();
         if (!sprite.path.length) sprite.pose = sprite.wantPose || "idle";
       } else {
-        sprite.x += dx * 0.18;
-        sprite.y += dy * 0.18;
+        const step = Math.min(dist, speed * dt);
+        sprite.x += (dx / dist) * step;
+        sprite.y += (dy / dist) * step;
         sprite.facing = dx < 0 ? -1 : 1;
         sprite.pose = "walk";
-        sprite.frame = Math.floor(now / 160) % 2;
+        sprite.frame = Math.floor(now / 140) % 2;
       }
     } else if (sprite.pose === "type") {
       sprite.frame = Math.floor(now / 220) % 2;
@@ -440,63 +447,82 @@ function drawOffice(ox, oy) {
   const office = state.office;
   if (!office) return;
   const dim = state.paused || state.sleeping || state.budget?.exhausted;
-  ctx.fillStyle = office.walls || "#2a2118";
   const bounds = office.rooms?.reduce(
     (acc, room) => ({ w: Math.max(acc.w, room.x + room.w), h: Math.max(acc.h, room.y + room.h) }),
     { w: 22, h: 16 },
   ) || { w: 22, h: 16 };
-  ctx.fillRect(ox - 8, oy - 8, bounds.w * CELL + 16, bounds.h * CELL + 16);
+  ctx.fillStyle = office.walls || "#2a2118";
+  ctx.fillRect(ox - 14, oy - 14, bounds.w * CELL + 28, bounds.h * CELL + 28);
   for (const room of office.rooms || []) {
     const rx = ox + room.x * CELL;
     const ry = oy + room.y * CELL;
     const rw = room.w * CELL;
     const rh = room.h * CELL;
-    ctx.fillStyle = room.name === "break room" ? "#221c18" : room.name === "lab" ? "#19181c" : "#1c1916";
+    const base = /break/i.test(room.name) ? "#2a2018" : /meeting|lab/i.test(room.name) ? "#1c1b20" : "#221c16";
+    ctx.fillStyle = base;
     ctx.fillRect(rx, ry, rw, rh);
-    ctx.fillStyle = "#2e241c";
-    for (let x = 0; x < room.w; x += 1) {
-      for (let y = 0; y < room.h; y += 1) {
-        if ((x + y) % 2 === 0) ctx.fillRect(rx + x * CELL, ry + y * CELL, CELL, CELL);
+    for (let y = 0; y < room.h; y += 1) {
+      for (let x = 0; x < room.w; x += 1) {
+        const plank = (x + y) % 2 === 0;
+        ctx.fillStyle = plank ? "rgba(90,64,40,0.16)" : "rgba(0,0,0,0.08)";
+        ctx.fillRect(rx + x * CELL, ry + y * CELL, CELL, CELL);
       }
     }
     ctx.strokeStyle = "#4a3b2c";
-    ctx.strokeRect(rx + 0.5, ry + 0.5, rw - 1, rh - 1);
+    ctx.lineWidth = 3;
+    ctx.strokeRect(rx + 1.5, ry + 1.5, rw - 3, rh - 3);
+    ctx.lineWidth = 1;
     ctx.fillStyle = "#c9b59a";
     ctx.font = "11px sans-serif";
-    ctx.fillText(room.name, rx + 6, ry + 14);
+    ctx.fillText(room.name, rx + 8, ry + 16);
   }
 
-  for (const desk of office.desks || []) {
-    const lamp = { x: ox + (desk.x + 1) * CELL, y: oy + desk.y * CELL };
-    const glow = ctx.createRadialGradient(lamp.x, lamp.y, 4, lamp.x, lamp.y, 78);
-    glow.addColorStop(0, dim ? "rgba(245,158,11,0.10)" : "rgba(245,158,11,0.32)");
+  for (const lamp of office.decor || []) {
+    if (lamp.kind !== "lamp") continue;
+    const lx = ox + lamp.x * CELL + 10;
+    const ly = oy + lamp.y * CELL + 8;
+    const glow = ctx.createRadialGradient(lx, ly, 2, lx, ly, 90);
+    glow.addColorStop(0, dim ? "rgba(245,158,11,0.12)" : "rgba(245,158,11,0.38)");
     glow.addColorStop(1, "rgba(245,158,11,0)");
     ctx.fillStyle = glow;
-    ctx.fillRect(lamp.x - 78, lamp.y - 44, 156, 130);
+    ctx.fillRect(lx - 90, ly - 60, 180, 150);
+  }
+  for (const desk of office.desks || []) {
+    const lamp = { x: ox + (desk.x + 1) * CELL, y: oy + desk.y * CELL };
+    const glow = ctx.createRadialGradient(lamp.x, lamp.y, 4, lamp.x, lamp.y, 86);
+    glow.addColorStop(0, dim ? "rgba(245,158,11,0.10)" : "rgba(245,158,11,0.30)");
+    glow.addColorStop(1, "rgba(245,158,11,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(lamp.x - 86, lamp.y - 48, 172, 140);
   }
 
   for (const item of office.decor || []) drawDecor(ox, oy, item);
   for (const desk of office.desks || []) drawDesk(ox, oy, desk);
 
   if (dim) {
-    ctx.fillStyle = "rgba(8,6,4,0.46)";
-    ctx.fillRect(ox - 8, oy - 8, bounds.w * CELL + 16, bounds.h * CELL + 16);
+    ctx.fillStyle = "rgba(8,6,4,0.48)";
+    ctx.fillRect(ox - 14, oy - 14, bounds.w * CELL + 28, bounds.h * CELL + 28);
   }
 }
 
 function drawDesk(ox, oy, desk) {
   const x = ox + desk.x * CELL;
   const y = oy + desk.y * CELL;
-  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.fillStyle = "rgba(0,0,0,0.32)";
   ctx.beginPath();
-  ctx.ellipse(x + CELL * 1.05, y + CELL * 1.35, CELL * 1.05, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + CELL * 1.05, y + CELL * 1.45, CELL * 1.1, 7, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#5a4030";
-  roundRect(x, y, CELL * 2.1, CELL * 1.25, 6);
+  ctx.fillStyle = "#3a2a20";
+  roundRect(x + 10, y + CELL * 1.05, 16, 14, 4);
   ctx.fill();
+  ctx.fillStyle = "#5c4332";
+  roundRect(x, y, CELL * 2.15, CELL * 1.28, 7);
+  ctx.fill();
+  ctx.fillStyle = "#6d5240";
+  ctx.fillRect(x + 4, y + 3, CELL * 2.15 - 8, 4);
   ctx.fillStyle = "#3d2b20";
-  ctx.fillRect(x + 2, y + CELL * 1.15, 8, 8);
-  ctx.fillRect(x + CELL * 1.7, y + CELL * 1.15, 8, 8);
+  ctx.fillRect(x + 3, y + CELL * 1.18, 8, 8);
+  ctx.fillRect(x + CELL * 1.75, y + CELL * 1.18, 8, 8);
   const items = desk.items || [];
   if (items.includes("monitor") || items.includes("second_monitor")) {
     ctx.fillStyle = "#1a1f24";
@@ -555,10 +581,24 @@ function drawDecor(ox, oy, item) {
   if (item.kind === "whiteboard") {
     const w = (item.w || 6) * CELL;
     ctx.fillStyle = "#e8e0d2";
-    ctx.fillRect(x, y, w, CELL * 0.9);
+    ctx.fillRect(x, y, w, CELL * 1.05);
     ctx.fillStyle = "#2b2418";
     ctx.font = "10px sans-serif";
-    ctx.fillText(item.text || "SHIP", x + 6, y + 16);
+    const words = String(item.text || "SHIP").split(" ");
+    let line = "";
+    let row = 0;
+    for (const word of words) {
+      const next = line ? `${line} ${word}` : word;
+      if (ctx.measureText(next).width > w - 12) {
+        ctx.fillText(line, x + 6, y + 14 + row * 12);
+        line = word;
+        row += 1;
+        if (row > 1) break;
+      } else {
+        line = next;
+      }
+    }
+    if (line && row < 2) ctx.fillText(line, x + 6, y + 14 + row * 12);
   } else if (item.kind === "coffee") {
     ctx.fillStyle = "#3b2a22";
     ctx.fillRect(x, y, CELL * 1.1, CELL * 1.1);
@@ -618,6 +658,23 @@ function drawDecor(ox, oy, item) {
     ctx.fillRect(x, y, 16, 22);
     ctx.fillStyle = "#8aa";
     ctx.fillRect(x + 12, y + 8, 2, 6);
+  } else if (item.kind === "table") {
+    ctx.fillStyle = "#5a4030";
+    roundRect(x, y, CELL * 3.2, CELL * 1.6, 6);
+    ctx.fill();
+    ctx.fillStyle = "#3d2b20";
+    ctx.fillRect(x + 6, y + CELL * 1.5, 6, 10);
+    ctx.fillRect(x + CELL * 2.8, y + CELL * 1.5, 6, 10);
+  }
+  const ad = item.advertises;
+  if (ad) {
+    ctx.fillStyle = "rgba(27,20,14,0.72)";
+    ctx.font = "9px sans-serif";
+    const label = ad;
+    const tw = ctx.measureText(label).width;
+    ctx.fillRect(x, y - 12, tw + 8, 11);
+    ctx.fillStyle = "#e8d7b8";
+    ctx.fillText(label, x + 4, y - 3);
   }
 }
 
@@ -779,15 +836,31 @@ function drawPerson(ox, oy, employee, sprite, now) {
   }
   ctx.restore();
 
-  const plate = `${employee.name.split(" ")[0]}  ${employee.role}`;
+  const first = employee.name.split(" ")[0];
+  const at = sprite.at || "desk";
+  const verb =
+    sprite.pose === "walk"
+      ? `walking to ${at}`
+      : sprite.pose === "type"
+        ? `at ${at} · typing`
+        : sprite.pose === "talk"
+          ? `at ${at}`
+          : `at ${at}`;
   ctx.font = "10px sans-serif";
+  const plate = `${first}  ${employee.role}`;
   const tw = ctx.measureText(plate).width;
   ctx.fillStyle = "#1b140e";
-  ctx.fillRect(px + 8 - tw / 2 - 4, py + 26, tw + 8, 12);
+  ctx.fillRect(px + 8 - tw / 2 - 4, py + 28, tw + 8, 12);
   ctx.fillStyle = color;
-  ctx.fillRect(px + 8 - tw / 2 - 4, py + 26, 3, 12);
+  ctx.fillRect(px + 8 - tw / 2 - 4, py + 28, 3, 12);
   ctx.fillStyle = "#f3eadc";
-  ctx.fillText(plate, px + 8 - tw / 2 + 2, py + 35);
+  ctx.fillText(plate, px + 8 - tw / 2 + 2, py + 37);
+  ctx.font = "9px sans-serif";
+  const vw = ctx.measureText(verb).width;
+  ctx.fillStyle = "rgba(27,20,14,0.78)";
+  ctx.fillRect(px + 8 - vw / 2 - 3, py - 18, vw + 6, 11);
+  ctx.fillStyle = "#e8d7b8";
+  ctx.fillText(verb, px + 8 - vw / 2, py - 9);
 
   if (hoverId === employee.id) {
     const chip = `${employee.name.split(" ")[0]} · ${employee.model || employee.modelFamily}`;
@@ -848,6 +921,11 @@ function drawBubble(ox, oy, now) {
   ctx.fill();
   ctx.strokeStyle = bubble.color || "#d7b07a";
   ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(8, h);
+  ctx.lineTo(4, h + 7);
+  ctx.lineTo(16, h);
+  ctx.fill();
   ctx.fillStyle = "#f3eadc";
   lines.forEach((line, i) => ctx.fillText(line, 8, 14 + i * 12));
   ctx.restore();
@@ -924,6 +1002,27 @@ canvas.addEventListener("mousemove", (event) => {
 });
 canvas.addEventListener("mouseleave", () => {
   hoverId = null;
+});
+
+canvas.addEventListener("click", (event) => {
+  const inspect = document.getElementById("inspect");
+  const title = document.getElementById("inspect-title");
+  const body = document.getElementById("inspect-body");
+  if (hoverId) {
+    const person = (state.employees || []).find((item) => item.id === hoverId);
+    title.textContent = person?.name || hoverId;
+    body.textContent = person?.priorities || "in the room";
+    inspect.classList.remove("hidden");
+    return;
+  }
+  const board = decor("whiteboard");
+  if (board) {
+    title.textContent = "whiteboard";
+    body.textContent = board.text || "SHIP";
+    inspect.classList.remove("hidden");
+    return;
+  }
+  inspect.classList.add("hidden");
 });
 
 pauseBtn.addEventListener("click", async () => {

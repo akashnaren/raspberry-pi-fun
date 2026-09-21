@@ -20,6 +20,7 @@ export const KNOWN_DECOR = [
   "filing_cabinet",
   "beanbag",
   "minifridge",
+  "table",
 ];
 
 export function validateOffice(value) {

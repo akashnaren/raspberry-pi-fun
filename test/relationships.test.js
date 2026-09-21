@@ -38,6 +38,16 @@ test("reject events nudge Kessler vs Nova", () => {
   assert.ok(score < -1);
 });
 
+test("a green ship credits Mira toward Nova", () => {
+  const next = applyRelationshipEvent(emptyMatrix(), {
+    type: "build_passed",
+    actor: "nova",
+    data: { path: "product/index.html" },
+  });
+  const score = opinionsFor(next, "mira").find((item) => item.other === "nova").score;
+  assert.ok(score > 1);
+});
+
 test("context assembly includes last opinions", async () => {
   const root = await tempStudioRoot();
   const events = await createEventLog({ filePath: join(root, "data", "events.jsonl") });
