@@ -26,7 +26,7 @@ export const FALLBACK_OFFICE = {
       y: 1,
       w: 8,
       h: 2,
-      text: "SHIP: invoice · notes",
+      text: "SHIP: kanban · units",
       advertises: "plan",
     },
     { kind: "window", x: 11, y: 1, w: 2, h: 1 },

@@ -8,4 +8,4 @@ Timezone Buddy already shipped. It stays in the catalogue.
 
 No accounts. No payments. No uploads. No chat. That is permanent.
 
-This week: a stranger can poke Docs and tidy a messy table in under a minute. The HDMI stage shows that suite, not Timezone Buddy.
+This week: a stranger can poke Docs, drop three kanban cards, and convert 72°F or 5 km without an account. The HDMI stage shows that suite, not Timezone Buddy. Currency in Units is a demo rate, not live FX.

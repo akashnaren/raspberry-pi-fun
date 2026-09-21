@@ -1,6 +1,6 @@
-/** Scripted afternoon. $0. Invoice, notes, sit/pair, Jules still edits the room. */
+/** Scripted evening. $0. Kanban, units, sit/pair, Jules still edits the room. */
 
-import { applyNovaInvoiceTweak } from "./invoice-tweak.js";
+import { applyNovaUnitsTweak } from "./units-tweak.js";
 
 const SCRIPTS = {
   mira: [
@@ -8,30 +8,31 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Invoice first. Kessler, pair at the table with me.",
-          to: "kessler",
+          message: "Friday ship is three columns. Nova, walk the board.",
+          to: "nova",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Invoice prints cream. Notes make a list. No payments. No AI write." },
+        arguments: { text: "Kanban for Friday. Backlog, Doing, Done. No accounts." },
       },
     ],
     [
       {
         name: "say",
         arguments: {
-          message: "No payments. No AI. Coffee, then I cut the rest.",
+          message: "Coffee with Jules. No accounts on the board.",
+          to: "jules",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Notes stay a catalogue tool. Not in the rail." },
+        arguments: { text: "Units stay in the catalogue. Demo rates, not live FX." },
       },
       {
         name: "journal",
         arguments: {
-          text: "Cut: payments, AI write, slide animation. Keep invoice print and notes.",
+          text: "Cut accounts and live rates. Kanban and units stay on this machine.",
         },
       },
     ],
@@ -39,18 +40,18 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Take a break on the couch. Scope stays cut.",
+          message: "Take a break on the couch. Friday still ships.",
         },
       },
     ],
   ],
   nova: [
     [
-      { name: "read_file", arguments: { path: "product/invoice.html" } },
+      { name: "read_file", arguments: { path: "product/units.html" } },
       {
         name: "say",
         arguments: {
-          message: "Invoice prints cream. Mira, walk the board with me.",
+          message: "Moved the units card to Doing. Degree labels ship with it.",
           to: "mira",
         },
       },
@@ -59,26 +60,21 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Jules, I still want the standing desk. I ship faster on my feet.",
-          to: "jules",
+          message: "Back at the desk. I'll sit and finish the units page.",
         },
       },
       {
-        name: "request",
-        arguments: { item: "standing_desk", reason: "I ship faster on my feet." },
+        name: "journal",
+        arguments: {
+          text: "Moved the units card. Labels say °F, not deg.",
+        },
       },
     ],
     [
       {
         name: "say",
         arguments: {
-          message: "Need caffeine. Invoice has to keep the totals.",
-        },
-      },
-      {
-        name: "journal",
-        arguments: {
-          text: "Invoice, notes, print margins. Working beats AI.",
+          message: "Coffee. The demo rates stay labeled.",
         },
       },
     ],
@@ -88,18 +84,18 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Print margins clip the total at the table. Mira, look.",
-          to: "mira",
+          message: "Reject the label deg. Say °F. I'm at the table.",
+          to: "nova",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Bug: invoice print margins clip the total." },
+        arguments: { text: "Bug: unit label deg is fuzzy. Say °F." },
       },
       {
         name: "journal",
         arguments: {
-          text: "Bug: print margins eat the total. Notes must keep owners.",
+          text: "Fuzzy labels fail the table. °F, °C, km, mi.",
         },
       },
     ],
@@ -107,7 +103,7 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "I'll try notes after I print. Board stays honest.",
+          message: "I'll try the kanban after the table. Three columns, or it fails.",
         },
       },
       { name: "read_file", arguments: { path: "backlog.json" } },
@@ -116,7 +112,7 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Coffee with Jules. Margins still clip the total.",
+          message: "Coffee with Jules. The deg label still fails.",
           to: "jules",
         },
       },
@@ -128,26 +124,26 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Plant was crowding the aisle. Nova, it's by the clock now.",
+          message: "Plant was crowding the coffee.",
           to: "nova",
         },
       },
       {
         name: "edit_office",
-        arguments: { move: { kind: "plant", from: { x: 8, y: 9 }, x: 19, y: 10 } },
+        arguments: { move: { kind: "plant", from: { x: 7, y: 13 }, x: 1, y: 15 } },
       },
     ],
     [
       {
         name: "say",
         arguments: {
-          message: "Board is this afternoon. Invoice and notes.",
+          message: "Board is this evening. Kanban and units.",
         },
       },
       {
         name: "edit_office",
         arguments: {
-          whiteboard: "SHIP: invoice · notes",
+          whiteboard: "SHIP: kanban · units",
           deskItem: { owner: "mira", item: "sticky_notes" },
         },
       },
@@ -156,7 +152,7 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Beanbag off the meeting door. Kessler, you can still use it.",
+          message: "Beanbag off the coffee aisle. Kessler, the machine is clear.",
           to: "kessler",
         },
       },
@@ -169,20 +165,19 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Put the plant back. I'm not buying a standing desk.",
+          message: "Coffee stays put. The board already says the ship.",
         },
       },
       {
         name: "edit_office",
         arguments: {
-          move: { kind: "plant", from: { x: 19, y: 10 }, x: 8, y: 9 },
-          whiteboard: "SHIP: invoice · notes",
+          whiteboard: "SHIP: kanban · units",
         },
       },
       {
         name: "journal",
         arguments: {
-          text: "Tidied. Board says invoice and notes. Standing desk still no.",
+          text: "Tidied the coffee aisle. Board says kanban and units.",
         },
       },
     ],
@@ -190,11 +185,11 @@ const SCRIPTS = {
 };
 
 const WRAP_BEATS = [
-  { name: "say", arguments: { message: "Coffee. Checking the invoice again." } },
-  { name: "say", arguments: { message: "Back at the desk. I'll sit and finish the invoice." } },
+  { name: "say", arguments: { message: "Coffee. Checking the unit labels again." } },
+  { name: "say", arguments: { message: "Back at the desk. I'll sit and move the next card." } },
   {
     name: "journal",
-    arguments: { text: "Dry-run afternoon. Still watching invoice print. Changing the note." },
+    arguments: { text: "Dry-run evening. Still watching kanban and units." },
   },
 ];
 
@@ -207,8 +202,8 @@ function novaShipCalls(html) {
     step.push({
       name: "write_file",
       arguments: {
-        path: "product/invoice.html",
-        contents: applyNovaInvoiceTweak(html),
+        path: "product/units.html",
+        contents: applyNovaUnitsTweak(html),
       },
     });
   }
@@ -220,7 +215,7 @@ export function dryRunCalls(employeeId, turnIndex, ctx = {}) {
   const sequence = SCRIPTS[employeeId] || SCRIPTS.mira;
   let step;
   if (employeeId === "nova" && n % sequence.length === 0) {
-    step = novaShipCalls(ctx.invoiceHtml || ctx.productHtml || ctx.docsHtml);
+    step = novaShipCalls(ctx.unitsHtml);
   } else {
     step = sequence[n % sequence.length].map((call) => ({
       name: call.name,
@@ -234,7 +229,7 @@ export function dryRunCalls(employeeId, turnIndex, ctx = {}) {
       arguments: {
         ...extra.arguments,
         ...(extra.name === "journal"
-          ? { text: `Dry-run afternoon ${n + 1}. Still watching invoice print. Changing the note.` }
+          ? { text: `Dry-run evening ${n + 1}. Still watching kanban and units.` }
           : {}),
       },
     });
@@ -242,7 +237,7 @@ export function dryRunCalls(employeeId, turnIndex, ctx = {}) {
   return step;
 }
 
-export function createDryRunDriver({ readProduct, readSheets, readInvoice } = {}) {
+export function createDryRunDriver({ readProduct, readSheets, readInvoice, readUnits } = {}) {
   const seen = new Map();
   return {
     complete({ employee }) {
@@ -251,6 +246,7 @@ export function createDryRunDriver({ readProduct, readSheets, readInvoice } = {}
       let productHtml = "";
       let sheetsHtml = "";
       let invoiceHtml = "";
+      let unitsHtml = "";
       if (typeof readSheets === "function") {
         try {
           sheetsHtml = readSheets() || "";
@@ -272,8 +268,15 @@ export function createDryRunDriver({ readProduct, readSheets, readInvoice } = {}
           invoiceHtml = "";
         }
       }
+      if (typeof readUnits === "function") {
+        try {
+          unitsHtml = readUnits() || "";
+        } catch {
+          unitsHtml = "";
+        }
+      }
       return {
-        toolCalls: dryRunCalls(employee.id, n, { productHtml, sheetsHtml, invoiceHtml }),
+        toolCalls: dryRunCalls(employee.id, n, { productHtml, sheetsHtml, invoiceHtml, unitsHtml }),
         text: "",
         costUsd: 0,
         dryRun: true,

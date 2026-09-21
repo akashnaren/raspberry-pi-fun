@@ -23,6 +23,8 @@ export function prettyPath(path) {
   if (rel === "product/paste-csv.html") return "Paste → CSV";
   if (rel === "product/invoice.html") return "Invoice";
   if (rel === "product/meeting-notes.html") return "Notes";
+  if (rel === "product/kanban.html") return "Kanban";
+  if (rel === "product/units.html") return "Units";
   if (rel.startsWith("product/")) return "the working copy";
   if (rel === "backlog.json") return "the backlog";
   if (rel === "office.json") return "the office layout";

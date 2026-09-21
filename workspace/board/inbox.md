@@ -48,5 +48,11 @@ Timezone Buddy stays in the catalogue as a shipped utility; weekly ships can sti
 - Cast sits at desks / couch after walk-to-desk; stands at whiteboard / table for pair review.
 - Dry-run afternoon: Nova ships invoice, Kessler files a print-margin bug, Mira cuts payments, Jules rewrites the board.
 
+## Evening (2026-09-21)
+- Kanban and Units are catalogue tools. One click from the cream rail. Not in the Docs / Sheets / Slides rail.
+- Kanban: Backlog, Doing, Done. Add, rename, drag or move. localStorage. Download `.json` or `.md`.
+- Units: length, mass, temperature. A few hard-coded currency rates, labeled as demo rates, not live FX.
+- Dry-run evening: Mira runs the Friday kanban, Nova moves a card and ships the units labels, Kessler rejects `deg` at the table, Jules writes `SHIP: kanban · units` and tidies coffee.
+
 ## Constraints
 DRY_RUN until greenlight · ~$10 OpenRouter · never top up · $5/day if live · Jules exclusive edit_office · event log is truth

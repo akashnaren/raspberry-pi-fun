@@ -75,7 +75,7 @@ test("cast lock: Nova, Kessler, Mira, Jules — product is Meridian Office", asy
     assert.ok(desk.items.includes("coffee_mug"));
     assert.ok(desk.items.includes("plant"));
   }
-  assert.ok(office.decor.some((item) => item.kind === "whiteboard" && /invoice|notes/.test(item.text)));
+  assert.ok(office.decor.some((item) => item.kind === "whiteboard" && item.text === "SHIP: kanban · units"));
   assert.ok(office.rooms.some((room) => /break/i.test(room.name)));
   assert.ok(office.decor.some((item) => item.kind === "coffee"));
 

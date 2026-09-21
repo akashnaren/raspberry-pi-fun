@@ -13,6 +13,8 @@ test("Meridian Office suite: cream rail, Docs leap, catalogue utilities", async 
   const paste = await readFile(join(REPO, "workspace/product/paste-csv.html"), "utf8");
   const invoice = await readFile(join(REPO, "workspace/product/invoice.html"), "utf8");
   const notes = await readFile(join(REPO, "workspace/product/meeting-notes.html"), "utf8");
+  const kanban = await readFile(join(REPO, "workspace/product/kanban.html"), "utf8");
+  const units = await readFile(join(REPO, "workspace/product/units.html"), "utf8");
   assert.equal(syntaxCheckHtml(docs).ok, true);
   assert.equal(syntaxCheckHtml(sheets).ok, true);
   assert.equal(syntaxCheckHtml(slides).ok, true);
@@ -20,8 +22,10 @@ test("Meridian Office suite: cream rail, Docs leap, catalogue utilities", async 
   assert.equal(syntaxCheckHtml(paste).ok, true);
   assert.equal(syntaxCheckHtml(invoice).ok, true);
   assert.equal(syntaxCheckHtml(notes).ok, true);
+  assert.equal(syntaxCheckHtml(kanban).ok, true);
+  assert.equal(syntaxCheckHtml(units).ok, true);
 
-  for (const page of [docs, sheets, slides, paste, buddy, invoice, notes]) {
+  for (const page of [docs, sheets, slides, paste, buddy, invoice, notes, kanban, units]) {
     assert.match(page, /class="rail"/);
     assert.match(page, /class="apps"/);
     assert.match(page, /Meridian Office/);
@@ -34,12 +38,14 @@ test("Meridian Office suite: cream rail, Docs leap, catalogue utilities", async 
   assert.match(docsRail, /Docs/);
   assert.match(docsRail, /Sheets/);
   assert.match(docsRail, /Slides/);
-  assert.doesNotMatch(docsRail, /Timezone|paste-csv|Invoice|Notes/i);
+  assert.doesNotMatch(docsRail, /Timezone|paste-csv|Invoice|Notes|Kanban|Units/i);
   assert.match(docs, /aria-label="Catalogue"/);
   assert.match(docs, /timezone-buddy\.html/);
   assert.match(docs, /paste-csv\.html/);
   assert.match(docs, /invoice\.html/);
   assert.match(docs, /meeting-notes\.html/);
+  assert.match(docs, /kanban\.html/);
+  assert.match(docs, /units\.html/);
 
   assert.match(docs, /aria-current="page">Docs/);
   assert.match(docs, /contenteditable/);
@@ -91,6 +97,14 @@ test("Meridian Office suite: cream rail, Docs leap, catalogue utilities", async 
   assert.match(buddy, /catalogue/i);
   assert.match(buddy, /paste-csv\.html/);
   assert.match(buddy, /invoice\.html/);
+  assert.match(buddy, /kanban\.html/);
+  assert.match(buddy, /units\.html/);
+  assert.match(kanban, /aria-current="page">Kanban/);
+  assert.match(units, /aria-current="page">Units/);
+  for (const page of [sheets, slides, paste, invoice, notes]) {
+    assert.match(page, /kanban\.html/);
+    assert.match(page, /units\.html/);
+  }
 });
 
 test("board seeds useful tools and keeps DRY_RUN", async () => {

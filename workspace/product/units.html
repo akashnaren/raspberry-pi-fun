@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Units — Meridian Office</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f4ecd8;
+        --sheet: #faf4e8;
+        --ink: #2a2118;
+        --muted: #8a7d6b;
+        --rule: #e0d4bc;
+        --rail: #efe6d2;
+        --rail-line: #d8cbb0;
+        --ui: system-ui, -apple-system, "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
+        font-family: var(--ui);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); }
+      body { display: grid; grid-template-columns: 6.1rem 1fr; grid-template-rows: auto 1fr auto; min-height: 100dvh; }
+      .rail {
+        grid-row: 1 / -1; display: flex; flex-direction: column; gap: 0.55rem;
+        padding: 0.7rem 0.5rem 0.8rem; background: var(--rail);
+        border-right: 1px solid var(--rail-line);
+      }
+      .brand { font-size: 0.72rem; font-weight: 600; line-height: 1.25; }
+      .apps { display: flex; flex-direction: column; gap: 0.15rem; }
+      .apps a, .more a {
+        color: #6b5d4d; text-decoration: none; font-size: 0.8rem;
+        padding: 0.32rem 0.4rem; border-radius: 5px;
+      }
+      .more { margin-top: auto; padding-top: 0.55rem; border-top: 1px solid var(--rail-line); }
+      .more span { display: block; font-size: 0.62rem; color: var(--muted); letter-spacing: 0.04em; margin: 0 0.4rem 0.25rem; }
+      .more a { display: block; font-size: 0.68rem; padding: 0.22rem 0.4rem; }
+      .more a[aria-current="page"] { color: var(--ink); }
+      header {
+        display: flex; align-items: baseline; gap: 0.9rem;
+        padding: 0.5rem 1rem; border-bottom: 1px solid var(--rule);
+      }
+      .module { font-size: 0.78rem; color: var(--muted); }
+      .stage { min-height: 0; overflow: auto; padding: 0.8rem 1rem 1.4rem; }
+      main { width: min(36rem, 100%); margin: 0 auto; }
+      h1 { font-size: 1.15rem; font-weight: 500; margin: 0; }
+      .lede { margin: 0.25rem 0 0.9rem; color: var(--muted); font-size: 0.82rem; }
+      .row { display: flex; flex-wrap: wrap; gap: 0.7rem; align-items: end; }
+      label { display: block; font-size: 0.68rem; color: var(--muted); margin: 0 0 0.2rem; }
+      input, select {
+        border: 1px solid var(--rule); background: var(--sheet); color: var(--ink);
+        font: 0.95rem var(--ui); padding: 0.35rem 0.45rem; min-width: 6.5rem;
+      }
+      #amount { width: 7.5rem; font-variant-numeric: tabular-nums; }
+      #result {
+        margin: 1rem 0 0; padding: 0.85rem 1rem; background: var(--sheet);
+        border: 1px solid var(--rule); font-size: 1.15rem; font-variant-numeric: tabular-nums;
+      }
+      footer {
+        display: flex; justify-content: space-between; gap: 1rem;
+        padding: 0.35rem 1rem; border-top: 1px solid var(--rule);
+        color: var(--muted); font-size: 0.7rem;
+      }
+    </style>
+  </head>
+  <body data-unit-labels="precise">
+    <aside class="rail" aria-label="Meridian Office">
+      <div class="brand">Meridian Office</div>
+      <nav class="apps" aria-label="Apps">
+        <a href="./index.html">Docs</a>
+        <a href="./sheets.html">Sheets</a>
+        <a href="./slides.html">Slides</a>
+      </nav>
+      <nav class="more" aria-label="Catalogue">
+        <span>CATALOGUE</span>
+        <a href="./paste-csv.html">Paste → CSV</a>
+        <a href="./invoice.html">Invoice</a>
+        <a href="./meeting-notes.html">Notes</a>
+        <a href="./kanban.html">Kanban</a>
+        <a href="./units.html" aria-current="page">Units</a>
+        <a href="./timezone-buddy.html">Timezone Buddy</a>
+      </nav>
+    </aside>
+    <header>
+      <span class="module">Units</span>
+    </header>
+    <div class="stage">
+      <main>
+        <h1>Convert a number</h1>
+        <p class="lede">Length, mass, temperature. Currency uses demo rates, not live FX.</p>
+        <div class="row">
+          <div>
+            <label for="amount">Amount</label>
+            <input id="amount" type="number" inputmode="decimal" value="72" aria-label="Amount" />
+          </div>
+          <div>
+            <label for="from-unit">From</label>
+            <select id="from-unit" aria-label="From">
+              <optgroup label="Length">
+                <option value="mm">mm</option>
+                <option value="cm">cm</option>
+                <option value="m">m</option>
+                <option value="km">km</option>
+                <option value="in">in</option>
+                <option value="ft">ft</option>
+                <option value="mi">mi</option>
+              </optgroup>
+              <optgroup label="Mass">
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="oz">oz</option>
+                <option value="lb">lb</option>
+              </optgroup>
+              <optgroup label="Temperature">
+                <option value="C">°C</option>
+                <option value="F" selected>°F</option>
+                <option value="K">K</option>
+              </optgroup>
+              <optgroup label="Currency (demo)">
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+                <option value="JPY">JPY</option>
+              </optgroup>
+            </select>
+          </div>
+          <div>
+            <label for="to-unit">To</label>
+            <select id="to-unit" aria-label="To">
+              <optgroup label="Length">
+                <option value="mm">mm</option>
+                <option value="cm">cm</option>
+                <option value="m">m</option>
+                <option value="km">km</option>
+                <option value="in">in</option>
+                <option value="ft">ft</option>
+                <option value="mi">mi</option>
+              </optgroup>
+              <optgroup label="Mass">
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="oz">oz</option>
+                <option value="lb">lb</option>
+              </optgroup>
+              <optgroup label="Temperature">
+                <option value="C" selected>°C</option>
+                <option value="F">°F</option>
+                <option value="K">K</option>
+              </optgroup>
+              <optgroup label="Currency (demo)">
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+                <option value="JPY">JPY</option>
+              </optgroup>
+            </select>
+          </div>
+        </div>
+        <p id="result" aria-live="polite">72 °F = 22.2222 °C</p>
+      </main>
+    </div>
+    <footer>
+      <span>Local only. No accounts.</span>
+      <span id="demo-rates">Currency uses demo rates, not live FX.</span>
+    </footer>
+    <script>
+      var DEMO_FX_NOTE = "demo rates, not live FX";
+      var LENGTH_TO_M = { mm: 0.001, cm: 0.01, m: 1, km: 1000, in: 0.0254, ft: 0.3048, mi: 1609.344 };
+      var MASS_TO_KG = { g: 0.001, kg: 1, oz: 0.028349523125, lb: 0.45359237 };
+      var DEMO_FX = { USD: 1, EUR: 0.92, GBP: 0.79, JPY: 149 };
+      var UNIT_LABELS = {
+        mm: "mm", cm: "cm", m: "m", km: "km", in: "in", ft: "ft", mi: "mi",
+        g: "g", kg: "kg", oz: "oz", lb: "lb",
+        C: "°C", F: "°F", K: "K",
+        USD: "USD", EUR: "EUR", GBP: "GBP", JPY: "JPY"
+      };
+      function familyOf(unit) {
+        if (Object.prototype.hasOwnProperty.call(LENGTH_TO_M, unit)) return "length";
+        if (Object.prototype.hasOwnProperty.call(MASS_TO_KG, unit)) return "mass";
+        if (unit === "C" || unit === "F" || unit === "K") return "temp";
+        if (Object.prototype.hasOwnProperty.call(DEMO_FX, unit)) return "currency";
+        return "";
+      }
+      function toCelsius(value, unit) {
+        if (unit === "C") return value;
+        if (unit === "F") return ((value - 32) * 5) / 9;
+        return value - 273.15;
+      }
+      function fromCelsius(celsius, unit) {
+        if (unit === "C") return celsius;
+        if (unit === "F") return (celsius * 9) / 5 + 32;
+        return celsius + 273.15;
+      }
+      function formatAmount(n) {
+        if (!Number.isFinite(n)) return "";
+        var abs = Math.abs(n);
+        var digits = abs >= 1000 ? 2 : abs >= 100 ? 3 : abs >= 1 ? 4 : 6;
+        return String(Number(n.toFixed(digits)));
+      }
+      function convert(value, from, to) {
+        var n = Number(value);
+        var src = String(from || "");
+        var dst = String(to || "");
+        var family = familyOf(src);
+        if (!Number.isFinite(n) || !family || family !== familyOf(dst)) {
+          return { ok: false, error: "Those units don't share a measure." };
+        }
+        var result = n;
+        var note = "";
+        if (family === "length") result = (n * LENGTH_TO_M[src]) / LENGTH_TO_M[dst];
+        else if (family === "mass") result = (n * MASS_TO_KG[src]) / MASS_TO_KG[dst];
+        else if (family === "temp") result = fromCelsius(toCelsius(n, src), dst);
+        else {
+          result = (n / DEMO_FX[src]) * DEMO_FX[dst];
+          note = DEMO_FX_NOTE;
+        }
+        return {
+          ok: true,
+          result: result,
+          text: formatAmount(result),
+          from: src,
+          to: dst,
+          labelFrom: UNIT_LABELS[src],
+          labelTo: UNIT_LABELS[dst],
+          family: family,
+          note: note
+        };
+      }
+      function boot() {
+        var KEY = "meridian-office-units-v1";
+        var amount = document.getElementById("amount");
+        var from = document.getElementById("from-unit");
+        var to = document.getElementById("to-unit");
+        var result = document.getElementById("result");
+        try {
+          var raw = localStorage.getItem(KEY);
+          if (raw) {
+            var data = JSON.parse(raw);
+            if (data && data.amount != null) amount.value = data.amount;
+            if (data && data.from) from.value = data.from;
+            if (data && data.to) to.value = data.to;
+          }
+        } catch (err) {}
+        function paint() {
+          var out = convert(amount.value, from.value, to.value);
+          if (!out.ok) {
+            result.textContent = out.error;
+            return;
+          }
+          var line = amount.value + " " + out.labelFrom + " = " + out.text + " " + out.labelTo;
+          if (out.note) line += " · " + out.note;
+          result.textContent = line;
+          try {
+            localStorage.setItem(KEY, JSON.stringify({ amount: amount.value, from: from.value, to: to.value }));
+          } catch (err) {}
+        }
+        amount.addEventListener("input", paint);
+        from.addEventListener("change", paint);
+        to.addEventListener("change", paint);
+        paint();
+      }
+      if (typeof document !== "undefined") boot();
+    </script>
+  </body>
+</html>
