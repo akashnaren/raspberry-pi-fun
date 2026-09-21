@@ -1,0 +1,63 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createStudio } from "../src/studio.js";
+import { tempStudioRoot, testEnv } from "./helpers.js";
+
+test("green-build promotes only a passing product and leaves dist on failure", async () => {
+  const root = await tempStudioRoot();
+  const studio = await createStudio({
+    root,
+    env: testEnv(),
+    listen: false,
+    now: () => 1_700_000_000_000,
+  });
+
+  const before = await readFile(join(root, "dist/index.html"), "utf8");
+  assert.match(before, /Stamp/);
+
+  const broken = await studio.tools.execute("nova", "write_file", {
+    path: "product/index.html",
+    contents: "<div>broken",
+  });
+  assert.equal(broken.build, "failed");
+  const working = await readFile(join(root, "workspace/product/index.html"), "utf8");
+  assert.match(working, /broken/);
+  const afterFail = await readFile(join(root, "dist/index.html"), "utf8");
+  assert.equal(afterFail, before);
+  assert.equal(studio.events.all().some((event) => event.type === "build_failed"), true);
+
+  const good = `<!doctype html><html><head><title>Stamp</title></head><body><h1>Stamp v2</h1></body></html>`;
+  const passed = await studio.tools.execute("nova", "write_file", {
+    path: "product/index.html",
+    contents: good,
+  });
+  assert.equal(passed.ok, true);
+  const afterPass = await readFile(join(root, "dist/index.html"), "utf8");
+  assert.match(afterPass, /Stamp v2/);
+  assert.equal(studio.events.all().some((event) => event.type === "build_passed"), true);
+
+  await studio.stop();
+});
+
+test("dry-run tick works without an API key", async () => {
+  const root = await tempStudioRoot();
+  const studio = await createStudio({
+    root,
+    env: testEnv(),
+    listen: false,
+    random: () => 0,
+  });
+  assert.equal(studio.llm.dryRun, true);
+  const families = new Set(studio.employees.map((employee) => employee.modelFamily));
+  assert.equal(families.size, 3);
+
+  const result = await studio.orchestrator.tickOnce();
+  assert.ok(result.employee);
+  assert.equal(result.result.dryRun, true);
+  const types = new Set(studio.events.all().map((event) => event.type));
+  assert.equal(types.has("turn_started"), true);
+  assert.equal(types.has("turn_finished"), true);
+  await studio.stop();
+});
