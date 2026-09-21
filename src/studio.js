@@ -114,7 +114,10 @@ export async function createStudio({
         id: event.actor,
         name: names[event.actor] || event.actor,
         at: event.data?.role === "qa" ? "the last green build" : "their desk",
+        tool: null,
       };
+    } else if (live.acting && event.actor === live.acting.id) {
+      live.acting.tool = toolNameFor(event);
     }
     relationships.applyEvent(event).then(() => refreshLive()).catch(() => {});
     refreshLive().catch(() => {});
@@ -232,6 +235,9 @@ export async function createStudio({
       budget: budgetSnap,
       hud: {
         staff: employees.length,
+        dayN: studioDayNumber(events, now()),
+        currentTask: firstOpenTask(live.backlog),
+        shipLine: "shipping when green",
         treasury: Number(live.office?.budget?.furniture ?? 0),
         burnUsd: budgetSnap.spentUsd,
         ceilingUsd: budgetSnap.ceilingUsd,
@@ -315,4 +321,30 @@ async function readJson(path) {
   } catch {
     return null;
   }
+}
+
+function studioDayNumber(events, nowTs) {
+  const started = events.all().find((event) => event.type === "world_started");
+  const origin = started?.ts || nowTs;
+  return 1 + Math.max(0, Math.floor((nowTs - origin) / 86_400_000));
+}
+
+function firstOpenTask(backlog) {
+  const open = (backlog?.tasks || []).find((task) => task.status === "open");
+  return open?.text || "shipping when green";
+}
+
+function toolNameFor(event) {
+  const map = {
+    file_written: "write_file",
+    file_read: "read_file",
+    say: "say",
+    journal: "journal",
+    task_added: "add_task",
+    task_closed: "close_task",
+    request_filed: "request",
+    office_edited: "edit_office",
+    aesthetics_changed: "edit_self_aesthetics",
+  };
+  return map[event.type] || event.data?.tool || event.type;
 }

@@ -14,28 +14,28 @@
       "x": 3,
       "y": 4,
       "facing": "south",
-      "items": ["monitor", "plant", "notebook"]
+      "items": ["monitor", "coffee_mug", "plant"]
     },
     {
       "owner": "nova",
       "x": 9,
       "y": 4,
       "facing": "south",
-      "items": ["second_monitor", "coffee_mug"]
+      "items": ["monitor", "coffee_mug", "plant"]
     },
     {
       "owner": "kessler",
       "x": 15,
       "y": 4,
       "facing": "south",
-      "items": ["monitor", "sticky_notes"]
+      "items": ["monitor", "coffee_mug", "plant"]
     },
     {
       "owner": "jules",
       "x": 20,
       "y": 7,
       "facing": "west",
-      "items": ["monitor", "notebook"]
+      "items": ["monitor", "coffee_mug", "plant"]
     }
   ],
   "rooms": [

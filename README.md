@@ -22,11 +22,16 @@ Stage 1 is in this repo. The full spec stays with the CTO handoff (`AI studio �
 
 One Node process is the world clock. Every 90–120 seconds it picks one employee, assembles a small context, makes at most one model call, runs a handful of tools, and appends events.
 
-The display is one page, split down the middle:
+The display is a workplace aquarium (not a dashboard): warm dark slate, amber lamps, one accent per person. Sound stays optional — readable with it off.
 
-| Left | Right |
+| Zone | What you see |
 | --- | --- |
-| Top-down office. Pixel people at desks and objects, driven by the event log plus `workspace/office.json`. | An iframe in a **LIVE BUILD** chrome frame, pointed at `dist/` — the last build that passed the green-build gate. |
+| Top HUD | **Day N** · headcount · burn vs **$5** bar · current task · “shipping when green” · English ticker (last 5 events) |
+| Left ~55% | Event-driven top-down office. Walk, bubble, and glow only when an event happens. Failures flash red here. |
+| Right ~45% | Last **green** `dist/` iframe (`LIVE · green build`). Never black. Open-in-new-tab for Connect. |
+| Bottom | Who is acting + tool name (`write_file`, `say`, …) |
+
+A stranger should, after five minutes, name the people, Timezone Buddy, whether we are under $5, and whether they would leave it on.
 
 Four load-bearing rules, unchanged from the spec:
 

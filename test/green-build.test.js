@@ -57,6 +57,10 @@ test("dry-run tick works without an API key", async () => {
   assert.equal(studio.employees.some((person) => person.id === "jules" && person.role === "office_manager"), true);
   assert.equal(studio.employees.find((person) => person.id === "nova").model, "qwen/qwen3-coder-next");
   assert.equal(studio.employees.find((person) => person.id === "jules").color, "#6366F1");
+  const snap = await studio.snapshot();
+  assert.equal(snap.hud.dayN, 1);
+  assert.match(snap.hud.currentTask, /Timezone Buddy/);
+  assert.equal(snap.hud.shipLine, "shipping when green");
   const novaKessler = studio.relationships
     .opinionsFor("nova")
     .find((item) => item.other === "kessler");

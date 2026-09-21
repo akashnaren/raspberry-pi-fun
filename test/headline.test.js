@@ -24,6 +24,6 @@ test("headlines are plain English a stranger can read", () => {
   );
   assert.match(
     headlineFor({ type: "budget_paused", actor: "system", data: {} }, names),
-    /Studio sleeping/,
+    /token ceiling — world paused/,
   );
 });

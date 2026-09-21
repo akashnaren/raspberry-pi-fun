@@ -48,7 +48,7 @@ export function headlineFor(event, names = {}) {
     case "world_resumed":
       return "Meridian Desk resumed. Someone will move.";
     case "budget_paused":
-      return "Studio sleeping. Daily ceiling hit; lights down until tomorrow.";
+      return "token ceiling — world paused";
     case "turn_started":
       return `${who} is acting.`;
     case "turn_finished":

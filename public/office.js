@@ -10,12 +10,17 @@ const onAir = document.getElementById("on-air");
 const actingEl = document.getElementById("acting");
 const budgetEl = document.getElementById("budget");
 const burnBar = document.getElementById("burn-bar");
-const treasuryEl = document.getElementById("treasury");
-const runwayEl = document.getElementById("runway");
-const ceilingLeftEl = document.getElementById("ceiling-left");
 const staffEl = document.getElementById("staff-count");
 const sleepBadge = document.getElementById("sleep-badge");
 const soundBtn = document.getElementById("sound-btn");
+const dayEl = document.getElementById("day-n");
+const taskEl = document.getElementById("current-task");
+const shipEl = document.getElementById("ship-line");
+const productTitle = document.getElementById("product-title");
+const spotAvatar = document.getElementById("spot-avatar");
+const spotTool = document.getElementById("spot-tool");
+const officePane = document.getElementById("office-pane");
+const buildingPulse = document.getElementById("building-pulse");
 
 const CELL = 26;
 const DPR = 1;
@@ -72,18 +77,16 @@ function applyState(next, event) {
   const hud = next.hud || {};
   const used = next.budget?.spentUsd ?? hud.burnUsd ?? 0;
   const cap = next.budget?.ceilingUsd || hud.ceilingUsd || 5;
-  const left = next.budget?.remainingUsd ?? hud.remainingUsd ?? Math.max(0, cap - used);
   budgetEl.textContent = `$${used.toFixed(2)} / $${cap.toFixed(0)}`;
   burnBar.style.width = `${Math.min(100, (used / cap) * 100)}%`;
-  treasuryEl.textContent = `${hud.treasury ?? next.office?.budget?.furniture ?? 0} credits`;
-  ceilingLeftEl.textContent = `$${Number(left).toFixed(2)}`;
-  runwayEl.textContent =
-    next.budget?.exhausted || hud.sleeping
-      ? "sleeping"
-      : hud.runwayHours == null
-        ? "full day"
-        : `${hud.runwayHours}h`;
-  staffEl.textContent = String(hud.staff || (next.employees || []).length || 4);
+  const staff = hud.staff || (next.employees || []).length || 4;
+  staffEl.textContent = `${staff} staff`;
+  dayEl.textContent = `Day ${hud.dayN || 1}`;
+  taskEl.textContent = hud.currentTask || currentTaskFrom(next) || "waiting for a task";
+  shipEl.textContent = hud.shipLine || "shipping when green";
+  const productName = next.studio?.product || "Timezone Buddy";
+  productTitle.textContent = productName;
+  document.getElementById("product-name").textContent = productName;
   const mode = next.mode || (next.dryRun ? "dry-run" : "live");
   modeBadge.textContent = mode;
   modeBadge.classList.toggle("live", mode === "live");
@@ -96,23 +99,55 @@ function applyState(next, event) {
   pauseBtn.textContent = next.paused ? "Resume" : "Pause";
   paintTicker(next.events || []);
   paintActing(next, sleeping);
+  paintSpotlight(next);
   if (event) react(event);
   if (event?.type === "build_passed") product.src = `/dist/index.html?t=${event.ts}`;
+  if (event?.type === "file_written" && event.data?.product) showBuilding(true);
+  if (event?.type === "build_passed" || event?.type === "build_failed" || event?.type === "turn_finished") {
+    showBuilding(false);
+  }
+  if (event?.type === "build_failed" || event?.type === "turn_failed") failFlash();
   syncSprites();
+}
+
+function currentTaskFrom(next) {
+  const open = (next.backlog?.tasks || []).find((task) => task.status === "open");
+  return open?.text || "";
+}
+
+function showBuilding(on) {
+  buildingPulse.classList.toggle("hidden", !on);
+}
+
+function failFlash() {
+  officePane.classList.remove("fail-flash");
+  void officePane.offsetWidth;
+  officePane.classList.add("fail-flash");
+  setTimeout(() => officePane.classList.remove("fail-flash"), 800);
+}
+
+function paintSpotlight(next) {
+  const acting = next.acting;
+  const employee = (next.employees || []).find((person) => person.id === acting?.id);
+  const color = employee?.accent || employee?.color || "#F59E0B";
+  const initial = (acting?.name || "?").slice(0, 1);
+  spotAvatar.textContent = initial;
+  spotAvatar.style.background = color;
+  spotTool.textContent = acting?.tool || "—";
 }
 
 function paintTicker(events) {
   const lines = events
     .filter((item) => !["model_resolved", "turn_finished"].includes(item.type))
     .map((item) => item.headline || item.message)
-    .filter(Boolean);
-  const crawl = lines.slice(-12).join("     ·     ");
+    .filter((line) => line && !/^\s*\{/.test(line));
+  const crawl = lines.slice(-5).join("     ·     ");
   tickerEl.textContent = crawl ? `${crawl}     ·     ${crawl}` : "the office is quiet";
 }
 
 function paintActing(next, sleeping) {
   if (sleeping) {
-    actingEl.textContent = "studio sleeping — lights down until tomorrow";
+    actingEl.textContent = "token ceiling — world paused";
     return;
   }
   if (next.replay) {
@@ -224,10 +259,12 @@ function react(event) {
     if (id !== event.actor) other.active = Math.max(0, other.active - 0.4);
   }
   if (event.type === "say" && event.data?.text) {
+    const who = (state.employees || []).find((person) => person.id === event.actor);
     bubble = {
       actor: event.actor,
       lines: wrapTwo(event.data.text),
       born: Date.now(),
+      color: who?.accent || who?.color || "#d7b07a",
     };
   }
 }
@@ -414,7 +451,7 @@ function drawOffice(ox, oy) {
     const ry = oy + room.y * CELL;
     const rw = room.w * CELL;
     const rh = room.h * CELL;
-    ctx.fillStyle = room.name === "break room" ? "#2a2218" : room.name === "lab" ? "#1d1c20" : "#241c16";
+    ctx.fillStyle = room.name === "break room" ? "#221c18" : room.name === "lab" ? "#19181c" : "#1c1916";
     ctx.fillRect(rx, ry, rw, rh);
     ctx.fillStyle = "#2e241c";
     for (let x = 0; x < room.w; x += 1) {
@@ -450,6 +487,10 @@ function drawOffice(ox, oy) {
 function drawDesk(ox, oy, desk) {
   const x = ox + desk.x * CELL;
   const y = oy + desk.y * CELL;
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath();
+  ctx.ellipse(x + CELL * 1.05, y + CELL * 1.35, CELL * 1.05, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = "#5a4030";
   roundRect(x, y, CELL * 2.1, CELL * 1.25, 6);
   ctx.fill();
@@ -805,7 +846,7 @@ function drawBubble(ox, oy, now) {
   ctx.fillStyle = "#2a2118";
   roundRect(0, 0, w, h, 6);
   ctx.fill();
-  ctx.strokeStyle = "#d7b07a";
+  ctx.strokeStyle = bubble.color || "#d7b07a";
   ctx.stroke();
   ctx.fillStyle = "#f3eadc";
   lines.forEach((line, i) => ctx.fillText(line, 8, 14 + i * 12));
