@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/pi/raspberry-pi-fun
-ExecStart=/usr/bin/node src/index.js
+ExecStart=/usr/local/bin/node src/index.js
 Restart=always
 RestartSec=3
 EnvironmentFile=-/home/pi/raspberry-pi-fun/.env

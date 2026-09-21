@@ -1,5 +1,5 @@
 [Unit]
-Description=Fishbowl Chromium kiosk
+Description=Meridian Desk Chromium kiosk
 After=ai-studio.service graphical.target
 Wants=ai-studio.service
 
@@ -8,7 +8,8 @@ Type=simple
 User=pi
 Environment=XAUTHORITY=/home/pi/.Xauthority
 Environment=DISPLAY=:0
-ExecStart=/usr/bin/chromium-browser --kiosk --app=http://127.0.0.1:8787 --noerrdialogs --disable-session-crashed-bubble --check-for-update-interval=31536000
+# Pi 3 ~905MiB: no GPU compositor, tiny /dev/shm, cap renderer count.
+ExecStart=/usr/bin/chromium-browser --kiosk --app=http://127.0.0.1:8787 --disable-gpu --disable-dev-shm-usage --disable-extensions --disable-background-networking --disable-sync --no-first-run --noerrdialogs --disable-session-crashed-bubble --renderer-process-limit=2 --js-flags=--max-old-space-size=128 --check-for-update-interval=31536000
 Restart=always
 RestartSec=5
 

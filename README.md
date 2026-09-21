@@ -1,6 +1,8 @@
 # raspberry-pi-fun
 
-AI Studio — Stage 1 **fishbowl** (self-running AI office on a Raspberry Pi).
+AI Studio — Stage 1 **fishbowl** (self-running office on a Raspberry Pi).
+
+The studio on screen is **Meridian Desk**. The stage name stays fishbowl.
 
 ## Locked defaults (2026-09-20)
 
@@ -13,7 +15,7 @@ AI Studio — Stage 1 **fishbowl** (self-running AI office on a Raspberry Pi).
 
 Node orchestrator · event log · 2D canvas office · websocket · Chromium kiosk · OpenRouter
 
-Stage 1 is in this repo. The full spec stays with the CTO handoff (`AI studio — design spec`). Out of scope here: audience site, economy enforcement, stream, hiring interviews.
+Stage 1 is in this repo. The full spec stays with the CTO handoff (`AI studio — design spec`). Out of scope here: audience site, economy enforcement, stream, hiring interviews, isometric, WebGL.
 
 ## What you get
 
@@ -23,26 +25,28 @@ The display is one page, split down the middle:
 
 | Left | Right |
 | --- | --- |
-| Top-down office. Rectangles with name tags, driven by the event log plus `workspace/office.json`. | An iframe pointed at `dist/` — the last build that passed the green-build gate. |
+| Top-down office. Pixel people at desks and objects, driven by the event log plus `workspace/office.json`. | An iframe pointed at `dist/` — the last build that passed the green-build gate. |
 
 Four load-bearing rules, unchanged from the spec:
 
-1. **The event log is the truth.** The office is a rendering of `data/events.jsonl`, not a screensaver.
+1. **The event log is the truth.** A sprite walks because an event happened. The office is `data/events.jsonl` plus `office.json`, not a screensaver.
 2. **Never show a broken build.** The product pane never points at the working copy.
-3. **Bots edit data, never machinery.** Employees may write product HTML, office layout, backlog, strategy, journals. They cannot write `src/`, `public/`, config, or secrets.
+3. **Bots edit data, never machinery.** Employees may write product HTML, office layout, backlog, strategy, journals, relationships. They cannot write `src/`, `public/`, config, or secrets.
 4. **Secrets stay in the environment.** `OPENROUTER_API_KEY` never enters the workspace.
 
 ## Cast
 
-| Name | Role | Model family (config) | Priority |
-| --- | --- | --- | --- |
-| Mira | producer | xAI / Grok | Tiny scope. Stamp stays a timestamp tool. |
-| Nova | programmer | OpenAI | Ship a single HTML file. Iterate in the open. |
-| Kessler | QA | Nous / Hermes | Use `dist/`. File overflow and timezone bugs. |
+| ID | Name | Role | Accent | Model family | Priority |
+| --- | --- | --- | --- | --- | --- |
+| `nova` | Nova Chen | programmer | coral `#F97316` | OpenAI | Ship a usable tool tonight. Working > pretty. |
+| `kessler` | Kessler Holt | QA | teal `#14B8A6` | Nous / Hermes | No ugly or broken UX. Reject loose greens. |
+| `mira` | Mira Sol | producer | amber `#F59E0B` | xAI / Grok | One clear useful tool. Kill scope creep. |
 
 Model ids are not hardcoded in the orchestrator. On a live boot the process reads OpenRouter's model list and picks each employee's first available `preferredModels` entry (then any model in that family). Edit `studio.config.json` to swap brains.
 
-Starting product: **Stamp**, a single-file Unix / ISO / timezone converter in `workspace/product/index.html`.
+Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
+
+Starting product: **Timezone Buddy**, a single-file “paste a time + city → 3–5 saved cities” converter in `workspace/product/index.html`. Whiteboard: `SHIP: Timezone Buddy — usable in <1 min`.
 
 ## Tools
 
@@ -52,10 +56,18 @@ Starting product: **Stamp**, a single-file Unix / ISO / timezone converter in `w
 
 Use Raspberry Pi OS Bookworm 64-bit. Put the checkout on a **USB SSD** if you can — the event log is a lot of small writes for SD flash. Heatsink and fan; this is a 24/7 process.
 
+Install **Node 20 LTS** from the official linux-arm64 tarball into `/usr/local`. No nvm. No NodeSource apt repo.
+
 ```bash
 sudo apt update
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
+sudo apt install -y curl xz-utils git
+
+NODE_VER=20.19.5
+curl -fsSL "https://nodejs.org/dist/v${NODE_VER}/node-v${NODE_VER}-linux-arm64.tar.xz" -o /tmp/node.tar.xz
+sudo tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+node -v   # v20.19.x
+npm -v
+
 git clone https://github.com/akashnaren/raspberry-pi-fun.git
 cd raspberry-pi-fun
 npm install
@@ -63,7 +75,9 @@ cp .env.example .env
 npm start
 ```
 
-First boot needs **no API key**. Without `OPENROUTER_API_KEY` the studio runs in **dry-run**: scripted turns, real events, real office motion, $0 spent. Open `http://127.0.0.1:8787` (or point Chromium kiosk at it).
+On a Pi 3 (~905MiB) that is enough. The office renderer forces **DPR=1** and throttles `requestAnimationFrame` when nobody is walking or speaking.
+
+First boot needs **no API key**. Without `OPENROUTER_API_KEY` the studio runs in **dry-run**: scripted turns, real events, real walks, $0 spent. Open `http://127.0.0.1:8787` (or point Chromium kiosk at it).
 
 Then, when you are ready to spend:
 
@@ -73,37 +87,37 @@ OPENROUTER_API_KEY=sk-or-...
 DAILY_CEILING_USD=5
 ```
 
-Restart the process. Mira / Nova / Kessler will start calling OpenRouter, each on a different model family.
+Restart the process. Mira / Nova / Kessler will start calling OpenRouter, each on a different model family. The HUD shows **ON AIR** when live.
 
 ### Env vars
 
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | empty | Live turns. Empty = dry-run. |
-| `DAILY_CEILING_USD` | `5` | Hard pause when the UTC-day spend reaches this. |
+| `DAILY_CEILING_USD` | `5` | Hard pause when the UTC-day spend reaches this. Lights dim; ticker says so. |
 | `PORT` | `8787` | HTTP + websocket. |
 | `HOST` | `127.0.0.1` | Bind address. Keep loopback on the Pi. |
 | `STUDIO_TICK_MIN_MS` | `90000` | Lower bound of the tick lottery. |
 | `STUDIO_TICK_MAX_MS` | `120000` | Upper bound. |
 | `OPENROUTER_HTTP_REFERER` | local URL | Optional OpenRouter header. |
-| `OPENROUTER_TITLE` | `AI Studio Fishbowl` | Optional OpenRouter header. |
+| `OPENROUTER_TITLE` | `Meridian Desk` | Optional OpenRouter header. |
 
 Nothing in `workspace/` may read these. Employees never see the key.
 
 ### Kill switch
 
-Pauses the world. Does not delete the log.
+Pauses the world. Does not delete the log. The office dims and slowly **replays** the last events so Connect still looks like a room.
 
 - Phone / bookmark: `http://127.0.0.1:8787/kill`
 - Button on the HUD
 - `POST /api/pause` and `POST /api/resume`
 - Presence of `data/PAUSED`
 
-`say()` is stripped of markup and capped before it becomes a bubble. Combined with the kill switch that is the Stage 1 output filter.
+`say()` is stripped of markup and capped to two short lines before it becomes a canvas bubble. Combined with the kill switch that is the Stage 1 output filter.
 
 ### $5 / day ceiling
 
-The orchestrator records each turn's estimated USD cost (OpenRouter usage, conservative fallback rates) in `data/spend.json`. When the UTC day hits `$5`, ticks stop and the HUD shows the pause. The next UTC day resets the counter. This protects the card; it is independent of any later credit fiction.
+The orchestrator records each turn's estimated USD cost in `data/spend.json`. When the UTC day hits `$5`, ticks stop, the burn bar fills, the lights dim, and the ticker says the ceiling hit. The next UTC day resets the counter. This protects the card; it is independent of any later credit fiction.
 
 ### Chromium kiosk + systemd
 
@@ -118,9 +132,9 @@ sudo systemctl enable --now ai-studio.service
 sudo systemctl enable --now chromium-kiosk.service
 ```
 
-Kiosk command is Chromium pointed at the local page. Do not forward a port; use Tailscale or a Cloudflare Tunnel if you need to look in from elsewhere.
+The kiosk unit is sized for a Pi 3: `--disable-gpu --disable-dev-shm-usage --renderer-process-limit=2` and a small V8 heap. Do not forward a port; use Tailscale or a Cloudflare Tunnel if you need to look in from elsewhere.
 
-1080p, 2D canvas, no WebGL. Products stay 2D / HTML for the same reason.
+1080p, 2D canvas, no WebGL. Products stay 2D / HTML for the same reason. Fonts are local system faces (`Liberation Sans` / `DejaVu Sans`) — no CDN.
 
 ### Fast local loop (not the Pi default)
 
@@ -135,7 +149,7 @@ After a write under `workspace/product/`:
 1. The orchestrator syntax-checks HTML/JS (no `eval`, no employee code on the host).
 2. If a display client is connected, a hidden iframe loads `/candidate/` and reports pass/fail over the websocket.
 3. On pass, the product directory is copied to `dist/` and a `build_passed` event fires.
-4. On fail, `dist/` does not move. QA gets a `build_failed` event.
+4. On fail, `dist/` does not move. QA gets a `build_failed` event. The ticker can read “Kessler rejected Nova's write.”
 
 The right-hand iframe only ever loads `/dist/`.
 
@@ -144,10 +158,11 @@ The right-hand iframe only ever loads `/dist/`.
 ```
 src/                 machinery — orchestrator, tools, server (not writable by bots)
 public/              machinery — split-screen office
-workspace/           data — office.json, backlog, personas, Stamp source
+workspace/           data — office.json, relationships.json, backlog, personas, Timezone Buddy
 dist/                last green build (created at boot from the seed)
 data/                events.jsonl, spend.json, PAUSED
 deploy/              systemd units
+snapshots/           hook for later weekly snapshots
 studio.config.json   cast, families, tick, ceiling
 ```
 
@@ -159,8 +174,8 @@ npm test
 npm start
 ```
 
-Node 20+ (22 on the Pi is fine). The only runtime dependency is `ws`.
+Node 20+ (`engines.node >= 20`). The only runtime dependency is `ws`.
 
 ## Stage 2+ (not in this PR)
 
-Credits, salaries, hiring interviews, the relationship matrix, the audience site, and the stream stay deferred. Live with the fishbowl first and read the real bill.
+Credits, salaries, hiring interviews, a full relationship engine, the audience site, and the stream stay deferred. The matrix file and `snapshots/` are hooks. Live with the fishbowl first and read the real bill.
