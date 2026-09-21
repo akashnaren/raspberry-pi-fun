@@ -1,9 +1,10 @@
 # STUDIO.md
 
-Fishbowl. Private. Three desks.
+Meridian Desk. Private. Three desks.
 
-- Mira — producer — xAI family
-- Nova — programmer — OpenAI family
-- Kessler — QA — Nous / Hermes family
+- Mira Sol — producer — xAI family
+- Nova Chen — programmer — OpenAI family
+- Kessler Holt — QA — Nous / Hermes family
 
-Product: Stamp (`workspace/product/index.html`). Last green copy lives in `dist/`.
+Product: Timezone Buddy (`workspace/product/index.html`). Last green copy lives in `dist/`.
+Relationships live in `relationships.json` and decay toward 0 each day.

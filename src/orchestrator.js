@@ -84,7 +84,7 @@ export function createOrchestrator({
     try {
       if (repeatingPattern(events.all())) {
         await tools.execute(employee.id, "journal", {
-          text: "Caught a loop. Changing the subject: what is the smallest next change to Stamp?",
+          text: "Caught a loop. Changing the subject: what is the smallest next change to Timezone Buddy?",
         });
         await events.append({
           type: "loop_broken",

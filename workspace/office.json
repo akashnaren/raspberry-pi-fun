@@ -1,6 +1,10 @@
 {
-  "walls": "#1e1e26",
-  "floor": "tile_grey",
+  "walls": "#2a2118",
+  "floor": "tile_warm",
+  "palette": {
+    "ambient": "#1a1410",
+    "amber": "#F59E0B"
+  },
   "desks": [
     {
       "owner": "mira",
@@ -30,7 +34,23 @@
     { "name": "lab", "x": 10, "y": 12, "w": 13, "h": 5 }
   ],
   "decor": [
-    { "kind": "whiteboard", "x": 3, "y": 1, "text": "SHIP STAMP" },
-    { "kind": "coffee", "x": 3, "y": 14, "text": "coffee" }
+    {
+      "kind": "whiteboard",
+      "x": 2,
+      "y": 1,
+      "w": 8,
+      "h": 1,
+      "text": "SHIP: Timezone Buddy — usable in <1 min"
+    },
+    { "kind": "lamp", "x": 5, "y": 3 },
+    { "kind": "lamp", "x": 12, "y": 3 },
+    { "kind": "lamp", "x": 19, "y": 3 },
+    { "kind": "plant", "x": 21, "y": 2 },
+    { "kind": "clock", "x": 21, "y": 8 },
+    { "kind": "shelf", "x": 14, "y": 1 },
+    { "kind": "coffee", "x": 2, "y": 14 },
+    { "kind": "couch", "x": 4, "y": 15 },
+    { "kind": "rug", "x": 2, "y": 13 },
+    { "kind": "plant", "x": 7, "y": 13 }
   ]
 }

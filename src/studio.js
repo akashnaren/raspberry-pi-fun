@@ -9,6 +9,7 @@ import { createOrchestrator } from "./orchestrator.js";
 import { createStudioServer } from "./server.js";
 import { createToolRunner } from "./tools.js";
 import { createPromoter, syntaxCheckHtml } from "./validator.js";
+import { createRelationships } from "./relationships.js";
 
 export async function loadConfig(root, env = process.env) {
   const raw = JSON.parse(await readFile(join(root, "studio.config.json"), "utf8"));
@@ -23,7 +24,7 @@ export async function loadConfig(root, env = process.env) {
     port: env.PORT === undefined || env.PORT === "" ? 8787 : Number(env.PORT),
     apiKey: env.OPENROUTER_API_KEY || "",
     referer: env.OPENROUTER_HTTP_REFERER || `http://127.0.0.1:${env.PORT || 8787}`,
-    title: env.OPENROUTER_TITLE || "AI Studio Fishbowl",
+    title: env.OPENROUTER_TITLE || "Meridian Desk",
   };
 }
 
@@ -42,7 +43,14 @@ export async function createStudio({
   const dataRoot = join(root, "data");
   const pendingValidations = new Map();
 
-  const events = await createEventLog({ filePath: join(dataRoot, "events.jsonl"), now });
+  const names = Object.fromEntries(config.employees.map((employee) => [employee.id, employee.name]));
+  names.system = "Meridian Desk";
+  const events = await createEventLog({ filePath: join(dataRoot, "events.jsonl"), now, names });
+  const relationships = await createRelationships({
+    filePath: join(workspaceRoot, "relationships.json"),
+    now,
+  });
+  await relationships.decayIfNewDay();
   const budget = await createBudget({
     filePath: join(dataRoot, "spend.json"),
     dailyCeilingUsd: config.budget.dailyCeilingUsd,
@@ -74,7 +82,7 @@ export async function createStudio({
     await events.append({
       type: "build_passed",
       actor: "system",
-      message: "seed Stamp promoted to dist/",
+      message: "Timezone Buddy is on the right pane.",
       data: { path: "product/index.html", stage: "seed" },
     });
   }
@@ -83,15 +91,26 @@ export async function createStudio({
     paused: await killSwitch.paused(),
     office: await readJson(join(workspaceRoot, "office.json")),
     backlog: (await readJson(join(workspaceRoot, "backlog.json"))) || { tasks: [] },
+    relationships: relationships.snapshot(),
+    acting: null,
   };
 
   async function refreshLive() {
     live.paused = await killSwitch.paused();
     live.office = await readJson(join(workspaceRoot, "office.json"));
     live.backlog = (await readJson(join(workspaceRoot, "backlog.json"))) || { tasks: [] };
+    live.relationships = relationships.snapshot();
   }
 
-  events.subscribe(() => {
+  events.subscribe((event) => {
+    if (event.type === "turn_started") {
+      live.acting = {
+        id: event.actor,
+        name: names[event.actor] || event.actor,
+        at: event.data?.role === "qa" ? "the last green build" : "their desk",
+      };
+    }
+    relationships.applyEvent(event).then(() => refreshLive()).catch(() => {});
     refreshLive().catch(() => {});
   });
   killSwitch.subscribe(() => {
@@ -187,6 +206,8 @@ export async function createStudio({
       paused: live.paused,
       office: live.office,
       backlog: live.backlog,
+      relationships: live.relationships,
+      acting: live.acting,
       budget: budget.snapshot(),
       employees,
       events: events.recent(40),
@@ -215,8 +236,8 @@ export async function createStudio({
     type: "world_started",
     actor: "system",
     message: llm.dryRun
-      ? "Fishbowl booted in dry-run (no OPENROUTER_API_KEY)"
-      : "Fishbowl booted live via OpenRouter",
+      ? "Meridian Desk opened in dry-run (no OPENROUTER_API_KEY)"
+      : "Meridian Desk went live via OpenRouter",
     data: {
       dryRun: llm.dryRun,
       ceilingUsd: config.budget.dailyCeilingUsd,
@@ -235,6 +256,7 @@ export async function createStudio({
     budget,
     killSwitch,
     tools,
+    relationships,
     llm,
     orchestrator,
     server,

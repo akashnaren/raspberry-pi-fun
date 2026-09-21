@@ -1,10 +1,11 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { headlineFor } from "./headline.js";
 
 const ROTATE_BYTES = 5 * 1024 * 1024;
 const KEEP_ON_ROTATE = 2000;
 
-export async function createEventLog({ filePath, now = () => Date.now() }) {
+export async function createEventLog({ filePath, now = () => Date.now(), names = {} }) {
   await mkdir(dirname(filePath), { recursive: true });
   let events = await load(filePath);
   let seq = events.reduce((max, event) => Math.max(max, parseSeq(event.id)), 0);
@@ -39,6 +40,8 @@ export async function createEventLog({ filePath, now = () => Date.now() }) {
         message: partial.message ?? "",
         data: partial.data ?? {},
       };
+      event.headline = headlineFor(event, names);
+      if (!partial.message) event.message = event.headline;
       events.push(event);
       await persist(event);
       await rotateIfNeeded();

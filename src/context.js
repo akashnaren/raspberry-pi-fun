@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolveWorkspacePath } from "./paths.js";
+import { opinionsFor } from "./relationships.js";
+import { displayName } from "./headline.js";
 
 const FILE_CAP = 400;
 
@@ -38,22 +40,36 @@ export async function assembleContext({ workspaceRoot, employee, employees, even
     }
   }
 
+  let relationships = { pairs: [] };
+  try {
+    relationships = JSON.parse(await readOptional(workspaceRoot, "relationships.json") || "{}");
+  } catch {
+    relationships = { pairs: [] };
+  }
+  const opinions = opinionsFor(relationships, employee.id);
+  const names = Object.fromEntries((employees || []).map((person) => [person.id, person.name]));
   const roster = employees
     .map((person) => `${person.name} (${person.id}) — ${person.role} — model ${person.model || person.modelFamily}. ${person.priorities}`)
     .join("\n");
+  const opinionLines = opinions.length
+    ? opinions
+        .map((item) => `${displayName(item.other, names)}: ${item.score > 0 ? "+" : ""}${item.score}${item.note ? ` — ${item.note}` : ""}`)
+        .join("\n")
+    : "(neutral)";
 
   const system = [
-    `You are ${employee.name}, ${employee.role} at Fishbowl, a private three-person AI studio.`,
+    `You are ${employee.name}, ${employee.role} at Meridian Desk, a private three-person studio.`,
     "You take exactly one turn. Call tools. Do not write secrets. Do not touch machinery (src/, public/, config, env).",
     "The product panel shows dist/ — the last green build — never the working copy.",
-    "Keep Stamp a single-file browser timestamp tool. No accounts, payments, uploads, or chat boxes.",
+    "Keep Timezone Buddy a single-file browser tool. Paste a time and city; show 3–5 saved cities. No accounts, payments, uploads, or chat boxes.",
     "For files under ~400 lines, rewrite the whole file rather than a patch.",
+    "Speech is at most two short lines, in your own voice.",
     "",
     persona.trim(),
     "",
     `Your priorities: ${employee.priorities}`,
     "",
-    "Colleagues (relationship scores arrive in Stage 2; treat them as reasonable professionals with conflicting priorities):",
+    "People in the room. Treat them as reasonable professionals with conflicting priorities. Do not perform conflict.",
     roster,
   ].join("\n");
 
@@ -67,11 +83,14 @@ export async function assembleContext({ workspaceRoot, employee, employees, even
     "# STUDIO.md",
     studio.trim() || "(none)",
     "",
+    "# How you feel about people in the room (−2..+2, decays toward 0)",
+    opinionLines,
+    "",
     "# Open backlog",
     JSON.stringify(openTasks(backlog), null, 2),
     "",
     "# Last ten events (the office is a rendering of these)",
-    recent.map((event) => `${event.id} ${event.actor} ${event.type}: ${event.message}`).join("\n") || "(none yet)",
+    recent.map((event) => `${event.id} ${event.actor} ${event.type}: ${event.headline || event.message}`).join("\n") || "(none yet)",
     "",
     `# Journal excerpt`,
     journal.trim().split("\n").slice(-20).join("\n") || "(empty)",

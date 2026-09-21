@@ -1,3 +1,23 @@
+export const KNOWN_ITEMS = [
+  "monitor",
+  "second_monitor",
+  "plant",
+  "coffee_mug",
+  "notebook",
+  "sticky_notes",
+];
+
+export const KNOWN_DECOR = [
+  "whiteboard",
+  "coffee",
+  "couch",
+  "plant",
+  "rug",
+  "lamp",
+  "shelf",
+  "clock",
+];
+
 export function validateOffice(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return "office.json must be an object";
@@ -11,9 +31,20 @@ export function validateOffice(value) {
   for (const desk of value.desks) {
     if (!desk || typeof desk.owner !== "string") return "desk.owner required";
     if (!Number.isFinite(desk.x) || !Number.isFinite(desk.y)) return "desk x/y required";
+    if (!Array.isArray(desk.items) || desk.items.length === 0) {
+      return `desk ${desk.owner} needs items (monitor, plant, mug…)`;
+    }
   }
   if (!Array.isArray(value.rooms)) return "office.json.rooms must be an array";
+  const hasBreak = value.rooms.some((room) => /break/i.test(room?.name || ""));
+  if (!hasBreak) return "office.json needs a break room";
   if (!Array.isArray(value.decor)) return "office.json.decor must be an array";
+  if (!value.decor.some((item) => item?.kind === "whiteboard")) {
+    return "office.json needs a whiteboard";
+  }
+  if (!value.decor.some((item) => item?.kind === "coffee")) {
+    return "office.json needs a coffee machine";
+  }
   return null;
 }
 

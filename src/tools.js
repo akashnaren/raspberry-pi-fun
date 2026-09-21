@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { isProductPath, resolveWorkspacePath, assertWritableFile } from "./paths.js";
 import { emptyBacklog, validateBacklog, validateOffice } from "./schemas.js";
+import { validateRelationships } from "./relationships.js";
 import { syntaxCheckFile, writeFileAtomic } from "./validator.js";
 
-const SAY_MAX = 240;
+const SAY_MAX = 84;
 
 export const TOOL_SCHEMAS = [
   {
@@ -185,6 +186,16 @@ export function createToolRunner({
         throw new Error(`backlog.json is not JSON: ${error.message}`);
       }
       const error = validateBacklog(parsed);
+      if (error) throw new Error(error);
+    }
+    if (rel === "relationships.json") {
+      let parsed;
+      try {
+        parsed = JSON.parse(contents);
+      } catch (error) {
+        throw new Error(`relationships.json is not JSON: ${error.message}`);
+      }
+      const error = validateRelationships(parsed);
       if (error) throw new Error(error);
     }
 

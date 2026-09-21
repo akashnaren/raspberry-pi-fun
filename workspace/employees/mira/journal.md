@@ -1,3 +1,3 @@
 # mira journal
 
-Day zero. Three desks, one converter. If we still have a timestamp tool on Friday I will call that a week.
+Day zero. Three desks. If Timezone Buddy still converts a pasted time on Friday, that is a week.

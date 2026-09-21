@@ -49,7 +49,7 @@ export function createLlm({
           authorization: `Bearer ${apiKey}`,
           "content-type": "application/json",
           "http-referer": referer || "http://127.0.0.1:8787",
-          "x-title": title || "AI Studio Fishbowl",
+          "x-title": title || "Meridian Desk",
         },
         body: JSON.stringify({
           model: employee.model,

@@ -4,19 +4,19 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Stamp stays a timestamp tool. If it grows a settings page I will cut it.",
+          message: "One tool. Paste a time, see five cities. If it grows a settings page I cut it.",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Accept fractional Unix seconds without rounding away the millis." },
+        arguments: { text: "Saved-city list stays at five. No add-city form this week." },
       },
     ],
     [
       {
         name: "journal",
         arguments: {
-          text: "Nova wants polish. Kessler wants edge cases. I want one screen that converts a time and copies it.",
+          text: "Nova will ship tonight. Kessler will reject a loose green. I will keep the backlog to one screen.",
         },
       },
     ],
@@ -27,7 +27,7 @@ const SCRIPTS = {
       {
         name: "journal",
         arguments: {
-          text: "Seed is a single file. I will not split it. Next: clearer copy on the epoch field.",
+          text: "Seed converts. Next: clearer empty-city copy. Working beats pretty.",
         },
       },
     ],
@@ -45,12 +45,12 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Using the last green build, not Nova's desk. Timezone offsets still look thin.",
+          message: "Using the last green build, not Nova's desk. Unknown cities still fail quietly.",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Reject timestamps that overflow JS Date instead of showing Invalid Date." },
+        arguments: { text: "Unknown city must say so. Do not invent an offset." },
       },
     ],
     [
@@ -58,7 +58,7 @@ const SCRIPTS = {
       {
         name: "journal",
         arguments: {
-          text: "I will file overflow and fractional seconds before I close anything. Shipping a lying clock is worse than shipping late.",
+          text: "I will file empty-city and bad-offset before I close anything. A lying clock is worse than late.",
         },
       },
     ],
@@ -77,7 +77,7 @@ export function createDryRunDriver() {
         step.unshift({
           name: "journal",
           arguments: {
-            text: `Dry-run turn ${n + 1}. Still watching Stamp. Not repeating myself.`,
+            text: `Dry-run turn ${n + 1}. Still watching Timezone Buddy. Changing the note.`,
           },
         });
       }
