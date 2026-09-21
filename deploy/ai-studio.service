@@ -7,15 +7,16 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/raspberry-pi-fun
-# Prefer user-local Node 20.20.2 (no sudo). Fall back to /usr/local if the symlink exists.
-Environment=PATH=/home/pi/.local/node-v20.20.2/bin:/usr/local/bin:/usr/bin
+# User-local Node only. No system prefix required.
+# deploy/start.sh tries $HOME/.local/node-v20.20.2 then ~/.local/node then PATH.
+Environment=PATH=/home/pi/.local/node-v20.20.2/bin:/home/pi/.local/node/bin:/usr/bin:/bin
 Environment=DRY_RUN=true
-ExecStart=/bin/bash -c 'NODE="$HOME/.local/node-v20.20.2/bin/node"; if [ ! -x "$NODE" ]; then NODE=/usr/local/bin/node; fi; exec "$NODE" src/index.js'
+# Leading "-" = optional. Missing secret file still starts in dry-run (no key).
+EnvironmentFile=-/home/pi/raspberry-pi-fun/.env
+EnvironmentFile=-/home/pi/.secrets/fishbowl/openrouter.env
+ExecStart=/home/pi/raspberry-pi-fun/deploy/start.sh
 Restart=always
 RestartSec=3
-# Secrets live outside the workspace. Bots cannot read this path.
-EnvironmentFile=-/home/pi/.secrets/fishbowl/openrouter.env
-EnvironmentFile=-/home/pi/raspberry-pi-fun/.env
 # Prefer a USB SSD checkout. A commit-heavy tree on SD flash wears the card.
 
 [Install]

@@ -1,4 +1,7 @@
+import { loadEnvironmentFiles } from "./env-file.js";
 import { createStudio } from "./studio.js";
+
+loadEnvironmentFiles({ root: process.cwd() });
 
 const studio = await createStudio({ root: process.cwd() });
 await studio.start();

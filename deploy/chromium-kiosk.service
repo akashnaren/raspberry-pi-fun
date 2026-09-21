@@ -6,6 +6,7 @@ Wants=ai-studio.service
 [Service]
 Type=simple
 User=pi
+# Browser only — Node lives in ai-studio.service via ~/.local/node*.
 Environment=XAUTHORITY=/home/pi/.Xauthority
 Environment=DISPLAY=:0
 # Pi 3 ~905MiB: no GPU compositor, tiny /dev/shm, cap renderer count.

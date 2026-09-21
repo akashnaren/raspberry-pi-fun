@@ -89,7 +89,7 @@ Target: Raspberry Pi OS Debian **aarch64**, ~1GB RAM (Pi 3 ≈ 905MiB). Chromium
 
 ### Node 20 LTS arm64 (prefer user-local, no sudo)
 
-OPS pins **v20.20.2** into `~/.local`. Do not use nvm or the NodeSource apt repo.
+OPS pins **v20.20.2** at `$HOME/.local/node-v20.20.2`. Optional short name: symlink `~/.local/node`. Do not use nvm, NodeSource, or `/usr/local` (no sudo required).
 
 ```bash
 NODE_VER=v20.20.2
@@ -101,19 +101,14 @@ cd "$HOME/.local/src"
 curl -fsSLO "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.tar.xz"
 tar -xJf "node-${NODE_VER}-${ARCH}.tar.xz" -C "$PREFIX" --strip-components=1
 
-grep -q "node-${NODE_VER}" ~/.profile 2>/dev/null || echo "export PATH=\"$PREFIX/bin:\$PATH\"" >> ~/.profile
-export PATH="$PREFIX/bin:$PATH"
+ln -sfn "$PREFIX" "$HOME/.local/node"
+grep -q '.local/node' ~/.profile 2>/dev/null || echo 'export PATH="$HOME/.local/node/bin:$PATH"' >> ~/.profile
+export PATH="$HOME/.local/node-v20.20.2/bin:$HOME/.local/node/bin:$PATH"
 
 node -v   # v20.20.2
 npm -v
-which node   # ~/.local/node-v20.20.2/bin/node
-```
-
-Optional symlink only if sudo works:
-
-```bash
-sudo ln -sfn "$HOME/.local/node-v20.20.2/bin/node" /usr/local/bin/node
-sudo ln -sfn "$HOME/.local/node-v20.20.2/bin/npm"  /usr/local/bin/npm
+which node
+# ~/.local/node-v20.20.2/bin/node  or  ~/.local/node/bin/node
 ```
 
 Node 22 linux-arm64 is fine later (`engines.node >= 20`). Same tarball recipe with `NODE_VER=v22.20.0` if you bump.
@@ -121,9 +116,9 @@ Node 22 linux-arm64 is fine later (`engines.node >= 20`). Same tarball recipe wi
 ```bash
 git clone https://github.com/akashnaren/raspberry-pi-fun.git
 cd raspberry-pi-fun
+export PATH="$HOME/.local/node-v20.20.2/bin:$HOME/.local/node/bin:$PATH"
 npm install
-cp .env.example .env
-# DRY_RUN=true is the default
+# DRY_RUN=true is the default. No API key. No OpenRouter calls.
 npm start
 ```
 
@@ -134,6 +129,11 @@ STUDIO_MODE=replay npm start
 ```
 
 Open `http://127.0.0.1:8787` (or point Chromium kiosk at it).
+
+`npm start` and the systemd unit load optional EnvironmentFile-style secrets (missing files are fine):
+
+1. `raspberry-pi-fun/.env` (gitignored; laptop / Pi dry-run)
+2. `~/.secrets/fishbowl/openrouter.env` (live key later; never required to start)
 
 Then, when you are ready to spend, put the key **outside the workspace** so bots cannot read it:
 
@@ -147,7 +147,7 @@ EOF
 chmod 600 ~/.secrets/fishbowl/openrouter.env
 ```
 
-The systemd unit loads `EnvironmentFile=-%h/.secrets/fishbowl/openrouter.env`. Never put the key in `workspace/`. A local `.env` in the repo root is also gitignored and is only for laptop dry-runs.
+The systemd unit uses `EnvironmentFile=-/home/pi/.secrets/fishbowl/openrouter.env` (leading `-` means optional). Never put the key in `workspace/`. A local `.env` in the repo root is also gitignored and is only for laptop dry-runs.
 
 Restart the process. Four people call OpenRouter, each on a locked model id. The HUD shows **ON AIR** when live.
 
@@ -187,7 +187,7 @@ The orchestrator records each turn's estimated USD cost in `data/spend.json`. Wh
 
 ### Chromium kiosk + systemd
 
-Units live in `deploy/ai-studio.service` and `deploy/chromium-kiosk.service`. Keep them. The orchestrator unit prefers `~/.local/node-v20.20.2` then `/usr/local/bin/node`.
+Units live in `deploy/ai-studio.service` and `deploy/chromium-kiosk.service`. Keep them. `deploy/start.sh` resolves Node from `$HOME/.local/node-v20.20.2` then the `~/.local/node` symlink. `/usr/local` is not required. The kiosk unit only launches Chromium.
 
 Disable screen blanking, then:
 
