@@ -1,0 +1,18 @@
+{
+  "tasks": [
+    {
+      "id": "t-1",
+      "text": "Keep Timezone Buddy a single file. Paste a time and city. No accounts.",
+      "status": "open",
+      "createdBy": "mira",
+      "createdAt": 1789972500000
+    },
+    {
+      "id": "t-2",
+      "text": "Empty city and unknown city must fail loudly, not show a wrong offset.",
+      "status": "open",
+      "createdBy": "kessler",
+      "createdAt": 1789972501000
+    }
+  ]
+}

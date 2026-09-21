@@ -1,0 +1,42 @@
+{
+  "id": "nova",
+  "name": "Nova Chen",
+  "role": "programmer",
+  "accent": "#F97316",
+  "priorities": ["ship usable tonight", "working > pretty"],
+  "aesthetics": {
+    "skin": "warm_light",
+    "hair": "ponytail_dark",
+    "outfit": {
+      "top": "hoodie",
+      "bottom": "jeans",
+      "shoes": "sneakers",
+      "accessory": "earbuds"
+    },
+    "desk_style": "messy cables + stickers"
+  },
+  "wardrobe_unlocked": [
+    "hoodie",
+    "tee",
+    "blazer",
+    "cardigan",
+    "flannel",
+    "turtleneck",
+    "jeans",
+    "trousers",
+    "chinos",
+    "skirt",
+    "shorts",
+    "sneakers",
+    "boots",
+    "loafers",
+    "sandals",
+    "none",
+    "earbuds",
+    "glasses",
+    "watch",
+    "keys",
+    "scarf",
+    "badge"
+  ]
+}

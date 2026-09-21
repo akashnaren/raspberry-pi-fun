@@ -1,0 +1,23 @@
+[Unit]
+Description=AI Studio fishbowl (Stage 1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/raspberry-pi-fun
+# User-local Node only. No system prefix required.
+# deploy/start.sh tries $HOME/.local/node-v20.20.2 then ~/.local/node then PATH.
+Environment=PATH=/home/pi/.local/node-v20.20.2/bin:/home/pi/.local/node/bin:/usr/bin:/bin
+Environment=DRY_RUN=true
+# Leading "-" = optional. Missing secret file still starts in dry-run (no key).
+EnvironmentFile=-/home/pi/raspberry-pi-fun/.env
+EnvironmentFile=-/home/pi/.secrets/fishbowl/openrouter.env
+ExecStart=/home/pi/raspberry-pi-fun/deploy/start.sh
+Restart=always
+RestartSec=3
+# Prefer a USB SSD checkout. A commit-heavy tree on SD flash wears the card.
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meridian Desk</title>
+    <link rel="stylesheet" href="/office.css" />
+  </head>
+  <body>
+    <header class="hud" aria-label="studio HUD">
+      <div class="hud-brand">
+        <span class="mark">MD</span>
+        <div>
+          <strong id="studio-name">Meridian Desk</strong>
+          <span id="product-name">Timezone Buddy</span>
+        </div>
+      </div>
+      <div class="hud-line" aria-label="studio status">
+        <span id="day-n" class="chip">Day 1</span>
+        <span id="cast-line" class="chip cast">Nova · Kessler · Mira</span>
+        <span id="staff-count" class="chip">4 staff</span>
+        <div class="burn" title="Token burn today versus the $5 cap">
+          <span>burn</span>
+          <div class="burn-track"><i id="burn-bar"></i></div>
+          <b id="budget">$0 / $5</b>
+        </div>
+        <p id="current-task" class="task">Keep Timezone Buddy a single file.</p>
+        <span id="ship-line" class="chip ship">shipping when green</span>
+      </div>
+      <div class="hud-flags">
+        <span id="on-air" class="on-air hidden">ON AIR</span>
+        <span id="mode-badge" class="badge">dry-run</span>
+        <span id="pause-badge" class="badge hidden">paused</span>
+        <span id="sleep-badge" class="badge sleep hidden">studio sleeping</span>
+        <button id="sound-btn" type="button" aria-pressed="false">sound off</button>
+        <button id="pause-btn" type="button">Pause</button>
+      </div>
+      <div id="model-chips" class="model-chips" aria-label="live model id per employee">
+        <span class="model-chip" data-id="nova"><b>Nova</b> <code>qwen/qwen3-coder-next</code></span>
+        <span class="model-chip" data-id="mira"><b>Mira</b> <code>z-ai/glm-5.3-flash</code></span>
+        <span class="model-chip" data-id="kessler"><b>Kessler</b> <code>nousresearch/hermes-3-llama-3.1-70b</code></span>
+      </div>
+    </header>
+    <div class="ticker-wrap" aria-label="plain English ticker">
+      <div id="ticker" class="ticker-track">waiting for the first event</div>
+    </div>
+    <main class="split">
+      <section class="pane office-pane" id="office-pane" aria-label="Office">
+        <div class="vignette" aria-hidden="true"></div>
+        <div id="building-pulse" class="building-pulse hidden">building…</div>
+        <aside id="inspect" class="inspect hidden">
+          <strong id="inspect-title"></strong>
+          <code id="inspect-model" class="inspect-model"></code>
+          <p id="inspect-body"></p>
+        </aside>
+        <canvas id="office" width="720" height="640"></canvas>
+      </section>
+      <section class="pane product-pane" aria-label="Last green build">
+        <div class="live-build">
+          <div class="live-build-bar">
+            <span class="live-chip">LIVE · green build</span>
+            <strong id="product-title">Timezone Buddy</strong>
+            <a id="open-product" class="open-tab" href="/dist/" target="_blank" rel="noopener">open</a>
+          </div>
+          <iframe id="product" title="Timezone Buddy" src="/dist/index.html" sandbox="allow-scripts allow-same-origin"></iframe>
+        </div>
+      </section>
+    </main>
+    <footer class="spotlight" aria-label="who is acting">
+      <span id="spot-avatar" class="spot-avatar" aria-hidden="true">·</span>
+      <p id="acting" class="acting">waiting for someone to act</p>
+      <code id="spot-tool" class="spot-tool">—</code>
+    </footer>
+    <iframe id="validator" class="hidden-frame" title="build validator" sandbox="allow-scripts allow-same-origin"></iframe>
+    <script src="/office.js" type="module"></script>
+  </body>
+</html>

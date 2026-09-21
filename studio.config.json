@@ -1,0 +1,98 @@
+{
+  "studio": {
+    "name": "Meridian Desk",
+    "product": "Timezone Buddy",
+    "private": true
+  },
+  "openrouter": {
+    "base_url": "https://openrouter.ai/api/v1"
+  },
+  "tick_ms": 105000,
+  "tick": {
+    "minMs": 90000,
+    "maxMs": 120000,
+    "midMs": 105000
+  },
+  "daily_ceiling_usd": 5.0,
+  "budget": {
+    "dailyCeilingUsd": 5.0,
+    "daily_ceiling_usd": 5.0
+  },
+  "mode": {
+    "dryRun": true,
+    "localStubs": true
+  },
+  "chatterModel": "z-ai/glm-5.3-flash",
+  "lottery": {
+    "nova": 0.5,
+    "mira": 0.25,
+    "kessler": 0.25,
+    "jules": 0.15
+  },
+  "employees": [
+    {
+      "id": "nova",
+      "name": "Nova Chen",
+      "role": "programmer",
+      "color": "#F97316",
+      "accent": "#F97316",
+      "modelTier": "frontier",
+      "modelFamily": "qwen",
+      "model": "qwen/qwen3-coder-next",
+      "preferredModels": ["qwen/qwen3-coder-next", "qwen/qwen3-coder-plus"],
+      "chatterModel": "z-ai/glm-5.3-flash",
+      "lottery_weight": 0.5,
+      "maxTokens": 1500,
+      "max_tokens": 1500,
+      "priorities": "Ship a usable tool tonight. Working beats pretty. One HTML file. Iterate in the open."
+    },
+    {
+      "id": "mira",
+      "name": "Mira Sol",
+      "role": "producer",
+      "color": "#F59E0B",
+      "accent": "#F59E0B",
+      "modelTier": "cheap-capable",
+      "modelFamily": "z-ai",
+      "model": "z-ai/glm-5.3-flash",
+      "preferredModels": ["z-ai/glm-5.3-flash"],
+      "chatterModel": "z-ai/glm-5.3-flash",
+      "lottery_weight": 0.25,
+      "maxTokens": 500,
+      "max_tokens": 500,
+      "priorities": "One clear useful tool. Kill scope creep. Timezone Buddy stays paste-a-time, see-your-cities."
+    },
+    {
+      "id": "kessler",
+      "name": "Kessler Holt",
+      "role": "qa",
+      "color": "#14B8A6",
+      "accent": "#14B8A6",
+      "modelTier": "mid",
+      "modelFamily": "nousresearch",
+      "model": "nousresearch/hermes-3-llama-3.1-70b",
+      "preferredModels": ["nousresearch/hermes-3-llama-3.1-70b"],
+      "chatterModel": "nousresearch/hermes-3-llama-3.1-70b",
+      "lottery_weight": 0.25,
+      "maxTokens": 400,
+      "max_tokens": 400,
+      "priorities": "No ugly or broken UX. Reject loose greens. Use the last green build, not Nova's desk."
+    },
+    {
+      "id": "jules",
+      "name": "Jules Park",
+      "role": "office_manager",
+      "color": "#6366F1",
+      "accent": "#6366F1",
+      "modelTier": "cheap-capable",
+      "modelFamily": "meta-llama",
+      "model": "meta-llama/llama-4-scout",
+      "preferredModels": ["meta-llama/llama-4-scout"],
+      "chatterModel": "meta-llama/llama-4-scout",
+      "lottery_weight": 0.15,
+      "maxTokens": 400,
+      "max_tokens": 400,
+      "priorities": "Office looks intentional. Thrift the furniture budget. Deny vanity requests until a green ship."
+    }
+  ]
+}
