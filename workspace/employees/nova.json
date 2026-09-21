@@ -2,6 +2,7 @@
   "id": "nova",
   "name": "Nova Chen",
   "role": "programmer",
+  "model": "qwen/qwen3-coder-next",
   "accent": "#F97316",
   "priorities": ["ship usable tonight", "working > pretty"],
   "aesthetics": {

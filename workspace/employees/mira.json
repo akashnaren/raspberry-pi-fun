@@ -2,6 +2,7 @@
   "id": "mira",
   "name": "Mira Sol",
   "role": "producer",
+  "model": "z-ai/glm-5.3-flash",
   "accent": "#F59E0B",
   "priorities": ["one clear useful tool", "kill scope creep"],
   "aesthetics": {

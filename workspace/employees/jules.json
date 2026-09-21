@@ -2,6 +2,7 @@
   "id": "jules",
   "name": "Jules Park",
   "role": "office_manager",
+  "model": "meta-llama/llama-4-scout",
   "accent": "#6366F1",
   "priorities": ["office looks intentional", "thrift furniture budget", "deny vanity until a green ship"],
   "aesthetics": {

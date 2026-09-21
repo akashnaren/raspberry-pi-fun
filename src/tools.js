@@ -258,6 +258,7 @@ export function createToolRunner({
         name: existing.name,
         role: existing.role,
         accent: existing.accent,
+        model: existing.model,
       };
       const error = validateEmployeeRecord(merged, actor);
       if (error) throw new Error(error);

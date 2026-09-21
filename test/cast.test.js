@@ -5,6 +5,36 @@ import { join } from "node:path";
 import { opinionsFor, emptyMatrix } from "../src/relationships.js";
 import { REPO } from "./helpers.js";
 
+test("CTO remap: product cast wins over Research River / Kessler-as-producer", async () => {
+  const config = JSON.parse(await readFile(join(REPO, "studio.config.json"), "utf8"));
+  const byId = Object.fromEntries(config.employees.map((person) => [person.id, person]));
+  assert.equal(byId.river, undefined);
+  assert.equal(byId.kessler.role, "qa");
+  assert.notEqual(byId.kessler.role, "producer");
+  assert.equal(byId.kessler.model, "nousresearch/hermes-3-llama-3.1-70b");
+  assert.notEqual(byId.kessler.model, "z-ai/glm-5.3-flash");
+  assert.equal(byId.mira.role, "producer");
+  assert.equal(byId.mira.model, "z-ai/glm-5.3-flash");
+  assert.equal(byId.nova.role, "programmer");
+  assert.equal(byId.nova.model, "qwen/qwen3-coder-next");
+  assert.equal(byId.nova.accent || byId.nova.color, "#F97316");
+  assert.equal(byId.kessler.accent || byId.kessler.color, "#14B8A6");
+  assert.equal(byId.mira.accent || byId.mira.color, "#F59E0B");
+  assert.equal(config.tick_ms || config.tick.midMs, 105000);
+  assert.equal(config.daily_ceiling_usd ?? config.budget.dailyCeilingUsd, 5);
+  assert.equal(config.mode.dryRun, true);
+
+  for (const [id, model] of [
+    ["nova", "qwen/qwen3-coder-next"],
+    ["kessler", "nousresearch/hermes-3-llama-3.1-70b"],
+    ["mira", "z-ai/glm-5.3-flash"],
+  ]) {
+    const record = JSON.parse(await readFile(join(REPO, `workspace/employees/${id}.json`), "utf8"));
+    assert.equal(record.model, model);
+    assert.notEqual(record.id, "river");
+  }
+});
+
 test("Meridian Desk cast lock: Nova, Kessler, Mira + Timezone Buddy", async () => {
   const config = JSON.parse(await readFile(join(REPO, "studio.config.json"), "utf8"));
   assert.equal(config.studio.name, "Meridian Desk");

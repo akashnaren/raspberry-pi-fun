@@ -94,6 +94,11 @@ export async function mergeEmployees(workspaceRoot, employees) {
       ...employee,
       color: record?.accent || employee.color,
       accent: record?.accent || employee.color,
+      // Provisioning stays in studio.config.json — employee files cannot swap models.
+      model: employee.model,
+      modelFamily: employee.modelFamily,
+      role: employee.role,
+      name: employee.name,
       aesthetics: record?.aesthetics || defaultAesthetics(employee.id),
       wardrobe_unlocked: record?.wardrobe_unlocked || defaultWardrobe(),
       desk_style: record?.aesthetics?.desk_style || "",
