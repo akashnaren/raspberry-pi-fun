@@ -87,46 +87,34 @@ Target: Raspberry Pi OS Debian **aarch64**, ~1GB RAM (Pi 3 ≈ 905MiB). Chromium
 - Office renderer forces **DPR=1** and throttles `requestAnimationFrame` when nobody is walking or speaking.
 - If the compositor still swaps: `STUDIO_LITE=1` or open `/?lite=1` to disable ticker / ON AIR animations. Soundtrack stays **off** until you toggle it.
 
-### Node v20.20.2 linux-arm64 tarball (not NodeSource 22)
+### Node v20.20.2 linux-arm64 tarball (not nvm, not NodeSource)
 
-Official Node **20 LTS** tarball into `$HOME/.local/node-v20.20.2`. No nvm. No NodeSource apt. Confirm **64-bit** OS first (`uname -m` → `aarch64`). If you see `armv7l`, use `linux-armv7l` instead — do not force arm64.
+Pin: official **v20.20.2** tarball under `~/.local/node-v20.20.2`. Confirm `uname -m` is **`aarch64`** before using `linux-arm64`. If `uname -m` is `armv7l`, set `ARCH=linux-armv7l` instead — do not force arm64.
 
 ```bash
-uname -m   # expect aarch64
-
 NODE_VER=v20.20.2
 ARCH=linux-arm64
 PREFIX="$HOME/.local/node-$NODE_VER"
-
 mkdir -p "$HOME/.local/src" "$PREFIX"
 cd "$HOME/.local/src"
-
-# Verify checksum from https://nodejs.org/dist/$NODE_VER/SHASUMS256.txt before extract in production
 curl -fsSLO "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.tar.xz"
 tar -xJf "node-${NODE_VER}-${ARCH}.tar.xz" -C "$PREFIX" --strip-components=1
-
-# User PATH (add to ~/.profile)
 grep -q "node-${NODE_VER}" ~/.profile 2>/dev/null || echo "export PATH=\"$PREFIX/bin:\$PATH\"" >> ~/.profile
 export PATH="$PREFIX/bin:$PATH"
-
-node -v    # expect v20.20.2
-npm -v
-which node # .../.local/node-v20.20.2/bin/node
+node -v && npm -v
 ```
 
-Optional symlink so systemd can see `/usr/local/bin/node`:
+Optional systemd symlinks (OPS §3). `deploy/start.sh` does not need them — it already tries `$HOME/.local/node-v20.20.2` then `~/.local/node` then PATH. Do not run `npm` as root.
 
 ```bash
 sudo ln -sfn "$HOME/.local/node-v20.20.2/bin/node" /usr/local/bin/node
 sudo ln -sfn "$HOME/.local/node-v20.20.2/bin/npm"  /usr/local/bin/npm
 ```
 
-`deploy/start.sh` does **not** require that symlink. It tries `$HOME/.local/node-v20.20.2` then `~/.local/node` then PATH. Do not run `npm` as root.
-
-Smoke:
+Smoke (Integration example path; systemd `WorkingDirectory` may stay the git clone path):
 
 ```bash
-cd ~/raspberry-pi-fun   # or ~/ai-studio-fishbowl
+cd ~/ai-studio-fishbowl   # or the raspberry-pi-fun clone
 node -e "console.log('ok', process.version, process.arch)"
 # expect: ok v20.20.2 arm64
 ```

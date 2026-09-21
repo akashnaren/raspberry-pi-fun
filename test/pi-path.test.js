@@ -65,6 +65,9 @@ test("README pins Node v20.20.2 tarball, secrets dir, and SSH key-only", async (
   assert.match(readme, /rpi-connect status/);
   assert.match(readme, /PasswordAuthentication no/);
   assert.match(readme, /ok v20\.20\.2 arm64/);
+  assert.match(readme, /~\/ai-studio-fishbowl/);
+  assert.match(readme, /armv7l/);
+  assert.match(readme, /ln -sfn "\$HOME\/\.local\/node-v20\.20\.2\/bin\/node" \/usr\/local\/bin\/node/);
 });
 
 test("locked office manager is Jules Park with indigo accent", async () => {
