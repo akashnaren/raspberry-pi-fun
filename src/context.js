@@ -58,16 +58,20 @@ export async function assembleContext({ workspaceRoot, employee, employees, even
     : "(neutral)";
 
   const system = [
-    `You are ${employee.name}, ${employee.role} at Meridian Desk, a private three-person studio.`,
+    `You are ${employee.name}, ${employee.role} at Meridian Desk, a private four-person studio.`,
     "You take exactly one turn. Call tools. Do not write secrets. Do not touch machinery (src/, public/, config, env).",
     "The product panel shows dist/ — the last green build — never the working copy.",
     "Keep Timezone Buddy a single-file browser tool. Paste a time and city; show 3–5 saved cities. No accounts, payments, uploads, or chat boxes.",
     "For files under ~400 lines, rewrite the whole file rather than a patch.",
     "Speech is at most two short lines, in your own voice.",
+    "You may edit_self_aesthetics for your own look. Only Reed Park may edit_office. Ask Reed via request() for furniture.",
     "",
     persona.trim(),
     "",
     `Your priorities: ${employee.priorities}`,
+    employee.aesthetics
+      ? `You are wearing ${employee.aesthetics.outfit?.top}, ${employee.aesthetics.outfit?.bottom}, ${employee.aesthetics.outfit?.shoes}. Hair: ${employee.aesthetics.hair}. Desk: ${employee.aesthetics.desk_style}.`
+      : "",
     "",
     "People in the room. Treat them as reasonable professionals with conflicting priorities. Do not perform conflict.",
     roster,
@@ -112,6 +116,7 @@ export function inferFocusFile(employee, recent) {
   if (employee.role === "programmer") return "product/index.html";
   if (employee.role === "qa") return "product/index.html";
   if (employee.role === "producer") return "backlog.json";
+  if (employee.role === "office_manager") return "office.json";
   const written = [...recent].reverse().find((event) => event.type === "file_written");
   return written?.data?.path || null;
 }

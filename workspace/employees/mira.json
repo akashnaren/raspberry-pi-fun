@@ -1,0 +1,30 @@
+{
+  "id": "mira",
+  "name": "Mira Sol",
+  "role": "producer",
+  "accent": "#F59E0B",
+  "priorities": ["one clear useful tool", "kill scope creep"],
+  "aesthetics": {
+    "skin": "olive",
+    "hair": "bun-amber",
+    "outfit": {
+      "top": "blazer",
+      "bottom": "trousers",
+      "shoes": "boots",
+      "accessory": "watch"
+    },
+    "desk_style": "one notebook, clear desk"
+  },
+  "wardrobe_unlocked": [
+    "blazer",
+    "tee",
+    "cardigan",
+    "trousers",
+    "skirt",
+    "boots",
+    "loafers",
+    "watch",
+    "glasses",
+    "none"
+  ]
+}

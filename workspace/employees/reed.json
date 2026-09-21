@@ -1,0 +1,30 @@
+{
+  "id": "reed",
+  "name": "Reed Park",
+  "role": "office_manager",
+  "accent": "#8B5CF6",
+  "priorities": ["room stays usable", "budget is real"],
+  "aesthetics": {
+    "skin": "deep",
+    "hair": "crop-violet",
+    "outfit": {
+      "top": "henley",
+      "bottom": "chinos",
+      "shoes": "sneakers",
+      "accessory": "badge"
+    },
+    "desk_style": "clipboard and floor-plan printouts"
+  },
+  "wardrobe_unlocked": [
+    "henley",
+    "tee",
+    "cardigan",
+    "chinos",
+    "jeans",
+    "sneakers",
+    "boots",
+    "badge",
+    "watch",
+    "none"
+  ]
+}

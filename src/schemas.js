@@ -16,6 +16,10 @@ export const KNOWN_DECOR = [
   "lamp",
   "shelf",
   "clock",
+  "standing_desk",
+  "filing_cabinet",
+  "beanbag",
+  "minifridge",
 ];
 
 export function validateOffice(value) {
@@ -44,6 +48,14 @@ export function validateOffice(value) {
   }
   if (!value.decor.some((item) => item?.kind === "coffee")) {
     return "office.json needs a coffee machine";
+  }
+  if (value.budget && !Number.isFinite(Number(value.budget.furniture))) {
+    return "office.json.budget.furniture must be a number";
+  }
+  for (const item of value.decor) {
+    if (item?.kind && !KNOWN_DECOR.includes(item.kind)) {
+      return `unknown decor kind ${item.kind}`;
+    }
   }
   return null;
 }

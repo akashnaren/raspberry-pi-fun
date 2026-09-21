@@ -38,6 +38,10 @@ const SCRIPTS = {
           message: "Working copy is on my desk. Dist stays green until Kessler says otherwise.",
         },
       },
+      {
+        name: "request",
+        arguments: { item: "standing_desk", reason: "I ship faster on my feet." },
+      },
     ],
   ],
   kessler: [
@@ -59,6 +63,25 @@ const SCRIPTS = {
         name: "journal",
         arguments: {
           text: "I will file empty-city and bad-offset before I close anything. A lying clock is worse than late.",
+        },
+      },
+    ],
+  ],
+  reed: [
+    [
+      { name: "read_file", arguments: { path: "requests.json" } },
+      {
+        name: "say",
+        arguments: {
+          message: "Two furniture credits. A standing desk waits. I can offer a plant.",
+        },
+      },
+    ],
+    [
+      {
+        name: "journal",
+        arguments: {
+          text: "Nova will ask again. Budget stays two until something ships.",
         },
       },
     ],

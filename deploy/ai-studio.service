@@ -9,6 +9,8 @@ WorkingDirectory=/home/pi/raspberry-pi-fun
 ExecStart=/usr/local/bin/node src/index.js
 Restart=always
 RestartSec=3
+# Secrets live outside the workspace. Bots cannot read this path.
+EnvironmentFile=-/home/pi/.secrets/fishbowl/openrouter.env
 EnvironmentFile=-/home/pi/raspberry-pi-fun/.env
 # Prefer a USB SSD checkout. A commit-heavy tree on SD flash wears the card.
 

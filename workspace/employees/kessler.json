@@ -1,0 +1,30 @@
+{
+  "id": "kessler",
+  "name": "Kessler Holt",
+  "role": "qa",
+  "accent": "#14B8A6",
+  "priorities": ["no ugly or broken UX", "reject loose greens"],
+  "aesthetics": {
+    "skin": "fair",
+    "hair": "wave-teal",
+    "outfit": {
+      "top": "cardigan",
+      "bottom": "chinos",
+      "shoes": "loafers",
+      "accessory": "glasses"
+    },
+    "desk_style": "aligned sticky notes"
+  },
+  "wardrobe_unlocked": [
+    "cardigan",
+    "tee",
+    "blazer",
+    "chinos",
+    "trousers",
+    "loafers",
+    "sneakers",
+    "glasses",
+    "watch",
+    "none"
+  ]
+}

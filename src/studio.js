@@ -10,6 +10,7 @@ import { createStudioServer } from "./server.js";
 import { createToolRunner } from "./tools.js";
 import { createPromoter, syntaxCheckHtml } from "./validator.js";
 import { createRelationships } from "./relationships.js";
+import { mergeEmployees } from "./aesthetics.js";
 
 export async function loadConfig(root, env = process.env) {
   const raw = JSON.parse(await readFile(join(root, "studio.config.json"), "utf8"));
@@ -67,7 +68,8 @@ export async function createStudio({
       available = [];
     }
   }
-  const employees = resolveEmployeeModels(config.employees, available);
+  const roster = resolveEmployeeModels(config.employees, available);
+  let employees = await mergeEmployees(workspaceRoot, roster);
   for (const employee of employees) {
     await events.append({
       type: "model_resolved",
@@ -100,6 +102,7 @@ export async function createStudio({
     live.office = await readJson(join(workspaceRoot, "office.json"));
     live.backlog = (await readJson(join(workspaceRoot, "backlog.json"))) || { tasks: [] };
     live.relationships = relationships.snapshot();
+    employees = await mergeEmployees(workspaceRoot, roster);
   }
 
   events.subscribe((event) => {
@@ -144,6 +147,7 @@ export async function createStudio({
     workspaceRoot,
     events,
     now,
+    employees: roster,
     async onProductWrite({ actor, path }) {
       const html = await readFile(join(workspaceRoot, "product/index.html"), "utf8");
       const syntax = syntaxCheckHtml(html);

@@ -12,9 +12,10 @@
     "dailyCeilingUsd": 5
   },
   "lottery": {
+    "nova": 4,
     "mira": 2,
-    "nova": 3,
-    "kessler": 2
+    "kessler": 2,
+    "reed": 2
   },
   "employees": [
     {
@@ -55,6 +56,19 @@
         "nousresearch/hermes-2-pro-llama-3-8b"
       ],
       "priorities": "No ugly or broken UX. Reject loose greens. Use the last green build, not Nova's desk."
+    },
+    {
+      "id": "reed",
+      "name": "Reed Park",
+      "role": "office_manager",
+      "color": "#8B5CF6",
+      "modelFamily": "google",
+      "preferredModels": [
+        "google/gemini-2.0-flash-001",
+        "google/gemini-2.5-flash",
+        "google/gemini-flash-1.5"
+      ],
+      "priorities": "The room stays usable. Furniture budget is real. Approve what helps Friday; deny vanity."
     }
   ]
 }

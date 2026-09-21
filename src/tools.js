@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
+import { applyAestheticsPatch, loadEmployeeRecord, validateEmployeeRecord } from "./aesthetics.js";
 import { isProductPath, resolveWorkspacePath, assertWritableFile } from "./paths.js";
 import { emptyBacklog, validateBacklog, validateOffice } from "./schemas.js";
 import { validateRelationships } from "./relationships.js";
@@ -24,7 +25,7 @@ export const TOOL_SCHEMAS = [
     function: {
       name: "write_file",
       description:
-        "Rewrite a workspace file in full. Use for product HTML, backlog, office.json, strategy, journals. Never write machinery or secrets.",
+        "Rewrite a workspace file in full. Product, backlog, strategy, journals. office.json is Reed only. employees/<id>.json aesthetics are self only.",
       parameters: {
         type: "object",
         properties: {
@@ -83,6 +84,59 @@ export const TOOL_SCHEMAS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "request",
+      description: "Ask the office manager for furniture or a wardrobe unlock.",
+      parameters: {
+        type: "object",
+        properties: {
+          item: { type: "string" },
+          reason: { type: "string" },
+        },
+        required: ["item", "reason"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_office",
+      description: "Office manager only. Patch office.json (desks, decor, rooms). Spends furniture budget on new props.",
+      parameters: {
+        type: "object",
+        properties: {
+          office: { type: "object" },
+        },
+        required: ["office"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_self_aesthetics",
+      description: "Change your own clothes and look. Only pieces in wardrobe_unlocked.",
+      parameters: {
+        type: "object",
+        properties: {
+          skin: { type: "string" },
+          hair: { type: "string" },
+          desk_style: { type: "string" },
+          outfit: {
+            type: "object",
+            properties: {
+              top: { type: "string" },
+              bottom: { type: "string" },
+              shoes: { type: "string" },
+              accessory: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+  },
 ];
 
 export function filterSay(message) {
@@ -99,32 +153,47 @@ export function createToolRunner({
   events,
   now = () => Date.now(),
   onProductWrite,
+  employees = [],
 }) {
+  const byId = new Map(employees.map((person) => [person.id, person]));
+
+  function isOfficeManager(actor) {
+    return byId.get(actor)?.role === "office_manager" || actor === "reed";
+  }
+
   const backlogPath = "backlog.json";
 
-  async function loadBacklog() {
-    const { abs } = resolveWorkspacePath(workspaceRoot, backlogPath);
+  async function loadJson(rel, fallback) {
+    const { abs } = resolveWorkspacePath(workspaceRoot, rel);
     try {
-      const parsed = JSON.parse(await readFile(abs, "utf8"));
-      const error = validateBacklog(parsed);
-      if (error) return emptyBacklog();
-      return parsed;
+      return JSON.parse(await readFile(abs, "utf8"));
     } catch {
-      return emptyBacklog();
+      return fallback;
     }
   }
 
-  async function saveBacklog(backlog) {
-    const { abs } = resolveWorkspacePath(workspaceRoot, backlogPath);
-    await writeFileAtomic(abs, `${JSON.stringify(backlog, null, 2)}\n`);
+  async function saveJson(rel, value) {
+    const { abs } = resolveWorkspacePath(workspaceRoot, rel);
+    await writeFileAtomic(abs, `${JSON.stringify(value, null, 2)}\n`);
+  }
+
+  async function loadBacklog() {
+    const parsed = await loadJson(backlogPath, emptyBacklog());
+    return validateBacklog(parsed) ? emptyBacklog() : parsed;
   }
 
   async function nextTaskId(backlog) {
     const nums = backlog.tasks
       .map((task) => Number(/^t-(\d+)$/.exec(task.id)?.[1]))
       .filter((n) => Number.isFinite(n));
-    const next = (nums.length ? Math.max(...nums) : 0) + 1;
-    return `t-${next}`;
+    return `t-${(nums.length ? Math.max(...nums) : 0) + 1}`;
+  }
+
+  async function nextRequestId(list) {
+    const nums = list
+      .map((item) => Number(/^r-(\d+)$/.exec(item.id)?.[1]))
+      .filter((n) => Number.isFinite(n));
+    return `r-${(nums.length ? Math.max(...nums) : 0) + 1}`;
   }
 
   return {
@@ -137,6 +206,9 @@ export function createToolRunner({
         if (name === "close_task") return await closeTask(actor, args);
         if (name === "say") return await sayTool(actor, args);
         if (name === "journal") return await journalTool(actor, args);
+        if (name === "request") return await requestTool(actor, args);
+        if (name === "edit_office") return await editOffice(actor, args);
+        if (name === "edit_self_aesthetics") return await editSelf(actor, args);
         throw new Error(`unknown tool ${name}`);
       } catch (error) {
         const event = await events.append({
@@ -168,15 +240,39 @@ export function createToolRunner({
     const contents = String(args.contents ?? "");
     if (contents.length > 200_000) throw new Error("file too large");
 
-    if (rel === "office.json") {
+    const selfRecord = rel.match(/^employees\/([^/]+)\.json$/);
+    if (selfRecord) {
+      if (selfRecord[1] !== actor) throw new Error("only you can change your own look");
       let parsed;
       try {
         parsed = JSON.parse(contents);
       } catch (error) {
-        throw new Error(`office.json is not JSON: ${error.message}`);
+        throw new Error(`employee record is not JSON: ${error.message}`);
       }
-      const error = validateOffice(parsed);
+      const existing = (await loadEmployeeRecord(workspaceRoot, actor)) || parsed;
+      const merged = {
+        ...existing,
+        aesthetics: parsed.aesthetics || existing.aesthetics,
+        wardrobe_unlocked: existing.wardrobe_unlocked,
+        id: actor,
+        name: existing.name,
+        role: existing.role,
+        accent: existing.accent,
+      };
+      const error = validateEmployeeRecord(merged, actor);
       if (error) throw new Error(error);
+      await writeFileAtomic(abs, `${JSON.stringify(merged, null, 2)}\n`);
+      const event = await events.append({
+        type: "aesthetics_changed",
+        actor,
+        data: { aesthetics: merged.aesthetics },
+      });
+      return { ok: true, path: rel, event };
+    }
+
+    if (rel === "office.json") {
+      if (!isOfficeManager(actor)) throw new Error("only the office manager can edit office.json");
+      return editOffice(actor, { office: JSON.parse(contents) });
     }
     if (rel === "backlog.json") {
       let parsed;
@@ -244,11 +340,10 @@ export function createToolRunner({
       createdAt: now(),
     };
     backlog.tasks.push(task);
-    await saveBacklog(backlog);
+    await saveJson(backlogPath, backlog);
     const event = await events.append({
       type: "task_added",
       actor,
-      message: `${actor} added task ${task.id}: ${text}`,
       data: { task },
     });
     return { ok: true, task, event };
@@ -262,11 +357,10 @@ export function createToolRunner({
     task.status = "closed";
     task.closedBy = actor;
     task.closedAt = now();
-    await saveBacklog(backlog);
+    await saveJson(backlogPath, backlog);
     const event = await events.append({
       type: "task_closed",
       actor,
-      message: `${actor} closed task ${id}`,
       data: { task },
     });
     return { ok: true, task, event };
@@ -278,7 +372,6 @@ export function createToolRunner({
     const event = await events.append({
       type: "say",
       actor,
-      message: `${actor}: ${message}`,
       data: { text: message },
     });
     return { ok: true, text: message, event };
@@ -296,14 +389,95 @@ export function createToolRunner({
       existing = `# ${actor} journal\n`;
     }
     const stamp = new Date(now()).toISOString();
-    const next = `${existing.trimEnd()}\n\n## ${stamp}\n\n${text}\n`;
-    await writeFileAtomic(abs, next);
+    await writeFileAtomic(abs, `${existing.trimEnd()}\n\n## ${stamp}\n\n${text}\n`);
     const event = await events.append({
       type: "journal",
       actor,
-      message: `${actor} wrote in their journal`,
       data: { path: rel, excerpt: text.slice(0, 160) },
     });
     return { ok: true, path: rel, event };
+  }
+
+  async function requestTool(actor, args) {
+    const item = String(args.item ?? "").trim();
+    const reason = String(args.reason ?? "").trim();
+    if (!item || !reason) throw new Error("item and reason are required");
+    const pile = await loadJson("requests.json", { requests: [] });
+    if (!Array.isArray(pile.requests)) pile.requests = [];
+    const entry = {
+      id: await nextRequestId(pile.requests),
+      item,
+      reason,
+      from: actor,
+      status: "open",
+      createdAt: now(),
+    };
+    pile.requests.push(entry);
+    await saveJson("requests.json", pile);
+    const event = await events.append({
+      type: "request_filed",
+      actor,
+      data: { request: entry, item, reason },
+    });
+    return { ok: true, request: entry, event };
+  }
+
+  async function editOffice(actor, args) {
+    if (!isOfficeManager(actor)) throw new Error("edit_office is exclusive to the office manager");
+    const current = await loadJson("office.json", null);
+    if (!current) throw new Error("office.json missing");
+    const patch = args.office && typeof args.office === "object" ? args.office : args;
+    const next = {
+      ...current,
+      ...patch,
+      desks: patch.desks || current.desks,
+      rooms: patch.rooms || current.rooms,
+      decor: patch.decor || current.decor,
+      budget: { furniture: Number(current.budget?.furniture ?? 0), ...(patch.budget || {}) },
+    };
+    const error = validateOffice(next);
+    if (error) {
+      await rejectOffice(actor, error, patch);
+      throw new Error(error);
+    }
+    const added = Math.max(0, (next.decor?.length || 0) - (current.decor?.length || 0));
+    const furniture = Number(next.budget?.furniture ?? 0);
+    if (added > furniture) {
+      const msg = `furniture budget ${furniture} cannot cover ${added} new props`;
+      await rejectOffice(actor, msg, patch);
+      throw new Error(msg);
+    }
+    if (added > 0) next.budget.furniture = furniture - added;
+    await saveJson("office.json", next);
+    const event = await events.append({
+      type: "office_edited",
+      actor,
+      data: { added, furniture: next.budget.furniture },
+    });
+    return { ok: true, office: next, event };
+  }
+
+  async function rejectOffice(actor, error, patch) {
+    const { abs } = resolveWorkspacePath(workspaceRoot, "office-rejections.jsonl");
+    await appendFile(abs, `${JSON.stringify({ ts: now(), actor, error, patch })}\n`).catch(() => {});
+    await events.append({
+      type: "office_edit_rejected",
+      actor,
+      data: { error },
+    });
+  }
+
+  async function editSelf(actor, args) {
+    const record = await loadEmployeeRecord(workspaceRoot, actor);
+    if (!record) throw new Error(`no employee record for ${actor}`);
+    const next = applyAestheticsPatch(record, args);
+    const { abs } = resolveWorkspacePath(workspaceRoot, `employees/${actor}.json`);
+    await writeFileAtomic(abs, `${JSON.stringify(next, null, 2)}\n`);
+    const event = await events.append({
+      type: "aesthetics_changed",
+      actor,
+      data: { aesthetics: next.aesthetics },
+    });
+    return { ok: true, aesthetics: next.aesthetics, event };
   }
 }

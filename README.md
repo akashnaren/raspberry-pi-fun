@@ -7,7 +7,7 @@ The studio on screen is **Meridian Desk**. The stage name stays fishbowl.
 ## Locked defaults (2026-09-20)
 
 - Private
-- 3 employees
+- 3 employees originally; Stage 1 now seats **4** (office manager added)
 - Starting product: useful browser tool (not a game)
 - Daily API ceiling: $5
 
@@ -41,16 +41,19 @@ Four load-bearing rules, unchanged from the spec:
 | `nova` | Nova Chen | programmer | coral `#F97316` | OpenAI | Ship a usable tool tonight. Working > pretty. |
 | `kessler` | Kessler Holt | QA | teal `#14B8A6` | Nous / Hermes | No ugly or broken UX. Reject loose greens. |
 | `mira` | Mira Sol | producer | amber `#F59E0B` | xAI / Grok | One clear useful tool. Kill scope creep. |
+| `reed` | Reed Park | office manager | violet `#8B5CF6` | Google | Room stays usable. Furniture budget is real. |
 
-Model ids are not hardcoded in the orchestrator. On a live boot the process reads OpenRouter's model list and picks each employee's first available `preferredModels` entry (then any model in that family). Edit `studio.config.json` to swap brains.
+Looks live in `workspace/employees/<id>.json`: skin, hair, outfit layers, desk_style, wardrobe_unlocked. Only that person may `edit_self_aesthetics`. Reed alone may `edit_office`.
 
-Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
+Model ids are not hardcoded in the orchestrator. On a live boot the process reads OpenRouter's model list and picks each employee's first available `preferredModels` entry (then any model in that family). Edit `studio.config.json` to swap brains. Lottery weights: Nova 4, everyone else 2.
+
+Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0, plus Reed pairs. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
 
 Starting product: **Timezone Buddy**, a single-file “paste a time + city → 3–5 saved cities” converter in `workspace/product/index.html`. Whiteboard: `SHIP: Timezone Buddy — usable in <1 min`.
 
 ## Tools
 
-`read_file`, `write_file`, `add_task`, `close_task`, `say`, `journal`.
+`read_file`, `write_file`, `add_task`, `close_task`, `say`, `journal`, `request`, `edit_office` (Reed only), `edit_self_aesthetics` (self only).
 
 ## Run on a Raspberry Pi
 
@@ -79,15 +82,20 @@ On a Pi 3 (~905MiB) that is enough. The office renderer forces **DPR=1** and thr
 
 First boot needs **no API key**. Without `OPENROUTER_API_KEY` the studio runs in **dry-run**: scripted turns, real events, real walks, $0 spent. Open `http://127.0.0.1:8787` (or point Chromium kiosk at it).
 
-Then, when you are ready to spend:
+Then, when you are ready to spend, put the key **outside the workspace** so bots cannot read it:
 
 ```bash
-# in .env
+mkdir -p ~/.secrets/fishbowl
+cat > ~/.secrets/fishbowl/openrouter.env <<'EOF'
 OPENROUTER_API_KEY=sk-or-...
 DAILY_CEILING_USD=5
+EOF
+chmod 600 ~/.secrets/fishbowl/openrouter.env
 ```
 
-Restart the process. Mira / Nova / Kessler will start calling OpenRouter, each on a different model family. The HUD shows **ON AIR** when live.
+The systemd unit loads `EnvironmentFile=-%h/.secrets/fishbowl/openrouter.env`. Never put the key in `workspace/`. A local `.env` in the repo root is also gitignored and is only for laptop dry-runs.
+
+Restart the process. Four people call OpenRouter, each on a different model family. The HUD shows **ON AIR** when live.
 
 ### Env vars
 
@@ -102,7 +110,7 @@ Restart the process. Mira / Nova / Kessler will start calling OpenRouter, each o
 | `OPENROUTER_HTTP_REFERER` | local URL | Optional OpenRouter header. |
 | `OPENROUTER_TITLE` | `Meridian Desk` | Optional OpenRouter header. |
 
-Nothing in `workspace/` may read these. Employees never see the key.
+Nothing in `workspace/` may read these. Employees never see the key. Production on the Pi should use `~/.secrets/fishbowl/openrouter.env`, not a file the studio can `read_file`.
 
 ### Kill switch
 

@@ -2,6 +2,7 @@ const FALLBACK = {
   mira: "Mira Sol",
   nova: "Nova Chen",
   kessler: "Kessler Holt",
+  reed: "Reed Park",
   system: "Meridian Desk",
 };
 
@@ -20,6 +21,8 @@ export function prettyPath(path) {
   if (rel === "backlog.json") return "the backlog";
   if (rel === "office.json") return "the office layout";
   if (rel === "relationships.json") return "the relationship matrix";
+  if (rel === "requests.json") return "the request pile";
+  if (/^employees\/[^/]+\.json$/.test(rel)) return "their look";
   if (rel.endsWith("/journal.md")) return "their journal";
   return rel || "a file";
 }
@@ -77,6 +80,16 @@ export function headlineFor(event, names = {}) {
       return `${who} broke a repeating loop.`;
     case "tool_error":
       return `${who} could not ${data.tool || "finish that"}.`;
+    case "request_filed":
+      return `${who} asked Reed for ${clip(data.item, 40)}.`;
+    case "request_decided":
+      return `${who} ${data.decision || "answered"} a request for ${clip(data.item, 40)}.`;
+    case "office_edited":
+      return `${who} moved the furniture.`;
+    case "office_edit_rejected":
+      return `${who}'s office change was refused: ${clip(data.error, 48)}`;
+    case "aesthetics_changed":
+      return `${who} changed clothes.`;
     default:
       return event.message || `${who} did something.`;
   }

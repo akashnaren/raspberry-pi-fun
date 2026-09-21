@@ -7,15 +7,17 @@ test("each employee lands on a different model family", () => {
     { id: "x-ai/grok-4-fast" },
     { id: "openai/gpt-4o-mini" },
     { id: "nousresearch/hermes-3-llama-3.1-70b" },
+    { id: "google/gemini-2.0-flash-001" },
   ];
   const employees = [
     { id: "mira", modelFamily: "x-ai", preferredModels: ["x-ai/grok-4-fast"] },
     { id: "nova", modelFamily: "openai", preferredModels: ["openai/gpt-4o-mini"] },
     { id: "kessler", modelFamily: "nousresearch", preferredModels: ["nousresearch/hermes-3-llama-3.1-70b"] },
+    { id: "reed", modelFamily: "google", preferredModels: ["google/gemini-2.0-flash-001"] },
   ];
   const resolved = resolveEmployeeModels(employees, available);
   const families = new Set(resolved.map((employee) => employee.model.split("/")[0]));
-  assert.equal(families.size, 3);
+  assert.equal(families.size, 4);
   assert.equal(pickModel(employees[1], available), "openai/gpt-4o-mini");
 });
 

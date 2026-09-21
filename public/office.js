@@ -127,6 +127,14 @@ function decor(kind) {
 function targetFor(event) {
   const office = state.office;
   if (!office || event.actor === "system") return null;
+  if (event.type === "request_filed") {
+    const reed = deskFor("reed");
+    if (reed) return { ...standAtDesk(reed), at: "desk" };
+  }
+  if (event.type === "office_edited" || event.type === "aesthetics_changed") {
+    const desk = deskFor(event.actor);
+    if (desk) return { ...standAtDesk(desk), at: "desk" };
+  }
   if (event.type === "task_added" || event.type === "task_closed") {
     const board = decor("whiteboard");
     if (board) return { x: board.x + 2, y: board.y + 2, at: "whiteboard" };
@@ -427,6 +435,17 @@ function drawDesk(ox, oy, desk) {
     ctx.fillStyle = items.includes("sticky_notes") ? "#e6d36a" : "#efe6d4";
     ctx.fillRect(x + 40, y + 18, 10, 8);
   }
+  const owner = (state.employees || []).find((person) => person.id === desk.owner);
+  const style = owner?.aesthetics?.desk_style || owner?.desk_style || "";
+  if (/messy|cable|sticker/i.test(style)) {
+    ctx.strokeStyle = "#2a2a2a";
+    ctx.beginPath();
+    ctx.moveTo(x + 8, y + 20);
+    ctx.lineTo(x + 28, y + 24);
+    ctx.stroke();
+    ctx.fillStyle = "#F97316";
+    ctx.fillRect(x + 30, y + 20, 5, 5);
+  }
 }
 
 function drawDecor(ox, oy, item) {
@@ -477,14 +496,69 @@ function drawDecor(ox, oy, item) {
     ctx.fill();
     ctx.strokeStyle = "#2b2418";
     ctx.stroke();
+  } else if (item.kind === "filing_cabinet") {
+    ctx.fillStyle = "#4a4a55";
+    ctx.fillRect(x, y, CELL * 1.1, CELL * 1.4);
+    ctx.fillStyle = "#2a2a33";
+    ctx.fillRect(x + 4, y + 6, CELL * 0.8, 6);
+    ctx.fillRect(x + 4, y + 16, CELL * 0.8, 6);
+  } else if (item.kind === "standing_desk") {
+    ctx.fillStyle = "#6a5340";
+    ctx.fillRect(x, y, CELL * 2, 8);
+    ctx.fillRect(x + 2, y + 8, 4, 16);
+    ctx.fillRect(x + CELL * 1.7, y + 8, 4, 16);
+  } else if (item.kind === "beanbag") {
+    ctx.fillStyle = "#5b3a78";
+    ctx.beginPath();
+    ctx.ellipse(x + 14, y + 12, 16, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (item.kind === "minifridge") {
+    ctx.fillStyle = "#dfe4ea";
+    ctx.fillRect(x, y, 16, 22);
+    ctx.fillStyle = "#8aa";
+    ctx.fillRect(x + 12, y + 8, 2, 6);
   }
+}
+
+const SKIN = { fair: "#f3d2b3", warm: "#d4a574", olive: "#c4a06a", deep: "#8d5a3c" };
+const HAIR_COLOR = {
+  "short-black": "#1b1b1b",
+  "bun-amber": "#c4842a",
+  "wave-teal": "#0f766e",
+  "crop-violet": "#5b21b6",
+  ponytail: "#3f2a1d",
+};
+const TOP_COLOR = {
+  hoodie: "#F97316",
+  tee: "#e8e0d2",
+  blazer: "#F59E0B",
+  cardigan: "#14B8A6",
+  henley: "#8B5CF6",
+};
+const BOTTOM_COLOR = { jeans: "#314e73", chinos: "#8a6a3d", skirt: "#5b3a78", trousers: "#2c241c" };
+const SHOE_COLOR = { sneakers: "#efe6d4", boots: "#3b2418", loafers: "#5a3b22" };
+
+function lookOf(employee) {
+  const aesthetics = employee.aesthetics || {};
+  const outfit = aesthetics.outfit || {};
+  return {
+    skin: SKIN[aesthetics.skin] || SKIN.warm,
+    hair: HAIR_COLOR[aesthetics.hair] || employee.color || "#1b1b1b",
+    hairStyle: aesthetics.hair || "short-black",
+    top: TOP_COLOR[outfit.top] || employee.color || "#888",
+    topKind: outfit.top || "tee",
+    bottom: BOTTOM_COLOR[outfit.bottom] || "#314e73",
+    shoes: SHOE_COLOR[outfit.shoes] || "#efe6d4",
+    accessory: outfit.accessory || "none",
+  };
 }
 
 function drawPerson(ox, oy, employee, sprite, now) {
   const px = ox + sprite.x * CELL;
   const py = oy + sprite.y * CELL;
   const bob = sprite.pose === "idle" ? Math.sin(now / 400 + sprite.x) * 1.2 : 0;
-  const color = employee.color || "#F97316";
+  const color = employee.accent || employee.color || "#F97316";
+  const look = lookOf(employee);
   if (sprite.active > 0.08) {
     ctx.strokeStyle = color;
     ctx.globalAlpha = 0.35 + sprite.active * 0.5;
@@ -504,19 +578,56 @@ function drawPerson(ox, oy, employee, sprite, now) {
   ctx.save();
   ctx.translate(px + 8, py + 4 + bob);
   ctx.scale(sprite.facing || 1, 1);
-  ctx.fillStyle = "#f0d2b0";
-  ctx.fillRect(-5, -10, 10, 8);
-  ctx.fillStyle = color;
-  ctx.fillRect(-6, -14, 12, 6);
-  ctx.fillStyle = color;
+  ctx.fillStyle = look.shoes;
+  ctx.fillRect(-5, 14, 4, 3);
+  ctx.fillRect(1, 14, 4, 3);
+  ctx.fillStyle = look.bottom;
+  ctx.fillRect(-5, 8, 4, 7 + (walk ? 1 : 0));
+  ctx.fillRect(1, 8, 4, 7 + (walk ? 0 : 1));
+  ctx.fillStyle = look.top;
   ctx.fillRect(-6, -2, 12, 10);
-  ctx.fillStyle = "#f0d2b0";
+  if (look.topKind === "hoodie") {
+    ctx.fillRect(-7, -4, 3, 6);
+    ctx.fillRect(4, -4, 3, 6);
+  }
+  if (look.topKind === "blazer") ctx.fillRect(-7, -2, 2, 10);
+  ctx.fillStyle = look.skin;
+  ctx.fillRect(-5, -10, 10, 8);
   const arm = sprite.pose === "type" ? -4 - type * 2 : sprite.pose === "walk" ? walk * 3 - 1 : 1;
   ctx.fillRect(-8, 0, 3, 7 + (sprite.pose === "talk" ? 1 : 0));
   ctx.fillRect(5, arm, 3, 7);
-  ctx.fillStyle = "#2c241c";
-  ctx.fillRect(-5, 8, 4, 7 + (walk ? 1 : 0));
-  ctx.fillRect(1, 8, 4, 7 + (walk ? 0 : 1));
+  ctx.fillStyle = look.hair;
+  if (look.hairStyle === "bun-amber") {
+    ctx.fillRect(-6, -14, 12, 5);
+    ctx.beginPath();
+    ctx.arc(0, -16, 3, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (look.hairStyle === "ponytail") {
+    ctx.fillRect(-6, -14, 12, 5);
+    ctx.fillRect(5, -12, 4, 10);
+  } else if (look.hairStyle === "wave-teal") {
+    ctx.fillRect(-7, -14, 14, 6);
+    ctx.fillRect(-8, -10, 3, 5);
+  } else {
+    ctx.fillRect(-6, -14, 12, 6);
+  }
+  if (look.accessory === "glasses") {
+    ctx.strokeStyle = "#1b1b1b";
+    ctx.strokeRect(-4, -8, 3, 2);
+    ctx.strokeRect(1, -8, 3, 2);
+  }
+  if (look.accessory === "earbuds") {
+    ctx.fillStyle = "#eee";
+    ctx.fillRect(-6, -6, 2, 2);
+  }
+  if (look.accessory === "badge") {
+    ctx.fillStyle = "#8B5CF6";
+    ctx.fillRect(3, 2, 3, 4);
+  }
+  if (look.accessory === "watch") {
+    ctx.fillStyle = "#d4af37";
+    ctx.fillRect(-8, 4, 3, 2);
+  }
   ctx.restore();
 
   const plate = `${employee.name.split(" ")[0]}  ${employee.role}`;

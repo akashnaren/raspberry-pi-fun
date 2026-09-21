@@ -11,7 +11,9 @@ test("seed office is a dollhouse the renderer can draw", async () => {
   assert.ok(office.rooms.some((room) => room.name === "break room"));
   assert.ok(office.decor.some((item) => item.kind === "whiteboard" && /Timezone Buddy/.test(item.text)));
   assert.ok(office.decor.some((item) => item.kind === "coffee"));
-  assert.equal(office.desks.length, 3);
+  assert.equal(office.desks.length, 4);
+  assert.ok(office.desks.some((desk) => desk.owner === "reed"));
+  assert.equal(office.budget.furniture, 2);
   for (const desk of office.desks) {
     assert.ok(desk.items.length > 0);
   }
