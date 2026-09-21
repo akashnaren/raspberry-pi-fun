@@ -5,6 +5,7 @@ import {
   hudStatus,
   latestEventLine,
   poseFor,
+  settlePose,
   standBeside,
   verbFor,
 } from "./office-motion.js";
@@ -193,7 +194,7 @@ function syncSprites() {
         x: stand.x,
         y: stand.y,
         path: [],
-        pose: "idle",
+        pose: "sit",
         facing: 1,
         frame: 0,
         at: "desk",
@@ -211,13 +212,13 @@ function enqueueWalk(sprite, target) {
     : { x: Math.round(sprite.x), y: Math.round(sprite.y) };
   if (from.x === target.x && from.y === target.y) {
     sprite.at = target.at;
-    if (!sprite.path?.length) sprite.pose = sprite.wantPose || "idle";
+    if (!sprite.path?.length) sprite.pose = settlePose(target.at, sprite.wantPose || "idle");
     return;
   }
   const next = findPath(state.office, from, target);
   sprite.path = [...(sprite.path || []), ...next];
   sprite.at = target.at;
-  sprite.pose = sprite.path.length ? "walk" : sprite.wantPose || "idle";
+  sprite.pose = sprite.path.length ? "walk" : settlePose(target.at, sprite.wantPose || "idle");
 }
 
 function react(event) {
@@ -403,7 +404,7 @@ function stepSprites(now) {
         sprite.x = next.x;
         sprite.y = next.y;
         sprite.path.shift();
-        if (!sprite.path.length) sprite.pose = sprite.wantPose || "idle";
+        if (!sprite.path.length) sprite.pose = settlePose(sprite.at, sprite.wantPose || "idle");
       } else {
         const step = Math.min(dist, speed * dt);
         sprite.x += (dx / dist) * step;
@@ -412,12 +413,15 @@ function stepSprites(now) {
         sprite.pose = "walk";
         sprite.frame = Math.floor(now / 140) % 2;
       }
-    } else if (sprite.pose === "type") {
+    } else if (sprite.pose === "type" || sprite.pose === "sit-type") {
       sprite.frame = Math.floor(now / 220) % 2;
     } else {
       sprite.frame = Math.floor(now / 700) % 2;
     }
-    if (sprite.pose === "idle" && now > sprite.blinkUntil + 2400 + ((sprite.x * 400) % 1800)) {
+    if (
+      (sprite.pose === "idle" || sprite.pose === "sit" || sprite.pose === "stand") &&
+      now > sprite.blinkUntil + 2400 + ((sprite.x * 400) % 1800)
+    ) {
       sprite.blinkUntil = now + 120;
     }
     sprite.active *= 0.992;

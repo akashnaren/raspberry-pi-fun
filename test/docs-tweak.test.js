@@ -15,6 +15,8 @@ test("Nova Docs tweak is already in the seed and stays idempotent", async () => 
   assert.match(seed, /function printReadyHtml/);
   assert.match(seed, /data-heading="1"/);
   assert.match(seed, /insertOrderedList/);
+  assert.match(seed, /id="insert-table"/);
+  assert.match(seed, /id="preview-toggle"/);
   assert.equal(applyNovaDocsTweak(seed), seed);
   assert.equal(syntaxCheckHtml(applyNovaDocsTweak(seed)).ok, true);
 });

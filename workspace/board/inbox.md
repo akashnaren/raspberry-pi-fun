@@ -42,5 +42,11 @@ Timezone Buddy stays in the catalogue as a shipped utility; weekly ships can sti
 - Dry-run: Nova ships the grid; Kessler bugs a one-cell paste; Mira cuts formulas; Jules tidies.
 - Office canvas: stronger window light, desk lamps, distinct clutter, readable board.
 
+## Mid-morning (2026-09-21)
+- Invoice / estimate HTML printer and meeting notes → action items are catalogue tools. One click from the cream rail.
+- Docs: table insert + markdown preview. Slides: theme strip + presenter notes.
+- Cast sits at desks / couch after walk-to-desk; stands at whiteboard / table for pair review.
+- Dry-run afternoon: Nova ships invoice, Kessler files a print-margin bug, Mira cuts payments, Jules rewrites the board.
+
 ## Constraints
 DRY_RUN until greenlight · ~$10 OpenRouter · never top up · $5/day if live · Jules exclusive edit_office · event log is truth

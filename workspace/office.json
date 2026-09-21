@@ -50,7 +50,7 @@
       "y": 1,
       "w": 8,
       "h": 2,
-      "text": "SHIP: Docs print · paste-csv",
+      "text": "SHIP: invoice · notes",
       "advertises": "plan"
     },
     { "kind": "window", "x": 11, "y": 1, "w": 2, "h": 1 },

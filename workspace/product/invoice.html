@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Invoice — Meridian Office</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f4ecd8;
+        --sheet: #faf4e8;
+        --ink: #2a2118;
+        --muted: #8a7d6b;
+        --rule: #e0d4bc;
+        --rail: #efe6d2;
+        --rail-line: #d8cbb0;
+        --ui: system-ui, -apple-system, "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
+        font-family: var(--ui);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); }
+      body { display: grid; grid-template-columns: 6.1rem 1fr; grid-template-rows: auto 1fr auto; min-height: 100dvh; }
+      .rail {
+        grid-row: 1 / -1; display: flex; flex-direction: column; gap: 0.55rem;
+        padding: 0.7rem 0.5rem 0.8rem; background: var(--rail);
+        border-right: 1px solid var(--rail-line);
+      }
+      .brand { font-size: 0.72rem; font-weight: 600; line-height: 1.25; }
+      .apps { display: flex; flex-direction: column; gap: 0.15rem; }
+      .apps a, .more a {
+        color: #6b5d4d; text-decoration: none; font-size: 0.8rem;
+        padding: 0.32rem 0.4rem; border-radius: 5px;
+      }
+      .more { margin-top: auto; padding-top: 0.55rem; border-top: 1px solid var(--rail-line); }
+      .more span { display: block; font-size: 0.62rem; color: var(--muted); letter-spacing: 0.04em; margin: 0 0.4rem 0.25rem; }
+      .more a { display: block; font-size: 0.68rem; padding: 0.22rem 0.4rem; }
+      .more a[aria-current="page"] { color: var(--ink); }
+      header {
+        display: flex; align-items: baseline; gap: 0.9rem;
+        padding: 0.5rem 1rem; border-bottom: 1px solid var(--rule);
+      }
+      .module { font-size: 0.78rem; color: var(--muted); }
+      .tools { margin-left: auto; display: flex; gap: 0.85rem; font-size: 0.72rem; }
+      .tools button { border: 0; background: none; color: var(--ink); font: inherit; cursor: pointer; padding: 0; }
+      .stage { min-height: 0; overflow: auto; padding: 0.8rem 1rem 1.4rem; }
+      main { width: min(48rem, 100%); margin: 0 auto; display: grid; gap: 0.75rem; }
+      h1 { font-size: 1.15rem; font-weight: 500; margin: 0; }
+      .lede { margin: 0; color: var(--muted); font-size: 0.82rem; }
+      #messy {
+        width: 100%; min-height: 7.5rem; resize: vertical;
+        border: 1px solid var(--rule); background: var(--sheet); color: var(--ink);
+        font: 0.8rem/1.4 ui-monospace, "Liberation Mono", monospace;
+        padding: 0.55rem 0.6rem;
+      }
+      .row { display: flex; gap: 0.8rem; align-items: baseline; }
+      .row button { border: 0; background: none; color: var(--ink); font: 0.75rem var(--ui); cursor: pointer; padding: 0; }
+      #invoice-paper {
+        background: var(--sheet); border: 1px solid var(--rule);
+        padding: 1rem 1.15rem 1.4rem; min-height: 12rem;
+        box-shadow: 0 14px 32px rgba(42, 33, 24, 0.06);
+        font-family: "Iowan Old Style", Palatino, "Liberation Serif", Georgia, serif;
+      }
+      #invoice-paper h2 { font-size: 1.35rem; margin: 0 0 0.3rem; font-weight: 600; }
+      #invoice-paper .meta { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.8rem; }
+      table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+      th, td { border: 1px solid var(--rule); padding: 0.28rem 0.4rem; text-align: left; }
+      th { background: #efe6d2; font-weight: 500; }
+      td:nth-child(2), td:nth-child(3), td:nth-child(4),
+      th:nth-child(2), th:nth-child(3), th:nth-child(4) { text-align: right; }
+      .total.print-margin { margin: 0.7rem 0 0; font-size: 1.05rem; padding-bottom: 1.2rem; }
+      footer {
+        display: flex; justify-content: space-between; gap: 1rem;
+        padding: 0.35rem 1rem; border-top: 1px solid var(--rule);
+        color: var(--muted); font-size: 0.7rem;
+      }
+      @page { margin: 0.75in; }
+      @media print {
+        .rail, header, .lede, #messy, .row, footer { display: none !important; }
+        body { display: block; background: #faf4e8; }
+        .stage { padding: 0; }
+        #invoice-paper { box-shadow: none; border: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <aside class="rail" aria-label="Meridian Office">
+      <div class="brand">Meridian Office</div>
+      <nav class="apps" aria-label="Apps">
+        <a href="./index.html">Docs</a>
+        <a href="./sheets.html">Sheets</a>
+        <a href="./slides.html">Slides</a>
+      </nav>
+      <nav class="more" aria-label="Catalogue">
+        <span>CATALOGUE</span>
+        <a href="./paste-csv.html">Paste → CSV</a>
+        <a href="./invoice.html" aria-current="page">Invoice</a>
+        <a href="./meeting-notes.html">Notes</a>
+        <a href="./timezone-buddy.html">Timezone Buddy</a>
+      </nav>
+    </aside>
+    <header>
+      <span class="module">Invoice</span>
+      <div class="tools">
+        <button id="download-html" type="button">download .html</button>
+        <button id="print" type="button">print</button>
+      </div>
+    </header>
+    <div class="stage">
+      <main>
+        <h1>Paste lines. Print a page.</h1>
+        <p class="lede">From, to, then item · qty · price. Estimate if you say so. Stays on this machine. No payments.</p>
+        <textarea id="messy" aria-label="Invoice lines" placeholder="estimate
+from: North Shop
+to: Harbor Press
+EST-12
+Design hours    8    90
+Print proof     1    25"></textarea>
+        <div class="row">
+          <button id="build" type="button">build page</button>
+          <span id="size">0 lines</span>
+        </div>
+        <div id="invoice-paper" class="paper" aria-label="Invoice preview"></div>
+      </main>
+    </div>
+    <footer>
+      <span>Local only. No accounts.</span>
+      <span id="kept">Catalogue tool. Cream paper. Print keeps the total.</span>
+    </footer>
+    <script>
+      const KEY = "meridian-office-invoice-v1";
+      const messy = document.getElementById("messy");
+      const paper = document.getElementById("invoice-paper");
+      const size = document.getElementById("size");
+      const kept = document.getElementById("kept");
+      let doc = parseInvoice("");
+
+      function parseMoney(value) {
+        const n = Number(String(value || "").replace(/[$,]/g, "").trim());
+        return isFinite(n) ? n : 0;
+      }
+      function parseItemLine(line) {
+        const src = String(line || "").trim();
+        if (!src) return null;
+        const qtyAt = /^(.+?)\s+[x×]\s*(\d+(?:\.\d+)?)\s+@\s*\$?(\d+(?:\.\d+)?)\s*$/i.exec(src);
+        if (qtyAt) return { desc: qtyAt[1].trim(), qty: Number(qtyAt[2]), price: Number(qtyAt[3]) };
+        if (src.indexOf(",") >= 0 || src.indexOf("\t") >= 0) {
+          const parts = src.split(/[,\t]/).map(function (cell) { return cell.trim(); });
+          if (parts.length >= 3) {
+            const price = parseMoney(parts[parts.length - 1]);
+            const qty = parseMoney(parts[parts.length - 2]);
+            if (qty > 0) return { desc: parts.slice(0, -2).join(", "), qty: qty, price: price };
+          }
+        }
+        const spaced = src.split(/\s{2,}|\s+/);
+        if (spaced.length >= 3) {
+          const price = parseMoney(spaced[spaced.length - 1]);
+          const qty = parseMoney(spaced[spaced.length - 2]);
+          if (qty > 0) return { desc: spaced.slice(0, -2).join(" "), qty: qty, price: price };
+        }
+        return null;
+      }
+      function parseInvoice(text) {
+        const lines = String(text || "").replace(/\r\n/g, "\n").split("\n").map(function (line) {
+          return line.trim();
+        }).filter(function (line) { return line && !/^[-–—_=]{2,}$/.test(line); });
+        const meta = { kind: "invoice", from: "", to: "", number: "", date: "" };
+        const items = [];
+        for (let i = 0; i < lines.length; i += 1) {
+          const line = lines[i];
+          const early = parseItemLine(line);
+          if (/^estimate\b/i.test(line) && !early) {
+            meta.kind = "estimate";
+            const rest = line.replace(/^estimate\b[:\s]*/i, "").trim();
+            if (rest) meta.number = meta.number || rest;
+            continue;
+          }
+          if (/^invoice\b/i.test(line) && !early) {
+            meta.kind = "invoice";
+            const rest = line.replace(/^invoice\b[:\s]*/i, "").trim();
+            if (rest) meta.number = meta.number || rest;
+            continue;
+          }
+          const kv = /^(from|to|bill(?:\s+to)?|client|number|no\.?|date|kind|type)\s*[:#]\s*(.+)$/i.exec(line);
+          if (kv) {
+            let key = kv[1].toLowerCase();
+            if (key.indexOf("bill") === 0 || key === "client") key = "to";
+            if (key === "no" || key === "no.") key = "number";
+            if (key === "type") key = "kind";
+            const val = kv[2].trim();
+            if (key === "kind") meta.kind = /est/i.test(val) ? "estimate" : "invoice";
+            else meta[key] = val;
+            continue;
+          }
+          if (/^item\b/i.test(line) && /qty|price|amount/i.test(line)) continue;
+          if (early && early.desc && !/^(item|desc|description)$/i.test(early.desc)) {
+            items.push(early);
+            continue;
+          }
+          if (!meta.from) meta.from = line;
+          else if (!meta.to) meta.to = line;
+          else if (!meta.number) meta.number = line;
+        }
+        const total = Math.round(items.reduce(function (sum, row) { return sum + row.qty * row.price; }, 0) * 100) / 100;
+        return { kind: meta.kind, from: meta.from, to: meta.to, number: meta.number, date: meta.date, items: items, subtotal: total, total: total };
+      }
+      function money(n) { return (Math.round(Number(n || 0) * 100) / 100).toFixed(2); }
+      function escapeHtml(value) {
+        return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+      function invoiceReadyHtml(next) {
+        const kind = next.kind === "estimate" ? "Estimate" : "Invoice";
+        const rows = (next.items || []).map(function (row) {
+          return "<tr><td>" + escapeHtml(row.desc) + "</td><td>" + escapeHtml(String(row.qty)) + "</td><td>" +
+            money(row.price) + "</td><td>" + money(row.qty * row.price) + "</td></tr>";
+        }).join("");
+        return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" + kind +
+          "</title><style>@page{margin:0.75in}body{margin:0;padding:1.4rem 1.6rem 2.4rem;color:#2a2118;background:#faf4e8;font:1rem/1.45 Georgia,serif}h1{font-size:1.6rem;margin:0 0 0.35rem}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d8cbb0;padding:0.35rem 0.5rem}.total{padding-bottom:1.2rem}</style></head><body><h1>" +
+          kind + "</h1><p>" + escapeHtml(next.from || "Your name") + (next.to ? "<br>For " + escapeHtml(next.to) : "") +
+          (next.number ? "<br>" + escapeHtml(next.number) : "") + "</p><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>" +
+          (rows || "<tr><td colspan=\"4\">No lines yet.</td></tr>") + "</tbody></table><p class=\"total\">Total $" +
+          money(next.total) + "</p></body></html>";
+      }
+      function paintPaper(next) {
+        const kind = next.kind === "estimate" ? "Estimate" : "Invoice";
+        let html = "<h2>" + kind + "</h2><p class=\"meta\">" + escapeHtml(next.from || "Your name");
+        if (next.to) html += "<br>For " + escapeHtml(next.to);
+        if (next.number) html += "<br>" + escapeHtml(next.number);
+        if (next.date) html += "<br>" + escapeHtml(next.date);
+        html += "</p><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>";
+        if (!next.items.length) html += "<tr><td colspan=\"4\">Paste lines, then build.</td></tr>";
+        for (let i = 0; i < next.items.length; i += 1) {
+          const row = next.items[i];
+          html += "<tr><td>" + escapeHtml(row.desc) + "</td><td>" + escapeHtml(String(row.qty)) + "</td><td>" +
+            money(row.price) + "</td><td>" + money(row.qty * row.price) + "</td></tr>";
+        }
+        html += "</tbody></table><p class=\"total print-margin\">Total $" + money(next.total) + "</p>";
+        paper.innerHTML = html;
+        size.textContent = next.items.length === 1 ? "1 line" : next.items.length + " lines";
+      }
+      function build() {
+        doc = parseInvoice(messy.value);
+        paintPaper(doc);
+        try {
+          localStorage.setItem(KEY, JSON.stringify({ text: messy.value, savedAt: Date.now() }));
+        } catch (err) {}
+        kept.textContent = "Kept locally just now. Print leaves room for the total.";
+      }
+      function download(name, type, text) {
+        const blob = new Blob([text], { type: type });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+      document.getElementById("build").addEventListener("click", build);
+      document.getElementById("print").addEventListener("click", function () {
+        build();
+        window.print();
+      });
+      document.getElementById("download-html").addEventListener("click", function () {
+        build();
+        const name = (doc.kind === "estimate" ? "estimate" : "invoice") + (doc.number ? "-" + doc.number : "");
+        download(name.replace(/[^\w\-]+/g, "-").toLowerCase() + ".html", "text/html;charset=utf-8", invoiceReadyHtml(doc));
+      });
+      messy.addEventListener("input", function () {
+        if (paper.innerHTML) build();
+      });
+      try {
+        const raw = localStorage.getItem(KEY);
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data.text) messy.value = data.text;
+        }
+      } catch (err) {}
+      paintPaper(parseInvoice(messy.value));
+    </script>
+  </body>
+</html>

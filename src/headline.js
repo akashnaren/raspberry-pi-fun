@@ -21,6 +21,8 @@ export function prettyPath(path) {
   if (rel === "product/slides.html") return "Meridian Slides";
   if (rel === "product/timezone-buddy.html") return "Timezone Buddy";
   if (rel === "product/paste-csv.html") return "Paste → CSV";
+  if (rel === "product/invoice.html") return "Invoice";
+  if (rel === "product/meeting-notes.html") return "Notes";
   if (rel.startsWith("product/")) return "the working copy";
   if (rel === "backlog.json") return "the backlog";
   if (rel === "office.json") return "the office layout";

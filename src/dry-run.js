@@ -1,6 +1,6 @@
-/** Scripted day. $0. Docs print, paste-csv, pair walks, and furniture still hit the event log. */
+/** Scripted afternoon. $0. Invoice, notes, sit/pair, Jules still edits the room. */
 
-import { applyNovaDocsTweak } from "./docs-tweak.js";
+import { applyNovaInvoiceTweak } from "./invoice-tweak.js";
 
 const SCRIPTS = {
   mira: [
@@ -8,30 +8,30 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Headings first. Kessler, walk the board with me.",
+          message: "Invoice first. Kessler, pair at the table with me.",
           to: "kessler",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Docs: H1, lists, find, print. No formulas. No AI write." },
+        arguments: { text: "Invoice prints cream. Notes make a list. No payments. No AI write." },
       },
     ],
     [
       {
         name: "say",
         arguments: {
-          message: "No formulas. No AI. Coffee, then I cut the rest.",
+          message: "No payments. No AI. Coffee, then I cut the rest.",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Paste-to-CSV stays a catalogue tool. Not in the rail." },
+        arguments: { text: "Notes stay a catalogue tool. Not in the rail." },
       },
       {
         name: "journal",
         arguments: {
-          text: "Cut: formulas, AI write, slide animation. Keep print and tidy CSV.",
+          text: "Cut: payments, AI write, slide animation. Keep invoice print and notes.",
         },
       },
     ],
@@ -46,11 +46,11 @@ const SCRIPTS = {
   ],
   nova: [
     [
-      { name: "read_file", arguments: { path: "product/index.html" } },
+      { name: "read_file", arguments: { path: "product/invoice.html" } },
       {
         name: "say",
         arguments: {
-          message: "Headings and lists ship. Mira, print the page.",
+          message: "Invoice prints cream. Mira, walk the board with me.",
           to: "mira",
         },
       },
@@ -72,13 +72,13 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Need caffeine. Print has to hide the rail.",
+          message: "Need caffeine. Invoice has to keep the totals.",
         },
       },
       {
         name: "journal",
         arguments: {
-          text: "H1, lists, find, print. Working beats AI.",
+          text: "Invoice, notes, print margins. Working beats AI.",
         },
       },
     ],
@@ -88,18 +88,18 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Using the last green. Mira, find skipped the second heading at the table.",
+          message: "Print margins clip the total at the table. Mira, look.",
           to: "mira",
         },
       },
       {
         name: "add_task",
-        arguments: { text: "Bug: find must hit every heading, then print." },
+        arguments: { text: "Bug: invoice print margins clip the total." },
       },
       {
         name: "journal",
         arguments: {
-          text: "Bug: find misses H2. Print still dumps the rail. Paste-csv must tidy spaces.",
+          text: "Bug: print margins eat the total. Notes must keep owners.",
         },
       },
     ],
@@ -107,7 +107,7 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "I'll try paste-csv after I print. Board stays honest.",
+          message: "I'll try notes after I print. Board stays honest.",
         },
       },
       { name: "read_file", arguments: { path: "backlog.json" } },
@@ -116,7 +116,7 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Coffee with Jules. Find has to hit every heading.",
+          message: "Coffee with Jules. Margins still clip the total.",
           to: "jules",
         },
       },
@@ -141,13 +141,13 @@ const SCRIPTS = {
       {
         name: "say",
         arguments: {
-          message: "Board is the plan. Docs print and paste-csv.",
+          message: "Board is this afternoon. Invoice and notes.",
         },
       },
       {
         name: "edit_office",
         arguments: {
-          whiteboard: "SHIP: Docs print · paste-csv",
+          whiteboard: "SHIP: invoice · notes",
           deskItem: { owner: "mira", item: "sticky_notes" },
         },
       },
@@ -176,13 +176,13 @@ const SCRIPTS = {
         name: "edit_office",
         arguments: {
           move: { kind: "plant", from: { x: 19, y: 10 }, x: 8, y: 9 },
-          whiteboard: "SHIP: Docs print · paste-csv",
+          whiteboard: "SHIP: invoice · notes",
         },
       },
       {
         name: "journal",
         arguments: {
-          text: "Tidied. Board says print and paste-csv. Standing desk still no.",
+          text: "Tidied. Board says invoice and notes. Standing desk still no.",
         },
       },
     ],
@@ -190,11 +190,11 @@ const SCRIPTS = {
 };
 
 const WRAP_BEATS = [
-  { name: "say", arguments: { message: "Coffee. Checking the floor again." } },
-  { name: "say", arguments: { message: "Back to the whiteboard. Print still first." } },
+  { name: "say", arguments: { message: "Coffee. Checking the invoice again." } },
+  { name: "say", arguments: { message: "Back at the desk. I'll sit and finish the invoice." } },
   {
     name: "journal",
-    arguments: { text: "Dry-run turn. Still watching Docs print. Changing the note." },
+    arguments: { text: "Dry-run afternoon. Still watching invoice print. Changing the note." },
   },
 ];
 
@@ -207,8 +207,8 @@ function novaShipCalls(html) {
     step.push({
       name: "write_file",
       arguments: {
-        path: "product/index.html",
-        contents: applyNovaDocsTweak(html),
+        path: "product/invoice.html",
+        contents: applyNovaInvoiceTweak(html),
       },
     });
   }
@@ -220,7 +220,7 @@ export function dryRunCalls(employeeId, turnIndex, ctx = {}) {
   const sequence = SCRIPTS[employeeId] || SCRIPTS.mira;
   let step;
   if (employeeId === "nova" && n % sequence.length === 0) {
-    step = novaShipCalls(ctx.productHtml || ctx.docsHtml);
+    step = novaShipCalls(ctx.invoiceHtml || ctx.productHtml || ctx.docsHtml);
   } else {
     step = sequence[n % sequence.length].map((call) => ({
       name: call.name,
@@ -234,7 +234,7 @@ export function dryRunCalls(employeeId, turnIndex, ctx = {}) {
       arguments: {
         ...extra.arguments,
         ...(extra.name === "journal"
-          ? { text: `Dry-run turn ${n + 1}. Still watching Docs print. Changing the note.` }
+          ? { text: `Dry-run afternoon ${n + 1}. Still watching invoice print. Changing the note.` }
           : {}),
       },
     });
@@ -242,7 +242,7 @@ export function dryRunCalls(employeeId, turnIndex, ctx = {}) {
   return step;
 }
 
-export function createDryRunDriver({ readProduct, readSheets } = {}) {
+export function createDryRunDriver({ readProduct, readSheets, readInvoice } = {}) {
   const seen = new Map();
   return {
     complete({ employee }) {
@@ -250,6 +250,7 @@ export function createDryRunDriver({ readProduct, readSheets } = {}) {
       seen.set(employee.id, n + 1);
       let productHtml = "";
       let sheetsHtml = "";
+      let invoiceHtml = "";
       if (typeof readSheets === "function") {
         try {
           sheetsHtml = readSheets() || "";
@@ -264,8 +265,15 @@ export function createDryRunDriver({ readProduct, readSheets } = {}) {
           productHtml = "";
         }
       }
+      if (typeof readInvoice === "function") {
+        try {
+          invoiceHtml = readInvoice() || "";
+        } catch {
+          invoiceHtml = "";
+        }
+      }
       return {
-        toolCalls: dryRunCalls(employee.id, n, { productHtml, sheetsHtml }),
+        toolCalls: dryRunCalls(employee.id, n, { productHtml, sheetsHtml, invoiceHtml }),
         text: "",
         costUsd: 0,
         dryRun: true,

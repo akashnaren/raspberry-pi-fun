@@ -18,11 +18,16 @@ test("green-build promotes only a passing product and leaves dist on failure", a
   const beforeSheets = await readFile(join(root, "dist/sheets.html"), "utf8");
   const beforeSlides = await readFile(join(root, "dist/slides.html"), "utf8");
   const beforePaste = await readFile(join(root, "dist/paste-csv.html"), "utf8");
+  const beforeInvoice = await readFile(join(root, "dist/invoice.html"), "utf8");
+  const beforeNotes = await readFile(join(root, "dist/meeting-notes.html"), "utf8");
   assert.match(before, /Meridian Office/);
   assert.match(before, /id="find-box"/);
+  assert.match(before, /id="insert-table"/);
   assert.match(beforeSheets, /id="paste-from"/);
-  assert.match(beforeSlides, /id="slide-title"/);
+  assert.match(beforeSlides, /id="slide-notes"/);
   assert.match(beforePaste, /id="messy"/);
+  assert.match(beforeInvoice, /id="invoice-paper"/);
+  assert.match(beforeNotes, /function extractActions/);
 
   const broken = await studio.tools.execute("nova", "write_file", {
     path: "product/index.html",

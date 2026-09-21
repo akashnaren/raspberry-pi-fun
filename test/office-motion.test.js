@@ -8,6 +8,7 @@ import {
   fitView,
   hudStatus,
   latestEventLine,
+  settlePose,
   standBeside,
   verbFor,
 } from "../public/office-motion.js";
@@ -45,7 +46,17 @@ test("events walk to real objects, never 'thinking'", () => {
   assert.ok(ask.x > 18);
   assert.equal(destinationFor({ type: "say", actor: "system" }, office), null);
   assert.match(verbFor("idle", "desk"), /desk/);
+  assert.match(verbFor("sit", "desk"), /sitting at their desk/);
+  assert.match(verbFor("stand-talk", "meeting"), /standing at the meeting table/);
   assert.match(verbFor("walk", "coffee"), /walking to the coffee machine/);
+  assert.equal(settlePose("desk", "type"), "sit-type");
+  assert.equal(settlePose("whiteboard", "talk"), "stand-talk");
+  assert.equal(settlePose("meeting", "talk"), "stand-talk");
+  assert.equal(
+    destinationFor({ type: "say", actor: "nova", data: { text: "Back at the desk. I'll sit and finish the invoice." } }, office)
+      .at,
+    "desk",
+  );
   assert.doesNotMatch(verbFor("idle", "whiteboard"), /think/i);
   assert.doesNotMatch(latestEventLine([{ type: "say", headline: "Mira said, “Docs first.”" }]), /think/i);
   const moved = destinationFor(

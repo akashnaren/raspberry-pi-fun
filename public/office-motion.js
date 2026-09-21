@@ -137,9 +137,12 @@ export function destinationFor(event, office) {
     }
     case "say": {
       if (/coffee|mug|caffeine|espresso/i.test(text)) return coffee() || desk();
-      if (/break|couch|hang out|sit/i.test(text)) return couch() || coffee() || desk();
-      if (/review|meeting|table|fail|reject|green build|bug/i.test(text)) return meeting() || desk();
-      if (/board|plan|ship|task|backlog|docs|sheets|slides|grid|print|heading|find|paste-csv|paste →/i.test(text)) {
+      if (/break|couch|hang out/i.test(text)) return couch() || coffee() || desk();
+      if (/back at (?:the )?desk|sit and (?:write|finish)|walk to (?:the )?desk|at my desk/i.test(text)) {
+        return desk();
+      }
+      if (/review|meeting|table|fail|reject|green build|bug|pair|margin/i.test(text)) return meeting() || desk();
+      if (/board|plan|ship|task|backlog|docs|sheets|slides|grid|print|heading|find|paste-csv|paste →|invoice|notes|estimate/i.test(text)) {
         return board() || desk();
       }
       return coffee() || couch() || desk();
@@ -156,14 +159,26 @@ export function destinationFor(event, office) {
   }
 }
 
-export function poseFor(event) {
-  if (!event) return "idle";
-  if (event.type === "file_written" || event.type === "file_read" || event.type === "journal") {
-    return "type";
+export function poseFor(event, at) {
+  let want = "idle";
+  if (!event) want = "idle";
+  else if (event.type === "file_written" || event.type === "file_read" || event.type === "journal") want = "type";
+  else if (event.type === "say") want = "talk";
+  else if (event.type === "task_added" || event.type === "task_closed") want = "talk";
+  return at ? settlePose(at, want) : want;
+}
+
+/** After a walk lands: sit at desk/couch, stand at board/table/coffee. Never freeze mid-stride. */
+export function settlePose(at, wantPose = "idle") {
+  if (wantPose === "walk") return "walk";
+  const sitHere = at === "desk" || at === "couch";
+  if (sitHere) {
+    if (wantPose === "type" || wantPose === "sit-type") return "sit-type";
+    if (wantPose === "talk" || wantPose === "sit-talk") return "sit-talk";
+    return "sit";
   }
-  if (event.type === "say") return "talk";
-  if (event.type === "task_added" || event.type === "task_closed") return "talk";
-  return "idle";
+  if (wantPose === "talk" || wantPose === "stand-talk") return "stand-talk";
+  return "stand";
 }
 
 const PLACE = {
@@ -185,7 +200,9 @@ export function placeName(at) {
 export function verbFor(pose, at) {
   const place = placeName(at);
   if (pose === "walk") return `walking to ${place}`;
-  if (pose === "type") return `at ${place}, typing`;
+  if (pose === "sit-type" || pose === "type") return `sitting at ${place}, typing`;
+  if (pose === "sit" || pose === "sit-talk") return `sitting at ${place}`;
+  if (pose === "stand" || pose === "stand-talk") return `standing at ${place}`;
   if (pose === "talk") return `at ${place}`;
   return `at ${place}`;
 }
