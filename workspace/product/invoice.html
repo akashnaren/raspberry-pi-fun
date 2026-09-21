@@ -110,7 +110,7 @@
         <h1>Paste lines. Print a page.</h1>
         <p class="lede">From, to, then item · qty · price. Estimate if you say so. Stays on this machine. No payments.</p>
         <textarea id="messy" aria-label="Invoice lines" placeholder="estimate
-from: Meridian Desk
+from: North Shop
 to: Harbor Press
 EST-12
 Design hours    8    90
@@ -215,14 +215,14 @@ Print proof     1    25"></textarea>
         }).join("");
         return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" + kind +
           "</title><style>@page{margin:0.75in}body{margin:0;padding:1.4rem 1.6rem 2.4rem;color:#2a2118;background:#faf4e8;font:1rem/1.45 Georgia,serif}h1{font-size:1.6rem;margin:0 0 0.35rem}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d8cbb0;padding:0.35rem 0.5rem}.total{padding-bottom:1.2rem}</style></head><body><h1>" +
-          kind + "</h1><p>" + escapeHtml(next.from || "Meridian Desk") + (next.to ? "<br>For " + escapeHtml(next.to) : "") +
+          kind + "</h1><p>" + escapeHtml(next.from || "Your name") + (next.to ? "<br>For " + escapeHtml(next.to) : "") +
           (next.number ? "<br>" + escapeHtml(next.number) : "") + "</p><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>" +
           (rows || "<tr><td colspan=\"4\">No lines yet.</td></tr>") + "</tbody></table><p class=\"total\">Total $" +
           money(next.total) + "</p></body></html>";
       }
       function paintPaper(next) {
         const kind = next.kind === "estimate" ? "Estimate" : "Invoice";
-        let html = "<h2>" + kind + "</h2><p class=\"meta\">" + escapeHtml(next.from || "Meridian Desk");
+        let html = "<h2>" + kind + "</h2><p class=\"meta\">" + escapeHtml(next.from || "Your name");
         if (next.to) html += "<br>For " + escapeHtml(next.to);
         if (next.number) html += "<br>" + escapeHtml(next.number);
         if (next.date) html += "<br>" + escapeHtml(next.date);

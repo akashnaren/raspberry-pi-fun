@@ -96,7 +96,7 @@ export function parseInvoice(text) {
 export function invoiceReadyHtml(doc) {
   const kind = doc?.kind === "estimate" ? "Estimate" : "Invoice";
   const heading = escapeHtml(kind);
-  const from = escapeHtml(doc?.from || "Meridian Desk");
+  const from = escapeHtml(doc?.from || "Your name");
   const to = escapeHtml(doc?.to || "");
   const number = escapeHtml(doc?.number || "");
   const date = escapeHtml(doc?.date || "");

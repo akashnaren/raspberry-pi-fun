@@ -9,13 +9,13 @@ import { REPO } from "./helpers.js";
 
 test("parseInvoice reads paste lines into a printable total", () => {
   const doc = parseInvoice(`estimate
-from: Meridian Desk
+from: North Shop
 to: Harbor Press
 EST-12
 Design hours    8    90
 Print proof, 1, 25`);
   assert.equal(doc.kind, "estimate");
-  assert.equal(doc.from, "Meridian Desk");
+  assert.equal(doc.from, "North Shop");
   assert.equal(doc.to, "Harbor Press");
   assert.equal(doc.number, "EST-12");
   assert.equal(doc.items.length, 2);
