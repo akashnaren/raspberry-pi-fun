@@ -27,7 +27,7 @@ The display is a quiet split screen. Thin chrome. The office canvas is the hero 
 | Zone | What you see |
 | --- | --- |
 | Top bar | Small type: **Day N · 4 people · $x / $5 · who’s acting**. **pause** is the one underlined control. No wordmark, no ON AIR, no ticker crawl. |
-| Left ~56% | Locked-frame office: plank floors, windows, plants, four dressed people. Walk and speech bubble only when an event happens. One static event line under the room. |
+| Left ~56% | Locked-frame office: warm planks, window light, soft shadows, four dressed people. Walk and speech only when an event happens. One static event line under the room. |
 | Right ~44% | Last **green** `dist/` iframe — Meridian Office Docs. Cream paper, never Timezone Buddy. Open-in-new-tab for Connect. |
 
 A stranger should, after five minutes, name the people, Meridian Office, whether we are under $5, and whether they would leave it on.
@@ -87,7 +87,7 @@ Target: Raspberry Pi OS Debian **aarch64**, ~1GB RAM (Pi 3 ≈ 905MiB). Chromium
 
 - Enable **zram** (`sudo apt install -y zram-tools` or `dphys-swapfile` only as a last resort).
 - Run **one** Chromium, kiosk only — no extra tabs, no GPU compositor.
-- Office renderer forces **DPR=1** and throttles `requestAnimationFrame` when nobody is walking or speaking.
+- Office renderer forces **DPR=1**. The room is painted once into an opaque canvas and blitted; people redraw on top. `requestAnimationFrame` stops while everyone is seated (a blink is one frame, not a loop). Walks hold a 12ms frame budget, then drop to ~30fps. No WebGL and no draw worker: the kiosk runs `--disable-gpu`, and a software GL context or a second heap would spend RAM a Pi 3 (~905MiB) does not have.
 - If the compositor still swaps: `STUDIO_LITE=1` or open `/?lite=1` to skip leftover motion. Soundtrack stays **off** until you toggle it.
 
 ### Node 20 LTS arm64 (prefer user-local, no sudo)
