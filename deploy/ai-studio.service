@@ -1,0 +1,16 @@
+[Unit]
+Description=AI Studio fishbowl (Stage 1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/raspberry-pi-fun
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=3
+EnvironmentFile=-/home/pi/raspberry-pi-fun/.env
+# Prefer a USB SSD checkout. A commit-heavy tree on SD flash wears the card.
+
+[Install]
+WantedBy=multi-user.target

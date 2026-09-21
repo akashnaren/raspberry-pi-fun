@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fishbowl — AI Studio</title>
+    <link rel="stylesheet" href="/office.css" />
+  </head>
+  <body>
+    <header class="hud">
+      <div class="hud-brand">
+        <span class="mark">FB</span>
+        <div>
+          <strong id="studio-name">Fishbowl</strong>
+          <span id="product-name">Stamp</span>
+        </div>
+      </div>
+      <dl class="hud-stats">
+        <div><dt>day</dt><dd id="day-num">1</dd></div>
+        <div><dt>staff</dt><dd id="headcount">3</dd></div>
+        <div><dt>today</dt><dd id="budget">$5.00 left</dd></div>
+      </dl>
+      <div class="hud-flags">
+        <span id="mode-badge" class="badge">dry-run</span>
+        <span id="pause-badge" class="badge hidden">paused</span>
+        <button id="pause-btn" type="button">Pause</button>
+      </div>
+    </header>
+    <p id="ticker" class="ticker">waiting for the first event</p>
+    <main class="split">
+      <section class="pane office-pane" aria-label="Office">
+        <canvas id="office" width="720" height="640"></canvas>
+        <aside id="speech" class="speech" hidden></aside>
+      </section>
+      <section class="pane product-pane" aria-label="Last green build">
+        <div class="pane-label">last green build · dist/</div>
+        <iframe id="product" title="Stamp" src="/dist/index.html" sandbox="allow-scripts allow-same-origin"></iframe>
+      </section>
+    </main>
+    <iframe id="validator" class="hidden-frame" title="build validator" sandbox="allow-scripts allow-same-origin"></iframe>
+    <script src="/office.js" type="module"></script>
+  </body>
+</html>

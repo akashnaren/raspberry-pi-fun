@@ -1,0 +1,18 @@
+{
+  "tasks": [
+    {
+      "id": "t-1",
+      "text": "Keep Stamp a single-file timestamp converter. No accounts, no chat.",
+      "status": "open",
+      "createdBy": "mira",
+      "createdAt": 1789972500000
+    },
+    {
+      "id": "t-2",
+      "text": "Accept fractional Unix seconds and reject values that overflow Date.",
+      "status": "open",
+      "createdBy": "kessler",
+      "createdAt": 1789972501000
+    }
+  ]
+}

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stamp — timestamp converter</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe6;
+        --ink: #1d1a16;
+        --muted: #5d574e;
+        --card: #fffaf2;
+        --line: #d8d0c3;
+        --accent: #c45c1a;
+        font-family: "IBM Plex Sans", "Source Sans 3", "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--ink);
+        padding: 1.25rem;
+      }
+      main { max-width: 40rem; margin: 0 auto; }
+      h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+      .lede { color: var(--muted); margin: 0 0 1.2rem; }
+      label { display: block; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.35rem; }
+      input, select, button {
+        font: inherit;
+        width: 100%;
+        padding: 0.65rem 0.7rem;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--ink);
+      }
+      button { cursor: pointer; width: auto; background: var(--accent); color: #fff; border-color: var(--accent); }
+      button.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+      .row { display: grid; gap: 0.75rem; margin-bottom: 0.9rem; }
+      .pair { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem; }
+      .cards { display: grid; gap: 0.6rem; }
+      article {
+        background: var(--card);
+        border: 1px solid var(--line);
+        padding: 0.75rem 0.85rem;
+      }
+      article strong { display: block; font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+      article p { margin: 0.25rem 0 0; font-variant-numeric: tabular-nums; word-break: break-all; }
+      .err { color: #9b1d1d; min-height: 1.2rem; }
+      footer { margin-top: 1.4rem; color: var(--muted); font-size: 0.8rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Stamp</h1>
+      <p class="lede">Unix epoch, ISO-8601, and local time. Copy what you need.</p>
+      <div class="row">
+        <div>
+          <label for="raw">Timestamp, ISO, or date text</label>
+          <input id="raw" type="text" inputmode="decimal" placeholder="1716249600 or 2024-05-21T00:00:00Z" autocomplete="off" />
+        </div>
+        <div>
+          <label for="tz">Display timezone</label>
+          <select id="tz"></select>
+        </div>
+        <div class="pair">
+          <button id="now" class="ghost" type="button">Use now</button>
+          <button id="convert" type="button">Convert</button>
+        </div>
+      </div>
+      <p id="err" class="err"></p>
+      <div class="cards">
+        <article><strong>Unix seconds</strong><p id="out-sec">—</p></article>
+        <article><strong>Unix milliseconds</strong><p id="out-ms">—</p></article>
+        <article><strong>ISO-8601 (UTC)</strong><p id="out-iso">—</p></article>
+        <article><strong>In selected zone</strong><p id="out-local">—</p></article>
+      </div>
+      <p class="pair" style="margin-top:0.8rem">
+        <button id="copy" class="ghost" type="button">Copy ISO</button>
+      </p>
+      <footer>Fishbowl seed product. No accounts. Everything stays in this tab.</footer>
+    </main>
+    <script>
+      const MAX_MS = 8640000000000000;
+      const raw = document.getElementById("raw");
+      const tz = document.getElementById("tz");
+      const err = document.getElementById("err");
+      const out = {
+        sec: document.getElementById("out-sec"),
+        ms: document.getElementById("out-ms"),
+        iso: document.getElementById("out-iso"),
+        local: document.getElementById("out-local"),
+      };
+
+      const zones = [
+        "UTC",
+        "America/Los_Angeles",
+        "America/New_York",
+        "Europe/London",
+        "Europe/Berlin",
+        "Asia/Kolkata",
+        "Asia/Tokyo",
+        "Australia/Sydney",
+      ];
+      const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (localZone && !zones.includes(localZone)) zones.splice(1, 0, localZone);
+      for (const zone of zones) {
+        const opt = document.createElement("option");
+        opt.value = zone;
+        opt.textContent = zone;
+        tz.appendChild(opt);
+      }
+      tz.value = localZone && zones.includes(localZone) ? localZone : "UTC";
+
+      function parseInput(value) {
+        const text = String(value || "").trim();
+        if (!text) return { error: "Type a timestamp or press Use now." };
+        if (/^[+-]?\d+(\.\d+)?$/.test(text)) {
+          const n = Number(text);
+          if (!Number.isFinite(n)) return { error: "Not a finite number." };
+          const ms = Math.abs(n) < 1e11 ? n * 1000 : n;
+          if (!Number.isFinite(ms) || Math.abs(ms) > MAX_MS) {
+            return { error: "That timestamp overflows JavaScript Date." };
+          }
+          const date = new Date(ms);
+          if (Number.isNaN(date.getTime())) return { error: "Invalid Date." };
+          return { date };
+        }
+        const date = new Date(text);
+        if (Number.isNaN(date.getTime())) return { error: "Could not parse that date." };
+        if (Math.abs(date.getTime()) > MAX_MS) return { error: "That timestamp overflows JavaScript Date." };
+        return { date };
+      }
+
+      function render(date) {
+        err.textContent = "";
+        const ms = date.getTime();
+        out.sec.textContent = String(ms / 1000);
+        out.ms.textContent = String(ms);
+        out.iso.textContent = date.toISOString();
+        try {
+          out.local.textContent = new Intl.DateTimeFormat("en-GB", {
+            timeZone: tz.value,
+            dateStyle: "full",
+            timeStyle: "long",
+          }).format(date);
+        } catch (error) {
+          err.textContent = error.message;
+        }
+      }
+
+      function convert() {
+        const result = parseInput(raw.value);
+        if (result.error) {
+          err.textContent = result.error;
+          out.sec.textContent = out.ms.textContent = out.iso.textContent = out.local.textContent = "—";
+          return;
+        }
+        render(result.date);
+      }
+
+      document.getElementById("convert").addEventListener("click", convert);
+      document.getElementById("now").addEventListener("click", () => {
+        raw.value = String(Date.now());
+        convert();
+      });
+      document.getElementById("copy").addEventListener("click", async () => {
+        if (!out.iso.textContent || out.iso.textContent === "—") return;
+        try {
+          await navigator.clipboard.writeText(out.iso.textContent);
+        } catch {
+          raw.value = out.iso.textContent;
+        }
+      });
+      raw.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") convert();
+      });
+      tz.addEventListener("change", convert);
+    </script>
+  </body>
+</html>

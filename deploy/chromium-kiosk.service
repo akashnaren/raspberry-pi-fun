@@ -1,0 +1,16 @@
+[Unit]
+Description=Fishbowl Chromium kiosk
+After=ai-studio.service graphical.target
+Wants=ai-studio.service
+
+[Service]
+Type=simple
+User=pi
+Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=DISPLAY=:0
+ExecStart=/usr/bin/chromium-browser --kiosk --app=http://127.0.0.1:8787 --noerrdialogs --disable-session-crashed-bubble --check-for-update-interval=31536000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

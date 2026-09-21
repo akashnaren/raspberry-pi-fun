@@ -1,0 +1,36 @@
+{
+  "walls": "#1e1e26",
+  "floor": "tile_grey",
+  "desks": [
+    {
+      "owner": "mira",
+      "x": 3,
+      "y": 4,
+      "facing": "south",
+      "items": ["monitor", "plant", "notebook"]
+    },
+    {
+      "owner": "nova",
+      "x": 10,
+      "y": 4,
+      "facing": "south",
+      "items": ["second_monitor", "coffee_mug"]
+    },
+    {
+      "owner": "kessler",
+      "x": 17,
+      "y": 4,
+      "facing": "south",
+      "items": ["monitor", "sticky_notes"]
+    }
+  ],
+  "rooms": [
+    { "name": "bullpen", "x": 1, "y": 1, "w": 22, "h": 10 },
+    { "name": "break room", "x": 1, "y": 12, "w": 8, "h": 5 },
+    { "name": "lab", "x": 10, "y": 12, "w": 13, "h": 5 }
+  ],
+  "decor": [
+    { "kind": "whiteboard", "x": 3, "y": 1, "text": "SHIP STAMP" },
+    { "kind": "coffee", "x": 3, "y": 14, "text": "coffee" }
+  ]
+}
