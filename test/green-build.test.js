@@ -61,6 +61,14 @@ test("dry-run tick works without an API key", async () => {
   assert.equal(snap.hud.dayN, 1);
   assert.match(snap.hud.currentTask, /Timezone Buddy/);
   assert.equal(snap.hud.shipLine, "shipping when green");
+  assert.equal(studio.config.tick.midMs, 105000);
+  assert.equal(studio.config.budget.dailyCeilingUsd, 5);
+  assert.equal(studio.config.openrouter.base_url, "https://openrouter.ai/api/v1");
+  const novaChip = snap.hud.models.find((person) => person.id === "nova");
+  assert.equal(novaChip.model, "qwen/qwen3-coder-next");
+  assert.equal(snap.hud.models.some((person) => person.id === "river"), false);
+  assert.equal(snap.employees.find((person) => person.id === "mira").model, "z-ai/glm-5.3-flash");
+  assert.equal(snap.employees.find((person) => person.id === "kessler").model, "nousresearch/hermes-3-llama-3.1-70b");
   const novaKessler = studio.relationships
     .opinionsFor("nova")
     .find((item) => item.other === "kessler");

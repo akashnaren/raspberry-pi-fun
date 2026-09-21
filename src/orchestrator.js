@@ -4,10 +4,17 @@ import { resolveWorkspacePath } from "./paths.js";
 import { stubCall } from "./stubs.js";
 import { filterSay } from "./tools.js";
 
+export function weightOf(employee, lottery) {
+  const raw = lottery?.[employee.id] ?? employee.lottery_weight ?? employee.lotteryWeight ?? 1;
+  const n = Number(raw);
+  if (lottery && Object.hasOwn(lottery, employee.id) && n === 0) return 0;
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
 export function pickEmployee(employees, lottery, random) {
   const weights = employees.map((employee) => ({
     employee,
-    weight: Math.max(1, Number(lottery?.[employee.id]) || 1),
+    weight: weightOf(employee, lottery),
   }));
   const total = weights.reduce((sum, item) => sum + item.weight, 0);
   let roll = random() * total;

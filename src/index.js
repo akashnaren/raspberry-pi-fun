@@ -20,7 +20,7 @@ console.log(modeLabel);
 console.log(`Daily ceiling: $${studio.config.budget.dailyCeilingUsd.toFixed(2)}`);
 console.log(`Kill switch: http://${host}:${port}/kill`);
 console.log(
-  `Tick: ${studio.config.tick.minMs / 1000}–${studio.config.tick.maxMs / 1000}s · one employee at a time`,
+  `Tick: ${studio.config.tick.minMs / 1000}–${studio.config.tick.maxMs / 1000}s (mid ${studio.config.tick.midMs / 1000}s) · one employee at a time`,
 );
 
 const shutdown = async (signal) => {

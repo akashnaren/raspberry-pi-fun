@@ -35,6 +35,11 @@
         <button id="sound-btn" type="button" aria-pressed="false">sound off</button>
         <button id="pause-btn" type="button">Pause</button>
       </div>
+      <div id="model-chips" class="model-chips" aria-label="live model id per employee">
+        <span class="model-chip" data-id="nova"><b>Nova</b> <code>qwen/qwen3-coder-next</code></span>
+        <span class="model-chip" data-id="mira"><b>Mira</b> <code>z-ai/glm-5.3-flash</code></span>
+        <span class="model-chip" data-id="kessler"><b>Kessler</b> <code>nousresearch/hermes-3-llama-3.1-70b</code></span>
+      </div>
     </header>
     <div class="ticker-wrap" aria-label="plain English ticker">
       <div id="ticker" class="ticker-track">waiting for the first event</div>
@@ -45,6 +50,7 @@
         <div id="building-pulse" class="building-pulse hidden">building…</div>
         <aside id="inspect" class="inspect hidden">
           <strong id="inspect-title"></strong>
+          <code id="inspect-model" class="inspect-model"></code>
           <p id="inspect-body"></p>
         </aside>
         <canvas id="office" width="720" height="640"></canvas>

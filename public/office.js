@@ -89,6 +89,7 @@ function applyState(next, event) {
       .map((person) => person.name.split(" ")[0]);
     if (named.length) cast.textContent = named.join(" · ");
   }
+  paintModelChips(next.employees || next.hud?.models || []);
   dayEl.textContent = `Day ${hud.dayN || 1}`;
   taskEl.textContent = hud.currentTask || currentTaskFrom(next) || "waiting for a task";
   shipEl.textContent = hud.shipLine || "shipping when green";
@@ -118,6 +119,24 @@ function applyState(next, event) {
   }
   if (event?.type === "build_failed" || event?.type === "turn_failed") failFlash();
   syncSprites();
+}
+
+function paintModelChips(employees) {
+  const row = document.getElementById("model-chips");
+  if (!row) return;
+  row.replaceChildren();
+  for (const person of employees) {
+    const chip = document.createElement("span");
+    chip.className = "model-chip";
+    chip.dataset.id = person.id;
+    chip.style.borderLeftColor = person.accent || person.color || "#F59E0B";
+    const name = document.createElement("b");
+    name.textContent = (person.name || person.id).split(" ")[0];
+    const model = document.createElement("code");
+    model.textContent = person.model || person.family || person.modelFamily || "—";
+    chip.append(name, model);
+    row.append(chip);
+  }
 }
 
 function currentTaskFrom(next) {
@@ -1017,15 +1036,19 @@ canvas.addEventListener("click", (event) => {
   const body = document.getElementById("inspect-body");
   if (hoverId) {
     const person = (state.employees || []).find((item) => item.id === hoverId);
+    const modelEl = document.getElementById("inspect-model");
     title.textContent = person?.name || hoverId;
+    if (modelEl) modelEl.textContent = person?.model || person?.modelFamily || "";
     const feel = feelLine(person?.id || hoverId);
-    body.textContent = [person?.priorities, feel].filter(Boolean).join(" · ");
+    body.textContent = [person?.role, person?.priorities, feel].filter(Boolean).join(" · ");
     inspect.classList.remove("hidden");
     return;
   }
   const board = decor("whiteboard");
   if (board) {
+    const modelEl = document.getElementById("inspect-model");
     title.textContent = "whiteboard";
+    if (modelEl) modelEl.textContent = "";
     body.textContent = board.text || "SHIP";
     inspect.classList.remove("hidden");
     return;

@@ -31,6 +31,7 @@ export function createLlm({
   apiKey,
   referer,
   title,
+  baseUrl = "https://openrouter.ai/api/v1",
   fetchImpl = fetch,
   dryRunDriver = createDryRunDriver(),
   forceDryRun = false,
@@ -46,8 +47,11 @@ export function createLlm({
         return dryRunDriver.complete({ employee, messages });
       }
       const model = modelForTurn(employee, { kind });
-      const maxTokens = Number(employee.maxTokens) || (employee.role === "programmer" ? 1500 : 400);
-      const response = await fetchImpl("https://openrouter.ai/api/v1/chat/completions", {
+      const maxTokens =
+        Number(employee.max_tokens || employee.maxTokens) ||
+        (employee.role === "programmer" ? 1500 : 400);
+      const root = String(baseUrl || "https://openrouter.ai/api/v1").replace(/\/$/, "");
+      const response = await fetchImpl(`${root}/chat/completions`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${apiKey}`,

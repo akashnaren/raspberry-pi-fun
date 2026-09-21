@@ -54,3 +54,29 @@ test("falls back to locked model id when the catalog is empty", () => {
   };
   assert.equal(pickModel(employee, []), "qwen/qwen3-coder-next");
 });
+
+test("locked Stage 1 ids win, then preferred, then family", () => {
+  const nova = {
+    id: "nova",
+    modelFamily: "qwen",
+    model: "qwen/qwen3-coder-next",
+    preferredModels: ["qwen/qwen3-coder-next", "qwen/qwen3-coder-plus"],
+  };
+  assert.equal(
+    pickModel(nova, [{ id: "qwen/qwen3-coder-next" }, { id: "qwen/qwen3-coder-plus" }]),
+    "qwen/qwen3-coder-next",
+  );
+  assert.equal(pickModel(nova, [{ id: "qwen/qwen3-coder-plus" }]), "qwen/qwen3-coder-plus");
+  assert.equal(pickModel(nova, [{ id: "qwen/qwen3-coder-next-free" }]), "qwen/qwen3-coder-next-free");
+});
+
+test("research seats map onto the product cast, not river", () => {
+  const employees = [
+    { id: "nova", role: "programmer", model: "qwen/qwen3-coder-next", modelFamily: "qwen" },
+    { id: "mira", role: "producer", model: "z-ai/glm-5.3-flash", modelFamily: "z-ai" },
+    { id: "kessler", role: "qa", model: "nousresearch/hermes-3-llama-3.1-70b", modelFamily: "nousresearch" },
+  ];
+  assert.equal(employees.some((person) => person.id === "river"), false);
+  const families = new Set(employees.map((person) => person.modelFamily));
+  assert.deepEqual([...families].sort(), ["nousresearch", "qwen", "z-ai"]);
+});

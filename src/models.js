@@ -5,17 +5,21 @@ export function familyOf(modelId) {
 }
 
 export function pickModel(employee, available) {
-  if (employee.model) return employee.model;
   const preferred = employee.preferredModels || [];
+  const locked = employee.model || preferred[0];
   const catalog = Array.isArray(available) ? available : [];
+  if (!catalog.length) {
+    if (locked) return locked;
+    throw new Error(`no model for ${employee.id} family ${employee.modelFamily}`);
+  }
   const ids = new Set(catalog.map((item) => item.id));
-  for (const id of preferred) {
+  for (const id of [locked, ...preferred].filter(Boolean)) {
     if (ids.has(id)) return id;
   }
   const family = employee.modelFamily;
   const match = catalog.find((item) => familyOf(item.id) === family);
   if (match) return match.id;
-  if (preferred[0]) return preferred[0];
+  if (locked) return locked;
   throw new Error(`no model for ${employee.id} family ${family}`);
 }
 
@@ -28,8 +32,9 @@ export function modelForTurn(employee, { kind = "auto" } = {}) {
   return chatter;
 }
 
-export async function fetchOpenRouterModels(fetchImpl = fetch) {
-  const response = await fetchImpl("https://openrouter.ai/api/v1/models", {
+export async function fetchOpenRouterModels(fetchImpl = fetch, baseUrl = "https://openrouter.ai/api/v1") {
+  const root = String(baseUrl || "https://openrouter.ai/api/v1").replace(/\/$/, "");
+  const response = await fetchImpl(`${root}/models`, {
     headers: { accept: "application/json" },
   });
   if (!response.ok) {

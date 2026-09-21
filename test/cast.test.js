@@ -26,6 +26,43 @@ test("Meridian Desk cast lock: Nova, Kessler, Mira + Timezone Buddy", async () =
   assert.equal(byId.mira.modelTier, "cheap-capable");
   assert.match(byId.mira.priorities, /scope creep/i);
 
+  assert.equal(byId.river, undefined);
+  assert.equal(config.employees.some((person) => person.id === "river"), false);
+  assert.equal(byId.nova.model, "qwen/qwen3-coder-next");
+  assert.equal(byId.mira.model, "z-ai/glm-5.3-flash");
+  assert.equal(byId.kessler.model, "nousresearch/hermes-3-llama-3.1-70b");
+  assert.equal(byId.nova.max_tokens ?? byId.nova.maxTokens, 1500);
+  assert.equal(byId.mira.max_tokens ?? byId.mira.maxTokens, 500);
+  assert.equal(byId.kessler.max_tokens ?? byId.kessler.maxTokens, 400);
+  assert.equal(byId.nova.lottery_weight ?? config.lottery.nova, 0.5);
+  assert.equal(byId.mira.lottery_weight ?? config.lottery.mira, 0.25);
+  assert.equal(byId.kessler.lottery_weight ?? config.lottery.kessler, 0.25);
+  assert.equal(config.lottery.nova, 0.5);
+  assert.equal(config.lottery.mira, 0.25);
+  assert.equal(config.lottery.kessler, 0.25);
+  assert.equal(config.tick.midMs || config.tick_ms, 105000);
+  assert.equal(config.tick.minMs, 90000);
+  assert.equal(config.tick.maxMs, 120000);
+  assert.equal(config.daily_ceiling_usd ?? config.budget.daily_ceiling_usd ?? config.budget.dailyCeilingUsd, 5);
+  assert.equal(config.openrouter.base_url, "https://openrouter.ai/api/v1");
+  assert.ok(byId.nova.preferredModels.includes("qwen/qwen3-coder-next"));
+  assert.ok(byId.mira.preferredModels.includes("z-ai/glm-5.3-flash"));
+  assert.ok(byId.kessler.preferredModels.includes("nousresearch/hermes-3-llama-3.1-70b"));
+  const stage1Families = new Set(["qwen", "z-ai", "nousresearch"]);
+  assert.equal(stage1Families.has(byId.nova.modelFamily) && byId.nova.modelFamily === "qwen", true);
+  assert.equal(byId.mira.modelFamily, "z-ai");
+  assert.equal(byId.kessler.modelFamily, "nousresearch");
+  assert.equal(new Set([byId.nova.modelFamily, byId.mira.modelFamily, byId.kessler.modelFamily]).size, 3);
+
+  const hud = await readFile(join(REPO, "public/index.html"), "utf8");
+  assert.match(hud, /id="model-chips"/);
+  assert.match(hud, /qwen\/qwen3-coder-next/);
+  assert.match(hud, /z-ai\/glm-5.3-flash/);
+  assert.match(hud, /nousresearch\/hermes-3-llama-3.1-70b/);
+  const officeJs = await readFile(join(REPO, "public/office.js"), "utf8");
+  assert.match(officeJs, /paintModelChips/);
+  assert.match(officeJs, /employee\.model \|\| employee\.modelFamily/);
+
   const office = JSON.parse(await readFile(join(REPO, "workspace/office.json"), "utf8"));
   for (const id of ["nova", "kessler", "mira"]) {
     const desk = office.desks.find((item) => item.owner === id);

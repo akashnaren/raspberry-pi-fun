@@ -26,7 +26,7 @@ The display is a workplace aquarium (not a dashboard): warm dark slate, amber la
 
 | Zone | What you see |
 | --- | --- |
-| Top HUD | **Day N** · headcount · burn vs **$5** bar · current task · “shipping when green” · English ticker (last 5 events) |
+| Top HUD | **Day N** · headcount · live model chips · burn vs **$5** bar · current task · “shipping when green” · English ticker (last 5 events) |
 | Left ~55% | Event-driven top-down office. Walk, bubble, and glow only when an event happens. Failures flash red here. |
 | Right ~45% | Last **green** `dist/` iframe (`LIVE · green build`). Never black. Open-in-new-tab for Connect. |
 | Bottom | Who is acting + tool name (`write_file`, `say`, …) |
@@ -47,13 +47,13 @@ Four load-bearing rules, unchanged from the spec:
 | ID | Name | Role | Accent | Model |
 | --- | --- | --- | --- | --- |
 | `nova` | Nova Chen | programmer | coral `#F97316` | `qwen/qwen3-coder-next` |
-| `kessler` | Kessler Holt | QA | teal `#14B8A6` | `nousresearch/hermes-3-llama-3.1-70b` |
+| `kessler` | Kessler Holt | QA (+ say/journal color) | teal `#14B8A6` | `nousresearch/hermes-3-llama-3.1-70b` |
 | `mira` | Mira Sol | producer | amber `#F59E0B` | `z-ai/glm-5.3-flash` |
 | `jules` | Jules Park | office manager | indigo `#6366F1` | `meta-llama/llama-4-scout` |
 
 Looks live in `workspace/employees/<id>.json`: skin, hair, outfit layers, desk_style, wardrobe_unlocked from `wardrobe-vocab.json`. Only that person may `edit_self_aesthetics`. Jules alone may `edit_office`.
 
-Model ids are locked in `studio.config.json`. Lottery weights: Nova **45**, Kessler **20**, Mira **20**, Jules **15**. Strongest model is used only for programmer writes; chatter seats stay on their cheap/mid ids. Constitution is sent as a separate cached prefix when OpenRouter honors `cache_control`.
+Model ids are locked in `studio.config.json` (Research IDs mapped onto the product cast — there is no `river` seat). Stage 1 lottery: Nova **0.5** · Mira **0.25** · Kessler **0.25**. Jules keeps a small office-manager weight (**0.15**). Families stay distinct: **Qwen · Z.ai · Nous** (Jules is a fourth Meta seat). Tick mid is **105s** (90–120). Strongest model is used only for programmer writes; chatter seats stay on their cheap/mid ids. The HUD and hover chip show the live model id per employee. Constitution is sent as a separate cached prefix when OpenRouter honors `cache_control`. Preferred lists stay as first-available fallback after the locked ids.
 
 Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0, Jules↔Nova −1, Jules↔Kessler +1, Jules↔Mira 0. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
 

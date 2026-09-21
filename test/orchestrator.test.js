@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createBudget } from "../src/budget.js";
 import { createEventLog } from "../src/event-log.js";
 import { createKillSwitch } from "../src/kill-switch.js";
-import { createOrchestrator, nextTickDelay, pickEmployee } from "../src/orchestrator.js";
+import { createOrchestrator, nextTickDelay, pickEmployee, weightOf } from "../src/orchestrator.js";
 import { createToolRunner } from "../src/tools.js";
 import { tempStudioRoot } from "./helpers.js";
 
@@ -13,6 +13,20 @@ const employees = [
   { id: "nova", name: "Nova", role: "programmer", model: "qwen/qwen3-coder-next", priorities: "ship" },
   { id: "kessler", name: "Kessler", role: "qa", model: "nousresearch/hermes-3-llama-3.1-70b", priorities: "bugs" },
 ];
+
+test("Stage 1 lottery uses 0.5 / 0.25 / 0.25 fractional weights", () => {
+  const trio = [
+    { id: "nova", name: "Nova" },
+    { id: "mira", name: "Mira" },
+    { id: "kessler", name: "Kessler" },
+  ];
+  const lottery = { nova: 0.5, mira: 0.25, kessler: 0.25 };
+  assert.equal(weightOf(trio[0], lottery), 0.5);
+  assert.equal(weightOf(trio[1], lottery), 0.25);
+  assert.equal(pickEmployee(trio, lottery, () => 0.1).id, "nova");
+  assert.equal(pickEmployee(trio, lottery, () => 0.6).id, "mira");
+  assert.equal(pickEmployee(trio, lottery, () => 0.9).id, "kessler");
+});
 
 test("lottery picks one employee and tick delay stays in 90–120s", () => {
   const picks = new Set();
