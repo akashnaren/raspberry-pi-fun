@@ -17,6 +17,7 @@ export function testEnv(overrides = {}) {
     OPENROUTER_API_KEY: "",
     DRY_RUN: "true",
     DAILY_CEILING_USD: "5",
+    FISHBOWL_DAILY_CEILING_USD: "5",
     PORT: "0",
     HOST: "127.0.0.1",
     STUDIO_TICK_MIN_MS: "60000",

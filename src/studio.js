@@ -19,7 +19,12 @@ export async function loadConfig(root, env = process.env) {
   const maxMs = Number(env.STUDIO_TICK_MAX_MS || raw.tick.maxMs || raw.tick_ms || 120_000);
   const midMs = Number(raw.tick?.midMs || raw.tick_ms || 105_000);
   const dailyCeilingUsd = Number(
-    env.DAILY_CEILING_USD || raw.budget.dailyCeilingUsd || raw.budget.daily_ceiling_usd || raw.daily_ceiling_usd || 5,
+    env.FISHBOWL_DAILY_CEILING_USD ||
+      env.DAILY_CEILING_USD ||
+      raw.budget.dailyCeilingUsd ||
+      raw.budget.daily_ceiling_usd ||
+      raw.daily_ceiling_usd ||
+      5,
   );
   const mode = resolveStudioMode(env);
   return {
@@ -27,7 +32,8 @@ export async function loadConfig(root, env = process.env) {
     tick: { minMs, maxMs, midMs },
     budget: { dailyCeilingUsd },
     openrouter: {
-      base_url: raw.openrouter?.base_url || "https://openrouter.ai/api/v1",
+      base_url:
+        env.OPENROUTER_BASE_URL || raw.openrouter?.base_url || "https://openrouter.ai/api/v1",
     },
     host: env.HOST || "127.0.0.1",
     port: env.PORT === undefined || env.PORT === "" ? 8787 : Number(env.PORT),

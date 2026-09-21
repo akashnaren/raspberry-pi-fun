@@ -40,7 +40,7 @@ Four load-bearing rules, unchanged from the spec:
 1. **The event log is the truth.** A sprite walks because an event happened. The office is `data/events.jsonl` plus `office.json`, not a screensaver.
 2. **Never show a broken build.** The product pane never points at the working copy.
 3. **Bots edit data, never machinery.** Employees may write product HTML, office layout, backlog, strategy, journals, relationships. They cannot write `src/`, `public/`, config, or secrets.
-4. **Secrets stay in the environment.** `OPENROUTER_API_KEY` never enters the workspace.
+4. **Secrets stay in the environment.** `OPENROUTER_API_KEY` lives under `~/.secrets/fishbowl/` and is loaded by systemd `EnvironmentFile`. Never in `workspace/`.
 
 ## Cast
 
@@ -87,36 +87,54 @@ Target: Raspberry Pi OS Debian **aarch64**, ~1GB RAM (Pi 3 ≈ 905MiB). Chromium
 - Office renderer forces **DPR=1** and throttles `requestAnimationFrame` when nobody is walking or speaking.
 - If the compositor still swaps: `STUDIO_LITE=1` or open `/?lite=1` to disable ticker / ON AIR animations. Soundtrack stays **off** until you toggle it.
 
-### Node 20 LTS arm64 (prefer user-local, no sudo)
+### Node v20.20.2 linux-arm64 tarball (not NodeSource 22)
 
-OPS pins **v20.20.2** at `$HOME/.local/node-v20.20.2`. Optional short name: symlink `~/.local/node`. Do not use nvm, NodeSource, or `/usr/local` (no sudo required).
+Official Node **20 LTS** tarball into `$HOME/.local/node-v20.20.2`. No nvm. No NodeSource apt. Confirm **64-bit** OS first (`uname -m` → `aarch64`). If you see `armv7l`, use `linux-armv7l` instead — do not force arm64.
 
 ```bash
+uname -m   # expect aarch64
+
 NODE_VER=v20.20.2
 ARCH=linux-arm64
 PREFIX="$HOME/.local/node-$NODE_VER"
 
 mkdir -p "$HOME/.local/src" "$PREFIX"
 cd "$HOME/.local/src"
+
+# Verify checksum from https://nodejs.org/dist/$NODE_VER/SHASUMS256.txt before extract in production
 curl -fsSLO "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.tar.xz"
 tar -xJf "node-${NODE_VER}-${ARCH}.tar.xz" -C "$PREFIX" --strip-components=1
 
-ln -sfn "$PREFIX" "$HOME/.local/node"
-grep -q '.local/node' ~/.profile 2>/dev/null || echo 'export PATH="$HOME/.local/node/bin:$PATH"' >> ~/.profile
-export PATH="$HOME/.local/node-v20.20.2/bin:$HOME/.local/node/bin:$PATH"
+# User PATH (add to ~/.profile)
+grep -q "node-${NODE_VER}" ~/.profile 2>/dev/null || echo "export PATH=\"$PREFIX/bin:\$PATH\"" >> ~/.profile
+export PATH="$PREFIX/bin:$PATH"
 
-node -v   # v20.20.2
+node -v    # expect v20.20.2
 npm -v
-which node
-# ~/.local/node-v20.20.2/bin/node  or  ~/.local/node/bin/node
+which node # .../.local/node-v20.20.2/bin/node
 ```
 
-Node 22 linux-arm64 is fine later (`engines.node >= 20`). Same tarball recipe with `NODE_VER=v22.20.0` if you bump.
+Optional symlink so systemd can see `/usr/local/bin/node`:
+
+```bash
+sudo ln -sfn "$HOME/.local/node-v20.20.2/bin/node" /usr/local/bin/node
+sudo ln -sfn "$HOME/.local/node-v20.20.2/bin/npm"  /usr/local/bin/npm
+```
+
+`deploy/start.sh` does **not** require that symlink. It tries `$HOME/.local/node-v20.20.2` then `~/.local/node` then PATH. Do not run `npm` as root.
+
+Smoke:
+
+```bash
+cd ~/raspberry-pi-fun   # or ~/ai-studio-fishbowl
+node -e "console.log('ok', process.version, process.arch)"
+# expect: ok v20.20.2 arm64
+```
 
 ```bash
 git clone https://github.com/akashnaren/raspberry-pi-fun.git
 cd raspberry-pi-fun
-export PATH="$HOME/.local/node-v20.20.2/bin:$HOME/.local/node/bin:$PATH"
+export PATH="$HOME/.local/node-v20.20.2/bin:$PATH"
 npm install
 # DRY_RUN=true is the default. No API key. No OpenRouter calls.
 npm start
@@ -130,26 +148,79 @@ STUDIO_MODE=replay npm start
 
 Open `http://127.0.0.1:8787` (or point Chromium kiosk at it).
 
-`npm start` and the systemd unit load optional EnvironmentFile-style secrets (missing files are fine):
+### Secrets (`~/.secrets/fishbowl/` + systemd EnvironmentFile)
+
+Secrets **never** enter `workspace/` (bots can `read_file` there). App code reads `process.env.OPENROUTER_API_KEY` only. Never log the value.
+
+```text
+~/.secrets/fishbowl/
+  OPENROUTER_API_KEY     # single line, mode 0600
+  openrouter.env         # KEY=value for systemd EnvironmentFile, mode 0600
+```
+
+Create once (Connect remote shell or SSH):
+
+```bash
+mkdir -p ~/.secrets/fishbowl
+chmod 700 ~/.secrets/fishbowl
+install -m 600 /dev/null ~/.secrets/fishbowl/OPENROUTER_API_KEY
+nano ~/.secrets/fishbowl/OPENROUTER_API_KEY   # one line: sk-or-...
+```
+
+Generate `openrouter.env` without echoing the key:
+
+```bash
+umask 077
+printf 'OPENROUTER_API_KEY=%s\nOPENROUTER_BASE_URL=https://openrouter.ai/api/v1\nFISHBOWL_DAILY_CEILING_USD=5\n' \
+  "$(tr -d '\n' < ~/.secrets/fishbowl/OPENROUTER_API_KEY)" \
+  > ~/.secrets/fishbowl/openrouter.env
+chmod 600 ~/.secrets/fishbowl/openrouter.env
+```
+
+`npm start` and the systemd unit load optional EnvironmentFile-style secrets (missing files are fine — leading `-`):
 
 1. `raspberry-pi-fun/.env` (gitignored; laptop / Pi dry-run)
 2. `~/.secrets/fishbowl/openrouter.env` (live key later; never required to start)
 
-Then, when you are ready to spend, put the key **outside the workspace** so bots cannot read it:
+The unit is `EnvironmentFile=-/home/pi/.secrets/fishbowl/openrouter.env`. Do not store the key in the clone, git, PR, or chat.
+
+Live mode (only when you intend to spend): set `DRY_RUN=false` in that same env file. Four people call OpenRouter, each on a locked model id. The HUD shows **ON AIR** when live.
+
+### Connect + LAN SSH (key-only)
+
+| Channel | Role |
+| --- | --- |
+| **Raspberry Pi Connect** (screen + remote shell) | Human break-glass, kiosk eyeball, bootstrap until SSH keys land. |
+| **SSH (LAN, key-only)** | Primary unattended path: apt, Node install, git, systemd, logs. |
+| **rsync over SSH** | Later: push `dist/`, pull logs. Prefer git for source. Never rsync `~/.secrets/`. |
+| **VNC / Samba / NFS** | Skip Week 1. |
+
+Bring-up (Connect shell first):
 
 ```bash
-mkdir -p ~/.secrets/fishbowl
-cat > ~/.secrets/fishbowl/openrouter.env <<'EOF'
-OPENROUTER_API_KEY=sk-or-...
-DRY_RUN=false
-DAILY_CEILING_USD=5
-EOF
-chmod 600 ~/.secrets/fishbowl/openrouter.env
+loginctl enable-linger
+rpi-connect status
+sudo systemctl enable --now ssh
+hostname -I
 ```
 
-The systemd unit uses `EnvironmentFile=-/home/pi/.secrets/fishbowl/openrouter.env` (leading `-` means optional). Never put the key in `workspace/`. A local `.env` in the repo root is also gitignored and is only for laptop dry-runs.
+Client key (once):
 
-Restart the process. Four people call OpenRouter, each on a locked model id. The HUD shows **ON AIR** when live.
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_pi3 -C "fishbowl-pi3"
+ssh-copy-id -i ~/.ssh/id_ed25519_pi3.pub <user>@<pi-ip>
+# then on the Pi: PasswordAuthentication no; PermitRootLogin no; restart ssh
+```
+
+```sshconfig
+Host pi3
+  HostName <lan-ip-or-pi3.local>
+  User <pi-user>
+  IdentityFile ~/.ssh/id_ed25519_pi3
+  IdentitiesOnly yes
+```
+
+Avoid Connect screen-share automation loops. Replay mode is the $0 demo on the HDMI TV.
 
 ### Env vars
 
@@ -158,7 +229,9 @@ Restart the process. Four people call OpenRouter, each on a locked model id. The
 | `DRY_RUN` | `true` | Live only when `false` **and** a key is set. |
 | `STUDIO_MODE` | empty | `replay` = event log only, zero tokens. |
 | `OPENROUTER_API_KEY` | empty | Live turns. Empty = dry-run. |
-| `DAILY_CEILING_USD` | `5` | Hard pause when the UTC-day spend reaches this. HUD: studio sleeping. |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter root. |
+| `FISHBOWL_DAILY_CEILING_USD` | `5` | Hard pause when UTC-day spend hits this. HUD: studio sleeping. |
+| `DAILY_CEILING_USD` | `5` | Alias for the same ceiling. |
 | `STUDIO_LOCAL_STUBS` | `true` | Template `say()` when the ceiling hits. |
 | `STUDIO_LITE` | empty | Disable CSS animations for Pi 3. |
 | `PORT` | `8787` | HTTP + websocket. |
@@ -183,7 +256,7 @@ Pauses the world. Does not delete the log. The office dims and slowly **replays*
 
 ### $5 / day ceiling
 
-The orchestrator records each turn's estimated USD cost in `data/spend.json`. When the UTC day hits `$5`, ticks stop, the burn bar fills, the lights dim, and the HUD says **studio sleeping**. The next UTC day resets the counter. This protects the card; it is independent of any later credit fiction.
+The orchestrator records each turn's estimated USD cost in `data/spend.json`. When the UTC day hits `$5` (`FISHBOWL_DAILY_CEILING_USD` / `DAILY_CEILING_USD`), ticks stop, the burn bar fills, the lights dim, and the HUD says **studio sleeping**. The next UTC day resets the counter. This protects the card; it is independent of any later credit fiction.
 
 ### Chromium kiosk + systemd
 

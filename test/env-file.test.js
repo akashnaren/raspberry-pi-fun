@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadEnvironmentFiles, parseEnvironmentFile } from "../src/env-file.js";
+import { loadConfig } from "../src/studio.js";
+import { REPO } from "./helpers.js";
 
 test("EnvironmentFile parser skips comments and accepts quotes", () => {
   const parsed = parseEnvironmentFile(`
@@ -47,6 +49,18 @@ test("already-set env wins; missing secret file does not require a key", async (
   assert.deepEqual(loaded, []);
   assert.equal(env.DRY_RUN, "true");
   assert.equal(env.OPENROUTER_API_KEY, "");
+});
+
+test("FISHBOWL_DAILY_CEILING_USD is the hard ceiling name", async () => {
+  const config = await loadConfig(REPO, {
+    FISHBOWL_DAILY_CEILING_USD: "5",
+    DAILY_CEILING_USD: "9",
+    OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+    DRY_RUN: "true",
+    OPENROUTER_API_KEY: "",
+  });
+  assert.equal(config.budget.dailyCeilingUsd, 5);
+  assert.equal(config.openrouter.base_url, "https://openrouter.ai/api/v1");
 });
 
 test("DRY_RUN defaults true when unset", async () => {

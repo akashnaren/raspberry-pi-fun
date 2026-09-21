@@ -50,6 +50,23 @@ test("ai-studio unit uses user-local Node and optional EnvironmentFile", async (
   assert.doesNotMatch(unit, /sudo/);
 });
 
+test("README pins Node v20.20.2 tarball, secrets dir, and SSH key-only", async () => {
+  const readme = await readFile(join(REPO, "README.md"), "utf8");
+  assert.match(readme, /NODE_VER=v20\.20\.2/);
+  assert.match(readme, /linux-arm64/);
+  assert.match(readme, /not NodeSource/);
+  assert.doesNotMatch(readme, /setup_22\.x|nodesource\.com/);
+  assert.match(readme, /uname -m/);
+  assert.match(readme, /~\/\.secrets\/fishbowl\//);
+  assert.match(readme, /EnvironmentFile/);
+  assert.match(readme, /FISHBOWL_DAILY_CEILING_USD=5/);
+  assert.match(readme, /OPENROUTER_API_KEY/);
+  assert.match(readme, /ssh-keygen -t ed25519/);
+  assert.match(readme, /rpi-connect status/);
+  assert.match(readme, /PasswordAuthentication no/);
+  assert.match(readme, /ok v20\.20\.2 arm64/);
+});
+
 test("locked office manager is Jules Park with indigo accent", async () => {
   const config = JSON.parse(await readFile(join(REPO, "studio.config.json"), "utf8"));
   const manager = config.employees.find((person) => person.role === "office_manager");
