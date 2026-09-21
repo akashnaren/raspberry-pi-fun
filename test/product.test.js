@@ -16,10 +16,18 @@ test("Meridian Office Docs is a green seed; Sheets/Slides are stubs; Timezone Bu
   assert.equal(syntaxCheckHtml(buddy).ok, true);
   assert.match(docs, /Meridian Office/);
   assert.match(docs, /contenteditable/);
-  assert.match(docs, /download/);
+  assert.match(docs, /download-md/);
+  assert.match(docs, /download-html/);
+  assert.match(docs, /localStorage/);
+  assert.match(docs, /\.md/);
+  assert.match(docs, /Morning notes/);
   assert.match(sheets, /Sheets later/);
   assert.match(slides, /Slides after/);
   assert.match(buddy, /Timezone Buddy/);
+  assert.match(buddy, /catalogue/);
+  assert.doesNotMatch(docs, /timezone-buddy\.html/);
+  assert.doesNotMatch(sheets, /timezone-buddy\.html/);
+  assert.doesNotMatch(slides, /timezone-buddy\.html/);
   for (const page of [docs, sheets, slides, buddy]) {
     assert.doesNotMatch(page, /sign[- ]?up|create an account|checkout|stripe|upload a file|chat box|live chat/i);
   }

@@ -24,5 +24,11 @@ Timezone Buddy stays in the catalogue as a shipped utility; weekly ships can sti
 4. **Human writing** — product copy and say()/journals read like people, not corporate LLM
 5. **HUD** — no ticker crawl, no MERIDIAN DESK wordmark, no ON AIR pills. Thin bar: day · people · $x / $5 · who’s acting. Office canvas is the hero.
 
+## HDMI / kiosk (2026-09-21 night)
+- Product pane must be Meridian Office Docs, not Timezone Buddy (light empty iframe read as a blank screen).
+- Chromium on labwc needs `WAYLAND_DISPLAY=wayland-0`, `XDG_RUNTIME_DIR=/run/user/1000`, `--ozone-platform=wayland`.
+- `events.jsonl` must skip/quarantine null-byte and torn lines after a power cut.
+- Office canvas must paint a room before the websocket — never wait on a socket to show floor, desks, people.
+
 ## Constraints
 DRY_RUN until greenlight · ~$10 OpenRouter · never top up · $5/day if live · Jules exclusive edit_office · event log is truth

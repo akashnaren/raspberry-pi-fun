@@ -6,72 +6,112 @@
     <title>Meridian Office — Docs</title>
     <style>
       :root {
-        color-scheme: light;
-        --bg: #f5f5f7;
-        --paper: #ffffff;
-        --ink: #1d1d1f;
-        --muted: #6e6e73;
-        --line: #d2d2d7;
-        font-family: system-ui, -apple-system, "Segoe UI", "Liberation Sans", sans-serif;
+        color-scheme: dark;
+        --chrome: #1c1916;
+        --paper: #f3ead7;
+        --ink: #2a2118;
+        --muted: #8a7d6b;
+        --line: #3a322b;
+        --rule: #e0d4bc;
+        font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Liberation Serif", Georgia, serif;
+        --ui: system-ui, -apple-system, "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
+      html, body { margin: 0; height: 100%; background: var(--chrome); color: #e8dfd2; }
       body { display: grid; grid-template-rows: auto 1fr auto; min-height: 100dvh; }
       header {
         display: flex; align-items: baseline; gap: 1.1rem;
-        padding: 0.7rem 1.1rem; border-bottom: 1px solid var(--line);
+        padding: 0.65rem 1rem; border-bottom: 1px solid var(--line);
+        font-family: var(--ui);
       }
-      nav { display: flex; gap: 0.9rem; font-size: 0.8rem; }
-      nav a { color: var(--muted); text-decoration: none; }
-      nav a[aria-current="page"] { color: var(--ink); }
-      .tools { margin-left: auto; display: flex; gap: 0.7rem; font-size: 0.75rem; }
-      .tools button, .tools label {
-        border: 0; background: none; color: var(--ink); font: inherit; cursor: pointer; padding: 0;
+      .brand { font-size: 0.78rem; letter-spacing: 0.02em; color: #e8dfd2; }
+      nav { display: flex; gap: 0.85rem; font-size: 0.78rem; font-family: var(--ui); }
+      nav a { color: #9a8f80; text-decoration: none; }
+      nav a[aria-current="page"] { color: #f3ead7; }
+      .tools { margin-left: auto; display: flex; gap: 0.75rem; font-size: 0.72rem; font-family: var(--ui); }
+      .tools button {
+        border: 0; background: none; color: #f3ead7; font: inherit; cursor: pointer; padding: 0;
       }
-      main { display: grid; grid-template-rows: auto 1fr; min-height: 0; background: var(--paper); }
+      .tools button:hover { color: #c4b8a8; }
+      main {
+        display: grid; grid-template-rows: auto auto 1fr; min-height: 0;
+        background: var(--paper); color: var(--ink);
+        box-shadow: inset 0 0 0 1px #d8cbb0;
+      }
+      .format {
+        display: flex; gap: 0.45rem; padding: 0.4rem 1.1rem 0.3rem;
+        border-bottom: 1px solid var(--rule); font-family: var(--ui); font-size: 0.7rem;
+      }
+      .format button {
+        border: 1px solid #d8cbb0; background: #faf4e8; color: var(--ink);
+        font: inherit; padding: 0.15rem 0.45rem; cursor: pointer;
+      }
       #title {
-        width: 100%; border: 0; border-bottom: 1px solid var(--line);
-        padding: 0.85rem 1.2rem 0.55rem; font: inherit; font-size: 1.35rem; background: transparent;
+        width: 100%; border: 0; border-bottom: 1px solid var(--rule);
+        padding: 0.9rem 1.3rem 0.45rem; font: inherit; font-size: 1.45rem;
+        background: transparent; color: var(--ink);
       }
       #body {
-        padding: 0.85rem 1.2rem 1.4rem; outline: none; overflow: auto; line-height: 1.55;
-        min-height: 12rem;
+        padding: 0.7rem 1.3rem 1.6rem; outline: none; overflow: auto;
+        line-height: 1.55; min-height: 14rem; font-size: 1.02rem;
       }
-      #body:empty::before { content: attr(data-placeholder); color: var(--muted); }
+      #body h2 { font-size: 1.05rem; margin: 1rem 0 0.35rem; }
+      #body p { margin: 0 0 0.7rem; }
+      #body ul { margin: 0 0 0.7rem; padding-left: 1.2rem; }
       footer {
         display: flex; justify-content: space-between; gap: 1rem;
-        padding: 0.45rem 1.1rem; border-top: 1px solid var(--line);
-        color: var(--muted); font-size: 0.72rem;
+        padding: 0.4rem 1rem; border-top: 1px solid var(--line);
+        color: #9a8f80; font-size: 0.7rem; font-family: var(--ui);
+      }
+      @media print {
+        header, .format, footer { display: none; }
+        body, main { background: #fff; color: #111; }
       }
     </style>
   </head>
   <body>
     <header>
+      <span class="brand">Meridian Office</span>
       <nav aria-label="Meridian Office">
         <a href="./index.html" aria-current="page">Docs</a>
         <a href="./sheets.html">Sheets</a>
         <a href="./slides.html">Slides</a>
-        <a href="./timezone-buddy.html">Timezone Buddy</a>
       </nav>
       <div class="tools">
-        <button id="download-txt" type="button">download text</button>
-        <button id="download-html" type="button">download html</button>
+        <button id="download-md" type="button">download .md</button>
+        <button id="download-html" type="button">download .html</button>
         <button id="print" type="button">print</button>
       </div>
     </header>
     <main>
-      <input id="title" type="text" maxlength="140" value="Untitled" aria-label="Document title" />
-      <div id="body" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Start writing. This stays in this tab until you download it."></div>
+      <div class="format" aria-label="format">
+        <button type="button" data-cmd="bold"><b>B</b></button>
+        <button type="button" data-cmd="italic"><i>I</i></button>
+        <button type="button" data-cmd="insertUnorderedList">list</button>
+        <button type="button" data-heading="2">heading</button>
+      </div>
+      <input id="title" type="text" maxlength="140" value="Morning notes — Meridian Office" aria-label="Document title" />
+      <div id="body" contenteditable="true" role="textbox" aria-multiline="true">
+        <p>Write here. This tab keeps the page on this machine. Download when you want a file.</p>
+        <h2>What ships</h2>
+        <ul>
+          <li>Docs first: edit, keep, take with you as .html or .md.</li>
+          <li>Sheets and Slides wait. A fake grid is worse than a stub.</li>
+          <li>No accounts. Nothing is uploaded.</li>
+        </ul>
+        <h2>From the room</h2>
+        <p>Nova ships the working copy. Kessler only greens what a stranger can use. Mira cuts scope. Jules spends furniture credits like they are real.</p>
+      </div>
     </main>
     <footer>
       <span id="count">0 words</span>
-      <span>No accounts. Nothing is uploaded. Last green build.</span>
+      <span>Local only. Last green build.</span>
     </footer>
     <script>
       const title = document.getElementById("title");
       const body = document.getElementById("body");
       const count = document.getElementById("count");
-      const KEY = "meridian-office-docs";
+      const KEY = "meridian-office-docs-v2";
 
       function words() {
         const text = body.innerText.replace(/\s+/g, " ").trim();
@@ -84,21 +124,24 @@
       function save() {
         try {
           localStorage.setItem(KEY, JSON.stringify({ title: title.value, html: body.innerHTML }));
-        } catch (_) {}
+        } catch (err) {}
         paintCount();
       }
       function load() {
         try {
           const raw = localStorage.getItem(KEY);
-          if (!raw) return;
+          if (!raw) {
+            paintCount();
+            return;
+          }
           const data = JSON.parse(raw);
           if (data.title) title.value = data.title;
           if (data.html) body.innerHTML = data.html;
-        } catch (_) {}
+        } catch (err) {}
         paintCount();
       }
       function download(name, type, text) {
-        const blob = new Blob([text], { type });
+        const blob = new Blob([text], { type: type });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = name;
@@ -109,16 +152,56 @@
         const name = title.value.trim() || "untitled";
         return name.replace(/[^\w\- ]+/g, "").replace(/\s+/g, "-").toLowerCase() || "untitled";
       }
-      document.getElementById("download-txt").addEventListener("click", () => {
-        download(fileBase() + ".txt", "text/plain", title.value + "\n\n" + body.innerText);
+      function escapeHtml(value) {
+        return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+      function htmlToMarkdown(root) {
+        let out = "";
+        function walk(node) {
+          if (node.nodeType === 3) {
+            out += node.nodeValue;
+            return;
+          }
+          if (node.nodeType !== 1) return;
+          const tag = node.tagName;
+          if (tag === "H1") { out += "# "; kids(node); out += "\n\n"; return; }
+          if (tag === "H2") { out += "## "; kids(node); out += "\n\n"; return; }
+          if (tag === "P" || tag === "DIV") { kids(node); out += "\n\n"; return; }
+          if (tag === "BR") { out += "\n"; return; }
+          if (tag === "LI") { out += "- "; kids(node); out += "\n"; return; }
+          if (tag === "STRONG" || tag === "B") { out += "**"; kids(node); out += "**"; return; }
+          if (tag === "EM" || tag === "I") { out += "*"; kids(node); out += "*"; return; }
+          if (tag === "UL" || tag === "OL") { kids(node); out += "\n"; return; }
+          kids(node);
+        }
+        function kids(node) {
+          for (let i = 0; i < node.childNodes.length; i += 1) walk(node.childNodes[i]);
+        }
+        walk(root);
+        return out.replace(/\n{3,}/g, "\n\n").trim() + "\n";
+      }
+      document.getElementById("download-md").addEventListener("click", function () {
+        const md = "# " + title.value.trim() + "\n\n" + htmlToMarkdown(body);
+        download(fileBase() + ".md", "text/markdown;charset=utf-8", md);
       });
-      document.getElementById("download-html").addEventListener("click", () => {
+      document.getElementById("download-html").addEventListener("click", function () {
         const html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>" +
-          title.value.replace(/</g, "") + "</title></head><body><h1>" +
-          title.value.replace(/</g, "") + "</h1>" + body.innerHTML + "</body></html>";
-        download(fileBase() + ".html", "text/html", html);
+          escapeHtml(title.value) + "</title></head><body><h1>" +
+          escapeHtml(title.value) + "</h1>" + body.innerHTML + "</body></html>";
+        download(fileBase() + ".html", "text/html;charset=utf-8", html);
       });
-      document.getElementById("print").addEventListener("click", () => window.print());
+      document.getElementById("print").addEventListener("click", function () { window.print(); });
+      document.querySelector(".format").addEventListener("click", function (event) {
+        const btn = event.target.closest("button");
+        if (!btn) return;
+        body.focus();
+        if (btn.dataset.heading) {
+          document.execCommand("formatBlock", false, "h2");
+        } else if (btn.dataset.cmd) {
+          document.execCommand(btn.dataset.cmd, false, null);
+        }
+        save();
+      });
       title.addEventListener("input", save);
       body.addEventListener("input", save);
       load();

@@ -8,4 +8,4 @@ Timezone Buddy already shipped. It stays in the catalogue.
 
 No accounts. No payments. No uploads. No chat. That is permanent.
 
-This week: a document that holds a thought and lets you take it with you.
+This week: a document that holds a thought and lets you take it with you as `.html` or `.md`. The HDMI stage shows that page, not Timezone Buddy.

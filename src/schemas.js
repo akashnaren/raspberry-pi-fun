@@ -21,6 +21,7 @@ export const KNOWN_DECOR = [
   "beanbag",
   "minifridge",
   "table",
+  "window",
 ];
 
 export function validateOffice(value) {
