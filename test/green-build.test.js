@@ -15,7 +15,7 @@ test("green-build promotes only a passing product and leaves dist on failure", a
   });
 
   const before = await readFile(join(root, "dist/index.html"), "utf8");
-  assert.match(before, /Stamp/);
+  assert.match(before, /Timezone Buddy/);
 
   const broken = await studio.tools.execute("nova", "write_file", {
     path: "product/index.html",
@@ -28,14 +28,14 @@ test("green-build promotes only a passing product and leaves dist on failure", a
   assert.equal(afterFail, before);
   assert.equal(studio.events.all().some((event) => event.type === "build_failed"), true);
 
-  const good = `<!doctype html><html><head><title>Stamp</title></head><body><h1>Stamp v2</h1></body></html>`;
+  const good = `<!doctype html><html><head><title>Timezone Buddy</title></head><body><h1>Timezone Buddy v2</h1></body></html>`;
   const passed = await studio.tools.execute("nova", "write_file", {
     path: "product/index.html",
     contents: good,
   });
   assert.equal(passed.ok, true);
   const afterPass = await readFile(join(root, "dist/index.html"), "utf8");
-  assert.match(afterPass, /Stamp v2/);
+  assert.match(afterPass, /Timezone Buddy v2/);
   assert.equal(studio.events.all().some((event) => event.type === "build_passed"), true);
 
   await studio.stop();
@@ -50,8 +50,14 @@ test("dry-run tick works without an API key", async () => {
     random: () => 0,
   });
   assert.equal(studio.llm.dryRun, true);
+  assert.equal(studio.config.studio.name, "Meridian Desk");
+  assert.equal(studio.config.studio.product, "Timezone Buddy");
   const families = new Set(studio.employees.map((employee) => employee.modelFamily));
   assert.equal(families.size, 3);
+  const novaKessler = studio.relationships
+    .opinionsFor("nova")
+    .find((item) => item.other === "kessler");
+  assert.equal(novaKessler.score, -1);
 
   const result = await studio.orchestrator.tickOnce();
   assert.ok(result.employee);
