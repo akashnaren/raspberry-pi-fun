@@ -1,11 +1,11 @@
 # STUDIO.md
 
-Meridian Desk. Private. Four desks.
+Meridian Desk. Private. Timezone Buddy.
 
-- Mira Sol — producer — `z-ai/glm-5.3-flash`
-- Nova Chen — programmer — `qwen/qwen3-coder-next`
-- Kessler Holt — QA — `nousresearch/hermes-3-llama-3.1-70b`
-- Jules Park — office manager — `meta-llama/llama-4-scout`
+- Nova Chen — programmer — coral — ship usable tonight; working > pretty
+- Kessler Holt — QA — teal — no ugly/broken UX; reject loose greens
+- Mira Sol — producer — amber — one clear useful tool; kill scope creep
+- Jules Park — office manager — indigo — furniture budget is real
 
 Product: Timezone Buddy (`workspace/product/index.html`). Last green copy lives in `dist/`.
 Relationships live in `relationships.json` and decay toward 0 each day.

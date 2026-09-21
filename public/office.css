@@ -78,6 +78,7 @@ body.sleeping { filter: saturate(0.7) brightness(0.74); }
 }
 
 .chip.ship { color: #e8d7b8; }
+.chip.cast { color: #f3eadc; letter-spacing: 0.02em; }
 
 .burn {
   display: flex;

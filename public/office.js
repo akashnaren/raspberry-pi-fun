@@ -82,6 +82,13 @@ function applyState(next, event) {
   burnBar.style.width = `${Math.min(100, (used / cap) * 100)}%`;
   const staff = hud.staff || (next.employees || []).length || 4;
   staffEl.textContent = `${staff} staff`;
+  const cast = document.getElementById("cast-line");
+  if (cast) {
+    const named = (next.employees || [])
+      .filter((person) => ["nova", "kessler", "mira"].includes(person.id))
+      .map((person) => person.name.split(" ")[0]);
+    if (named.length) cast.textContent = named.join(" · ");
+  }
   dayEl.textContent = `Day ${hud.dayN || 1}`;
   taskEl.textContent = hud.currentTask || currentTaskFrom(next) || "waiting for a task";
   shipEl.textContent = hud.shipLine || "shipping when green";
@@ -1011,7 +1018,8 @@ canvas.addEventListener("click", (event) => {
   if (hoverId) {
     const person = (state.employees || []).find((item) => item.id === hoverId);
     title.textContent = person?.name || hoverId;
-    body.textContent = person?.priorities || "in the room";
+    const feel = feelLine(person?.id || hoverId);
+    body.textContent = [person?.priorities, feel].filter(Boolean).join(" · ");
     inspect.classList.remove("hidden");
     return;
   }
