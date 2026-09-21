@@ -652,24 +652,24 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
   const blink = now < (sprite.blinkUntil || 0);
 
   ctx.save();
-  ctx.translate(px, py + bounce + (sitting ? cell * 0.18 : 0));
+  ctx.translate(px, py + bounce + (sitting ? cell * 0.34 : 0));
   ctx.scale((sprite.facing || 1) * s, s);
 
   ctx.fillStyle = look.bottom;
   if (sitting) {
     if (look.bottomKind === "skirt") {
       ctx.beginPath();
-      ctx.moveTo(-8, 12);
-      ctx.lineTo(8, 12);
-      ctx.lineTo(12, 20);
-      ctx.lineTo(-12, 20);
+      ctx.moveTo(-9, 11);
+      ctx.lineTo(9, 11);
+      ctx.lineTo(13, 19);
+      ctx.lineTo(-13, 19);
       ctx.closePath();
       ctx.fill();
     } else {
-      ctx.fillRect(-9, 13, 18, 7);
+      ctx.fillRect(-11, 12, 22, 8);
     }
-    ctx.fillRect(-9, 18, 5, 6);
-    ctx.fillRect(5, 18, 5, 6);
+    ctx.fillRect(-11, 18, 6, 5);
+    ctx.fillRect(6, 18, 6, 5);
   } else if (look.bottomKind === "skirt") {
     ctx.beginPath();
     ctx.moveTo(-7, 12);
