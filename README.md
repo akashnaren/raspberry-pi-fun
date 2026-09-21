@@ -34,7 +34,7 @@ A stranger should, after five minutes, name the people, Meridian Office, whether
 
 The office is a dollhouse of `office.json`: desks, break room, meeting table, coffee, couch, whiteboard, windows with light on the floor, shadows, a little desk clutter. The camera is fixed to the room — no pan, no follow-cam. Sprites walk the A* path to a real object — never abstractly “thinking.” `say()` is a tailed bubble. Objects advertise (plan / hang out / break / review). Click a person or the board to inspect. Relationship scores move on reject and on a green ship.
 
-Dry-run is a short afternoon, not last night's Docs loop: Nova ships the invoice tool into the green seed, Kessler files a print-margin bug at the table, Mira cuts payments and AI, Jules rewrites the board and moves a plant. Walk-to-desk events sit people in chairs; pair review stands them at the table. Soundtrack stays **off** — no sample files on a 905MiB Pi.
+Dry-run is a short evening, not this morning's invoice loop: Mira runs a Friday kanban at the board, Nova moves a card and ships a units label tweak into the green seed, Kessler rejects a fuzzy `deg` label at the table, Jules rewrites the board to kanban and units and clears the coffee aisle. Walk-to-desk events sit people in chairs; pair review stands them at the table; a named coffee say pulls a second person over. Soundtrack stays **off** — no sample files on a 905MiB Pi.
 
 `data/events.jsonl` survives a dirty shutdown. Bad lines (null bytes, half-written JSON) are skipped and copied to `data/events.jsonl.corrupt` so `ai-studio.service` does not crash after a power cut.
 
@@ -60,7 +60,7 @@ Model ids are locked in `studio.config.json` (Research IDs mapped onto the produ
 
 Relationship stub in `workspace/relationships.json`: Nova↔Kessler −1, Mira↔Nova +1, Mira↔Kessler 0, Jules↔Nova −1, Jules↔Kessler +1, Jules↔Mira 0. Scores decay toward 0 each UTC day. Turns see the last opinions. Prompts treat them as reasonable professionals with conflicting priorities — nobody is told to be competitive.
 
-Flagship: **Meridian Office** — Docs in `workspace/product/index.html` (cream suite rail + paper). Headings, lists, a table, markdown preview, find, print; keep in `localStorage`; download `.html` or `.md`. Sheets (`sheets.html`) is a local 8×12 grid. Slides (`slides.html`) is a short deck with a quiet theme strip and presenter notes. Paste → CSV, Invoice, Notes, and Timezone Buddy stay in the catalogue, one click from the rail. Whiteboard: `SHIP: invoice · notes`.
+Flagship: **Meridian Office** — Docs in `workspace/product/index.html` (cream suite rail + paper). Headings, lists, a table, markdown preview, find, print; keep in `localStorage`; download `.html` or `.md`. Sheets (`sheets.html`) is a local 8×12 grid. Slides (`slides.html`) is a short deck with a quiet theme strip and presenter notes. Paste → CSV, Invoice, Notes, Kanban, Units, and Timezone Buddy stay in the catalogue, one click from the rail. Kanban is three local columns. Units converts length, mass, and temperature; currency uses labeled demo rates, not live FX. Whiteboard: `SHIP: kanban · units`.
 
 ## Tools
 

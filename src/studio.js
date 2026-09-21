@@ -225,6 +225,13 @@ export async function createStudio({
           return "";
         }
       },
+      readUnits() {
+        try {
+          return readFileSync(join(workspaceRoot, "product/units.html"), "utf8");
+        } catch {
+          return "";
+        }
+      },
     }),
   });
 

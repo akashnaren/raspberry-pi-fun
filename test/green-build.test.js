@@ -20,7 +20,13 @@ test("green-build promotes only a passing product and leaves dist on failure", a
   const beforePaste = await readFile(join(root, "dist/paste-csv.html"), "utf8");
   const beforeInvoice = await readFile(join(root, "dist/invoice.html"), "utf8");
   const beforeNotes = await readFile(join(root, "dist/meeting-notes.html"), "utf8");
+  const beforeKanban = await readFile(join(root, "dist/kanban.html"), "utf8");
+  const beforeUnits = await readFile(join(root, "dist/units.html"), "utf8");
   assert.match(before, /Meridian Office/);
+  assert.match(before, /kanban\.html/);
+  assert.match(before, /units\.html/);
+  assert.match(beforeKanban, /function moveCard/);
+  assert.match(beforeUnits, /function convert/);
   assert.match(before, /id="find-box"/);
   assert.match(before, /id="insert-table"/);
   assert.match(beforeSheets, /id="paste-from"/);

@@ -142,7 +142,7 @@ export function destinationFor(event, office) {
         return desk();
       }
       if (/review|meeting|table|fail|reject|green build|bug|pair|margin/i.test(text)) return meeting() || desk();
-      if (/board|plan|ship|task|backlog|docs|sheets|slides|grid|print|heading|find|paste-csv|paste →|invoice|notes|estimate/i.test(text)) {
+      if (/board|plan|ship|task|backlog|docs|sheets|slides|grid|print|heading|find|paste-csv|paste →|invoice|notes|estimate|kanban|units/i.test(text)) {
         return board() || desk();
       }
       return coffee() || couch() || desk();

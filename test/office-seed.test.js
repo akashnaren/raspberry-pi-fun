@@ -32,7 +32,7 @@ test("fallback office paints a room before any socket", async () => {
   assert.ok(FALLBACK_OFFICE.decor.some((item) => item.kind === "window"));
   const plants = FALLBACK_OFFICE.decor.filter((item) => item.kind === "plant");
   assert.ok(plants.length >= 5);
-  assert.match(FALLBACK_OFFICE.decor.find((item) => item.kind === "whiteboard").text, /invoice|notes/);
+  assert.equal(FALLBACK_OFFICE.decor.find((item) => item.kind === "whiteboard").text, "SHIP: kanban · units");
   assert.ok(windowSky(false).top);
   assert.notEqual(windowSky(false).top, windowSky(true).top);
   const looks = Object.fromEntries(FALLBACK_CAST.map((person) => [person.id, lookOf(person)]));
