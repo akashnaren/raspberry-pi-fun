@@ -13,6 +13,7 @@ test("blocks machinery and traversal", () => {
   assert.equal(isMachineryRel("product/index.html"), false);
 
   assert.throws(() => resolveWorkspacePath(root, "../src/index.js"), /escapes/);
+  assert.throws(() => resolveWorkspacePath(root, "../pi-pair/mini_chat.py"), /escapes/);
   assert.throws(() => resolveWorkspacePath(root, "/etc/passwd"), /absolute/);
   assert.throws(() => resolveWorkspacePath(root, "src/orchestrator.js"), /machinery/);
   const ok = resolveWorkspacePath(root, "product/index.html");

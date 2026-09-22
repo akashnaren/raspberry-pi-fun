@@ -6,3 +6,12 @@ dist/
 data/
 *.log
 .DS_Store
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+*.gguf
+*.ggml
+uploads/
+pi-pair/peers.json

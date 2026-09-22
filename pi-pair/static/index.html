@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#212121"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<title>Mesh</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<link rel="stylesheet" href="/static/mesh.css"/>
+</head><body>
+<div id="banner"></div>
+<div class="app">
+  <header>
+    <div class="brand">Mesh</div>
+    <div class="hdr-right">
+      <select id="peerSel" title="Peer" aria-label="Peer">
+        <option value="auto">Auto</option>
+      </select>
+      <span id="status">…</span>
+    </div>
+  </header>
+  <div id="log"><div class="empty" id="empty"><p>Send a message to get started.</p></div></div>
+  <footer>
+    <div class="composer-wrap">
+      <div class="toolbar">
+        <button class="link-btn" id="btnAttach" type="button">Attach</button>
+        <button class="link-btn" id="btnIo" type="button">Settings</button>
+      </div>
+      <div class="file-chip" id="fileChip"><span id="fileName"></span><button type="button" id="fileClear" aria-label="Remove">×</button></div>
+      <div class="composer-row">
+        <textarea id="q" placeholder="Message…" rows="1" enterkeyhint="enter"></textarea>
+        <input type="file" id="attach" accept=".txt,.md,.csv,.json,.log,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,text/plain"/>
+        <button class="send-btn" id="go" type="button">Send</button>
+      </div>
+    </div>
+  </footer>
+</div>
+<div class="overlay" id="overlay"></div>
+<aside class="drawer" id="ioPanel" aria-label="Settings">
+  <div class="drawer-head">
+    <h2>Settings</h2>
+    <button class="drawer-close" id="btnCloseIo" type="button">Close</button>
+  </div>
+  <div class="drawer-body">
+    <div class="field">
+      <label for="sys">System prompt</label>
+      <textarea id="sys" placeholder="Optional system instructions…" rows="3"></textarea>
+    </div>
+    <div class="field">
+      <label for="modelSel">Model</label>
+      <select id="modelSel"><option value="">__MODEL__</option></select>
+    </div>
+    <div class="field">
+      <label for="temp">Temperature</label>
+      <input id="temp" type="number" min="0" max="2" step="0.1" value="0.7"/>
+    </div>
+    <div class="field">
+      <label for="maxt">Max tokens</label>
+      <input id="maxt" type="number" min="16" max="8192" step="16" value="256"/>
+    </div>
+    <label class="row-check"><input type="checkbox" id="mesh" checked/> Mesh routing</label>
+    <div class="drawer-actions">
+      <button type="button" id="btnMd">Export .md</button>
+      <button type="button" id="btnTxt">Export .txt</button>
+      <button type="button" class="danger" id="btnClear">Clear chat</button>
+    </div>
+  </div>
+</aside>
+<script>window.MESH_DEFAULT_MODEL="__MODEL__";</script>
+<script src="/static/mesh.js"></script></body></html>

@@ -189,6 +189,8 @@ Mesh jobs in this build are only the idle flavor line and a short Docs assist. T
 
 `DRY_RUN=false` and `MESH_URL` set: the stage calls the mesh for those two lines even if `OPENROUTER_API_KEY` is empty. Mesh lines are local and are not added to the $5 OpenRouter ceiling. OpenRouter still spends only when dry-run is off **and** a key is set.
 
+The router source lives in `pi-pair/` (stdlib Python, separate from this Node process). Start it with `python3 mini_chat.py` from that directory — see `pi-pair/README.md`. Empty `MESH_URL` is unchanged, and `deploy/ai-studio.service` is unchanged.
+
 Point the pi3 stage at a Pi-PAIR router (this example uses pi2’s LAN address) with Auto:
 
 ```bash
@@ -295,17 +297,29 @@ The right-hand iframe only ever loads `/dist/`.
 
 ## Repo layout
 
+Three trees. They do not share a process.
+
+| Tree | Role |
+| --- | --- |
+| Meridian / Fishbowl | `src/` machinery, `public/` office, `deploy/` systemd. One Node process on `:8787`. |
+| Pi PAIR | `pi-pair/` mesh chat. Stdlib Python on `:18080`. Copied to `~/pi-pair` on the Pis; this repo is the source. |
+| Runtime | `workspace/` office data the cast may edit. `data/` and `dist/` are generated and gitignored. |
+
 ```
-src/                 machinery — orchestrator, tools, server (not writable by bots)
-public/              machinery — split-screen office
-workspace/           data — office.json, board, backlog, personas, Meridian Office
-dist/                last green build (created at boot from the seed)
-data/                events.jsonl, spend.json, PAUSED
-deploy/              systemd units
-snapshots/           hook for later weekly snapshots
+src/                 Meridian machinery — orchestrator, tools, server
+public/              Meridian machinery — split-screen office
+deploy/              Fishbowl systemd units (WorkingDirectory stays /home/pi/raspberry-pi-fun)
+pi-pair/             Pi PAIR — mini_chat.py, pair/, static/, install.sh
+  mini_chat.py       python3 mini_chat.py
+workspace/           runtime data — office.json, board, backlog, personas, product
+data/                events.jsonl, spend.json, PAUSED (gitignored)
+dist/                last green build (gitignored)
+snapshots/           reserved hook for later weekly snapshots
 studio.config.json   cast, models, tick, ceiling
-wardrobe-vocab.json  Product wardrobe allowlist
+wardrobe-vocab.json  product wardrobe allowlist
 ```
+
+Pi PAIR sits outside `workspace/`, so employee tools cannot write it. `deploy/ai-studio.service` keeps `WorkingDirectory=/home/pi/raspberry-pi-fun`.
 
 ## Develop
 
