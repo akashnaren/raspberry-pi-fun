@@ -11,6 +11,7 @@ WorkingDirectory=/home/pi/raspberry-pi-fun
 # deploy/start.sh tries $HOME/.local/node-v20.20.2 then ~/.local/node then PATH.
 Environment=PATH=/home/pi/.local/node-v20.20.2/bin:/home/pi/.local/node/bin:/usr/bin:/bin
 Environment=DRY_RUN=true
+# HOST defaults to 0.0.0.0 in the app (tunnel-ready). Kiosk still uses 127.0.0.1.
 # Leading "-" = optional. Missing secret file still starts in dry-run (no key).
 EnvironmentFile=-/home/pi/raspberry-pi-fun/.env
 EnvironmentFile=-/home/pi/.secrets/fishbowl/openrouter.env

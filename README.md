@@ -131,7 +131,7 @@ First boot needs **no API key**. Dry-run: scripted turns, real events, real walk
 STUDIO_MODE=replay npm start
 ```
 
-Open `http://127.0.0.1:8787` (or point Chromium kiosk at it).
+Open `http://127.0.0.1:8787` (or point Chromium kiosk at it). The process listens on `0.0.0.0` so a later tunnel can reach the same office. The kiosk stays on loopback.
 
 `npm start` and the systemd unit load optional EnvironmentFile-style secrets (missing files are fine):
 
@@ -165,13 +165,53 @@ Restart the process. Four people call OpenRouter, each on a locked model id. The
 | `STUDIO_LOCAL_STUBS` | `true` | Template `say()` when the ceiling hits. |
 | `STUDIO_LITE` | empty | Disable CSS animations for Pi 3. |
 | `PORT` | `8787` | HTTP + websocket. |
-| `HOST` | `127.0.0.1` | Bind address. Keep loopback on the Pi. |
+| `HOST` | `0.0.0.0` | Bind address. All interfaces, so a later tunnel can reach this one office. The kiosk still opens `127.0.0.1`. Set `127.0.0.1` for loopback only. |
+| `MESH_URL` | empty | Pi-PAIR (`:18080`) or Ollama (`:11434`) base. Empty keeps today's dry-run / OpenRouter path. |
+| `MESH_TARGET` | `auto` | `auto`, `pi2`, `pi3`, or `pi4`. Auto spreads across the fleet. Pin a peer only to experiment. |
+| `MESH_KIND` | from port | `pair` or `ollama`. Port `18080` selects Pi-PAIR `/v1/chat/completions`. Port `11434` selects Ollama `/api/chat`. |
+| `MESH_MODEL` | `qwen2.5:0.5b` | Model name sent to the mesh. Tiny Pi models only. |
 | `STUDIO_TICK_MIN_MS` | `90000` | Lower bound of the tick lottery. |
 | `STUDIO_TICK_MAX_MS` | `120000` | Upper bound. |
 | `OPENROUTER_HTTP_REFERER` | local URL | Optional OpenRouter header. |
 | `OPENROUTER_TITLE` | `Meridian Office` | Optional OpenRouter header. |
 
 Nothing in `workspace/` may read these. Employees never see the key. Production on the Pi should use `~/.secrets/fishbowl/openrouter.env`, not a file the studio can `read_file`.
+
+### Pi mesh (one office)
+
+There is one Meridian world: one `office.json`, one event log, one Docs tree on the stage (pi3 HDMI today). pi2, pi3, and pi4 are the same kind of inference peer. `MESH_TARGET` defaults to `auto` so Pi-PAIR can spread a job across whichever peers are up. Pin `pi2`, `pi3`, or `pi4` only for an experiment. A pinned peer that is down is a hard error (`pi3 offline`). Meridian does not silently call OpenRouter instead.
+
+Mesh jobs in this build are only the idle flavor line and a short Docs assist. The cast lottery stays on dry-run or OpenRouter. Worker replies are text. The stage appends `idle_flavor` or `docs_assist` on the authority log. Workers do not write files and do not keep a second office.
+
+`MESH_URL` empty: those jobs do not run. Ticks, spend, and dry-run scripts stay as they are.
+
+`DRY_RUN` (the default, including when `MESH_URL` is set): the mesh is skipped. No fetch, no mesh events, $0. Stub lines exist in code for tests; they are not written into the log.
+
+`DRY_RUN=false` and `MESH_URL` set: the stage calls the mesh for those two lines even if `OPENROUTER_API_KEY` is empty. Mesh lines are local and are not added to the $5 OpenRouter ceiling. OpenRouter still spends only when dry-run is off **and** a key is set.
+
+Point the pi3 stage at a Pi-PAIR router (this example uses pi2’s LAN address) with Auto:
+
+```bash
+# ~/.secrets/fishbowl/openrouter.env  or  the checkout .env  — no secrets below
+MESH_URL=http://10.0.0.180:18080
+MESH_TARGET=auto
+DRY_RUN=false
+```
+
+Direct Ollama on a peer uses port `11434` (`/api/chat`). `MESH_KIND=pair` or `MESH_KIND=ollama` overrides the port guess.
+
+Smoke the router from the stage before restarting Fishbowl:
+
+```bash
+curl -sS http://10.0.0.180:18080/health
+curl -sS http://10.0.0.180:18080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -H 'X-Pi-Target: auto' \
+  -H 'X-Pi-Mesh: on' \
+  -d '{"model":"qwen2.5:0.5b","messages":[{"role":"user","content":"Say hi in five words."}],"stream":false,"pi_target":"auto","pi_mesh":"on"}'
+```
+
+The public URL is a later Cloudflare Tunnel (or Tailscale Funnel) from Integration/CTO onto this process. This repo does not install that tunnel. Bind stays `HOST=0.0.0.0` and `PORT=8787`. The page opens its websocket at `location.host` `/ws`, and `/health` reports the viewer `origin` from `X-Forwarded-Proto` and `X-Forwarded-Host` when a tunnel sends them. Redirects stay relative.
 
 ### Kill switch
 
