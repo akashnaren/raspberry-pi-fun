@@ -1,0 +1,5 @@
+[
+  {"name": "pi2", "host": "10.0.0.180", "port": 8080, "kind": "llamacpp", "note": "llama.cpp"},
+  {"name": "pi3", "host": "10.0.0.228", "port": 11434, "kind": "ollama", "note": ""},
+  {"name": "pi4", "host": "10.0.0.166", "port": 11434, "kind": "ollama", "note": ""}
+]

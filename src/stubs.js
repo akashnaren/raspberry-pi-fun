@@ -25,7 +25,3 @@ export function stubCall(employee, kind = "say") {
     arguments: { message: LINES[id] || LINES.mira },
   };
 }
-
-export function stubLine(employee) {
-  return stubCall(employee, "say").arguments.message;
-}
