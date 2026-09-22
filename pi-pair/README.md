@@ -66,7 +66,7 @@ The example fleet is the map the chat was using:
 
 pi2 is also probed on 11434 if 8080 does not answer. A pinned peer that is down returns `pi3 offline` (or that peer's name). Auto does not fall through to a different Pi when you pin one.
 
-Fishbowl on pi3 is untouched: do not point this unit at `:8787` or at `deploy/ai-studio.service`.
+`install.sh` is a one-shot copy you run by hand. It does not restart Fishbowl, does not edit `deploy/`, and does not change the `:18080` listen port. Fishbowl on pi3 stays on `:8787`.
 
 ## Endpoints
 

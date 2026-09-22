@@ -46,16 +46,9 @@ def static_file(url_path: str) -> Path | None:
 
 
 def index_body() -> bytes:
+    """Same substitution the single-file chat used: replace __MODEL__ in the page."""
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    model = runtime.MODEL
-    html = html.replace(
-        'window.MESH_DEFAULT_MODEL="__MODEL__"',
-        "window.MESH_DEFAULT_MODEL=" + json.dumps(model),
-    )
-    visible = (
-        model.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    )
-    return html.replace("__MODEL__", visible).encode("utf-8")
+    return html.replace("__MODEL__", runtime.MODEL).encode("utf-8")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -80,7 +73,6 @@ class Handler(BaseHTTPRequestHandler):
             self._cors()
             self.send_header("content-type", "text/html; charset=utf-8")
             self.send_header("content-length", str(len(body)))
-            self.send_header("cache-control", "no-cache")
             self.end_headers()
             safe_write(self, body)
             return
@@ -91,7 +83,6 @@ class Handler(BaseHTTPRequestHandler):
             self._cors()
             self.send_header("content-type", _TYPES.get(asset.suffix, "application/octet-stream"))
             self.send_header("content-length", str(len(body)))
-            self.send_header("cache-control", "no-cache")
             self.end_headers()
             safe_write(self, body)
             return
