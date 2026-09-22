@@ -14,6 +14,8 @@ import { createToolRunner } from "./tools.js";
 import { createPromoter, syntaxCheckHtml } from "./validator.js";
 import { createRelationships } from "./relationships.js";
 import { mergeEmployees } from "./aesthetics.js";
+import { meshNetworkAllowed, meshSettingsFromEnv } from "./mesh.js";
+import { executeMeshJobs } from "./mesh-jobs.js";
 
 export async function loadConfig(root, env = process.env) {
   const raw = JSON.parse(await readFile(join(root, "studio.config.json"), "utf8"));
@@ -31,8 +33,9 @@ export async function loadConfig(root, env = process.env) {
     openrouter: {
       base_url: raw.openrouter?.base_url || "https://openrouter.ai/api/v1",
     },
-    host: env.HOST || "127.0.0.1",
+    host: env.HOST === undefined || env.HOST === "" ? "0.0.0.0" : env.HOST,
     port: env.PORT === undefined || env.PORT === "" ? 8787 : Number(env.PORT),
+    mesh: meshSettingsFromEnv(env),
     apiKey: env.OPENROUTER_API_KEY || "",
     referer: env.OPENROUTER_HTTP_REFERER || `http://127.0.0.1:${env.PORT || 8787}`,
     title: env.OPENROUTER_TITLE || "Meridian Desk",
@@ -235,6 +238,49 @@ export async function createStudio({
     }),
   });
 
+  const mesh = config.mesh;
+  let meshKick = null;
+  let meshTimer = null;
+
+  async function readDocsHtml() {
+    try {
+      return await readFile(join(workspaceRoot, "product/index.html"), "utf8");
+    } catch {
+      return "";
+    }
+  }
+
+  async function runMeshJobs() {
+    return executeMeshJobs({
+      settings: mesh,
+      allowNetwork: meshNetworkAllowed(env),
+      events,
+      fetchImpl,
+      docsHtml: await readDocsHtml(),
+    });
+  }
+
+  function armMeshJobs() {
+    if (!mesh.enabled) return;
+    const kickMs = Math.min(mesh.jobMs, 15_000);
+    meshKick = setTimeout(() => {
+      meshKick = null;
+      runMeshJobs().catch(() => {});
+      meshTimer = setInterval(() => {
+        runMeshJobs().catch(() => {});
+      }, mesh.jobMs);
+      meshTimer.unref?.();
+    }, kickMs);
+    meshKick.unref?.();
+  }
+
+  function stopMeshJobs() {
+    if (meshKick) clearTimeout(meshKick);
+    if (meshTimer) clearInterval(meshTimer);
+    meshKick = null;
+    meshTimer = null;
+  }
+
   const orchestrator = createOrchestrator({
     workspaceRoot,
     employees,
@@ -352,11 +398,14 @@ export async function createStudio({
     pendingValidations,
     async start() {
       orchestrator.start();
+      armMeshJobs();
     },
     async stop() {
       orchestrator.stop();
+      stopMeshJobs();
       await server.close();
     },
+    runMeshJobs,
   };
 }
 

@@ -58,4 +58,16 @@ test("headlines are plain English a stranger can read", () => {
     headlineFor({ type: "office_edited", actor: "jules", data: { action: "whiteboard", kind: "whiteboard" } }, { jules: "Jules Park" }),
     /rewrote the whiteboard/,
   );
+  assert.equal(
+    headlineFor({ type: "idle_flavor", actor: "system", data: { text: "The lamp stays on." } }, names),
+    "The lamp stays on.",
+  );
+  assert.equal(
+    headlineFor({ type: "docs_assist", actor: "system", message: "Docs: a short heading, then the list." }, names),
+    "Docs: a short heading, then the list.",
+  );
+  assert.equal(
+    headlineFor({ type: "mesh_error", actor: "system", data: { text: "pi3 offline" } }, names),
+    "pi3 offline",
+  );
 });

@@ -105,6 +105,10 @@ export function headlineFor(event, names = {}) {
       return `${who}'s office change was refused: ${clip(data.error, 48)}`;
     case "aesthetics_changed":
       return `${who} changed clothes.`;
+    case "idle_flavor":
+    case "docs_assist":
+    case "mesh_error":
+      return clip(data.text || event.message, 96);
     default:
       return event.message || `${who} did something.`;
   }

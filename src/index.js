@@ -1,4 +1,5 @@
 import { loadEnvironmentFiles } from "./env-file.js";
+import { meshNetworkAllowed } from "./mesh.js";
 import { createStudio } from "./studio.js";
 
 loadEnvironmentFiles({ root: process.cwd() });
@@ -11,12 +12,23 @@ const host = typeof addr === "object" && addr ? addr.address : studio.config.hos
 const port = typeof addr === "object" && addr ? addr.port : studio.config.port;
 
 console.log(`Office listening on http://${host}:${port}`);
+if (host === "0.0.0.0" || host === "::") {
+  console.log(`This machine: http://127.0.0.1:${port}`);
+}
 const modeLabel = studio.config.mode.replay
   ? "Mode: replay (event log only, zero tokens)"
   : studio.llm.dryRun
     ? "Mode: dry-run (DRY_RUN default or no OPENROUTER_API_KEY)"
     : "Mode: OpenRouter live";
 console.log(modeLabel);
+const mesh = studio.config.mesh;
+if (!mesh?.enabled) {
+  console.log("Mesh: off (MESH_URL unset — dry-run / OpenRouter path unchanged)");
+} else if (meshNetworkAllowed(process.env)) {
+  console.log(`Mesh: ${mesh.url} target ${mesh.target} (${mesh.kind}) — local lines, not OpenRouter`);
+} else {
+  console.log(`Mesh: ${mesh.url} target ${mesh.target} (${mesh.kind}) — DRY_RUN skips network`);
+}
 console.log(`Daily ceiling: $${studio.config.budget.dailyCeilingUsd.toFixed(2)}`);
 console.log(`Kill switch: http://${host}:${port}/kill`);
 console.log(

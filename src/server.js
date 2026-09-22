@@ -3,6 +3,37 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, relative, resolve } from "node:path";
 import { WebSocketServer } from "ws";
 
+/** Public host a tunnel viewer used. Path routing never depends on it. */
+export function viewerOrigin(req) {
+  const forwardedHost = firstHeaderToken(req?.headers?.["x-forwarded-host"]);
+  const host = forwardedHost || safeHost(req?.headers?.host) || "localhost";
+  const forwardedProto = firstHeaderToken(req?.headers?.["x-forwarded-proto"]);
+  const proto = forwardedProto === "https" || forwardedProto === "http" ? forwardedProto : "http";
+  return `${proto}://${host}`;
+}
+
+function firstHeaderToken(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return "";
+  return safeHost(String(raw).split(",")[0]);
+}
+
+function safeHost(value) {
+  const host = String(value || "").trim();
+  if (!host || /[\s/\\]/.test(host)) return "";
+  if (!/^[A-Za-z0-9.\-:[\]]+$/.test(host)) return "";
+  return host;
+}
+
+function requestUrl(req) {
+  const host = safeHost(req.headers?.host) || "localhost";
+  try {
+    return new URL(req.url || "/", `http://${host}`);
+  } catch {
+    return new URL(req.url || "/", "http://localhost");
+  }
+}
+
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -33,6 +64,9 @@ export function createStudioServer({
       res.end(error.message);
     }
   });
+  // Stay above a reverse tunnel's idle timeout so upgrades are not cut early.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
 
   const wss = new WebSocketServer({ server, path: "/ws" });
   wss.on("connection", (socket) => {
@@ -67,7 +101,7 @@ export function createStudioServer({
   }
 
   async function handle(req, res) {
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const url = requestUrl(req);
     if (url.pathname === "/api/state") {
       return json(res, getSnapshot());
     }
@@ -92,7 +126,12 @@ export function createStudioServer({
     }
     if (url.pathname === "/health") {
       const snap = budget.snapshot();
-      return json(res, { ok: true, paused: await killSwitch.paused(), budget: snap });
+      return json(res, {
+        ok: true,
+        paused: await killSwitch.paused(),
+        budget: snap,
+        origin: viewerOrigin(req),
+      });
     }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
