@@ -11,7 +11,7 @@ import {
 } from "./office-motion.js";
 import { FALLBACK_CAST, FALLBACK_OFFICE, seedSprites } from "./office-seed.js";
 import { depthOrder, dioramaPose, drawBubble, drawOffice, drawPerson, fillVoid, staticRoomKey } from "./office-draw.js";
-import { dprFor, dueBlink, frameGapMs, hotKind } from "./office-perf.js";
+import { armFrame, dprFor, dueBlink, frameGapMs, hotKind, perfReadout, typingPose } from "./office-perf.js";
 import { mergeStudioState, parseSocketMessage, reconnectDelayMs } from "./office-net.js";
 
 const canvas = document.getElementById("office");
@@ -242,6 +242,7 @@ function react(event) {
   if (sprite && target) {
     sprite.wantPose = poseFor(event);
     sprite.active = 1;
+    if (sprite.wantPose === "type") sprite.typeUntil = 0;
     enqueueWalk(sprite, target);
   }
   const otherId = companionId(event);
@@ -261,7 +262,7 @@ function react(event) {
     bubble = {
       actor: event.actor,
       lines: wrapTwo(event.data.text),
-      born: Date.now(),
+      born: performance.now(),
       color: who?.accent || who?.color || "#c4b8a8",
     };
   }
@@ -429,7 +430,10 @@ function stepSprites(now) {
         sprite.frame = Math.floor(now / 140) % 2;
       }
     } else if (sprite.pose === "type" || sprite.pose === "sit-type") {
-      sprite.frame = Math.floor(now / 220) % 2;
+      const burst = typingPose(sprite, now);
+      sprite.pose = burst.pose === "settle" ? settlePose(sprite.at, "idle") : burst.pose;
+      sprite.frame = burst.frame;
+      sprite.typeUntil = burst.typeUntil;
     }
     stampPose(sprite);
   }
@@ -467,10 +471,9 @@ function viewSize() {
 }
 
 function currentHot(now) {
-  const alive = bubble && now - bubble.born < ENTER + HOLD + FADE;
   return hotKind({
     hover: Boolean(hoverId),
-    bubble: alive ? { born: bubble.born, life: ENTER + HOLD + FADE } : null,
+    bubble: bubble ? { born: bubble.born, life: ENTER + HOLD + FADE } : null,
     now,
     sprites: state.sprites,
   });
@@ -487,13 +490,16 @@ function wake() {
   if (!rafId) rafId = requestAnimationFrame(loop);
 }
 
+function armLater(ms) {
+  clearIdle();
+  idleTimer = setTimeout(() => {
+    idleTimer = 0;
+    wake();
+  }, ms);
+}
+
 function scheduleIdle(now) {
   clearIdle();
-  const kind = currentHot(now);
-  if (frameGapMs(kind, lastFrameMs) > 0) {
-    wake();
-    return;
-  }
   if (state.paused || state.sleeping || state.replay || state.budget?.exhausted) {
     const remain = Math.max(250, 6000 - (now - lastReplay));
     idleTimer = setTimeout(() => {
@@ -582,37 +588,84 @@ function draw(now) {
     hold: HOLD,
     fade: FADE,
   });
-  if (bubble && !talking) bubble = null;
+  if (bubble && !talking) {
+    for (const sprite of state.sprites.values()) {
+      if (sprite.wantPose === "talk") sprite.wantPose = "idle";
+      if (sprite.path?.length || !/talk/.test(sprite.pose || "")) continue;
+      sprite.pose = settlePose(sprite.at, "idle");
+      stampPose(sprite);
+    }
+    bubble = null;
+  }
   return walking || talking;
+}
+
+const perfOn = new URLSearchParams(location.search).get("perf") === "1";
+let perfEl = null;
+let perfFrames = 0;
+let perfStamp = 0;
+if (perfOn) {
+  perfEl = document.createElement("p");
+  perfEl.id = "perf-readout";
+  perfEl.className = "perf-chip";
+  perfEl.textContent = perfReadout({ kind: "idle" }).text;
+  document.querySelector(".hud-tools")?.prepend(perfEl);
+}
+
+function notePerf(ts, kind) {
+  if (!perfEl) return;
+  const gap = frameGapMs(kind, lastFrameMs);
+  if (gap <= 0) {
+    perfEl.textContent = perfReadout({ kind: "idle" }).text;
+    perfFrames = 0;
+    perfStamp = 0;
+    return;
+  }
+  perfFrames += 1;
+  if (!perfStamp) perfStamp = ts;
+  const span = ts - perfStamp;
+  if (span < 480) return;
+  perfEl.textContent = perfReadout({ kind, gap, frames: perfFrames, spanMs: span }).text;
+  perfFrames = 0;
+  perfStamp = ts;
 }
 
 function loop(ts) {
   const started = performance.now();
   rafId = 0;
-  const kind = currentHot(ts);
-  const gap = frameGapMs(kind, lastFrameMs);
-  if (gap > 0 && lastDraw && ts - lastDraw < gap) {
-    rafId = requestAnimationFrame(loop);
+  const since = lastDraw ? ts - lastDraw : Infinity;
+  const early = armFrame({ kind: currentHot(ts), lastFrameMs, sinceDrawMs: since });
+  if (early.mode === "wait") {
+    armLater(early.waitMs);
     return;
   }
   draw(ts);
   lastDraw = ts;
   lastFrameMs = performance.now() - started;
-  const again = frameGapMs(currentHot(performance.now()), lastFrameMs);
-  if (again > 0) {
+  const kind = currentHot(performance.now());
+  const next = armFrame({
+    kind,
+    lastFrameMs,
+    sinceDrawMs: Math.max(0, performance.now() - ts),
+  });
+  notePerf(ts, kind);
+  let blinkLeft = 0;
+  if (next.mode === "idle") {
+    for (const sprite of state.sprites.values()) {
+      if (sprite.blinkUntil > ts) blinkLeft = Math.max(blinkLeft, sprite.blinkUntil - ts);
+    }
+  }
+  if (blinkLeft > 0) {
+    armLater(blinkLeft + 16);
+    return;
+  }
+  if (next.mode === "frame") {
+    clearIdle();
     rafId = requestAnimationFrame(loop);
     return;
   }
-  let blinkLeft = 0;
-  for (const sprite of state.sprites.values()) {
-    if (sprite.blinkUntil > ts) blinkLeft = Math.max(blinkLeft, sprite.blinkUntil - ts);
-  }
-  if (blinkLeft > 0) {
-    clearIdle();
-    idleTimer = setTimeout(() => {
-      idleTimer = 0;
-      wake();
-    }, blinkLeft + 16);
+  if (next.mode === "wait") {
+    armLater(next.waitMs);
     return;
   }
   scheduleIdle(ts);

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { FALLBACK_CAST, FALLBACK_OFFICE } from "../public/office-seed.js";
-import { clutterPx, drawOffice, limbPose, lookOf, staticRoomKey } from "../public/office-draw.js";
-import { dprFor, dueBlink, frameGapMs, hotKind } from "../public/office-perf.js";
+import { clutterPx, drawBubble, drawOffice, limbPose, lookOf, staticRoomKey } from "../public/office-draw.js";
+import { armFrame, bubbleAlive, dprFor, dueBlink, frameGapMs, hotKind, perfReadout, TYPE_BURST_MS, typingPose } from "../public/office-perf.js";
 import { REPO } from "./helpers.js";
 
 const CAST_TOP = {
@@ -72,6 +72,119 @@ test("DPR stays 1 and idle does not schedule another frame", () => {
   const blink = dueBlink(0, [{ x: 4, blinkUntil: 0 }]);
   assert.ok(blink.delay >= 90);
   assert.equal(blink.index, 0);
+});
+
+test("a Date.now bubble is not talk on the animation-frame clock", () => {
+  const epoch = 1_790_048_991_039;
+  assert.equal(bubbleAlive(1000, epoch, 5120), false);
+  assert.equal(bubbleAlive(40, 0, 100), true);
+  assert.equal(bubbleAlive(100, 0, 100), false);
+  assert.equal(
+    hotKind({
+      now: 1000,
+      bubble: { born: epoch, life: 5120 },
+      sprites: [{ pose: "sit", path: [] }],
+    }),
+    "idle",
+  );
+  assert.equal(
+    hotKind({
+      now: 5120,
+      bubble: { born: 0, life: 5120 },
+      sprites: [{ pose: "sit", path: [] }],
+    }),
+    "idle",
+  );
+  assert.equal(
+    drawBubble(mockCtx(), {
+      bubble: { born: epoch, lines: ["Coffee."], color: "#fff" },
+      sprite: { x: 2, y: 3 },
+      ox: 0,
+      oy: 0,
+      cell: 30,
+      now: 80,
+      enter: 220,
+      hold: 4200,
+      fade: 700,
+    }),
+    false,
+  );
+  assert.equal(
+    drawBubble(mockCtx(), {
+      bubble: { born: 0, lines: ["Coffee."], color: "#c4b8a8" },
+      sprite: { x: 2, y: 3 },
+      ox: 0,
+      oy: 0,
+      cell: 30,
+      now: 300,
+      enter: 220,
+      hold: 4200,
+      fade: 700,
+    }),
+    true,
+  );
+});
+
+test("idle stops the frame clock; a wide gap does not chain animation frames", () => {
+  assert.deepEqual(armFrame({ kind: "idle", lastFrameMs: 30, sinceDrawMs: 0 }), {
+    mode: "idle",
+    gap: 0,
+    waitMs: 0,
+  });
+  assert.deepEqual(armFrame({ kind: "hover", sinceDrawMs: 0 }), { mode: "idle", gap: 0, waitMs: 0 });
+  assert.deepEqual(armFrame({ kind: "walk", lastFrameMs: 4, sinceDrawMs: 16 }), {
+    mode: "frame",
+    gap: 16,
+    waitMs: 0,
+  });
+  assert.deepEqual(armFrame({ kind: "walk", lastFrameMs: 4, sinceDrawMs: 0 }), {
+    mode: "frame",
+    gap: 16,
+    waitMs: 0,
+  });
+  assert.deepEqual(armFrame({ kind: "walk", lastFrameMs: 18, sinceDrawMs: 10 }), {
+    mode: "wait",
+    gap: 33,
+    waitMs: 23,
+  });
+  assert.deepEqual(armFrame({ kind: "type", lastFrameMs: 4, sinceDrawMs: 20 }), {
+    mode: "wait",
+    gap: 140,
+    waitMs: 120,
+  });
+  assert.deepEqual(armFrame({ kind: "type", lastFrameMs: 4, sinceDrawMs: 140 }), {
+    mode: "frame",
+    gap: 140,
+    waitMs: 0,
+  });
+  assert.deepEqual(armFrame({ kind: "talk", lastFrameMs: 20, sinceDrawMs: 40 }), {
+    mode: "frame",
+    gap: 33,
+    waitMs: 0,
+  });
+});
+
+test("typing is a short burst, then the seated pose is still", () => {
+  const fresh = typingPose({ pose: "sit-type", at: "desk", frame: 0, typeUntil: 0 }, 1000);
+  assert.equal(fresh.hot, true);
+  assert.equal(fresh.pose, "sit-type");
+  assert.equal(fresh.typeUntil, 1000 + TYPE_BURST_MS);
+  assert.ok(TYPE_BURST_MS <= 2500);
+  const done = typingPose({ pose: "sit-type", at: "desk", frame: 1, typeUntil: 1000 }, 1000 + TYPE_BURST_MS);
+  assert.equal(done.hot, false);
+  assert.equal(done.pose, "settle");
+  assert.equal(done.typeUntil, 0);
+  assert.equal(done.frame, 0);
+});
+
+test("perf readout reports idle as stopped and walk as frames", () => {
+  assert.deepEqual(perfReadout({ kind: "idle" }), { fps: 0, gap: 0, text: "idle · 0 fps · gap 0" });
+  assert.equal(perfReadout({ kind: "hover" }).fps, 0);
+  assert.deepEqual(perfReadout({ kind: "walk", gap: 16, frames: 30, spanMs: 500 }), {
+    fps: 60,
+    gap: 16,
+    text: "walk · 60 fps · gap 16",
+  });
 });
 
 test("floor seams are batched and desk clutter has a TV-scale minimum", () => {
@@ -238,5 +351,11 @@ test("renderer stays 2D, cached, and event-driven — no WebGL, no worker", asyn
   assert.match(office, /frameGapMs/);
   assert.match(office, /dprFor\(/);
   assert.match(office, /requestAnimationFrame\(loop\)/);
+  assert.match(office, /armFrame/);
+  assert.match(office, /typingPose/);
+  assert.match(office, /born:\s*performance\.now\(\)/);
+  assert.doesNotMatch(office, /born:\s*Date\.now\(\)/);
+  assert.match(office, /get\("perf"\) === "1"/);
+  assert.doesNotMatch(office, /mode === "wait"[\s\S]{0,80}requestAnimationFrame/);
   assert.doesNotMatch(`${draw}\n${office}\n${perf}`, /getContext\(\s*["']webgl|new Worker\(/);
 });

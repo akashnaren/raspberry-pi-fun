@@ -1,5 +1,7 @@
 /** Painted diorama. Upright billboards, solid floor, one shadow. No WebGL. Fixed camera. */
 
+import { bubbleAlive } from "./office-perf.js";
+
 export const ROOM_VOID = "#16110d";
 
 const SKIN = {
@@ -1230,9 +1232,9 @@ export function drawPerson(ctx, { employee, sprite, ox, oy, cell, now, hover, fe
 
 export function drawBubble(ctx, { bubble, sprite, ox, oy, cell, now, enter, hold, fade }) {
   if (!bubble || !sprite) return false;
-  const age = now - bubble.born;
   const life = enter + hold + fade;
-  if (age > life) return false;
+  if (!bubbleAlive(now, bubble.born, life)) return false;
+  const age = now - bubble.born;
   let alpha = 1;
   let scale = 1;
   if (age < enter) {
