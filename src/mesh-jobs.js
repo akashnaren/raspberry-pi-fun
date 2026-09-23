@@ -1,6 +1,7 @@
 /**
  * Idle flavor + Docs assist. Both write only through the stage event log.
  * DRY_RUN skips the network and does not append (scripted evening stays $0).
+ * Mesh pause skips the network and does not append. The office stage keeps running.
  */
 
 import { MeshError, meshChat } from "./mesh.js";
@@ -67,6 +68,7 @@ export function meshJobMessages(job, { docsHtml = "" } = {}) {
 /**
  * One job. Unset MESH_URL returns skipped and does not touch the log.
  * DRY_RUN (allowNetwork false) returns the stub and does not fetch or append.
+ * Mesh pause returns skipped mesh-paused and does not fetch or append.
  * Live mesh text is appended on the stage. Failures append mesh_error and do not call OpenRouter.
  */
 export async function runMeshJob({
@@ -76,7 +78,9 @@ export async function runMeshJob({
   events,
   fetchImpl,
   docsHtml = "",
+  meshPaused = false,
 } = {}) {
+  if (await readMeshPaused(meshPaused)) return pausedJob(job);
   if (!settings?.enabled) {
     return { job, skipped: "mesh-unset", committed: false, network: false, costUsd: 0 };
   }
@@ -160,12 +164,34 @@ export async function runMeshJob({
 }
 
 export async function executeMeshJobs(opts = {}) {
+  if (await readMeshPaused(opts.meshPaused)) {
+    return {
+      skipped: "mesh-paused",
+      idle: pausedJob("idle_flavor"),
+      docs: pausedJob("docs_assist"),
+    };
+  }
   if (!opts.settings?.enabled) {
     return { skipped: "mesh-unset", idle: null, docs: null };
   }
   const idle = await runMeshJob({ ...opts, job: "idle_flavor" });
   const docs = await runMeshJob({ ...opts, job: "docs_assist" });
   return { skipped: null, idle, docs };
+}
+
+async function readMeshPaused(meshPaused) {
+  if (typeof meshPaused === "function") return Boolean(await meshPaused());
+  return Boolean(meshPaused);
+}
+
+function pausedJob(job) {
+  return {
+    job,
+    skipped: "mesh-paused",
+    committed: false,
+    network: false,
+    costUsd: 0,
+  };
 }
 
 async function commitLine(events, { type, text, data }) {

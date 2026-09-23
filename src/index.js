@@ -31,6 +31,7 @@ if (!mesh?.enabled) {
 }
 console.log(`Daily ceiling: $${studio.config.budget.dailyCeilingUsd.toFixed(2)}`);
 console.log(`Kill switch: http://${host}:${port}/kill`);
+console.log(`Mesh pause: http://${host}:${port}/mesh-pause`);
 console.log(
   `Tick: ${studio.config.tick.minMs / 1000}–${studio.config.tick.maxMs / 1000}s (mid ${studio.config.tick.midMs / 1000}s) · one employee at a time`,
 );

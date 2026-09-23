@@ -542,98 +542,98 @@ test("M5 mesh pause is independent of the world kill switch", async () => {
     },
   });
   try {
-  const port = studio.server.server.address().port;
+    const port = studio.server.server.address().port;
 
-  const open = await studio.snapshot();
-  assert.equal(open.paused, false);
-  assert.equal(open.mesh.enabled, true);
-  assert.equal(open.mesh.paused, false);
-  assert.equal(open.mesh.target, "pi2");
-  assert.equal(open.mesh.url, PAIR);
-  assert.equal(open.mesh.kind, "pair");
-  assert.equal(open.mesh.lastPeer, undefined);
+    const open = await studio.snapshot();
+    assert.equal(open.paused, false);
+    assert.equal(open.mesh.enabled, true);
+    assert.equal(open.mesh.paused, false);
+    assert.equal(open.mesh.target, "pi2");
+    assert.equal(open.mesh.url, PAIR);
+    assert.equal(open.mesh.kind, "pair");
+    assert.equal(open.mesh.lastPeer, undefined);
 
-  const world = await httpCall(port, "/api/pause", {}, "POST");
-  assert.equal(world.status, 200);
-  assert.equal(JSON.parse(world.body).paused, true);
-  assert.equal(await fileExists(join(root, "data", "PAUSED")), true);
-  assert.equal(await fileExists(join(root, "data", "MESH_PAUSED")), false);
+    const world = await httpCall(port, "/api/pause", {}, "POST");
+    assert.equal(world.status, 200);
+    assert.equal(JSON.parse(world.body).paused, true);
+    assert.equal(await fileExists(join(root, "data", "PAUSED")), true);
+    assert.equal(await fileExists(join(root, "data", "MESH_PAUSED")), false);
 
-  const worldSnap = await studio.snapshot();
-  assert.equal(worldSnap.paused, true);
-  assert.equal(worldSnap.mesh.paused, false);
-  const held = await studio.orchestrator.tickOnce();
-  assert.equal(held.skipped, "paused");
+    const worldSnap = await studio.snapshot();
+    assert.equal(worldSnap.paused, true);
+    assert.equal(worldSnap.mesh.paused, false);
+    const held = await studio.orchestrator.tickOnce();
+    assert.equal(held.skipped, "paused");
 
-  const whileWorldPaused = await studio.runMeshJobs();
-  assert.equal(whileWorldPaused.skipped, null);
-  assert.equal(whileWorldPaused.idle.committed, true);
-  assert.equal(fetches, 2);
-  assert.equal((await studio.snapshot()).mesh.lastPeer, "pi4");
+    const whileWorldPaused = await studio.runMeshJobs();
+    assert.equal(whileWorldPaused.skipped, null);
+    assert.equal(whileWorldPaused.idle.committed, true);
+    assert.equal(fetches, 2);
+    assert.equal((await studio.snapshot()).mesh.lastPeer, "pi4");
 
-  const resumedWorld = await httpCall(port, "/api/resume", {}, "POST");
-  assert.equal(resumedWorld.status, 200);
-  assert.equal((await studio.snapshot()).paused, false);
+    const resumedWorld = await httpCall(port, "/api/resume", {}, "POST");
+    assert.equal(resumedWorld.status, 200);
+    assert.equal((await studio.snapshot()).paused, false);
 
-  const meshPause = await httpCall(port, "/api/mesh/pause", {}, "POST");
-  assert.equal(meshPause.status, 200);
-  assert.equal(JSON.parse(meshPause.body).meshPaused, true);
-  const pauseFile = JSON.parse(await readFile(join(root, "data", "MESH_PAUSED"), "utf8"));
-  assert.equal(pauseFile.paused, true);
-  assert.equal(await fileExists(join(root, "data", "PAUSED")), false);
+    const meshPause = await httpCall(port, "/api/mesh/pause", {}, "POST");
+    assert.equal(meshPause.status, 200);
+    assert.equal(JSON.parse(meshPause.body).meshPaused, true);
+    const pauseFile = JSON.parse(await readFile(join(root, "data", "MESH_PAUSED"), "utf8"));
+    assert.equal(pauseFile.paused, true);
+    assert.equal(await fileExists(join(root, "data", "PAUSED")), false);
 
-  const meshSnap = await studio.snapshot();
-  assert.equal(meshSnap.paused, false);
-  assert.equal(meshSnap.mesh.paused, true);
-  assert.equal(meshSnap.mesh.enabled, true);
-  assert.equal(meshSnap.mesh.target, "pi2");
-  assert.equal(meshSnap.mesh.lastPeer, "pi4");
+    const meshSnap = await studio.snapshot();
+    assert.equal(meshSnap.paused, false);
+    assert.equal(meshSnap.mesh.paused, true);
+    assert.equal(meshSnap.mesh.enabled, true);
+    assert.equal(meshSnap.mesh.target, "pi2");
+    assert.equal(meshSnap.mesh.lastPeer, "pi4");
 
-  const health = JSON.parse((await httpCall(port, "/health")).body);
-  assert.equal(health.ok, true);
-  assert.equal(health.paused, false);
-  assert.equal(health.mesh.paused, true);
-  assert.equal(health.mesh.enabled, true);
-  assert.equal(health.mesh.target, "pi2");
+    const health = JSON.parse((await httpCall(port, "/health")).body);
+    assert.equal(health.ok, true);
+    assert.equal(health.paused, false);
+    assert.equal(health.mesh.paused, true);
+    assert.equal(health.mesh.enabled, true);
+    assert.equal(health.mesh.target, "pi2");
 
-  const beforeFlavor = studio.events.all().filter((event) => event.type === "idle_flavor").length;
-  const beforeAssist = studio.events.all().filter((event) => event.type === "docs_assist").length;
-  const skipped = await studio.runMeshJobs();
-  assert.equal(skipped.skipped, "mesh-paused");
-  assert.equal(skipped.idle.network, false);
-  assert.equal(fetches, 2);
-  assert.equal(studio.events.all().filter((event) => event.type === "idle_flavor").length, beforeFlavor);
-  assert.equal(studio.events.all().filter((event) => event.type === "docs_assist").length, beforeAssist);
-  assert.equal(await readFile(docsPath, "utf8"), beforeDocs);
+    const beforeFlavor = studio.events.all().filter((event) => event.type === "idle_flavor").length;
+    const beforeAssist = studio.events.all().filter((event) => event.type === "docs_assist").length;
+    const skipped = await studio.runMeshJobs();
+    assert.equal(skipped.skipped, "mesh-paused");
+    assert.equal(skipped.idle.network, false);
+    assert.equal(fetches, 2);
+    assert.equal(studio.events.all().filter((event) => event.type === "idle_flavor").length, beforeFlavor);
+    assert.equal(studio.events.all().filter((event) => event.type === "docs_assist").length, beforeAssist);
+    assert.equal(await readFile(docsPath, "utf8"), beforeDocs);
 
-  const tick = await studio.orchestrator.tickOnce();
-  assert.notEqual(tick.skipped, "paused");
-  assert.ok(tick.employee);
-  const state = await httpCall(port, "/api/state");
-  assert.equal(state.status, 200);
-  assert.equal(JSON.parse(state.body).mesh.paused, true);
-  assert.equal(JSON.parse(state.body).paused, false);
+    const tick = await studio.orchestrator.tickOnce();
+    assert.notEqual(tick.skipped, "paused");
+    assert.ok(tick.employee);
+    const state = await httpCall(port, "/api/state");
+    assert.equal(state.status, 200);
+    assert.equal(JSON.parse(state.body).mesh.paused, true);
+    assert.equal(JSON.parse(state.body).paused, false);
 
-  const phone = await httpCall(port, "/mesh-pause");
-  assert.equal(phone.status, 200);
-  assert.match(phone.body, /Mesh paused/);
-  assert.match(phone.headers["content-type"], /text\/plain/);
+    const phone = await httpCall(port, "/mesh-pause");
+    assert.equal(phone.status, 200);
+    assert.match(phone.body, /Mesh paused/);
+    assert.match(phone.headers["content-type"], /text\/plain/);
 
-  const meshResume = await httpCall(port, "/api/mesh/resume", {}, "POST");
-  assert.equal(meshResume.status, 200);
-  assert.equal(JSON.parse(meshResume.body).meshPaused, false);
-  assert.equal(await fileExists(join(root, "data", "MESH_PAUSED")), false);
-  const again = await studio.runMeshJobs();
-  assert.equal(again.skipped, null);
-  assert.equal(again.idle.committed, true);
-  assert.equal(fetches, 4);
-  const after = await studio.snapshot();
-  assert.equal(after.paused, false);
-  assert.equal(after.mesh.paused, false);
-  assert.equal(after.mesh.lastPeer, "pi4");
-  const healthLive = JSON.parse((await httpCall(port, "/health")).body);
-  assert.equal(healthLive.paused, false);
-  assert.equal(healthLive.mesh.paused, false);
+    const meshResume = await httpCall(port, "/api/mesh/resume", {}, "POST");
+    assert.equal(meshResume.status, 200);
+    assert.equal(JSON.parse(meshResume.body).meshPaused, false);
+    assert.equal(await fileExists(join(root, "data", "MESH_PAUSED")), false);
+    const again = await studio.runMeshJobs();
+    assert.equal(again.skipped, null);
+    assert.equal(again.idle.committed, true);
+    assert.equal(fetches, 4);
+    const after = await studio.snapshot();
+    assert.equal(after.paused, false);
+    assert.equal(after.mesh.paused, false);
+    assert.equal(after.mesh.lastPeer, "pi4");
+    const healthLive = JSON.parse((await httpCall(port, "/health")).body);
+    assert.equal(healthLive.paused, false);
+    assert.equal(healthLive.mesh.paused, false);
   } finally {
     await studio.stop();
   }
