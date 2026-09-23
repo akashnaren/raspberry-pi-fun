@@ -32,7 +32,7 @@ header{
   display:flex; align-items:center; justify-content:space-between; gap:12px;
   border-bottom:1px solid var(--border); background:var(--bg); z-index:20;
 }
-.brand{font-size:15px; font-weight:600; letter-spacing:-.01em; color:var(--text)}
+.brand{font-size:15px; font-weight:600; letter-spacing:-.01em; color:var(--text); white-space:nowrap; flex-shrink:0}
 .hdr-right{display:flex; align-items:center; gap:10px; min-width:0}
 .hdr-right select{
   background:var(--bg); border:1px solid var(--border); border-radius:6px;

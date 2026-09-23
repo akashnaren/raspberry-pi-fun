@@ -1,4 +1,4 @@
-"""Stdlib tests for Pi PAIR helpers and the chat HTTP contract."""
+"""Stdlib tests for Pi 0.2 High helpers and the chat HTTP contract."""
 from __future__ import annotations
 
 import json
@@ -256,6 +256,8 @@ class PairHttp(unittest.TestCase):
             html = response.read().decode()
         self.assertIn("/static/mesh.css", html)
         self.assertIn("/static/mesh.js", html)
+        self.assertIn("<title>Pi 0.2 High</title>", html)
+        self.assertIn("Pi 0.2 High", html)
         self.assertIn(runtime.MODEL, html)
         self.assertNotIn("__MODEL__", html)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/static/mesh.js", timeout=5) as response:
@@ -365,6 +367,43 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_model"], "tiny")
         self.assertEqual(body["choices"][0]["message"]["content"], "llama:tiny")
         self.assertEqual(body["pi_kind"], "llamacpp")
+
+
+class ProductCopy(unittest.TestCase):
+    """User-facing static UI and READMEs must say Pi 0.2 High, not Pi PAIR."""
+
+    def test_static_and_readmes_use_pi_0_2_high(self):
+        product = "Pi 0.2 High"
+        files = [
+            ROOT / "static" / "index.html",
+            ROOT / "static" / "mesh.js",
+            ROOT / "static" / "mesh.css",
+            ROOT / "README.md",
+            ROOT.parent / "README.md",
+            ROOT / "install.sh",
+            ROOT / "mesh-hello.sh",
+            ROOT / "start.sh",
+        ]
+        problems = []
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(ROOT.parent)
+            if "Pi PAIR" in text or "PI PAIR" in text:
+                problems.append(f"{rel} still says Pi PAIR")
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        if f"<title>{product}</title>" not in html:
+            problems.append("static/index.html title is not Pi 0.2 High")
+        if f'<div class="brand">{product}</div>' not in html:
+            problems.append("static/index.html brand is not Pi 0.2 High")
+        if not (ROOT / "README.md").read_text(encoding="utf-8").startswith(f"# {product}\n"):
+            problems.append("pi-pair/README.md title is not Pi 0.2 High")
+        root_readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
+        if f"**{product}**" not in root_readme:
+            problems.append("README.md does not name Pi 0.2 High")
+        install = (ROOT / "install.sh").read_text(encoding="utf-8")
+        if "Description=Pi 0.2 High\n" not in install:
+            problems.append("install.sh Description is not Pi 0.2 High")
+        self.assertEqual(problems, [], "\n".join(problems))
 
 
 if __name__ == "__main__":

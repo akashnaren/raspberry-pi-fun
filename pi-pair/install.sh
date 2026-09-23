@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pi PAIR installer — run on each Raspberry Pi (pi2 / pi3 / pi4).
+# Pi 0.2 High installer — run on each Raspberry Pi (pi2 / pi3 / pi4).
 # Does NOT prompt for a sudo password: prints the commands you need.
 set -euo pipefail
 
@@ -11,7 +11,7 @@ OLLAMA_MODEL_FALLBACK="tinyllama"
 PAIR_PORT="${PI_PAIR_PORT:-18080}"
 NODE_NAME="${PI_PAIR_NAME:-$(hostname -s)}"
 
-echo "=== Pi PAIR install ==="
+echo "=== Pi 0.2 High install ==="
 echo "Source:  $ROOT"
 echo "Target:  $INSTALL_DIR"
 echo "Name:    $NODE_NAME"
@@ -68,7 +68,7 @@ mkdir -p "$UNIT_DIR"
 UNIT_FILE="$UNIT_DIR/${SERVICE_NAME}.service"
 cat > "$UNIT_FILE" << UNIT
 [Unit]
-Description=Pi PAIR mesh inference router
+Description=Pi 0.2 High
 After=network-online.target
 Wants=network-online.target
 
