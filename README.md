@@ -236,6 +236,21 @@ Stops new idle flavor and Docs assist jobs. Ticks, the HDMI office, Docs, and th
 - `POST /api/mesh/pause` and `POST /api/mesh/resume`
 - Presence of `data/MESH_PAUSED`
 
+### Mesh brain
+
+Choose the brain for the **next** idle flavor and Docs assist job. The office keeps running. This does not rewrite `.env` or `MESH_URL`, and it does not pause the world.
+
+Boot uses `MESH_TARGET` (default `auto`) and `MESH_KIND`. A phone or API switch writes `data/MESH_TARGET` over that default. The following job re-reads it. No restart.
+
+- Auto: `http://127.0.0.1:8787/mesh-auto` — `X-Pi-Target: auto`
+- Pin: `http://127.0.0.1:8787/mesh-pin/pi2` (also `pi3`, `pi4`)
+- Direct Ollama: `http://127.0.0.1:8787/mesh-ollama` — `/api/chat` on the configured `MESH_URL`, no `X-Pi-Target`
+- `POST /api/mesh/target` with `{ "target": "auto" }` or `pi2` / `pi3` / `pi4`, or `{ "kind": "ollama" }`
+
+`/api/state` and `/health` `mesh` report the effective `target` and `kind`. When mesh is on, the office status line shows a quiet chip: `brain: auto`, `brain: pi3` (a pin, or the last auto peer), or `brain: ollama`. Mesh off hides the chip.
+
+Mesh pause stays separate. Pausing mesh does not clear the brain. Pausing the world does not stop a mesh job.
+
 ### $5 / day ceiling
 
 The orchestrator records each turn's estimated USD cost in `data/spend.json`. When the UTC day hits `$5`, ticks stop, the burn bar fills, the lights dim, and the HUD says **studio sleeping**. The next UTC day resets the counter. This protects the card; it is independent of any later credit fiction.

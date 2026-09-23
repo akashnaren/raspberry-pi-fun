@@ -21,7 +21,7 @@ const modeLabel = studio.config.mode.replay
     ? "Mode: dry-run (DRY_RUN default or no OPENROUTER_API_KEY)"
     : "Mode: OpenRouter live";
 console.log(modeLabel);
-const mesh = studio.config.mesh;
+const mesh = studio.meshSettings();
 if (!mesh?.enabled) {
   console.log("Mesh: off (MESH_URL unset — dry-run / OpenRouter path unchanged)");
 } else if (meshNetworkAllowed(process.env)) {
@@ -32,6 +32,7 @@ if (!mesh?.enabled) {
 console.log(`Daily ceiling: $${studio.config.budget.dailyCeilingUsd.toFixed(2)}`);
 console.log(`Kill switch: http://${host}:${port}/kill`);
 console.log(`Mesh pause: http://${host}:${port}/mesh-pause`);
+console.log(`Mesh brain: http://${host}:${port}/mesh-auto  /mesh-pin/pi3  /mesh-ollama`);
 console.log(
   `Tick: ${studio.config.tick.minMs / 1000}–${studio.config.tick.maxMs / 1000}s (mid ${studio.config.tick.midMs / 1000}s) · one employee at a time`,
 );

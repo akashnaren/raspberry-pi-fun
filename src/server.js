@@ -54,6 +54,7 @@ export function createStudioServer({
   budget,
   killSwitch,
   meshPause,
+  meshTarget,
   meshStatus,
   getSnapshot,
   pendingValidations,
@@ -142,6 +143,45 @@ export function createStudioServer({
       );
       return;
     }
+    if (url.pathname === "/api/mesh/target" && req.method === "POST") {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch (error) {
+        if (error?.code === "bad_body") return meshTargetError(res, error.message);
+        throw error;
+      }
+      try {
+        const settings =
+          body.kind === "ollama"
+            ? await meshTarget.setOllama("api")
+            : await meshTarget.setPairTarget(requireMeshTarget(body.target), "api");
+        return json(res, { target: settings.target, kind: settings.kind });
+      } catch (error) {
+        if (error?.code === "bad_target") return meshTargetError(res, error.message);
+        throw error;
+      }
+    }
+    if (url.pathname === "/mesh-auto") {
+      const settings = await meshTarget.setPairTarget("auto", "phone");
+      return plain(res, 200, `Mesh auto. Next job sends X-Pi-Target ${settings.target}.\n`);
+    }
+    if (url.pathname === "/mesh-ollama") {
+      await meshTarget.setOllama("phone");
+      return plain(
+        res,
+        200,
+        "Mesh ollama. Next job uses /api/chat on the configured MESH_URL.\n",
+      );
+    }
+    if (url.pathname.startsWith("/mesh-pin/")) {
+      const pin = url.pathname.slice("/mesh-pin/".length);
+      if (pin !== "pi2" && pin !== "pi3" && pin !== "pi4") {
+        return plain(res, 400, "Mesh pin must be pi2, pi3, or pi4.\n");
+      }
+      const settings = await meshTarget.setPairTarget(pin, "phone");
+      return plain(res, 200, `Mesh pin ${settings.target}. Next job sends X-Pi-Target ${settings.target}.\n`);
+    }
     if (url.pathname === "/health") {
       const snap = budget.snapshot();
       const body = {
@@ -217,4 +257,45 @@ async function sendFile(res, file) {
 function json(res, body) {
   res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
   res.end(`${JSON.stringify(body)}\n`);
+}
+
+function plain(res, status, message) {
+  res.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
+  res.end(message);
+}
+
+function meshTargetError(res, message) {
+  res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+  res.end(`${JSON.stringify({ error: message })}\n`);
+}
+
+function requireMeshTarget(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    const error = new Error("MESH_TARGET must be auto, pi2, pi3, or pi4");
+    error.code = "bad_target";
+    throw error;
+  }
+  return raw;
+}
+
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+  if (!raw) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    const error = new Error("JSON body required");
+    error.code = "bad_body";
+    throw error;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    const error = new Error("JSON object required");
+    error.code = "bad_body";
+    throw error;
+  }
+  return parsed;
 }

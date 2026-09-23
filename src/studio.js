@@ -17,6 +17,7 @@ import { mergeEmployees } from "./aesthetics.js";
 import { meshNetworkAllowed, meshSettingsFromEnv } from "./mesh.js";
 import { executeMeshJobs } from "./mesh-jobs.js";
 import { createMeshPause, meshView } from "./mesh-pause.js";
+import { createMeshTarget } from "./mesh-target.js";
 
 export async function loadConfig(root, env = process.env) {
   const raw = JSON.parse(await readFile(join(root, "studio.config.json"), "utf8"));
@@ -74,6 +75,7 @@ export async function createStudio({
   });
   const killSwitch = await createKillSwitch({ filePath: join(dataRoot, "PAUSED") });
   const meshPause = await createMeshPause({ dataRoot });
+  const meshTarget = await createMeshTarget({ dataRoot, env });
   const promoter = createPromoter({ workspaceRoot, distRoot });
 
   let available = [];
@@ -246,7 +248,6 @@ export async function createStudio({
     }),
   });
 
-  const mesh = config.mesh;
   let meshKick = null;
   let meshTimer = null;
   let meshLastPeer = "";
@@ -261,15 +262,16 @@ export async function createStudio({
 
   function currentMeshView() {
     return meshView({
-      settings: mesh,
+      settings: meshTarget.settings(),
       paused: live.meshPaused,
       lastPeer: meshLastPeer,
     });
   }
 
   async function runMeshJobs() {
+    const settings = meshTarget.settings();
     const result = await executeMeshJobs({
-      settings: mesh,
+      settings,
       allowNetwork: meshNetworkAllowed(env),
       events,
       fetchImpl,
@@ -282,14 +284,15 @@ export async function createStudio({
   }
 
   function armMeshJobs() {
-    if (!mesh.enabled) return;
-    const kickMs = Math.min(mesh.jobMs, 15_000);
+    const settings = meshTarget.settings();
+    if (!settings.enabled) return;
+    const kickMs = Math.min(settings.jobMs, 15_000);
     meshKick = setTimeout(() => {
       meshKick = null;
       runMeshJobs().catch(() => {});
       meshTimer = setInterval(() => {
         runMeshJobs().catch(() => {});
-      }, mesh.jobMs);
+      }, settings.jobMs);
       meshTimer.unref?.();
     }, kickMs);
     meshKick.unref?.();
@@ -374,9 +377,10 @@ export async function createStudio({
     budget,
     killSwitch,
     meshPause,
+    meshTarget,
     meshStatus: async () =>
       meshView({
-        settings: mesh,
+        settings: meshTarget.settings(),
         paused: await meshPause.paused(),
         lastPeer: meshLastPeer,
       }),
@@ -415,6 +419,7 @@ export async function createStudio({
     budget,
     killSwitch,
     meshPause,
+    meshSettings: () => meshTarget.settings(),
     tools,
     relationships,
     llm,
