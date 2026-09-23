@@ -1,8 +1,6 @@
 # Pi PAIR
 
-Mesh chat for the Raspberry Pi fleet. Stdlib Python only (no pip). It proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4.
-
-This is separate from Meridian / Fishbowl (`src/`, port **8787**). Pi PAIR listens on **18080**. Point Fishbowl at it with `MESH_URL=http://<pi>:18080` when you want local lines. Leaving `MESH_URL` empty does not change the office.
+Mesh chat for the Raspberry Pi fleet. Stdlib Python only (no pip). It proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4. It listens on **18080**.
 
 ## Layout
 
@@ -15,6 +13,7 @@ pi-pair/
   peers.example.json    fleet map (copy to peers.json)
   install.sh            copy to ~/pi-pair and write a user systemd unit
   mesh-hello.sh         curl /health, probe peers, send one chat
+  test_pair.py          stdlib unittest
 ```
 
 `peers.json` is gitignored. `install.sh` creates it from the example only when the Pi does not already have one.
@@ -66,7 +65,7 @@ The example fleet is the map the chat was using:
 
 pi2 is also probed on 11434 if 8080 does not answer. A pinned peer that is down returns `pi3 offline` (or that peer's name). Auto does not fall through to a different Pi when you pin one.
 
-`install.sh` is a one-shot copy you run by hand. It does not restart Fishbowl, does not edit `deploy/`, and does not change the `:18080` listen port. Fishbowl on pi3 stays on `:8787`.
+`install.sh` is a one-shot copy you run by hand. It does not change the `:18080` listen port.
 
 ## Endpoints
 
@@ -76,7 +75,7 @@ pi2 is also probed on 11434 if 8080 does not answer. A pinned peer that is down 
 | GET | `/health`, `/peers` | Router plus peer health |
 | POST | `/v1/chat/completions` | OpenAI chat. `stream:true` is SSE |
 
-Targeting matches the Fishbowl client:
+Target a peer with these headers:
 
 ```http
 POST /v1/chat/completions

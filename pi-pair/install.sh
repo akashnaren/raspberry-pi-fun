@@ -102,4 +102,3 @@ echo "Manual start (no systemd):"
 echo "  python3 $INSTALL_DIR/mini_chat.py"
 echo
 echo "Done. Chat UI: http://<this-pi-ip>:${PAIR_PORT}/"
-echo "Fishbowl stays on :8787. pi-pair uses :${PAIR_PORT}."
