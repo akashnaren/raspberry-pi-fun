@@ -85,6 +85,10 @@ body.sleeping { filter: saturate(0.82) brightness(0.88); }
   color: var(--muted);
 }
 
+#brain-chip {
+  color: var(--muted);
+}
+
 #pause-btn.kill {
   color: var(--ink);
   text-decoration: underline;

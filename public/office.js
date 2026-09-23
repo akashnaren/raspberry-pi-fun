@@ -32,6 +32,8 @@ const officePane = document.getElementById("office-pane");
 const buildingPulse = document.getElementById("building-pulse");
 const eventLine = document.getElementById("event-line");
 const pauseNote = document.getElementById("pause-note");
+const brainChipEl = document.getElementById("brain-chip");
+const brainSepEl = document.getElementById("brain-sep");
 
 let CELL = 30;
 const DPR = dprFor();
@@ -135,6 +137,14 @@ function applyState(next, event) {
   staffEl.textContent = status.people;
   budgetEl.textContent = status.burn;
   actingEl.textContent = status.who;
+  const mesh = next.mesh || {};
+  const showBrain = Boolean(mesh.enabled);
+  const brainName = mesh.kind === "ollama" ? "ollama" : mesh.target === "auto" ? mesh.lastPeer || "auto" : mesh.target || "auto";
+  if (brainChipEl) {
+    brainChipEl.textContent = showBrain ? `brain: ${brainName}` : "";
+    brainChipEl.classList.toggle("hidden", !showBrain);
+  }
+  if (brainSepEl) brainSepEl.classList.toggle("hidden", !showBrain);
   productTitle.textContent = next.studio?.product || "Meridian Office";
   const mode = next.mode || (next.dryRun ? "dry-run" : "live");
   modeBadge.textContent = mode;
