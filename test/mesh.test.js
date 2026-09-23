@@ -639,6 +639,241 @@ test("M5 mesh pause is independent of the world kill switch", async () => {
   }
 });
 
+test("M3 runtime target starts as env MESH_TARGET and the next job follows a phone or API brain switch", async () => {
+  const autoRoot = await tempStudioRoot();
+  const autoStudio = await createStudio({
+    root: autoRoot,
+    env: testEnv({ MESH_URL: PAIR }),
+    listen: false,
+  });
+  try {
+    const autoSnap = await autoStudio.snapshot();
+    assert.equal(autoSnap.mesh.enabled, true);
+    assert.equal(autoSnap.mesh.target, "auto");
+    assert.equal(autoSnap.mesh.kind, "pair");
+    assert.equal(autoSnap.mesh.url, PAIR);
+    assert.equal(await fileExists(join(autoRoot, "data", "MESH_TARGET")), false);
+  } finally {
+    await autoStudio.stop();
+  }
+
+  const pinRoot = await tempStudioRoot();
+  const pinStudio = await createStudio({
+    root: pinRoot,
+    env: testEnv({ MESH_URL: PAIR, MESH_TARGET: "pi2" }),
+    listen: false,
+  });
+  try {
+    assert.equal((await pinStudio.snapshot()).mesh.target, "pi2");
+    assert.equal((await pinStudio.snapshot()).mesh.kind, "pair");
+    assert.equal(await fileExists(join(pinRoot, "data", "MESH_TARGET")), false);
+  } finally {
+    await pinStudio.stop();
+  }
+
+  const root = await tempStudioRoot();
+  const calls = [];
+  const studio = await createStudio({
+    root,
+    env: testEnv({
+      MESH_URL: PAIR,
+      MESH_TARGET: "pi4",
+      MESH_KIND: "ollama",
+      DRY_RUN: "false",
+      PORT: "0",
+    }),
+    listen: true,
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      assert.doesNotMatch(String(url), /openrouter\.ai/);
+      if (String(url).endsWith("/api/chat")) {
+        return jsonResponse({ message: { content: "The lamp stays on." }, model: "qwen2.5:0.5b" });
+      }
+      return jsonResponse(
+        { choices: [{ message: { content: "The lamp stays on." } }], model: "qwen2.5:0.5b" },
+        { headers: { "X-Pi-Peer": "pi3" } },
+      );
+    },
+  });
+  try {
+    const port = studio.server.server.address().port;
+    const targetFile = join(root, "data", "MESH_TARGET");
+
+    const booted = await studio.snapshot();
+    assert.equal(booted.mesh.target, "pi4");
+    assert.equal(booted.mesh.kind, "ollama");
+    assert.equal(booted.mesh.url, PAIR);
+    assert.equal(booted.mesh.enabled, true);
+    assert.equal(booted.paused, false);
+    assert.equal(await fileExists(targetFile), false);
+    assert.equal(await fileExists(join(root, ".env")), false);
+    await expectOllama(port, studio, calls, { target: "pi4" });
+
+    for (const target of ["pi3", "pi2", "pi4", "auto"]) {
+      const posted = await httpCall(
+        port,
+        "/api/mesh/target",
+        { "content-type": "application/json" },
+        "POST",
+        JSON.stringify({ target }),
+      );
+      assert.equal(posted.status, 200);
+      assert.match(posted.headers["content-type"], /application\/json/);
+      const body = JSON.parse(posted.body);
+      assert.equal(body.target, target);
+      assert.equal(body.kind, "pair");
+      const saved = JSON.parse(await readFile(targetFile, "utf8"));
+      assert.equal(saved.target, target);
+      assert.equal(saved.kind, "pair");
+      const state = JSON.parse((await httpCall(port, "/api/state")).body);
+      assert.equal(state.paused, false);
+      assert.equal(state.mesh.paused, false);
+      assert.equal(state.mesh.target, target);
+      assert.equal(state.mesh.kind, "pair");
+      assert.equal(state.mesh.url, PAIR);
+      assert.equal(state.mesh.enabled, true);
+      const health = JSON.parse((await httpCall(port, "/health")).body);
+      assert.equal(health.mesh.target, target);
+      assert.equal(health.mesh.kind, "pair");
+      assert.equal(health.mesh.url, PAIR);
+      await expectPair(port, studio, calls, target);
+    }
+
+    const rejected = await httpCall(
+      port,
+      "/api/mesh/target",
+      { "content-type": "application/json" },
+      "POST",
+      JSON.stringify({ target: "pi5" }),
+    );
+    assert.equal(rejected.status, 400);
+    assert.equal(JSON.parse((await httpCall(port, "/api/state")).body).mesh.target, "auto");
+    assert.equal(JSON.parse(await readFile(targetFile, "utf8")).target, "auto");
+
+    for (const pin of ["pi2", "pi3", "pi4"]) {
+      const phone = await httpCall(port, `/mesh-pin/${pin}`);
+      assert.equal(phone.status, 200);
+      assert.match(phone.headers["content-type"], /text\/plain/);
+      assert.match(phone.body, new RegExp(pin));
+      const saved = JSON.parse(await readFile(targetFile, "utf8"));
+      assert.equal(saved.target, pin);
+      assert.equal(saved.kind, "pair");
+      await expectPair(port, studio, calls, pin);
+    }
+
+    const badPin = await httpCall(port, "/mesh-pin/pi5");
+    assert.equal(badPin.status, 400);
+    assert.match(badPin.headers["content-type"], /text\/plain/);
+    assert.equal(JSON.parse(await readFile(targetFile, "utf8")).target, "pi4");
+
+    const apiOllama = await httpCall(
+      port,
+      "/api/mesh/target",
+      { "content-type": "application/json" },
+      "POST",
+      JSON.stringify({ kind: "ollama" }),
+    );
+    assert.equal(apiOllama.status, 200);
+    assert.equal(JSON.parse(apiOllama.body).kind, "ollama");
+    assert.equal(JSON.parse(await readFile(targetFile, "utf8")).kind, "ollama");
+    await expectOllama(port, studio, calls, { target: "auto" });
+
+    const phoneOllama = await httpCall(port, "/mesh-ollama");
+    assert.equal(phoneOllama.status, 200);
+    assert.match(phoneOllama.headers["content-type"], /text\/plain/);
+    assert.match(phoneOllama.body, /ollama/);
+    assert.equal((await studio.snapshot()).mesh.url, PAIR);
+    await expectOllama(port, studio, calls, { target: "auto" });
+
+    const phoneAuto = await httpCall(port, "/mesh-auto");
+    assert.equal(phoneAuto.status, 200);
+    assert.match(phoneAuto.headers["content-type"], /text\/plain/);
+    assert.match(phoneAuto.body, /auto/);
+    const autoSaved = JSON.parse(await readFile(targetFile, "utf8"));
+    assert.equal(autoSaved.target, "auto");
+    assert.equal(autoSaved.kind, "pair");
+    await expectPair(port, studio, calls, "auto");
+    assert.equal(await fileExists(join(root, ".env")), false);
+
+    const world = await httpCall(port, "/api/pause", {}, "POST");
+    assert.equal(world.status, 200);
+    assert.equal(JSON.parse(world.body).paused, true);
+    assert.equal(await fileExists(join(root, "data", "PAUSED")), true);
+    assert.equal(await fileExists(join(root, "data", "MESH_PAUSED")), false);
+    const duringWorldPause = await studio.runMeshJobs();
+    assert.equal(duringWorldPause.skipped, null);
+    assert.equal(duringWorldPause.idle.committed, true);
+    assert.equal((await studio.snapshot()).mesh.target, "auto");
+    await httpCall(port, "/api/resume", {}, "POST");
+    assert.equal(await fileExists(join(root, "data", "PAUSED")), false);
+
+    const meshPause = await httpCall(port, "/api/mesh/pause", {}, "POST");
+    assert.equal(meshPause.status, 200);
+    assert.equal(JSON.parse(meshPause.body).meshPaused, true);
+    const beforePause = calls.length;
+    const skipped = await studio.runMeshJobs();
+    assert.equal(skipped.skipped, "mesh-paused");
+    assert.equal(skipped.idle.network, false);
+    assert.equal(calls.length, beforePause);
+    const pausedSnap = await studio.snapshot();
+    assert.equal(pausedSnap.paused, false);
+    assert.equal(pausedSnap.mesh.paused, true);
+    assert.equal(pausedSnap.mesh.target, "auto");
+    assert.equal(pausedSnap.mesh.kind, "pair");
+    assert.equal(await fileExists(join(root, "data", "PAUSED")), false);
+    assert.equal(JSON.parse(await readFile(targetFile, "utf8")).target, "auto");
+
+    const phonePause = await httpCall(port, "/mesh-pause");
+    assert.equal(phonePause.status, 200);
+    assert.match(phonePause.headers["content-type"], /text\/plain/);
+    assert.match(phonePause.body, /Mesh paused/);
+
+    const meshResume = await httpCall(port, "/api/mesh/resume", {}, "POST");
+    assert.equal(meshResume.status, 200);
+    assert.equal(JSON.parse(meshResume.body).meshPaused, false);
+    await expectPair(port, studio, calls, "auto");
+    const after = await studio.snapshot();
+    assert.equal(after.paused, false);
+    assert.equal(after.mesh.paused, false);
+    assert.equal(after.mesh.target, "auto");
+    assert.equal(after.mesh.kind, "pair");
+    assert.equal(after.mesh.lastPeer, "pi3");
+  } finally {
+    await studio.stop();
+  }
+});
+
+test("M3 office status shows a quiet brain chip from mesh.target and mesh.lastPeer", async () => {
+  const html = await readFile(join(REPO, "public/index.html"), "utf8");
+  const office = await readFile(join(REPO, "public/office.js"), "utf8");
+  const css = await readFile(join(REPO, "public/office.css"), "utf8");
+
+  assert.match(html, /id="status-line"/);
+  const statusAt = html.indexOf('id="status-line"');
+  const chipAt = html.indexOf('id="brain-chip"');
+  const toolsAt = html.indexOf('class="hud-tools"');
+  assert.ok(chipAt > statusAt, "brain chip sits in the office status line");
+  assert.ok(toolsAt > chipAt, "brain chip stays in the status line");
+  const chipLine = html.split("\n").find((line) => line.includes("brain-chip"));
+  assert.ok(chipLine);
+  assert.doesNotMatch(chipLine, /<button/i);
+  assert.doesNotMatch(html, /ticker-track|ON AIR|model-chips|Meridian Desk/);
+
+  assert.match(office, /getElementById\("brain-chip"\)/);
+  assert.match(office, /const showBrain = Boolean\(mesh\.enabled\)/);
+  assert.match(
+    office,
+    /mesh\.kind === "ollama" \? "ollama" : mesh\.target === "auto" \? mesh\.lastPeer \|\| "auto" : mesh\.target \|\| "auto"/,
+  );
+  assert.match(office, /`brain: \$\{brainName\}`/);
+  assert.match(office, /classList\.toggle\("hidden", !showBrain\)/);
+
+  const block = css.match(/#brain-chip\s*\{[^}]*\}/);
+  assert.ok(block, "quiet brain chip rule");
+  assert.match(block[0], /var\(--muted\)/);
+  assert.doesNotMatch(block[0], /glow|text-shadow|box-shadow|animation|@keyframes|neon/);
+});
+
 test("direct job helper with no URL does not append", async () => {
   const events = await createEventLog({ filePath: join(await tempStudioRoot(), "data", "events.jsonl") });
   const jobs = await executeMeshJobs({
@@ -653,6 +888,59 @@ test("direct job helper with no URL does not append", async () => {
   assert.equal(events.all().length, 0);
 });
 
+async function expectPair(port, studio, calls, target) {
+  const before = calls.length;
+  const jobs = await studio.runMeshJobs();
+  assert.equal(jobs.skipped, null);
+  assert.equal(jobs.idle.committed, true);
+  assert.equal(jobs.idle.network, true);
+  assert.equal(jobs.docs.committed, true);
+  const batch = calls.slice(before);
+  assert.equal(batch.length, 2);
+  for (const call of batch) {
+    assert.equal(call.url, `${PAIR}/v1/chat/completions`);
+    assert.equal(call.init.headers["X-Pi-Target"], target);
+    assert.equal(call.init.headers["X-Pi-Mesh"], "on");
+    const payload = JSON.parse(call.init.body);
+    assert.equal(payload.pi_target, target);
+    assert.equal(payload.pi_mesh, "on");
+  }
+  const state = JSON.parse((await httpCall(port, "/api/state")).body);
+  assert.equal(state.mesh.target, target);
+  assert.equal(state.mesh.kind, "pair");
+  assert.equal(state.mesh.url, PAIR);
+  const health = JSON.parse((await httpCall(port, "/health")).body);
+  assert.equal(health.mesh.target, target);
+  assert.equal(health.mesh.kind, "pair");
+  assert.equal(health.mesh.url, PAIR);
+}
+
+async function expectOllama(port, studio, calls, { target } = {}) {
+  const before = calls.length;
+  const jobs = await studio.runMeshJobs();
+  assert.equal(jobs.skipped, null);
+  assert.equal(jobs.idle.committed, true);
+  assert.equal(jobs.docs.committed, true);
+  const batch = calls.slice(before);
+  assert.equal(batch.length, 2);
+  for (const call of batch) {
+    assert.equal(call.url, `${PAIR}/api/chat`);
+    assert.equal(call.init.headers["X-Pi-Target"], undefined);
+    const payload = JSON.parse(call.init.body);
+    assert.equal(payload.pi_target, undefined);
+    assert.equal(payload.stream, false);
+  }
+  const state = JSON.parse((await httpCall(port, "/api/state")).body);
+  assert.equal(state.mesh.kind, "ollama");
+  assert.equal(state.mesh.url, PAIR);
+  assert.equal(state.mesh.enabled, true);
+  if (target) assert.equal(state.mesh.target, target);
+  const health = JSON.parse((await httpCall(port, "/health")).body);
+  assert.equal(health.mesh.kind, "ollama");
+  assert.equal(health.mesh.url, PAIR);
+  if (target) assert.equal(health.mesh.target, target);
+}
+
 async function fileExists(path) {
   try {
     await access(path);
@@ -663,9 +951,12 @@ async function fileExists(path) {
   }
 }
 
-function httpCall(port, path, headers, method = "GET") {
+function httpCall(port, path, headers = {}, method = "GET", body) {
+  const payload = body == null ? null : Buffer.from(body);
+  const hdrs = { ...headers };
+  if (payload) hdrs["content-length"] = String(payload.length);
   return new Promise((resolve, reject) => {
-    const req = request({ hostname: "127.0.0.1", port, path, method, headers }, (res) => {
+    const req = request({ hostname: "127.0.0.1", port, path, method, headers: hdrs }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {
@@ -677,6 +968,7 @@ function httpCall(port, path, headers, method = "GET") {
       });
     });
     req.on("error", reject);
+    if (payload) req.write(payload);
     req.end();
   });
 }
