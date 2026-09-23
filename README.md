@@ -1,8 +1,8 @@
 # raspberry-pi-fun
 
-Local model development for a Raspberry Pi fleet. This repo is **Pi PAIR**: a stdlib Python router that proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4.
+Local model development for a Raspberry Pi fleet. This repo is **Pi 0.2 High**: a stdlib Python router that proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4.
 
-No pip packages. Pi PAIR listens on **18080**.
+No pip packages. Pi 0.2 High listens on **18080**.
 
 ## Layout
 

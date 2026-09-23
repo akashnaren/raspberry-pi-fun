@@ -151,7 +151,7 @@ async function refresh(){
       currentModel()+' · '+up+'/'+(j.peers||[]).length+' up';
   }catch(e){
     const b=document.getElementById('banner');
-    b.textContent='Mesh UI offline from this phone — '+friendlyNet(e);
+    b.textContent='Pi 0.2 High offline from this phone — '+friendlyNet(e);
     b.className='on';
   }
 }
@@ -449,7 +449,7 @@ function autoGrow(ta){
 }
 
 function threadAsMd(){
-  let out='# Mesh chat\n\n';
+  let out='# Pi 0.2 High\n\n';
   thread.forEach(t=>{
     out+='### '+(t.role==='user'?'You':'Assistant')+'\n\n'+t.content+'\n\n';
     if(t.meta){

@@ -1,6 +1,6 @@
-# Pi PAIR
+# Pi 0.2 High
 
-Mesh chat for the Raspberry Pi fleet. Stdlib Python only (no pip). It proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4. It listens on **18080**.
+Chat for the Raspberry Pi fleet. Stdlib Python only (no pip). It proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4. It listens on **18080**.
 
 ## Layout
 

@@ -273,7 +273,7 @@ def make_server(host: str | None = None, port: int | None = None) -> ThreadingHT
 def main() -> None:
     runtime.configure()
     print(
-        f"Pi PAIR mini chat on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
+        f"Pi 0.2 High on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
         f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s (ollama+llamacpp)",
         flush=True,
     )

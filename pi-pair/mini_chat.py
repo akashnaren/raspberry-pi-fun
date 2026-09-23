@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pi PAIR mesh chat — multi-user, Ollama + llama.cpp. Port 18080. Stdlib only.
+"""Pi 0.2 High — multi-user chat, Ollama + llama.cpp. Port 18080. Stdlib only.
 
 Start: python3 mini_chat.py
 """
