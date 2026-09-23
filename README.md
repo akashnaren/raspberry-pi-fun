@@ -228,6 +228,14 @@ If `/api/state` fails, the seed office still paints. The websocket reconnects wi
 
 `say()` is stripped of markup and capped to two short lines before it becomes a canvas bubble. Combined with the kill switch that is the Stage 1 output filter.
 
+### Mesh pause
+
+Stops new idle flavor and Docs assist jobs. Ticks, the HDMI office, Docs, and the world kill switch keep running. `/api/state` and `/health` include `mesh` (`enabled`, `paused`, `target`, and `url` / `kind` / `lastPeer` when known).
+
+- Phone / bookmark: `http://127.0.0.1:8787/mesh-pause`
+- `POST /api/mesh/pause` and `POST /api/mesh/resume`
+- Presence of `data/MESH_PAUSED`
+
 ### $5 / day ceiling
 
 The orchestrator records each turn's estimated USD cost in `data/spend.json`. When the UTC day hits `$5`, ticks stop, the burn bar fills, the lights dim, and the HUD says **studio sleeping**. The next UTC day resets the counter. This protects the card; it is independent of any later credit fiction.

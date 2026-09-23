@@ -53,6 +53,8 @@ export function createStudioServer({
   events,
   budget,
   killSwitch,
+  meshPause,
+  meshStatus,
   getSnapshot,
   pendingValidations,
 }) {
@@ -118,20 +120,38 @@ export function createStudioServer({
       });
       return json(res, { paused: false });
     }
+    if (url.pathname === "/api/mesh/pause" && req.method === "POST") {
+      await meshPause.pause("api");
+      return json(res, { meshPaused: true });
+    }
+    if (url.pathname === "/api/mesh/resume" && req.method === "POST") {
+      await meshPause.resume();
+      return json(res, { meshPaused: false });
+    }
     if (url.pathname === "/kill") {
       await killSwitch.pause("phone");
       res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
       res.end("Office paused. Open / or POST /api/resume to start again.\n");
       return;
     }
+    if (url.pathname === "/mesh-pause") {
+      await meshPause.pause("phone");
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      res.end(
+        "Mesh paused. Idle flavor and Docs assist stop. The office keeps running. POST /api/mesh/resume to start mesh jobs again.\n",
+      );
+      return;
+    }
     if (url.pathname === "/health") {
       const snap = budget.snapshot();
-      return json(res, {
+      const body = {
         ok: true,
         paused: await killSwitch.paused(),
         budget: snap,
         origin: viewerOrigin(req),
-      });
+      };
+      if (meshStatus) body.mesh = await meshStatus();
+      return json(res, body);
     }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {

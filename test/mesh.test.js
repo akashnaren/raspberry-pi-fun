@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { request } from "node:http";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 import { createLlm } from "../src/openrouter.js";
@@ -21,6 +21,7 @@ import {
   clipMeshLine,
   docsExcerpt,
   executeMeshJobs,
+  runMeshJob,
 } from "../src/mesh-jobs.js";
 import { createEventLog } from "../src/event-log.js";
 import { tempStudioRoot, testEnv, REPO } from "./helpers.js";
@@ -451,6 +452,193 @@ test("docs excerpt stays short and mesh lines drop markup", () => {
   assert.equal(clipMeshLine("<b>Keep it short.</b> Then ignore this second sentence."), "Keep it short.");
 });
 
+test("M5 paused mesh skips idle flavor and docs assist without a fetch", async () => {
+  const root = await tempStudioRoot();
+  const events = await createEventLog({ filePath: join(root, "data", "events.jsonl") });
+  const settings = meshSettingsFromEnv({ MESH_URL: PAIR, MESH_TARGET: "auto" });
+  let fetches = 0;
+  let paused = true;
+  const fetchImpl = async () => {
+    fetches += 1;
+    throw new Error("paused mesh must not fetch");
+  };
+  const gate = async () => paused;
+
+  const jobs = await executeMeshJobs({
+    settings,
+    allowNetwork: true,
+    events,
+    fetchImpl,
+    meshPaused: gate,
+    docsHtml: "<title>Meridian Office — Docs</title><p>Keep the list.</p>",
+  });
+  assert.equal(jobs.skipped, "mesh-paused");
+  assert.equal(jobs.idle.skipped, "mesh-paused");
+  assert.equal(jobs.docs.skipped, "mesh-paused");
+  assert.equal(jobs.idle.network, false);
+  assert.equal(jobs.docs.committed, false);
+
+  const one = await runMeshJob({
+    job: "idle_flavor",
+    settings,
+    allowNetwork: true,
+    events,
+    fetchImpl,
+    meshPaused: true,
+  });
+  assert.equal(one.skipped, "mesh-paused");
+  assert.equal(one.network, false);
+  assert.equal(one.committed, false);
+  assert.equal(fetches, 0);
+  assert.equal(
+    events.all().some((event) => event.type === "idle_flavor" || event.type === "docs_assist"),
+    false,
+  );
+  assert.equal(events.all().some((event) => event.type === "mesh_error"), false);
+
+  paused = false;
+  const resumed = await executeMeshJobs({
+    settings,
+    allowNetwork: true,
+    events,
+    fetchImpl: async () =>
+      jsonResponse(
+        { choices: [{ message: { content: "The lamp stays on." } }], model: "qwen2.5:0.5b" },
+        { headers: { "X-Pi-Peer": "pi4" } },
+      ),
+    meshPaused: gate,
+    docsHtml: "<title>Meridian Office — Docs</title><p>Keep the list.</p>",
+  });
+  assert.equal(resumed.skipped, null);
+  assert.equal(resumed.idle.committed, true);
+  assert.equal(resumed.idle.network, true);
+  assert.equal(resumed.idle.text, "The lamp stays on.");
+  assert.equal(resumed.docs.committed, true);
+  assert.equal(events.all().filter((event) => event.type === "idle_flavor").length, 1);
+  assert.equal(events.all().filter((event) => event.type === "docs_assist").length, 1);
+});
+
+test("M5 mesh pause is independent of the world kill switch", async () => {
+  const root = await tempStudioRoot();
+  const docsPath = join(root, "workspace/product/index.html");
+  const beforeDocs = await readFile(docsPath, "utf8");
+  let fetches = 0;
+  const studio = await createStudio({
+    root,
+    env: testEnv({
+      MESH_URL: PAIR,
+      MESH_TARGET: "pi2",
+      DRY_RUN: "false",
+      PORT: "0",
+    }),
+    listen: true,
+    fetchImpl: async (url) => {
+      fetches += 1;
+      assert.equal(String(url), `${PAIR}/v1/chat/completions`);
+      return jsonResponse(
+        { choices: [{ message: { content: "The lamp stays on." } }], model: "qwen2.5:0.5b" },
+        { headers: { "X-Pi-Peer": "pi4" } },
+      );
+    },
+  });
+  try {
+    const port = studio.server.server.address().port;
+
+    const open = await studio.snapshot();
+    assert.equal(open.paused, false);
+    assert.equal(open.mesh.enabled, true);
+    assert.equal(open.mesh.paused, false);
+    assert.equal(open.mesh.target, "pi2");
+    assert.equal(open.mesh.url, PAIR);
+    assert.equal(open.mesh.kind, "pair");
+    assert.equal(open.mesh.lastPeer, undefined);
+
+    const world = await httpCall(port, "/api/pause", {}, "POST");
+    assert.equal(world.status, 200);
+    assert.equal(JSON.parse(world.body).paused, true);
+    assert.equal(await fileExists(join(root, "data", "PAUSED")), true);
+    assert.equal(await fileExists(join(root, "data", "MESH_PAUSED")), false);
+
+    const worldSnap = await studio.snapshot();
+    assert.equal(worldSnap.paused, true);
+    assert.equal(worldSnap.mesh.paused, false);
+    const held = await studio.orchestrator.tickOnce();
+    assert.equal(held.skipped, "paused");
+
+    const whileWorldPaused = await studio.runMeshJobs();
+    assert.equal(whileWorldPaused.skipped, null);
+    assert.equal(whileWorldPaused.idle.committed, true);
+    assert.equal(fetches, 2);
+    assert.equal((await studio.snapshot()).mesh.lastPeer, "pi4");
+
+    const resumedWorld = await httpCall(port, "/api/resume", {}, "POST");
+    assert.equal(resumedWorld.status, 200);
+    assert.equal((await studio.snapshot()).paused, false);
+
+    const meshPause = await httpCall(port, "/api/mesh/pause", {}, "POST");
+    assert.equal(meshPause.status, 200);
+    assert.equal(JSON.parse(meshPause.body).meshPaused, true);
+    const pauseFile = JSON.parse(await readFile(join(root, "data", "MESH_PAUSED"), "utf8"));
+    assert.equal(pauseFile.paused, true);
+    assert.equal(await fileExists(join(root, "data", "PAUSED")), false);
+
+    const meshSnap = await studio.snapshot();
+    assert.equal(meshSnap.paused, false);
+    assert.equal(meshSnap.mesh.paused, true);
+    assert.equal(meshSnap.mesh.enabled, true);
+    assert.equal(meshSnap.mesh.target, "pi2");
+    assert.equal(meshSnap.mesh.lastPeer, "pi4");
+
+    const health = JSON.parse((await httpCall(port, "/health")).body);
+    assert.equal(health.ok, true);
+    assert.equal(health.paused, false);
+    assert.equal(health.mesh.paused, true);
+    assert.equal(health.mesh.enabled, true);
+    assert.equal(health.mesh.target, "pi2");
+
+    const beforeFlavor = studio.events.all().filter((event) => event.type === "idle_flavor").length;
+    const beforeAssist = studio.events.all().filter((event) => event.type === "docs_assist").length;
+    const skipped = await studio.runMeshJobs();
+    assert.equal(skipped.skipped, "mesh-paused");
+    assert.equal(skipped.idle.network, false);
+    assert.equal(fetches, 2);
+    assert.equal(studio.events.all().filter((event) => event.type === "idle_flavor").length, beforeFlavor);
+    assert.equal(studio.events.all().filter((event) => event.type === "docs_assist").length, beforeAssist);
+    assert.equal(await readFile(docsPath, "utf8"), beforeDocs);
+
+    const tick = await studio.orchestrator.tickOnce();
+    assert.notEqual(tick.skipped, "paused");
+    assert.ok(tick.employee);
+    const state = await httpCall(port, "/api/state");
+    assert.equal(state.status, 200);
+    assert.equal(JSON.parse(state.body).mesh.paused, true);
+    assert.equal(JSON.parse(state.body).paused, false);
+
+    const phone = await httpCall(port, "/mesh-pause");
+    assert.equal(phone.status, 200);
+    assert.match(phone.body, /Mesh paused/);
+    assert.match(phone.headers["content-type"], /text\/plain/);
+
+    const meshResume = await httpCall(port, "/api/mesh/resume", {}, "POST");
+    assert.equal(meshResume.status, 200);
+    assert.equal(JSON.parse(meshResume.body).meshPaused, false);
+    assert.equal(await fileExists(join(root, "data", "MESH_PAUSED")), false);
+    const again = await studio.runMeshJobs();
+    assert.equal(again.skipped, null);
+    assert.equal(again.idle.committed, true);
+    assert.equal(fetches, 4);
+    const after = await studio.snapshot();
+    assert.equal(after.paused, false);
+    assert.equal(after.mesh.paused, false);
+    assert.equal(after.mesh.lastPeer, "pi4");
+    const healthLive = JSON.parse((await httpCall(port, "/health")).body);
+    assert.equal(healthLive.paused, false);
+    assert.equal(healthLive.mesh.paused, false);
+  } finally {
+    await studio.stop();
+  }
+});
+
 test("direct job helper with no URL does not append", async () => {
   const events = await createEventLog({ filePath: join(await tempStudioRoot(), "data", "events.jsonl") });
   const jobs = await executeMeshJobs({
@@ -465,9 +653,19 @@ test("direct job helper with no URL does not append", async () => {
   assert.equal(events.all().length, 0);
 });
 
-function httpCall(port, path, headers) {
+async function fileExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function httpCall(port, path, headers, method = "GET") {
   return new Promise((resolve, reject) => {
-    const req = request({ hostname: "127.0.0.1", port, path, method: "GET", headers }, (res) => {
+    const req = request({ hostname: "127.0.0.1", port, path, method, headers }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {

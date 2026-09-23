@@ -16,6 +16,7 @@ import { createRelationships } from "./relationships.js";
 import { mergeEmployees } from "./aesthetics.js";
 import { meshNetworkAllowed, meshSettingsFromEnv } from "./mesh.js";
 import { executeMeshJobs } from "./mesh-jobs.js";
+import { createMeshPause, meshView } from "./mesh-pause.js";
 
 export async function loadConfig(root, env = process.env) {
   const raw = JSON.parse(await readFile(join(root, "studio.config.json"), "utf8"));
@@ -72,6 +73,7 @@ export async function createStudio({
     now,
   });
   const killSwitch = await createKillSwitch({ filePath: join(dataRoot, "PAUSED") });
+  const meshPause = await createMeshPause({ dataRoot });
   const promoter = createPromoter({ workspaceRoot, distRoot });
 
   let available = [];
@@ -105,6 +107,7 @@ export async function createStudio({
 
   const live = {
     paused: await killSwitch.paused(),
+    meshPaused: await meshPause.paused(),
     office: await readJson(join(workspaceRoot, "office.json")),
     backlog: (await readJson(join(workspaceRoot, "backlog.json"))) || { tasks: [] },
     relationships: relationships.snapshot(),
@@ -113,6 +116,7 @@ export async function createStudio({
 
   async function refreshLive() {
     live.paused = await killSwitch.paused();
+    live.meshPaused = await meshPause.paused();
     live.office = await readJson(join(workspaceRoot, "office.json"));
     live.backlog = (await readJson(join(workspaceRoot, "backlog.json"))) || { tasks: [] };
     live.relationships = relationships.snapshot();
@@ -134,6 +138,10 @@ export async function createStudio({
     refreshLive().catch(() => {});
   });
   killSwitch.subscribe(() => {
+    refreshLive().catch(() => {});
+  });
+  meshPause.subscribe(({ paused }) => {
+    live.meshPaused = paused;
     refreshLive().catch(() => {});
   });
 
@@ -241,6 +249,7 @@ export async function createStudio({
   const mesh = config.mesh;
   let meshKick = null;
   let meshTimer = null;
+  let meshLastPeer = "";
 
   async function readDocsHtml() {
     try {
@@ -250,14 +259,26 @@ export async function createStudio({
     }
   }
 
+  function currentMeshView() {
+    return meshView({
+      settings: mesh,
+      paused: live.meshPaused,
+      lastPeer: meshLastPeer,
+    });
+  }
+
   async function runMeshJobs() {
-    return executeMeshJobs({
+    const result = await executeMeshJobs({
       settings: mesh,
       allowNetwork: meshNetworkAllowed(env),
       events,
       fetchImpl,
       docsHtml: await readDocsHtml(),
+      meshPaused: () => meshPause.paused(),
     });
+    const peer = result?.idle?.event?.data?.peer || result?.docs?.event?.data?.peer || "";
+    if (peer) meshLastPeer = peer;
+    return result;
   }
 
   function armMeshJobs() {
@@ -312,6 +333,7 @@ export async function createStudio({
       replay: config.mode.replay,
       lite: config.mode.lite,
       paused: live.paused,
+      mesh: currentMeshView(),
       sleeping,
       office: live.office,
       backlog: live.backlog,
@@ -351,6 +373,13 @@ export async function createStudio({
     events,
     budget,
     killSwitch,
+    meshPause,
+    meshStatus: async () =>
+      meshView({
+        settings: mesh,
+        paused: await meshPause.paused(),
+        lastPeer: meshLastPeer,
+      }),
     pendingValidations,
     getSnapshot,
   });
@@ -385,6 +414,7 @@ export async function createStudio({
     events,
     budget,
     killSwitch,
+    meshPause,
     tools,
     relationships,
     llm,
