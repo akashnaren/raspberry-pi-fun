@@ -1,6 +1,16 @@
-# Pi 0.2 High
+# pi-pair
 
-Chat for the Raspberry Pi fleet. Stdlib Python only (no pip). It proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4. It listens on **18080**.
+Chat for the pi2, pi3, and pi4 fleet. Stdlib Python only (no pip). It proxies OpenAI-style chat to Ollama or llama.cpp. Listens on **18080**.
+
+## Hardware
+
+pi2, pi3, and pi4 all sit in one custom 3D-printed server rack. Tailscale names are rpi-pi2, rpi-pi3, and rpi-pi4.
+
+![3D-printed vertical rack with three Raspberry Pis](docs/rack/rack-hero-render.jpg)
+
+![Front ports, USB Wi-Fi adapters, and antennas](docs/rack/rack-front-render.jpg)
+
+![Top view of the rack enclosure](docs/rack/rack-top-render.jpg)
 
 ## Layout
 
@@ -14,6 +24,7 @@ pi-pair/
   install.sh            copy to ~/pi-pair and write a user systemd unit
   mesh-hello.sh         curl /health, probe peers, send one chat
   test_pair.py          stdlib unittest
+  docs/rack/            photos of the 3D-printed rack
 ```
 
 `peers.json` is gitignored. `install.sh` creates it from the example only when the Pi does not already have one.
