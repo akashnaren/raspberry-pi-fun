@@ -1,29 +1,14 @@
-# Pi 0.2 High
+# pi-pair
 
-Chat for the Raspberry Pi fleet. Stdlib Python only (no pip). It proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4. It listens on **18080**.
+Chat for the pi2, pi3, and pi4 fleet. Stdlib Python only (no pip). It proxies OpenAI-style chat to Ollama or llama.cpp. Listens on port 18080.
 
-## Layout
-
-```
-pi-pair/
-  mini_chat.py          start here
-  start.sh              same command
-  pair/                 peers, health, chat, stream, HTTP
-  static/               chat HTML, CSS, JS
-  peers.example.json    fleet map (copy to peers.json)
-  install.sh            copy to ~/pi-pair and write a user systemd unit
-  mesh-hello.sh         curl /health, probe peers, send one chat
-  test_pair.py          stdlib unittest
-```
-
-`peers.json` is gitignored. `install.sh` creates it from the example only when the Pi does not already have one.
+pi2, pi3, and pi4 all sit in one custom 3D-printed server rack. Tailscale names are rpi-pi2, rpi-pi3, and rpi-pi4.
 
 ## Start
 
-From a checkout, or from `~/pi-pair` after install:
+From this directory (a checkout of `pi-pair/`, or `~/pi-pair` after install):
 
 ```bash
-cd pi-pair
 python3 mini_chat.py
 ```
 
@@ -95,4 +80,3 @@ JSON fields `pi_target` and `pi_mesh` are accepted and stripped before the worke
 | `MESH_MODEL` | `qwen2.5:0.5b` | Model name when the request omits one |
 | `PI_PAIR_SLOTS` | `3` | Concurrent inference cap |
 | `PI_PAIR_HEALTH_TTL` | `2.5` | Seconds to cache `/health` probes |
-| `PI_PAIR_NAME` | hostname | Written into the user unit by `install.sh` |

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Probe the local Pi 0.2 High router, then each peer with the probe that matches its kind.
+# Probe the local pi-pair router, then each peer with the probe that matches its kind.
 set -euo pipefail
 PORT="${PI_PAIR_PORT:-18080}"
 BASE="http://127.0.0.1:${PORT}"
 MODEL="${MESH_MODEL:-qwen2.5:0.5b}"
 
-echo "=== Pi 0.2 High hello (${BASE}) ==="
+echo "=== pi-pair hello (${BASE}) ==="
 echo "--- /health ---"
 curl -fsS "${BASE}/health"
 echo

@@ -46,7 +46,7 @@ def static_file(url_path: str) -> Path | None:
 
 
 def index_body() -> bytes:
-    """Same substitution the single-file chat used: replace __MODEL__ in the page."""
+    """Replace __MODEL__ in the chat page."""
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     return html.replace("__MODEL__", runtime.MODEL).encode("utf-8")
 
@@ -273,7 +273,7 @@ def make_server(host: str | None = None, port: int | None = None) -> ThreadingHT
 def main() -> None:
     runtime.configure()
     print(
-        f"Pi 0.2 High on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
+        f"pi-pair on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
         f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s (ollama+llamacpp)",
         flush=True,
     )

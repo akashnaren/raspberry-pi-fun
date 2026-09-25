@@ -1,6 +1,5 @@
 let target='auto';
 let sending=false;
-let lastRaw=null;
 const DEFAULT_MODEL=window.MESH_DEFAULT_MODEL||'qwen2.5:0.5b';
 const thread=[]; // {role, content, meta?}
 
@@ -151,7 +150,7 @@ async function refresh(){
       currentModel()+' · '+up+'/'+(j.peers||[]).length+' up';
   }catch(e){
     const b=document.getElementById('banner');
-    b.textContent='Pi 0.2 High offline from this phone — '+friendlyNet(e);
+    b.textContent='pi-pair offline from this phone — '+friendlyNet(e);
     b.className='on';
   }
 }
@@ -335,7 +334,6 @@ async function sendText(t, isRetry){
       const textBody=await r.text();
       let j={};
       try{j=textBody?JSON.parse(textBody):{};}catch(_){j={raw:textBody};}
-      lastRaw=j;
       const ms=Math.round(performance.now()-t0);
       if(!r.ok){
         const msg=j.error||JSON.stringify(j)||('HTTP '+r.status);
@@ -396,7 +394,6 @@ async function sendText(t, isRetry){
         if(delta){ textAccum+=delta; live.setText(textAccum); }
       }
     }
-    lastRaw=lastChunk;
     const ms=Math.round(performance.now()-t0);
     if(msServer==null) msServer=ms;
     if(streamErr || (!r.ok && !textAccum)){
@@ -449,7 +446,7 @@ function autoGrow(ta){
 }
 
 function threadAsMd(){
-  let out='# Pi 0.2 High\n\n';
+  let out='# pi-pair\n\n';
   thread.forEach(t=>{
     out+='### '+(t.role==='user'?'You':'Assistant')+'\n\n'+t.content+'\n\n';
     if(t.meta){
@@ -501,7 +498,7 @@ document.getElementById('btnIo').onclick=()=>setSettingsOpen(true);
 document.getElementById('btnCloseIo').onclick=()=>setSettingsOpen(false);
 document.getElementById('overlay').onclick=()=>setSettingsOpen(false);
 document.getElementById('btnClear').onclick=()=>{
-  thread.length=0; lastRaw=null;
+  thread.length=0;
   const log=document.getElementById('log'); log.innerHTML='';
   const empty=el('div','empty'); empty.id='empty';
   empty.innerHTML='<p>Chat cleared.</p>';

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pi 0.2 High installer — run on each Raspberry Pi (pi2 / pi3 / pi4).
+# pi-pair installer — run on each Raspberry Pi (pi2 / pi3 / pi4).
 # Does NOT prompt for a sudo password: prints the commands you need.
 set -euo pipefail
 
@@ -9,12 +9,11 @@ SERVICE_NAME="pi-pair"
 OLLAMA_MODEL_PRIMARY="qwen2.5:0.5b"
 OLLAMA_MODEL_FALLBACK="tinyllama"
 PAIR_PORT="${PI_PAIR_PORT:-18080}"
-NODE_NAME="${PI_PAIR_NAME:-$(hostname -s)}"
 
-echo "=== Pi 0.2 High install ==="
+echo "=== pi-pair install ==="
 echo "Source:  $ROOT"
 echo "Target:  $INSTALL_DIR"
-echo "Name:    $NODE_NAME"
+echo "Name:    $(hostname -s)"
 echo "Proxy:   0.0.0.0:${PAIR_PORT}"
 echo "Ollama:  0.0.0.0:11434 (pi2 llama.cpp stays on :8080)"
 echo
@@ -68,14 +67,13 @@ mkdir -p "$UNIT_DIR"
 UNIT_FILE="$UNIT_DIR/${SERVICE_NAME}.service"
 cat > "$UNIT_FILE" << UNIT
 [Unit]
-Description=Pi 0.2 High
+Description=pi-pair
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-Environment=PI_PAIR_NAME=$NODE_NAME
 Environment=PI_PAIR_HOST=0.0.0.0
 Environment=PI_PAIR_PORT=$PAIR_PORT
 Environment=PI_PAIR_PEERS=$INSTALL_DIR/peers.json
