@@ -8,11 +8,11 @@ No pip packages. It listens on **18080**.
 
 pi2, pi3, and pi4 all sit in one custom 3D-printed server rack. Tailscale names are rpi-pi2, rpi-pi3, and rpi-pi4.
 
-![3D-printed vertical rack with three Raspberry Pis](pi-pair/docs/rack/rack-hero-studio.jpg)
+![3D-printed vertical rack with three Raspberry Pis](pi-pair/docs/rack/rack-hero-render.jpg)
 
-![Front ports, USB Wi-Fi adapters, and antennas](pi-pair/docs/rack/rack-front-ports-studio.jpg)
+![Front ports, USB Wi-Fi adapters, and antennas](pi-pair/docs/rack/rack-front-render.jpg)
 
-![Top view of the rack enclosure](pi-pair/docs/rack/rack-top-studio.jpg)
+![Top view of the rack enclosure](pi-pair/docs/rack/rack-top-render.jpg)
 
 ## Layout
 

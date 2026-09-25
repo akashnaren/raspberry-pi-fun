@@ -399,9 +399,9 @@ class ProductCopy(unittest.TestCase):
         if "Description=Pi 0.2 High\n" not in install:
             problems.append("install.sh Description is not Pi 0.2 High")
         readme_images = (
-            "rack-hero-studio.jpg",
-            "rack-front-ports-studio.jpg",
-            "rack-top-studio.jpg",
+            "rack-hero-render.jpg",
+            "rack-front-render.jpg",
+            "rack-top-render.jpg",
         )
         pi_readme = (ROOT / "README.md").read_text(encoding="utf-8")
         root_readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
@@ -415,9 +415,9 @@ class ProductCopy(unittest.TestCase):
                 problems.append(f"{label} still says {product}")
             if "3D-printed server rack" not in text:
                 problems.append(f"{label} does not mention the 3D-printed rack")
-            hero = f"{prefix}rack-hero-studio.jpg"
-            if text.find(hero) == -1 or text.find(hero) > text.find(f"{prefix}rack-front-ports-studio.jpg"):
-                problems.append(f"{label} hero is not rack-hero-studio.jpg")
+            hero = f"{prefix}rack-hero-render.jpg"
+            if text.find(hero) == -1 or text.find(hero) > text.find(f"{prefix}rack-front-render.jpg"):
+                problems.append(f"{label} hero is not rack-hero-render.jpg")
             for name in readme_images:
                 rel = f"{prefix}{name}"
                 if f"]({rel})" not in text:
@@ -427,10 +427,13 @@ class ProductCopy(unittest.TestCase):
         for name in (
             "rack-hero.jpg",
             "rack-hero-readme.jpg",
+            "rack-hero-studio.jpg",
             "rack-front-ports.jpg",
             "rack-front-ports-readme.jpg",
+            "rack-front-ports-studio.jpg",
             "rack-top.jpg",
             "rack-top-readme.jpg",
+            "rack-top-studio.jpg",
         ):
             if (ROOT / "docs" / "rack" / name).exists():
                 problems.append(f"old photo still present: docs/rack/{name}")
