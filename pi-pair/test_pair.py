@@ -370,9 +370,9 @@ class PairHttp(unittest.TestCase):
 
 
 class ProductCopy(unittest.TestCase):
-    """User-facing static UI and READMEs must say Pi 0.2 High, not Pi PAIR."""
+    """UI and installer keep Pi 0.2 High. READMEs stay plain and do not say Pi PAIR."""
 
-    def test_static_and_readmes_use_pi_0_2_high(self):
+    def test_static_and_readmes_copy(self):
         product = "Pi 0.2 High"
         files = [
             ROOT / "static" / "index.html",
@@ -395,14 +395,35 @@ class ProductCopy(unittest.TestCase):
             problems.append("static/index.html title is not Pi 0.2 High")
         if f'<div class="brand">{product}</div>' not in html:
             problems.append("static/index.html brand is not Pi 0.2 High")
-        if not (ROOT / "README.md").read_text(encoding="utf-8").startswith(f"# {product}\n"):
-            problems.append("pi-pair/README.md title is not Pi 0.2 High")
-        root_readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
-        if f"**{product}**" not in root_readme:
-            problems.append("README.md does not name Pi 0.2 High")
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
         if "Description=Pi 0.2 High\n" not in install:
             problems.append("install.sh Description is not Pi 0.2 High")
+        readme_images = (
+            "rack-hero-readme.jpg",
+            "rack-front-ports-readme.jpg",
+            "rack-top-readme.jpg",
+        )
+        pi_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        root_readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
+        if not pi_readme.startswith("# pi-pair\n"):
+            problems.append("pi-pair/README.md title is not pi-pair")
+        for label, text, readme_dir, prefix in (
+            ("pi-pair/README.md", pi_readme, ROOT, "docs/rack/"),
+            ("README.md", root_readme, ROOT.parent, "pi-pair/docs/rack/"),
+        ):
+            if product in text:
+                problems.append(f"{label} still says {product}")
+            if "3D-printed server rack" not in text:
+                problems.append(f"{label} does not mention the 3D-printed rack")
+            for name in readme_images:
+                rel = f"{prefix}{name}"
+                if f"]({rel})" not in text:
+                    problems.append(f"{label} missing image {rel}")
+                if not (readme_dir / rel).is_file():
+                    problems.append(f"missing {rel}")
+        for name in ("rack-hero.jpg", "rack-front-ports.jpg", "rack-top.jpg"):
+            if not (ROOT / "docs" / "rack" / name).is_file():
+                problems.append(f"missing docs/rack/{name}")
         self.assertEqual(problems, [], "\n".join(problems))
 
 

@@ -1,8 +1,18 @@
 # raspberry-pi-fun
 
-Local model development for a Raspberry Pi fleet. This repo is **Pi 0.2 High**: a stdlib Python router that proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4.
+Local model development for a Raspberry Pi fleet. pi-pair chat is a stdlib Python router. It proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4.
 
-No pip packages. Pi 0.2 High listens on **18080**.
+No pip packages. It listens on **18080**.
+
+## Hardware
+
+pi2, pi3, and pi4 all sit in one custom 3D-printed server rack. Tailscale names are rpi-pi2, rpi-pi3, and rpi-pi4.
+
+![3D-printed vertical rack with three Raspberry Pis](pi-pair/docs/rack/rack-hero-readme.jpg)
+
+![Front ports, USB Wi-Fi adapters, and antennas](pi-pair/docs/rack/rack-front-ports-readme.jpg)
+
+![Top view of the rack enclosure](pi-pair/docs/rack/rack-top-readme.jpg)
 
 ## Layout
 
@@ -16,6 +26,7 @@ pi-pair/
   install.sh            copy to ~/pi-pair and write a user systemd unit
   mesh-hello.sh         curl /health, probe peers, send one chat
   test_pair.py          stdlib unittest
+  docs/rack/            photos of the 3D-printed rack
   README.md             endpoints, fleet map, environment
 ```
 
