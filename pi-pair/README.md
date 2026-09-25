@@ -6,11 +6,11 @@ Chat for the pi2, pi3, and pi4 fleet. Stdlib Python only (no pip). It proxies Op
 
 pi2, pi3, and pi4 all sit in one custom 3D-printed server rack. Tailscale names are rpi-pi2, rpi-pi3, and rpi-pi4.
 
-![3D-printed vertical rack with three Raspberry Pis](docs/rack/rack-hero-readme.jpg)
+![3D-printed vertical rack with three Raspberry Pis](docs/rack/rack-hero-studio.jpg)
 
-![Front ports, USB Wi-Fi adapters, and antennas](docs/rack/rack-front-ports-readme.jpg)
+![Front ports, USB Wi-Fi adapters, and antennas](docs/rack/rack-front-ports-studio.jpg)
 
-![Top view of the rack enclosure](docs/rack/rack-top-readme.jpg)
+![Top view of the rack enclosure](docs/rack/rack-top-studio.jpg)
 
 ## Layout
 

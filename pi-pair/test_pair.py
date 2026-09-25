@@ -399,9 +399,9 @@ class ProductCopy(unittest.TestCase):
         if "Description=Pi 0.2 High\n" not in install:
             problems.append("install.sh Description is not Pi 0.2 High")
         readme_images = (
-            "rack-hero-readme.jpg",
-            "rack-front-ports-readme.jpg",
-            "rack-top-readme.jpg",
+            "rack-hero-studio.jpg",
+            "rack-front-ports-studio.jpg",
+            "rack-top-studio.jpg",
         )
         pi_readme = (ROOT / "README.md").read_text(encoding="utf-8")
         root_readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
@@ -415,15 +415,25 @@ class ProductCopy(unittest.TestCase):
                 problems.append(f"{label} still says {product}")
             if "3D-printed server rack" not in text:
                 problems.append(f"{label} does not mention the 3D-printed rack")
+            hero = f"{prefix}rack-hero-studio.jpg"
+            if text.find(hero) == -1 or text.find(hero) > text.find(f"{prefix}rack-front-ports-studio.jpg"):
+                problems.append(f"{label} hero is not rack-hero-studio.jpg")
             for name in readme_images:
                 rel = f"{prefix}{name}"
                 if f"]({rel})" not in text:
                     problems.append(f"{label} missing image {rel}")
                 if not (readme_dir / rel).is_file():
                     problems.append(f"missing {rel}")
-        for name in ("rack-hero.jpg", "rack-front-ports.jpg", "rack-top.jpg"):
-            if not (ROOT / "docs" / "rack" / name).is_file():
-                problems.append(f"missing docs/rack/{name}")
+        for name in (
+            "rack-hero.jpg",
+            "rack-hero-readme.jpg",
+            "rack-front-ports.jpg",
+            "rack-front-ports-readme.jpg",
+            "rack-top.jpg",
+            "rack-top-readme.jpg",
+        ):
+            if (ROOT / "docs" / "rack" / name).exists():
+                problems.append(f"old photo still present: docs/rack/{name}")
         self.assertEqual(problems, [], "\n".join(problems))
 
 
