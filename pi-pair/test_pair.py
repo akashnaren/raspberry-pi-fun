@@ -210,6 +210,44 @@ class PairHelpers(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(len(seen), 2)
 
+    def test_health_snapshot_caches_within_ttl(self):
+        previous = runtime.HEALTH_CACHE_TTL
+        runtime.HEALTH_CACHE_TTL = 60
+        calls = {"n": 0}
+
+        def fake(peer, *, alt_ports=None, get_json=None):
+            calls["n"] += 1
+            return True, ["qwen2.5:0.5b"], None, peer["port"]
+
+        previous_peers = list(runtime.PEERS)
+        previous_probe = health.peer_health
+        try:
+            runtime.set_peers(
+                [
+                    {
+                        "name": "pi3",
+                        "host": "10.0.0.1",
+                        "port": 11434,
+                        "kind": "ollama",
+                        "note": "",
+                    }
+                ]
+            )
+            health.peer_health = fake
+            first = health.snapshot_peers()
+            second = health.snapshot_peers()
+            self.assertEqual(calls["n"], 1)
+            self.assertEqual(first, second)
+            self.assertEqual(first[0]["name"], "pi3")
+            self.assertTrue(first[0]["ok"])
+            forced = health.snapshot_peers(force=True)
+            self.assertEqual(calls["n"], 2)
+            self.assertEqual(forced[0]["name"], "pi3")
+        finally:
+            runtime.HEALTH_CACHE_TTL = previous
+            health.peer_health = previous_probe
+            runtime.set_peers(previous_peers)
+
 
 class PairHttp(unittest.TestCase):
     def setUp(self):

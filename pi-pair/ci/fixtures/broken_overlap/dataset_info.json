@@ -1,0 +1,54 @@
+{
+  "pi_flywheel_canned": {
+    "file_name": "canned/canned_seed.jsonl",
+    "map_file": "canned/canned_map.json",
+    "formatting": "canned_map",
+    "columns": {
+      "prompt": "input",
+      "response": "answer"
+    },
+    "tags": ["canned", "fastpath", "seed"],
+    "stage": "serve"
+  },
+  "pi_flywheel_sft_chat": {
+    "file_name": "seed/sft_seed/sft_chat.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": ["sft", "chat", "seed"],
+    "stage": "sft"
+  },
+  "pi_flywheel_sft_alpaca": {
+    "file_name": "seed/sft_seed/sft_alpaca.jsonl",
+    "formatting": "alpaca",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output"
+    },
+    "tags": ["sft", "alpaca", "seed"],
+    "stage": "sft"
+  },
+  "pi_flywheel_preference": {
+    "file_name": "seed/sft_seed/preference_pairs.jsonl",
+    "formatting": "preference",
+    "ranking": true,
+    "columns": {
+      "prompt": "prompt",
+      "chosen": "chosen",
+      "rejected": "rejected"
+    },
+    "tags": ["dpo", "preference", "seed"],
+    "stage": "dpo"
+  },
+  "pi_flywheel_eval_heldout": {
+    "file_name": "seed/eval_heldout/eval_heldout.jsonl",
+    "formatting": "eval_gate",
+    "columns": {
+      "prompt": "input"
+    },
+    "tags": ["eval", "heldout", "gate"],
+    "stage": "eval"
+  }
+}

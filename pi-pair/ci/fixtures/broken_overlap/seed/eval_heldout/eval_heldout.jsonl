@@ -1,0 +1,1 @@
+{"id": "syn-overlap", "input": "hi", "expected_answer_contains": ["mesh", "online"], "rubric": "Friendly greeting acknowledging local mesh; must not claim cloud brain.", "tags": ["greeting", "heldout"], "source": "synthetic-eval-2026-10-02", "gate": "canned_or_sft"}

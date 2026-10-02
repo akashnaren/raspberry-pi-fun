@@ -219,6 +219,8 @@ pi-pair/
   test_pair.py              router tests
   test_flywheel.py          registry, queue, train-then-delete
   docs/rack/                photos of the 3D-printed rack
+  CI-CD.md                  development vs production, secrets, re-run
+  ci/                       data-stack validator and the pi3 deploy script
 ```
 
 `peers.json` is gitignored. `install.sh` creates it from the example only when the Pi does not already have one. The queue, prepared shards, metrics, and adapter manifests are gitignored. The canned map in git is the synthetic seed; a Pi that has already folded new lines keeps its map across reinstall.
@@ -332,3 +334,7 @@ JSON fields `pi_target` and `pi_mesh` are accepted and stripped before a worker 
 | Train config names an unknown dataset | Job exits before the queue is moved. |
 | Held-out text already in the map | Gate fails, queue restored, nothing promoted. |
 | Train job on pi4 or pi2 | Refused. The dataset role is pi3. |
+
+## CI/CD
+
+Pull requests into `main` use the GitHub Environment `development` (lint, unit tests, data-stack validation). A push to `main` uses the GitHub Environment `production`, joins Tailscale with `TS_AUTHKEY`, and syncs this tree plus `data/canned` to pi3. Names of the secrets, the dry-run input, and how to add a check are in [CI-CD.md](CI-CD.md).

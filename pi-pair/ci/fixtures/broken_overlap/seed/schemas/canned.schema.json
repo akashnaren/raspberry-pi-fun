@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/pi-flywheel/canned.schema.json",
+  "title": "PiFlywheelCannedRow",
+  "type": "object",
+  "required": ["input", "answer", "tags", "source"],
+  "additionalProperties": true,
+  "properties": {
+    "id": { "type": "string", "description": "Stable synthetic id" },
+    "input": { "type": "string", "minLength": 1 },
+    "answer": { "type": "string", "minLength": 1 },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "source": { "type": "string" }
+  }
+}

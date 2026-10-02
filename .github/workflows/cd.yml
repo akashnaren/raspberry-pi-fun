@@ -1,0 +1,103 @@
+# Deploy pi-pair and the canned/seed fixtures to pi3 after a merge to main.
+# Bound to the GitHub Environment named "production".
+# ubuntu-latest is not on the tailnet, so the job joins with the official
+# Tailscale action and production secret TS_AUTHKEY before any SSH.
+# Missing TS_AUTHKEY or PI3_SSH_HOST / PI3_SSH_USER / PI3_SSH_KEY fails the job.
+# This workflow does not generate SSH keys or Tailscale keys and does not target pi2 or pi4.
+# When the job ends, tailscale/github-action's post step (dist/logout) runs
+# `tailscale logout` and stops tailscaled. A logout miss is a warning.
+name: cd
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "rsync --dry-run only (no writes on pi3). Still fails if production secrets are missing."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-pi3
+  cancel-in-progress: false
+
+jobs:
+  deploy-pi3:
+    name: deploy pi3
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install rsync and OpenSSH
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rsync openssh-client
+      - name: Validate data stack before any SSH
+        run: python3 pi-pair/ci/validate_data_stack.py --data pi-pair/data --report pi-pair/ci/out/data-stack-report.json
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-stack-validation-report
+          path: pi-pair/ci/out/data-stack-report.json
+          if-no-files-found: error
+      - name: Require Tailscale and SSH secrets
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          PI3_SSH_HOST: ${{ secrets.PI3_SSH_HOST }}
+          PI3_SSH_USER: ${{ secrets.PI3_SSH_USER }}
+          PI3_SSH_KEY: ${{ secrets.PI3_SSH_KEY }}
+        run: |
+          missing=()
+          if [ -z "${TS_AUTHKEY}" ]; then
+            missing+=("TS_AUTHKEY")
+          fi
+          if [ -z "${PI3_SSH_HOST}" ]; then
+            missing+=("PI3_SSH_HOST")
+          fi
+          if [ -z "${PI3_SSH_USER}" ]; then
+            missing+=("PI3_SSH_USER")
+          fi
+          if [ -z "${PI3_SSH_KEY}" ]; then
+            missing+=("PI3_SSH_KEY")
+          fi
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "cd: missing production secrets: ${missing[*]}. Refusing to join the tailnet." >&2
+            exit 1
+          fi
+      - name: Join Tailscale
+        # v4.2.0. post: dist/logout/index.js logs out and stops tailscaled at job end.
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          version: "1.94.2"
+          hostname: gh-cd-${{ github.run_id }}
+          timeout: 2m
+      - name: Deploy to pi3
+        env:
+          PI3_SSH_HOST: ${{ secrets.PI3_SSH_HOST }}
+          PI3_SSH_USER: ${{ secrets.PI3_SSH_USER }}
+          PI3_SSH_KEY: ${{ secrets.PI3_SSH_KEY }}
+          PI3_SSH_PORT: ${{ secrets.PI3_SSH_PORT }}
+          PI3_PAIR_DIR: ${{ vars.PI3_PAIR_DIR }}
+          DEPLOY_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+        run: |
+          args=()
+          if [ "${DEPLOY_DRY_RUN}" = "1" ]; then
+            args+=(--dry-run)
+          fi
+          bash pi-pair/ci/deploy_pi3.sh "${args[@]}"
