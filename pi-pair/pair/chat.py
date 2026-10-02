@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import urllib.request
 
+from pair.guard import require_generative
+from pair.knobs import inference_knobs
+
 
 def _post_json(url: str, payload: dict, timeout: float) -> dict:
     request = urllib.request.Request(
@@ -23,12 +26,19 @@ def llamacpp_model(peer, model: str) -> str:
 
 
 def chat_ollama(peer, model, messages, temperature=0.7, max_tokens=256):
+    require_generative(peer)
+    knobs = inference_knobs()
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
     payload = {
         "model": model,
         "messages": messages,
         "stream": False,
-        "options": {"temperature": temperature, "num_predict": max_tokens},
+        "keep_alive": knobs.get("keep_alive") or "5m",
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "num_ctx": int(knobs.get("num_ctx") or 2048),
+        },
     }
     out = _post_json(url, payload, timeout=180)
     text = (out.get("message") or {}).get("content") or out.get("response") or ""
@@ -36,6 +46,7 @@ def chat_ollama(peer, model, messages, temperature=0.7, max_tokens=256):
 
 
 def chat_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256):
+    require_generative(peer)
     use = llamacpp_model(peer, model)
     url = f"http://{peer['host']}:{peer['port']}/v1/chat/completions"
     payload = {

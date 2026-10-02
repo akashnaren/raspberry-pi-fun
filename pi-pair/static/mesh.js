@@ -112,6 +112,28 @@ function fillModels(peers){
   if(list.includes(prev)) sel.value=prev; else sel.value=DEFAULT_MODEL;
 }
 
+function chipClass(label){
+  const text=String(label||'');
+  if(text==='cache') return 'chip chip-cache';
+  if(text.indexOf('brain')===0 || text==='pi4') return 'chip chip-brain';
+  if(text==='no gen') return 'chip chip-weak';
+  if(text==='Direct') return 'chip chip-direct';
+  return 'chip chip-neutral';
+}
+function chipNode(label){
+  return el('span', chipClass(label), label);
+}
+function paintMode(){
+  const node=document.getElementById('modeChip');
+  if(!node) return;
+  const meshOn=document.getElementById('mesh').checked;
+  let label='Auto';
+  if(!meshOn) label='Direct';
+  else if(target==='pi4') label='pi4';
+  else if(target && target!=='auto') label='no gen';
+  node.textContent=label;
+  node.className=chipClass(label==='pi4'?'brain: pi4':label);
+}
 function fillPeers(peers){
   const sel=document.getElementById('peerSel');
   const meshOn=document.getElementById('mesh').checked;
@@ -127,7 +149,7 @@ function fillPeers(peers){
     if(p.ok) up++;
     const o=document.createElement('option');
     o.value=p.name;
-    const kind=p.kind==='llamacpp'?'llama':(p.kind||'ollama');
+    const kind=p.generative===false?'no gen':(p.kind==='llamacpp'?'llama':(p.kind||'ollama'));
     o.textContent=p.name+(p.ok?'':' (off)')+' · '+kind;
     o.disabled=!p.ok && !meshOn;
     o.title=(p.models||[]).join(', ')||p.note||p.kind||'';
@@ -137,6 +159,7 @@ function fillPeers(peers){
   if(values.includes(prev)) sel.value=prev;
   else if(meshOn){ sel.value='auto'; target='auto'; }
   else if(values.length){ sel.value=values[0]; target=values[0]; }
+  paintMode();
   return up;
 }
 
@@ -165,7 +188,7 @@ function addMsg(role,text,meta,extraClass){
   d.appendChild(body);
   if(meta){
     const m=el('div','meta');
-    if(meta.peer){ const b=el('span','badge',meta.peer); m.appendChild(b); }
+    if(meta.peer){ m.appendChild(chipNode(meta.peer)); }
     const bits=[];
     if(meta.model) bits.push(meta.model);
     if(meta.ms!=null) bits.push(meta.ms+' ms');
@@ -243,7 +266,7 @@ function addLiveBot(){
       d.classList.remove('streaming');
       setBodyContent(body, text, true);
       meta.innerHTML='';
-      if(m && m.peer){ const b=el('span','badge',m.peer); meta.appendChild(b); }
+      if(m && m.peer){ meta.appendChild(chipNode(m.peer)); }
       const bits=[];
       if(m && m.model) bits.push(m.model);
       if(m && m.ms!=null) bits.push(m.ms+' ms');
@@ -287,8 +310,8 @@ async function sendText(t, isRetry){
   try{ await refresh(); think.add('fleet', document.getElementById('status').textContent); }
   catch(e){ think.add('fleet', friendlyNet(e)); }
   think.add('plan', mesh==='on'
-    ?(target==='auto'?'Mesh Auto — round-robin healthy peers':'Mesh pin → '+target)
-    :('Direct pin → '+target));
+    ?(target==='auto'?'Auto — canned map, else pi4':(target==='pi4'?'Pin pi4':'Pin '+target+' — generation will be rejected'))
+    :('Direct Ollama → '+target));
   think.add('params', 'temp '+temp+' · max_tokens '+maxt+' · model '+model);
   think.add('tool: chat', 'via mesh proxy (SSE stream)');
   const t0=performance.now();
@@ -328,6 +351,7 @@ async function sendText(t, isRetry){
     }
     if(lastErr) throw lastErr;
 
+    const chipHeader=r.headers.get('X-Pi-Chip')||'';
     const ct=(r.headers.get('content-type')||'').toLowerCase();
     const isSSE=ct.includes('event-stream');
 
@@ -347,7 +371,7 @@ async function sendText(t, isRetry){
         bot.appendChild(btn);
         return;
       }
-      const peer=j.pi_peer||r.headers.get('X-Pi-Peer')||'?';
+      const peer=j.pi_chip||chipHeader||j.pi_peer||r.headers.get('X-Pi-Peer')||'?';
       const used=j.pi_model||model;
       const msServer=j.pi_ms!=null?j.pi_ms:ms;
       const kind=j.pi_kind||'';
@@ -360,7 +384,7 @@ async function sendText(t, isRetry){
       return;
     }
 
-    let peer=r.headers.get('X-Pi-Peer')||'?';
+    let peer=chipHeader||r.headers.get('X-Pi-Peer')||'?';
     let used=model, kind='', msServer=null;
     think.add('stream', 'SSE live from '+peer);
     const live=addLiveBot();
@@ -388,7 +412,8 @@ async function sendText(t, isRetry){
         try{ j=JSON.parse(payload); }catch(_){ continue; }
         lastChunk=j;
         if(j.error){ streamErr=String(j.error); streamDone=true; break; }
-        if(j.pi_peer) peer=j.pi_peer;
+        if(j.pi_chip) peer=j.pi_chip;
+        else if(j.pi_peer) peer=j.pi_peer;
         if(j.pi_model) used=j.pi_model;
         if(j.pi_kind) kind=j.pi_kind;
         if(j.pi_ms!=null) msServer=j.pi_ms;
@@ -495,8 +520,8 @@ document.getElementById('q').addEventListener('input', e=>autoGrow(e.target));
 document.getElementById('q').addEventListener('keydown', e=>{
   if(e.key==='Enter' && (e.metaKey||e.ctrlKey)){ e.preventDefault(); send(); }
 });
-document.getElementById('mesh').onchange=()=>refresh();
-document.getElementById('peerSel').onchange=e=>{ target=e.target.value; refresh(); };
+document.getElementById('mesh').onchange=()=>{ paintMode(); refresh(); };
+document.getElementById('peerSel').onchange=e=>{ target=e.target.value; paintMode(); refresh(); };
 document.getElementById('btnIo').onclick=()=>setSettingsOpen(true);
 document.getElementById('btnCloseIo').onclick=()=>setSettingsOpen(false);
 document.getElementById('overlay').onclick=()=>setSettingsOpen(false);

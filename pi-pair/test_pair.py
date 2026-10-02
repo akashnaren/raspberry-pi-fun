@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -30,6 +31,9 @@ def _start(httpd: ThreadingHTTPServer) -> None:
 
 
 class OllamaFake(BaseHTTPRequestHandler):
+    posts = 0
+    last_payload = None
+
     def log_message(self, *args):
         pass
 
@@ -44,6 +48,8 @@ class OllamaFake(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
+        type(self).posts += 1
+        type(self).last_payload = payload
         if payload.get("stream"):
             self.send_response(200)
             self.send_header("content-type", "application/x-ndjson")
@@ -92,13 +98,11 @@ class PairHelpers(unittest.TestCase):
         self._peers = [dict(peer) for peer in runtime.PEERS]
         self._health = health.peer_health
         runtime.reset_health()
-        runtime.reset_rr()
 
     def tearDown(self):
         health.peer_health = self._health
         runtime.PEERS = self._peers
         runtime.reset_health()
-        runtime.reset_rr()
 
     def test_example_matches_builtin_fleet(self):
         example = json.loads((ROOT / "peers.example.json").read_text(encoding="utf-8"))
@@ -142,23 +146,32 @@ class PairHelpers(unittest.TestCase):
     def test_pin_does_not_fall_back(self):
         runtime.set_peers(DEFAULT_PEERS)
         health.peer_health = lambda peer: (False, [], "refused", peer["port"])
-        with self.assertRaisesRegex(RuntimeError, "^pi3 offline$"):
+        with self.assertRaisesRegex(RuntimeError, "pi3 cannot be the brain"):
             pick("pi3", True, "qwen2.5:0.5b")
-        with self.assertRaisesRegex(RuntimeError, r"^pi2 offline \(llama.cpp\)$"):
+        with self.assertRaisesRegex(RuntimeError, "pi2 cannot be the brain"):
             pick("pi2", False, "qwen2.5:0.5b")
+        with self.assertRaisesRegex(RuntimeError, "^pi4 offline$"):
+            pick("pi4", True, "qwen2.5:0.5b")
         with self.assertRaisesRegex(RuntimeError, "^unknown peer pi9$"):
             pick("pi9", True, "qwen2.5:0.5b")
 
-    def test_auto_round_robin(self):
-        runtime.set_peers(
-            [
-                {"name": "pi3", "host": "10.0.0.1", "port": 11434, "kind": "ollama", "note": ""},
-                {"name": "pi4", "host": "10.0.0.2", "port": 11434, "kind": "ollama", "note": ""},
-            ]
-        )
+    def test_auto_is_pi4_only(self):
+        runtime.set_peers(DEFAULT_PEERS)
         health.peer_health = lambda peer: (True, ["qwen2.5:0.5b"], None, peer["port"])
         names = [pick("auto", True, "qwen2.5:0.5b")["name"] for _ in range(3)]
-        self.assertEqual(names, ["pi3", "pi4", "pi3"])
+        self.assertEqual(names, ["pi4", "pi4", "pi4"])
+
+    def test_auto_miss_does_not_use_a_healthy_weak_peer(self):
+        runtime.set_peers(DEFAULT_PEERS)
+
+        def probe(peer):
+            if peer["name"] == "pi4":
+                return False, [], "down", peer["port"]
+            return True, ["qwen2.5:0.5b"], None, peer["port"]
+
+        health.peer_health = probe
+        with self.assertRaisesRegex(RuntimeError, "pi4 unreachable on cache miss"):
+            pick("auto", True, "qwen2.5:0.5b")
 
     def test_stream_line_parsers(self):
         self.assertEqual(ollama_delta('{"message":{"content":"hi"},"done":false}'), ("hi", False, False))
@@ -202,8 +215,13 @@ class PairHttp(unittest.TestCase):
     def setUp(self):
         self._peers = [dict(peer) for peer in runtime.PEERS]
         runtime.reset_health()
-        runtime.reset_rr()
         self.servers = []
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["PI_PAIR_DATA"] = self._tmp.name
+        os.environ["PI_PAIR_ROLE"] = "dataset"
+        os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
+        OllamaFake.posts = 0
+        OllamaFake.last_payload = None
 
     def tearDown(self):
         for httpd in self.servers:
@@ -211,7 +229,10 @@ class PairHttp(unittest.TestCase):
             httpd.server_close()
         runtime.PEERS = self._peers
         runtime.reset_health()
-        runtime.reset_rr()
+        os.environ.pop("PI_PAIR_DATA", None)
+        os.environ.pop("PI_PAIR_ROLE", None)
+        os.environ.pop("PI_PAIR_CANNED", None)
+        self._tmp.cleanup()
 
     def _listen(self, handler):
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -243,11 +264,13 @@ class PairHttp(unittest.TestCase):
         runtime.set_peers(
             [
                 {
-                    "name": "pi3",
+                    "name": "pi4",
                     "host": "127.0.0.1",
                     "port": peer_port,
                     "kind": "ollama",
                     "note": "",
+                    "generative": True,
+                    "role": "brain",
                 }
             ]
         )
@@ -279,30 +302,35 @@ class PairHttp(unittest.TestCase):
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get("X-Pi-Peer"), "pi3")
+        self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
+        self.assertEqual(headers.get("X-Pi-Chip"), "brain: pi4")
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
-        self.assertEqual(body["pi_peer"], "pi3")
+        self.assertEqual(body["pi_peer"], "pi4")
+        self.assertEqual(body["pi_chip"], "brain: pi4")
+        self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 2048)
+        self.assertEqual(OllamaFake.last_payload["keep_alive"], "5m")
         stream = urllib.request.Request(
             f"http://127.0.0.1:{port}/v1/chat/completions",
             data=json.dumps(
                 {
                     "model": "qwen2.5:0.5b",
-                    "messages": [{"role": "user", "content": "hi"}],
+                    "messages": [{"role": "user", "content": "Say hi in five words."}],
                     "stream": True,
-                    "pi_target": "pi3",
+                    "pi_target": "pi4",
                     "pi_mesh": "on",
                 }
             ).encode(),
             headers={
                 "content-type": "application/json",
-                "X-Pi-Target": "pi3",
+                "X-Pi-Target": "pi4",
                 "X-Pi-Mesh": "on",
             },
         )
         with urllib.request.urlopen(stream, timeout=5) as response:
             raw = response.read().decode()
             self.assertIn("text/event-stream", response.headers.get("content-type", ""))
-            self.assertEqual(response.headers.get("X-Pi-Peer"), "pi3")
+            self.assertEqual(response.headers.get("X-Pi-Peer"), "pi4")
+            self.assertEqual(response.headers.get("X-Pi-Chip"), "brain: pi4")
         self.assertIn("hel", raw)
         self.assertIn("lo", raw)
         self.assertIn("data: [DONE]", raw)
@@ -317,11 +345,13 @@ class PairHttp(unittest.TestCase):
         runtime.set_peers(
             [
                 {
-                    "name": "pi3",
+                    "name": "pi4",
                     "host": "127.0.0.1",
                     "port": 1,
                     "kind": "ollama",
                     "note": "",
+                    "generative": True,
+                    "role": "brain",
                 }
             ]
         )
@@ -330,24 +360,175 @@ class PairHttp(unittest.TestCase):
             port,
             {
                 "model": "qwen2.5:0.5b",
-                "messages": [{"role": "user", "content": "hi"}],
+                "messages": [{"role": "user", "content": "novel offline probe"}],
                 "stream": False,
             },
-            {"X-Pi-Target": "pi3", "X-Pi-Mesh": "on"},
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 502)
-        self.assertIn("pi3 offline", body["error"])
+        self.assertIn("pi4 offline", body["error"])
 
-    def test_llamacpp_rewrites_model(self):
-        peer_port = self._listen(LlamaFake)
+    def test_cache_hit_skips_pi4(self):
+        peer_port = self._listen(OllamaFake)
+        OllamaFake.posts = 0
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": "Hi!"}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Pi-Chip"), "cache")
+        self.assertEqual(headers.get("X-Pi-Peer"), "cache")
+        self.assertEqual(body["pi_chip"], "cache")
+        self.assertIn("Mesh assistant online", body["choices"][0]["message"]["content"])
+        self.assertEqual(OllamaFake.posts, 0)
+        queue = Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl"
+        self.assertFalse(queue.exists())
+
+    def test_pin_weak_peer_rejects(self):
+        peer_port = self._listen(OllamaFake)
+        OllamaFake.posts = 0
         runtime.set_peers(
             [
                 {
                     "name": "pi2",
                     "host": "127.0.0.1",
                     "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                },
+                {
+                    "name": "pi3",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                },
+            ]
+        )
+        port = self._pair()
+        for name in ("pi2", "pi3"):
+            status, _headers, body = self._post(
+                port,
+                {
+                    "model": "qwen2.5:0.5b",
+                    "messages": [{"role": "user", "content": "Hi!"}],
+                    "stream": False,
+                },
+                {"X-Pi-Target": name, "X-Pi-Mesh": "on"},
+            )
+            self.assertEqual(status, 502)
+            self.assertIn(f"{name} cannot be the brain", body["error"])
+            self.assertIn("does not run a chat model", body["error"])
+        self.assertEqual(OllamaFake.posts, 0)
+
+    def test_cache_miss_pi4_down_does_not_call_pi3(self):
+        peer_port = self._listen(OllamaFake)
+        OllamaFake.posts = 0
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi3",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": False,
+                    "role": "dataset",
+                    "note": "",
+                },
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": 1,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                },
+            ]
+        )
+        port = self._pair()
+        status, _headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": "a question the map has never seen"}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 502)
+        self.assertIn("pi4 unreachable on cache miss", body["error"])
+        self.assertNotIn("pi2", body["error"].split("Refusing")[0])
+        self.assertEqual(OllamaFake.posts, 0)
+
+    def test_direct_ollama_bypasses_cache(self):
+        peer_port = self._listen(OllamaFake)
+        OllamaFake.posts = 0
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": "Hi!"}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Pi-Chip"), "brain: pi4")
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertEqual(OllamaFake.posts, 1)
+        queued = (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl").read_text()
+        self.assertIn("Hi!", queued)
+
+    def test_llamacpp_rewrites_model(self):
+        peer_port = self._listen(LlamaFake)
+        runtime.set_peers(
+            [
+                {
+                    "name": "edge",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
                     "kind": "llamacpp",
-                    "note": "llama.cpp",
+                    "note": "",
+                    "generative": True,
+                    "role": "brain",
                 }
             ]
         )
@@ -360,10 +541,10 @@ class PairHttp(unittest.TestCase):
                 "stream": False,
                 "max_tokens": 8,
             },
-            {"X-Pi-Target": "pi2", "X-Pi-Mesh": "off"},
+            {"X-Pi-Target": "edge", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get("X-Pi-Peer"), "pi2")
+        self.assertEqual(headers.get("X-Pi-Peer"), "edge")
         self.assertEqual(body["pi_model"], "tiny")
         self.assertEqual(body["choices"][0]["message"]["content"], "llama:tiny")
         self.assertEqual(body["pi_kind"], "llamacpp")

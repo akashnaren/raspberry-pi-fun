@@ -124,6 +124,20 @@ header{
   display:inline-flex; align-items:center;
   color:var(--muted); font-weight:500; font-size:11px;
 }
+.chip{
+  display:inline-flex; align-items:center; flex-shrink:0;
+  font-size:11px; font-weight:600; letter-spacing:.01em;
+  padding:3px 8px; border-radius:999px; border:1px solid transparent;
+  line-height:1.2;
+}
+.chip-cache{ color:#d1fae5; background:#123524; border-color:#1c5c3a; }
+.chip-brain{ color:#dbeafe; background:#152238; border-color:#2a4468; }
+.chip-neutral{ color:#e5e5e5; background:#2a2a2a; border-color:#3a3a3a; }
+.chip-direct{ color:#fde68a; background:#2a2416; border-color:#5c4b1f; }
+.chip-weak{ color:#fecaca; background:#3b1515; border-color:#7f1d1d; }
+.empty-kicker{
+  font-size:13px; font-weight:600; color:var(--text); margin:0 0 8px;
+}
 .msg-actions{display:flex; gap:2px; margin-top:6px; flex-wrap:wrap; opacity:0; transition:opacity .12s}
 .msg:hover .msg-actions, .msg:focus-within .msg-actions{opacity:1}
 @media (hover:none){ .msg-actions{opacity:.65} }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pi 0.2 High installer — run on each Raspberry Pi (pi2 / pi3 / pi4).
+# Fleet chat installer — run on each Raspberry Pi (pi2 / pi3 / pi4).
 # Does NOT prompt for a sudo password: prints the commands you need.
 set -euo pipefail
 
@@ -7,23 +7,50 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="${PI_PAIR_DIR:-$HOME/pi-pair}"
 SERVICE_NAME="pi-pair"
 OLLAMA_MODEL_PRIMARY="qwen2.5:0.5b"
-OLLAMA_MODEL_FALLBACK="tinyllama"
 PAIR_PORT="${PI_PAIR_PORT:-18080}"
 NODE_NAME="${PI_PAIR_NAME:-$(hostname -s)}"
 
-echo "=== Pi 0.2 High install ==="
+ROLE="dataset"
+if [[ "$NODE_NAME" == *pi2* ]]; then
+  ROLE="health"
+elif [[ "$NODE_NAME" == *pi3* ]]; then
+  ROLE="dataset"
+elif [[ "$NODE_NAME" == *pi4* ]]; then
+  ROLE="brain"
+fi
+
+echo "=== fleet chat install ==="
 echo "Source:  $ROOT"
 echo "Target:  $INSTALL_DIR"
 echo "Name:    $NODE_NAME"
+echo "Role:    $ROLE"
 echo "Proxy:   0.0.0.0:${PAIR_PORT}"
-echo "Ollama:  0.0.0.0:11434 (pi2 llama.cpp stays on :8080)"
+if [[ "$ROLE" == "brain" ]]; then
+  echo "Ollama:  0.0.0.0:11434 on this board only"
+else
+  echo "Ollama:  not installed here. Generative models run only on pi4."
+fi
 echo
 
-mkdir -p "$INSTALL_DIR/pair" "$INSTALL_DIR/static"
+mkdir -p "$INSTALL_DIR/pair" "$INSTALL_DIR/static" \
+  "$INSTALL_DIR/scripts/lifecycle" "$INSTALL_DIR/scripts/data" "$INSTALL_DIR/scripts/train" "$INSTALL_DIR/scripts/eval" \
+  "$INSTALL_DIR/configs/train" "$INSTALL_DIR/configs/runtime" \
+  "$INSTALL_DIR/docs" \
+  "$INSTALL_DIR/data/canned" "$INSTALL_DIR/data/seed" \
+  "$INSTALL_DIR/data/train/pending" "$INSTALL_DIR/data/train/active" "$INSTALL_DIR/data/train/done" \
+  "$INSTALL_DIR/data/prepared" \
+  "$INSTALL_DIR/adapters/staging" "$INSTALL_DIR/adapters/active"
+
 cp -f "$ROOT/mini_chat.py" "$ROOT/start.sh" "$ROOT/mesh-hello.sh" "$ROOT/README.md" "$INSTALL_DIR/"
 cp -f "$ROOT/pair/"*.py "$INSTALL_DIR/pair/"
 cp -f "$ROOT/static/"* "$INSTALL_DIR/static/"
-chmod +x "$INSTALL_DIR/mini_chat.py" "$INSTALL_DIR/start.sh" "$INSTALL_DIR/mesh-hello.sh"
+cp -a "$ROOT/scripts/." "$INSTALL_DIR/scripts/"
+cp -a "$ROOT/configs/." "$INSTALL_DIR/configs/"
+cp -a "$ROOT/docs/." "$INSTALL_DIR/docs/"
+chmod +x "$INSTALL_DIR/mini_chat.py" "$INSTALL_DIR/start.sh" "$INSTALL_DIR/mesh-hello.sh" \
+  "$INSTALL_DIR/scripts/lifecycle/"*.py "$INSTALL_DIR/scripts/data/"*.py \
+  "$INSTALL_DIR/scripts/train/"*.py "$INSTALL_DIR/scripts/eval/"*.py
+
 if [[ ! -f "$INSTALL_DIR/peers.json" ]]; then
   cp "$ROOT/peers.example.json" "$INSTALL_DIR/peers.json"
   echo "Wrote $INSTALL_DIR/peers.json — edit hosts if this LAN map is wrong."
@@ -32,35 +59,45 @@ else
 fi
 cp -f "$ROOT/peers.example.json" "$INSTALL_DIR/peers.example.json"
 
-if ! command -v ollama >/dev/null 2>&1; then
-  echo
-  echo "Ollama not found. Install with (needs network + sudo once):"
-  echo "  curl -fsSL https://ollama.com/install.sh | sh"
-  echo
-  echo "Then re-run: bash $ROOT/install.sh"
+cp -f "$ROOT/data/dataset_info.json" "$INSTALL_DIR/data/dataset_info.json"
+cp -a "$ROOT/data/seed/." "$INSTALL_DIR/data/seed/"
+if [[ ! -f "$INSTALL_DIR/data/canned/canned_map.json" ]]; then
+  cp -f "$ROOT/data/canned/canned_map.json" "$INSTALL_DIR/data/canned/canned_map.json"
+  echo "Installed canned map."
 else
-  echo "Ollama present: $(command -v ollama)"
+  echo "Keeping existing canned map."
+fi
+if [[ ! -f "$INSTALL_DIR/data/canned/canned_seed.jsonl" ]]; then
+  cp -f "$ROOT/data/canned/canned_seed.jsonl" "$INSTALL_DIR/data/canned/canned_seed.jsonl"
 fi
 
-echo
-echo "--- Make Ollama listen on LAN (run these yourself if needed) ---"
-cat << SUDO
+if [[ "$ROLE" != "brain" ]]; then
+  echo "Skipping model pull on ${NODE_NAME}: generative models run only on pi4."
+else
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo
+    echo "Ollama not found. Install with (needs network + sudo once):"
+    echo "  curl -fsSL https://ollama.com/install.sh | sh"
+    echo
+    echo "Then re-run: bash $ROOT/install.sh"
+  else
+    echo "Ollama present: $(command -v ollama)"
+    echo "Pulling ${OLLAMA_MODEL_PRIMARY}…"
+    ollama pull "$OLLAMA_MODEL_PRIMARY" || echo "WARN: model pull failed — pull manually later on pi4."
+  fi
+  echo
+  echo "--- Make Ollama listen on LAN (run these yourself if needed) ---"
+  cat << 'SUDO'
 sudo mkdir -p /etc/systemd/system/ollama.service.d
 sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null <<'DROPIN'
 [Service]
 Environment="OLLAMA_HOST=0.0.0.0:11434"
+Environment="OLLAMA_NUM_PARALLEL=1"
 DROPIN
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
 SUDO
-echo
-
-if command -v ollama >/dev/null 2>&1; then
-  echo "Pulling ${OLLAMA_MODEL_PRIMARY} (fallback ${OLLAMA_MODEL_FALLBACK})…"
-  if ! ollama pull "$OLLAMA_MODEL_PRIMARY"; then
-    echo "Primary pull failed; trying $OLLAMA_MODEL_FALLBACK"
-    ollama pull "$OLLAMA_MODEL_FALLBACK" || echo "WARN: model pull failed — pull manually later."
-  fi
+  echo
 fi
 
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -76,6 +113,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$INSTALL_DIR
 Environment=PI_PAIR_NAME=$NODE_NAME
+Environment=PI_PAIR_ROLE=$ROLE
 Environment=PI_PAIR_HOST=0.0.0.0
 Environment=PI_PAIR_PORT=$PAIR_PORT
 Environment=PI_PAIR_PEERS=$INSTALL_DIR/peers.json
@@ -100,5 +138,10 @@ echo "  sudo loginctl enable-linger \$USER"
 echo
 echo "Manual start (no systemd):"
 echo "  python3 $INSTALL_DIR/mini_chat.py"
+if [[ "$ROLE" == "dataset" ]]; then
+  echo
+  echo "Train-then-delete (pi3 only, after the queue has misses):"
+  echo "  python3 $INSTALL_DIR/scripts/lifecycle/post_train.py"
+fi
 echo
 echo "Done. Chat UI: http://<this-pi-ip>:${PAIR_PORT}/"

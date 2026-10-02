@@ -6,6 +6,7 @@ import time
 import urllib.request
 
 from pair.config import PI2_ALT_PORTS
+from pair.guard import may_generate
 from pair import runtime
 
 
@@ -24,6 +25,9 @@ def peer_health(peer: dict, *, alt_ports=None, get_json=None):
     last_err = None
     for port in ports:
         try:
+            if kind == "health":
+                fetch(f"http://{peer['host']}:{port}/health", timeout=2.5)
+                return True, [], None, port
             if kind == "llamacpp":
                 data = fetch(f"http://{peer['host']}:{port}/v1/models", timeout=3.0)
                 models = []
@@ -65,6 +69,8 @@ def snapshot_peers(force: bool = False):
                 "models": models,
                 "error": err,
                 "note": peer.get("note") or "",
+                "generative": may_generate(peer),
+                "role": peer.get("role") or "",
             }
         )
     with runtime._health_lock:
