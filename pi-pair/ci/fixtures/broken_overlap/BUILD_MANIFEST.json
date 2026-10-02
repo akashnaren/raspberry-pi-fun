@@ -1,0 +1,27 @@
+{
+  "name": "pi-flywheel-broken-overlap",
+  "date": "2026-10-02",
+  "synthetic": true,
+  "pii": false,
+  "note": "Negative fixture. One held-out input copies a canned input. Schemas and registries match pi-pair/data.",
+  "counts": {
+    "canned": 2,
+    "sft_chat": 1,
+    "sft_alpaca": 1,
+    "preference": 1,
+    "eval_heldout": 1
+  },
+  "locks": {
+    "generate": [
+      "pi4"
+    ],
+    "dataset_and_train": [
+      "pi3"
+    ],
+    "health": [
+      "pi2"
+    ],
+    "train_then_delete": true,
+    "weak_gen": false
+  }
+}

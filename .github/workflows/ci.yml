@@ -1,0 +1,75 @@
+# Pull-request and non-main branch checks for the Pi flywheel.
+# Every job is bound to the GitHub Environment named "development".
+# Do not put production SSH secrets on that environment.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    environment: development
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff==0.13.2
+      - name: Ruff
+        run: ruff check pi-pair
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -x pi-pair/install.sh pi-pair/start.sh pi-pair/mesh-hello.sh pi-pair/ci/deploy_pi3.sh
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    environment: development
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Router, cache, and data-stack tests
+        run: python3 -m unittest discover -s pi-pair -p 'test_*.py' -v
+
+  data-stack:
+    name: data-stack
+    runs-on: ubuntu-latest
+    environment: development
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate canned, SFT, and eval fixtures
+        run: python3 pi-pair/ci/validate_data_stack.py --data pi-pair/data --report pi-pair/ci/out/data-stack-report.json
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-stack-validation-report
+          path: pi-pair/ci/out/data-stack-report.json
+          if-no-files-found: error

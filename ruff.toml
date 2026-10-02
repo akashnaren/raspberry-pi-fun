@@ -1,0 +1,5 @@
+# mini_chat.py and the unittest modules put the pi-pair root on sys.path
+# before importing the stdlib-only `pair` package. That import has to follow
+# the path edit, so E402 is the layout rather than an accident.
+[lint]
+ignore = ["E402"]

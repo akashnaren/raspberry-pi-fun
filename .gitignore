@@ -24,3 +24,5 @@ pi-pair/adapters/staging/*
 !pi-pair/adapters/staging/.gitkeep
 pi-pair/adapters/active/*
 !pi-pair/adapters/active/.gitkeep
+pi-pair/ci/out/
+pi-pair/data/shards/

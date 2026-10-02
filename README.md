@@ -30,6 +30,8 @@ pi-pair/
   mesh-hello.sh         curl /health, probe peers, send one chat
   test_pair.py          stdlib unittest
   docs/rack/            photos of the 3D-printed rack
+  CI-CD.md              development vs production, secrets, re-run
+  ci/                   data-stack validator and the pi3 deploy script
   README.md             roles, dataset layers, endpoints
 ```
 
@@ -79,3 +81,7 @@ systemctl --user enable --now pi-pair.service
 ```
 
 The example fleet, endpoints, and environment variables are in `pi-pair/README.md`.
+
+## CI/CD
+
+Pull requests into `main` run lint, router and health-cache tests, and data-stack validation in the GitHub Environment `development`. A push to `main` syncs `pi-pair` and the canned fixtures to pi3 from the GitHub Environment `production`. Secret names, dry-run, and how to add a check are in [pi-pair/CI-CD.md](pi-pair/CI-CD.md).

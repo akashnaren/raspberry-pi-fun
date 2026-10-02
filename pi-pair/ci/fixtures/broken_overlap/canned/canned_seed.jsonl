@@ -1,0 +1,2 @@
+{"id": "syn-e914d79437f0", "input": "hi", "answer": "Hi. Mesh assistant online. Ask status, roles, or help.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-bdabf7349722", "input": "hello", "answer": "Hello. Ready on the private Pi mesh.", "tags": ["greeting"], "source": "seed"}

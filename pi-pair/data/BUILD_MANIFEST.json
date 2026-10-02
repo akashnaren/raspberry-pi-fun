@@ -1,0 +1,21 @@
+{
+  "name": "pi-flywheel-seeds",
+  "date": "2026-10-02",
+  "synthetic": true,
+  "pii": false,
+  "note": "Counts match the checked-in seeds (canned 111, sft_chat 20, sft_alpaca 6, preference 8, eval_heldout 15). Synthetic only. No household transcripts.",
+  "counts": {
+    "canned": 111,
+    "sft_chat": 20,
+    "sft_alpaca": 6,
+    "preference": 8,
+    "eval_heldout": 15
+  },
+  "locks": {
+    "generate": ["pi4"],
+    "dataset_and_train": ["pi3"],
+    "health": ["pi2"],
+    "train_then_delete": true,
+    "weak_gen": false
+  }
+}

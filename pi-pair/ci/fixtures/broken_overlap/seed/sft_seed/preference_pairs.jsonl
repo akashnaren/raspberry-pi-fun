@@ -1,0 +1,1 @@
+{"id": "syn-93d34745fefa", "prompt": "Who generates answers on this mesh?", "chosen": "Only pi4 generates tokens for the user. pi2 and pi3 are non-generative (cache/train/health).", "rejected": "Any Pi can generate; we load the same chat model on all three for failover.", "tags": ["roles", "safety"], "source": "synthetic-seed-2026-10-02"}

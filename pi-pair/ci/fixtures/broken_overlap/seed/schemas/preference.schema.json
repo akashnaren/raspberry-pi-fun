@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/pi-flywheel/preference.schema.json",
+  "title": "PiFlywheelPreferenceRow",
+  "type": "object",
+  "required": ["prompt", "chosen", "rejected"],
+  "additionalProperties": true,
+  "properties": {
+    "id": { "type": "string" },
+    "prompt": { "type": "string" },
+    "chosen": { "type": "string" },
+    "rejected": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "source": { "type": "string" }
+  }
+}

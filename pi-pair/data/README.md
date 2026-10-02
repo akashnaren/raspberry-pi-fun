@@ -5,3 +5,15 @@
 `canned/canned_map.json` is what the router serves. `canned/canned_seed.jsonl` is the synthetic seed the map was built from. `seed/` holds SFT, preference, held-out eval, and JSON schemas. `train/pending` is the bounded miss queue on pi3. `train/active` and `prepared/` exist only during a job and are deleted when it finishes. `train/done/` keeps tombstones without the raw text.
 
 Do not copy `train/` or `prepared/` onto pi4. pi2 may mirror `canned/canned_map.json` and nothing else in this tree.
+
+`BUILD_MANIFEST.json` records these seed counts and the role locks CI checks: generation is pi4 only, dataset and train are pi3 only, health is pi2 only, train-then-delete stays on, weak generation stays off. The counts are the checked-in seeds (canned 111, chat 20, alpaca 6, preference 8, held-out 15).
+
+```bash
+python3 pi-pair/ci/validate_data_stack.py --data pi-pair/data --report /tmp/data-stack-report.json
+```
+
+Negative check (must fail with `eval_overlaps_canned`):
+
+```bash
+python3 pi-pair/ci/validate_data_stack.py --data pi-pair/ci/fixtures/broken_overlap
+```
