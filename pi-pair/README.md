@@ -2,7 +2,7 @@
 
 Chat router for the pi2, pi3, and pi4 fleet. Stdlib Python only (no pip). It listens on **18080**. A known line is answered from the canned map. Anything the map does not contain is generated on pi4 and only on pi4.
 
-This tree is the software half of that loop. The 2026-10-02 live board prove was RED/PARTIAL. Deploying this code and re-proving it on the boards is Software's job. Nothing in this document claims that prove is green.
+This tree is the software half of that loop. [PR #23](https://github.com/akashnaren/raspberry-pi-fun/pull/23) merged on 2026-10-02 (`45050ee`). After that deploy of main, live end-to-end stages 1–5 on the boards were GREEN. Product Ship was YES the same day, about 13:40 PT. The prove packet for that run is the post-#23 board record at `45050ee` (fleet handoff; not a file in this tree). Hugging Face holds datasets only so far; this document does not claim published model weights.
 
 ## Hardware
 
