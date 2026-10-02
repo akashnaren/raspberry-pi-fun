@@ -337,4 +337,4 @@ JSON fields `pi_target` and `pi_mesh` are accepted and stripped before a worker 
 
 ## CI/CD
 
-Pull requests into `main` use the GitHub Environment `development` (lint, unit tests, data-stack validation). A push to `main` uses the GitHub Environment `production` and syncs this tree plus `data/canned` to pi3. Names of the secrets, the dry-run input, and how to add a check are in [CI-CD.md](CI-CD.md).
+Pull requests into `main` use the GitHub Environment `development` (lint, unit tests, data-stack validation). A push to `main` uses the GitHub Environment `production`, joins Tailscale with `TS_AUTHKEY`, and syncs this tree plus `data/canned` to pi3. Names of the secrets, the dry-run input, and how to add a check are in [CI-CD.md](CI-CD.md).

@@ -84,4 +84,4 @@ The example fleet, endpoints, and environment variables are in `pi-pair/README.m
 
 ## CI/CD
 
-Pull requests into `main` run lint, router and health-cache tests, and data-stack validation in the GitHub Environment `development`. A push to `main` syncs `pi-pair` and the canned fixtures to pi3 from the GitHub Environment `production`. Secret names, dry-run, and how to add a check are in [pi-pair/CI-CD.md](pi-pair/CI-CD.md).
+Pull requests into `main` run lint, router and health-cache tests, and data-stack validation in the GitHub Environment `development`. A push to `main` joins Tailscale with the production secret `TS_AUTHKEY`, then syncs `pi-pair` and the canned fixtures to pi3 from the GitHub Environment `production`. Secret names, dry-run, and how to add a check are in [pi-pair/CI-CD.md](pi-pair/CI-CD.md).

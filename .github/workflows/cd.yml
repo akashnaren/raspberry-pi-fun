@@ -1,7 +1,11 @@
 # Deploy pi-pair and the canned/seed fixtures to pi3 after a merge to main.
 # Bound to the GitHub Environment named "production".
-# Missing PI3_SSH_HOST / PI3_SSH_USER / PI3_SSH_KEY fails the job.
-# This workflow does not generate SSH keys and does not target pi2 or pi4.
+# ubuntu-latest is not on the tailnet, so the job joins with the official
+# Tailscale action and production secret TS_AUTHKEY before any SSH.
+# Missing TS_AUTHKEY or PI3_SSH_HOST / PI3_SSH_USER / PI3_SSH_KEY fails the job.
+# This workflow does not generate SSH keys or Tailscale keys and does not target pi2 or pi4.
+# When the job ends, tailscale/github-action's post step (dist/logout) runs
+# `tailscale logout` and stops tailscaled. A logout miss is a warning.
 name: cd
 
 on:
@@ -27,7 +31,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: write
@@ -51,6 +55,38 @@ jobs:
           name: data-stack-validation-report
           path: pi-pair/ci/out/data-stack-report.json
           if-no-files-found: error
+      - name: Require Tailscale and SSH secrets
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          PI3_SSH_HOST: ${{ secrets.PI3_SSH_HOST }}
+          PI3_SSH_USER: ${{ secrets.PI3_SSH_USER }}
+          PI3_SSH_KEY: ${{ secrets.PI3_SSH_KEY }}
+        run: |
+          missing=()
+          if [ -z "${TS_AUTHKEY}" ]; then
+            missing+=("TS_AUTHKEY")
+          fi
+          if [ -z "${PI3_SSH_HOST}" ]; then
+            missing+=("PI3_SSH_HOST")
+          fi
+          if [ -z "${PI3_SSH_USER}" ]; then
+            missing+=("PI3_SSH_USER")
+          fi
+          if [ -z "${PI3_SSH_KEY}" ]; then
+            missing+=("PI3_SSH_KEY")
+          fi
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "cd: missing production secrets: ${missing[*]}. Refusing to join the tailnet." >&2
+            exit 1
+          fi
+      - name: Join Tailscale
+        # v4.2.0. post: dist/logout/index.js logs out and stops tailscaled at job end.
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          version: "1.94.2"
+          hostname: gh-cd-${{ github.run_id }}
+          timeout: 2m
       - name: Deploy to pi3
         env:
           PI3_SSH_HOST: ${{ secrets.PI3_SSH_HOST }}

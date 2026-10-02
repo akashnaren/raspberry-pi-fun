@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Idempotent sync of pi-pair onto pi3 (dataset, canned map, train-then-delete).
+# The CD workflow joins Tailscale with production secret TS_AUTHKEY before this runs.
+# This script still requires PI3_SSH_* and still refuses pi2 and pi4.
 #
 # Does not run install.sh, does not pull models, does not restart systemd,
 # and does not copy shards, prepared artifacts, adapters, or GGUF weights.

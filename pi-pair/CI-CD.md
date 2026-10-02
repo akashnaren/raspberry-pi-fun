@@ -35,13 +35,15 @@ A dispatch from any other branch skips the job (`github.ref == refs/heads/main`)
 
 On main the job:
 
-1. Validates `pi-pair/data` again. A bad fixture never reaches SSH. The same validation report artifact is uploaded.
-2. Requires the production secrets below. An empty required secret fails the job. The script does not generate a key, and it does not fall back to a key on disk.
-3. `rsync`s `pi-pair/` to pi3. A push to `main` is a real sync. The workflow_dispatch input **dry_run** adds `rsync -n` (no writes) and still requires the secrets.
+1. Validates `pi-pair/data` again. A bad fixture never reaches the tailnet. The same validation report artifact is uploaded.
+2. Requires `TS_AUTHKEY`, `PI3_SSH_HOST`, `PI3_SSH_USER`, and `PI3_SSH_KEY`. An empty required secret fails the job before Tailscale starts. The workflow does not generate a key, and it does not fall back to a key on disk.
+3. Joins the tailnet with the official action `tailscale/github-action` at `v4.2.0` (`d1b6cd204f8dceda5b3eaad7f1f767be390056cd`), Tailscale client `1.94.2`, using production secret `TS_AUTHKEY`. The ephemeral node hostname is `gh-cd-<run id>`.
+4. `rsync`s `pi-pair/` to pi3 over that tailnet. A push to `main` is a real sync. The workflow_dispatch input **dry_run** adds `rsync -n` (no writes) and still requires the secrets. pi2 and pi4 hosts are still refused.
+5. When the job ends, the action's post step logs out of Tailscale and stops `tailscaled`. A logout failure is a warning, so the job result stays the deploy result. An ephemeral node is removed by Tailscale if that logout misses.
 
-Required reviewers on production are optional. Add them in **Settings → Environments → production** if you want a person to approve each deploy. Leave them empty and a merge to main syncs as soon as the secrets exist.
+Required reviewers on production are optional. Add them in **Settings → Environments → production** if you want a person to approve each deploy. Leave them empty and a merge to main joins the tailnet and syncs once `TS_AUTHKEY` is set beside the SSH secrets.
 
-The first CD run after secrets are missing fails on purpose. Fill the secrets, then re-run. Do not treat that failure as a skipped deploy.
+If `TS_AUTHKEY` is empty, CD fails before Tailscale starts. Fill that secret, then re-run. Do not treat that failure as a skipped deploy.
 
 ## What lands on pi3
 
@@ -65,13 +67,31 @@ Create these on the **production** environment (**Settings → Environments → 
 
 | Name | Kind | Required | Value |
 | --- | --- | --- | --- |
-| `PI3_SSH_HOST` | secret | yes | pi3. Tailscale name `rpi-pi3`, or another address the GitHub runner can open SSH to. Not pi2. Not pi4. |
+| `TS_AUTHKEY` | secret | yes | Reusable, ephemeral Tailscale auth key tagged `tag:ci`. Never commit it. |
+| `PI3_SSH_HOST` | secret | yes | pi3 MagicDNS name `rpi-pi3`. Not pi2. Not pi4. Resolved only after the runner joins the tailnet. |
 | `PI3_SSH_USER` | secret | yes | SSH user on pi3. |
 | `PI3_SSH_KEY` | secret | yes | Private key **text**, including the `BEGIN` and `END` lines. Not a file path. |
 | `PI3_SSH_PORT` | secret | no | TCP port. Unset or empty means 22. |
 | `PI3_PAIR_DIR` | variable | no | Remote directory. Unset means `pi-pair`. |
 
-`ubuntu-latest` is not on the tailnet. `rpi-pi3` resolves only inside Tailscale. If the runner cannot route to the host, `ssh-keyscan` fails and the job stops. Host-key checking stays on for that scan (`StrictHostKeyChecking=yes`). The workflow does not take a Tailscale auth key. Add network reachability separately if the Pi is tailnet-only; do not disable the key check to make CD green.
+## Tailscale auth key
+
+`ubuntu-latest` is not on the tailnet. CD joins before SSH, using `authkey: ${{ secrets.TS_AUTHKEY }}`. The key never belongs in git, in a pull request, or on the **development** environment.
+
+Create it in the Tailscale admin console (Keys / Trust credentials):
+
+1. Define `tag:ci` in the tailnet policy, owned by whoever will mint the key.
+2. Allow `tag:ci` to open SSH to pi3 (`rpi-pi3` on port 22, or whatever `PI3_SSH_PORT` is). That grant is in addition to the existing policy.
+3. Generate an auth key that is **reusable**, **ephemeral**, and tagged **`tag:ci`**. If device approval is on, make the key pre-approved.
+4. Store the key as the **production** environment secret named exactly `TS_AUTHKEY`.
+
+Reusable means later CD runs can use the same secret. Ephemeral means the GitHub runner's node is removed when it logs out or drops offline, so CI nodes do not pile up next to the Pis. The tag lives on the key. This workflow does not pass a `tags:` input, because that input is for an OAuth client.
+
+Tailscale's action marks `authkey` as deprecated in favor of an OAuth client (`oauth-client-id`, `oauth-secret`, and `tags: tag:ci`). This job uses `TS_AUTHKEY` so there is one secret to set. Do not commit either kind of credential.
+
+The pinned action is `tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd` (tag `v4.2.0`). The client version in the workflow is `1.94.2`, that release's default. Its post step runs `sudo tailscale logout`, then stops `tailscaled` and runs `tailscaled --cleanup`. That is best-effort: a cleanup error is a warning and does not flip a green deploy to red.
+
+After the runner is on the tailnet, `deploy_pi3.sh` is unchanged: it still requires the SSH secrets, still refuses pi2 and pi4 (including `10.0.0.180` and `10.0.0.166`), and still keyscans with `StrictHostKeyChecking=yes`. Set `PI3_SSH_HOST` to `rpi-pi3`. A LAN address is not reachable from the runner.
 
 Each deploy keyscans the host and then requires that scan's key. That rejects an empty scan. It does not remember a key from a previous run, because the runner disk is new each time.
 
@@ -121,20 +141,6 @@ python3 pi-pair/ci/validate_data_stack.py --data pi-pair/ci/fixtures/broken_over
 
 Eval inputs are folded (case and whitespace) and compared to canned inputs. Overlap fails the data-stack job. The committed proof is `pi-pair/ci/fixtures/broken_overlap/`.
 
-## Creating the environments
+## Environments
 
-These two environments were **not** created from this change. `PUT /repos/akashnaren/raspberry-pi-fun/environments/{development,production}` returned **403** `Resource not accessible by integration` (the token used here cannot administer environments). A follow-up list showed `total_count: 0`.
-
-GitHub may create an environment the first time a workflow job names it, if Actions is allowed to. If a job instead stops because the environment is missing, a repo admin runs the commands below (no reviewers, no wait timer):
-
-```bash
-gh api --method PUT -H "Accept: application/vnd.github+json" \
-  /repos/akashnaren/raspberry-pi-fun/environments/development \
-  -f wait_timer=0
-
-gh api --method PUT -H "Accept: application/vnd.github+json" \
-  /repos/akashnaren/raspberry-pi-fun/environments/production \
-  -f wait_timer=0
-```
-
-Production reviewers stay a UI choice after the environment exists. Do not add reviewers to development. A reviewer on development makes every pull-request check wait for a person.
+`development` and `production` both exist on this repository. Software set `PI3_SSH_HOST`, `PI3_SSH_USER`, and `PI3_SSH_KEY` on **production**. `PI3_SSH_PORT` stays optional. `TS_AUTHKEY` is the remaining production secret; add it with the steps above. Do not add reviewers to development. Production reviewers stay a UI choice.
