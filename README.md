@@ -1,6 +1,6 @@
 # raspberry-pi-fun
 
-Local model development for a Raspberry Pi fleet. pi-pair chat is a stdlib Python router. It proxies OpenAI-style chat to Ollama or llama.cpp on pi2, pi3, and pi4.
+Local model development for a Raspberry Pi fleet. The chat router in `pi-pair/` serves a canned map first and sends generative misses only to pi4. pi2 and pi3 do not run chat models. The board roles, dataset layers, and train-then-delete job are documented in `pi-pair/README.md`.
 
 No pip packages. It listens on **18080**.
 
@@ -23,11 +23,14 @@ pi-pair/
   pair/                 peers, health, chat, stream, HTTP
   static/               chat HTML, CSS, JS
   peers.example.json    fleet map (copy to peers.json)
+  data/                 canned map, seeds, registry, train queue
+  configs/              train config and pi4 inference knobs
+  scripts/              prepare, train, eval gate, delete shards
   install.sh            copy to ~/pi-pair and write a user systemd unit
   mesh-hello.sh         curl /health, probe peers, send one chat
   test_pair.py          stdlib unittest
   docs/rack/            photos of the 3D-printed rack
-  README.md             endpoints, fleet map, environment
+  README.md             roles, dataset layers, endpoints
 ```
 
 `peers.json` is gitignored. `install.sh` creates it from the example only when the Pi does not already have one.

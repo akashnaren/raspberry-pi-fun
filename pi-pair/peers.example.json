@@ -1,5 +1,29 @@
 [
-  {"name": "pi2", "host": "10.0.0.180", "port": 8080, "kind": "llamacpp", "note": "llama.cpp"},
-  {"name": "pi3", "host": "10.0.0.228", "port": 11434, "kind": "ollama", "note": ""},
-  {"name": "pi4", "host": "10.0.0.166", "port": 11434, "kind": "ollama", "note": ""}
+  {
+    "name": "pi2",
+    "host": "10.0.0.180",
+    "port": 18080,
+    "kind": "health",
+    "note": "armv7 ~1GB; health and read-only canned mirror",
+    "generative": false,
+    "role": "health"
+  },
+  {
+    "name": "pi3",
+    "host": "10.0.0.228",
+    "port": 18080,
+    "kind": "health",
+    "note": "arm64 ~1GB; dataset, queue, and train-then-delete",
+    "generative": false,
+    "role": "dataset"
+  },
+  {
+    "name": "pi4",
+    "host": "10.0.0.166",
+    "port": 11434,
+    "kind": "ollama",
+    "note": "",
+    "generative": true,
+    "role": "brain"
+  }
 ]

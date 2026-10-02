@@ -11,3 +11,16 @@ venv/
 *.ggml
 uploads/
 pi-pair/peers.json
+pi-pair/data/metrics.json
+pi-pair/data/train/pending/*
+!pi-pair/data/train/pending/.gitkeep
+pi-pair/data/train/active/*
+!pi-pair/data/train/active/.gitkeep
+pi-pair/data/train/done/*
+!pi-pair/data/train/done/.gitkeep
+pi-pair/data/prepared/*
+!pi-pair/data/prepared/.gitkeep
+pi-pair/adapters/staging/*
+!pi-pair/adapters/staging/.gitkeep
+pi-pair/adapters/active/*
+!pi-pair/adapters/active/.gitkeep

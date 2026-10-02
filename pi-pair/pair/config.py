@@ -9,24 +9,29 @@ ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
 
 DEFAULT_MODEL = "qwen2.5:0.5b"
-# pi2 is llama.cpp on :8080 and sometimes answers Ollama-shaped probes on :11434.
+# Legacy llama.cpp probe, only if a peer is still kind llamacpp and named pi2.
 PI2_ALT_PORTS = [8080, 11434]
+WEAK_NAMES = frozenset({"pi2", "pi3"})
 
-# Fleet the Pi chat used when peers were hardcoded. peers.json overrides this.
+# Fleet map. Generative completion is pi4 only; normalize_peer enforces that.
 DEFAULT_PEERS = [
     {
         "name": "pi2",
         "host": "10.0.0.180",
-        "port": 8080,
-        "kind": "llamacpp",
-        "note": "llama.cpp",
+        "port": 18080,
+        "kind": "health",
+        "note": "armv7 ~1GB; health and read-only canned mirror",
+        "generative": False,
+        "role": "health",
     },
     {
         "name": "pi3",
         "host": "10.0.0.228",
-        "port": 11434,
-        "kind": "ollama",
-        "note": "",
+        "port": 18080,
+        "kind": "health",
+        "note": "arm64 ~1GB; dataset, queue, and train-then-delete",
+        "generative": False,
+        "role": "dataset",
     },
     {
         "name": "pi4",
@@ -34,6 +39,8 @@ DEFAULT_PEERS = [
         "port": 11434,
         "kind": "ollama",
         "note": "",
+        "generative": True,
+        "role": "brain",
     },
 ]
 
@@ -58,6 +65,13 @@ def health_ttl() -> float:
     return float(os.environ.get("PI_PAIR_HEALTH_TTL", "2.5"))
 
 
+def data_root() -> Path:
+    raw = os.environ.get("PI_PAIR_DATA", "").strip()
+    if raw:
+        return Path(raw)
+    return ROOT / "data"
+
+
 def normalize_peer(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("peer entry must be an object")
@@ -66,16 +80,29 @@ def normalize_peer(raw: dict) -> dict:
     if not name or not host:
         raise ValueError("peer needs name and host")
     kind = str(raw.get("kind") or "ollama").strip() or "ollama"
-    if kind not in ("ollama", "llamacpp"):
+    if kind not in ("ollama", "llamacpp", "health"):
         raise ValueError(f"unknown peer kind {kind}")
     if "port" not in raw or raw.get("port") in ("", None):
         raise ValueError(f"{name} needs port")
+    if "generative" in raw:
+        generative = bool(raw.get("generative"))
+    else:
+        generative = name == "pi4"
+    if name in WEAK_NAMES:
+        generative = False
+    role = str(raw.get("role") or "").strip()
+    if not role:
+        role = {"pi2": "health", "pi3": "dataset", "pi4": "brain"}.get(name, "")
+    if name in WEAK_NAMES:
+        role = "health" if name == "pi2" else "dataset"
     return {
         "name": name,
         "host": host,
         "port": int(raw["port"]),
         "kind": kind,
         "note": str(raw.get("note") or ""),
+        "generative": generative,
+        "role": role,
     }
 
 

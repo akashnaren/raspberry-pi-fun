@@ -1,0 +1,5 @@
+{
+  "dataset": "pi_flywheel_canned",
+  "map_file": "data/canned/canned_map.json",
+  "seed_file": "data/canned/canned_seed.jsonl"
+}

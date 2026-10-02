@@ -5,6 +5,8 @@ import json
 import urllib.request
 
 from pair.chat import llamacpp_model
+from pair.guard import require_generative
+from pair.knobs import inference_knobs
 
 
 def ollama_delta(line: str):
@@ -50,12 +52,19 @@ def _open(url: str, payload: dict, timeout: float):
 
 def stream_ollama(peer, model, messages, temperature=0.7, max_tokens=256):
     """Yield text deltas from Ollama /api/chat with stream:true (NDJSON)."""
+    require_generative(peer)
+    knobs = inference_knobs()
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
     payload = {
         "model": model,
         "messages": messages,
         "stream": True,
-        "options": {"temperature": temperature, "num_predict": max_tokens},
+        "keep_alive": knobs.get("keep_alive") or "5m",
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "num_ctx": int(knobs.get("num_ctx") or 2048),
+        },
     }
     with _open(url, payload, timeout=180) as response:
         while True:
@@ -73,6 +82,7 @@ def stream_ollama(peer, model, messages, temperature=0.7, max_tokens=256):
 
 def stream_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256):
     """Yield text deltas from llama.cpp OpenAI SSE /v1/chat/completions stream:true."""
+    require_generative(peer)
     use = llamacpp_model(peer, model)
     url = f"http://{peer['host']}:{peer['port']}/v1/chat/completions"
     payload = {

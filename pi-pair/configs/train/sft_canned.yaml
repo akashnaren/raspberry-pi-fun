@@ -1,0 +1,10 @@
+id: sft_canned
+stage: sft
+base_model: qwen2.5:0.5b
+delete_shards: true
+datasets:
+  - pi_flywheel_canned
+  - pi_flywheel_sft_chat
+  - pi_flywheel_sft_alpaca
+  - pi_flywheel_preference
+eval: pi_flywheel_eval_heldout

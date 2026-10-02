@@ -21,6 +21,9 @@ with urllib.request.urlopen(base + "/health", timeout=5) as response:
     health = json.loads(response.read().decode())
 for peer in health.get("peers") or []:
     kind = peer.get("kind") or "ollama"
+    if peer.get("generative") is False or kind == "health":
+        print(f"{peer['name']} {kind} no-gen")
+        continue
     path = "/v1/models" if kind == "llamacpp" else "/api/tags"
     url = f"http://{peer['host']}:{peer['port']}{path}"
     try:

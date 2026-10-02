@@ -1,0 +1,111 @@
+{"id": "syn-e914d79437f0", "input": "hi", "answer": "Hi. Mesh assistant online. Ask status, roles, or help.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-bdabf7349722", "input": "hello", "answer": "Hello. Ready on the private Pi mesh.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-72f7c36f8e1d", "input": "hey", "answer": "Hey. What do you need from the mesh?", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-f0af7f701206", "input": "good morning", "answer": "Good morning. Cache path warm; pi4 available for novel turns.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-b88d166da727", "input": "good evening", "answer": "Good evening. Local mesh only — no cloud round-trip required.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-be12e120890f", "input": "thanks", "answer": "You're welcome.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-2187d8c20c62", "input": "thank you", "answer": "Happy to help.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-c9d84c39188f", "input": "bye", "answer": "Bye. Mesh stays local.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-e89f6a8f1ada", "input": "goodbye", "answer": "Goodbye. Canned map and pi4 remain on-prem.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-324ccae6b7e1", "input": "who are you", "answer": "Local mesh assistant for this 3-Pi fleet: cache-first, pi4-only generate.", "tags": ["greeting", "identity"], "source": "seed"}
+{"id": "syn-6b3f7d246e0c", "input": "what can you do", "answer": "Answer known turns from the canned map instantly; route novel turns to pi4; never generate on pi2/pi3.", "tags": ["help", "identity"], "source": "seed"}
+{"id": "syn-f1f417551f2f", "input": "status", "answer": "Mesh nominal: pi4 generative brain; pi3 cache/train host; pi2 health/mirror.", "tags": ["status", "mesh"], "source": "seed"}
+{"id": "syn-f4ed4cdc78de", "input": "mesh status", "answer": "Private 3-Pi mesh up. Cache probe first; misses go to pi4 only.", "tags": ["status", "mesh"], "source": "seed"}
+{"id": "syn-4d526fd7524a", "input": "are you online", "answer": "Yes — local mesh path online.", "tags": ["status"], "source": "seed"}
+{"id": "syn-ffd3a3a24aa1", "input": "ping", "answer": "pong — local.", "tags": ["status"], "source": "seed"}
+{"id": "syn-2075ea7d37ff", "input": "health", "answer": "Health: entry/health on pi2; dataset/train on pi3; generate on pi4. No weak-peer decode.", "tags": ["status", "health"], "source": "seed"}
+{"id": "syn-0f7ada919a64", "input": "pi4 status", "answer": "pi4 is the sole generative brain (~8 GB class). Chat weights live here only.", "tags": ["status", "pi4"], "source": "seed"}
+{"id": "syn-f208797f5703", "input": "pi3 status", "answer": "pi3 hosts canned dataset, train queue, and train→delete. Non-generative.", "tags": ["status", "pi3"], "source": "seed"}
+{"id": "syn-37b4d3d2e1cf", "input": "pi2 status", "answer": "pi2: mesh entry, health, optional canned mirror. Never loads chat weights for users.", "tags": ["status", "pi2"], "source": "seed"}
+{"id": "syn-cbbda312ff49", "input": "is pi4 up", "answer": "Assume pi4 is the only legal generate host. If unreachable on a miss, fail closed — do not demote.", "tags": ["status", "pi4"], "source": "seed"}
+{"id": "syn-7376e667f690", "input": "is the cache warm", "answer": "Canned map is the warm path: known inputs return predetermined answers without decode.", "tags": ["status", "cache"], "source": "seed"}
+{"id": "syn-75d7d07e5049", "input": "any alerts", "answer": "No synthetic alerts in seed. Check pi2 health endpoint for live probes.", "tags": ["status", "health"], "source": "seed"}
+{"id": "syn-52cf9f601da5", "input": "who generates", "answer": "Only pi4 generates tokens for the user. pi2 and pi3 never do.", "tags": ["roles", "arch"], "source": "seed"}
+{"id": "syn-c4fdf5400d7f", "input": "which board is the brain", "answer": "pi4 is the sole generative brain.", "tags": ["roles", "arch"], "source": "seed"}
+{"id": "syn-61c780323421", "input": "can pi3 chat", "answer": "No. pi3 serves cache/dataset/train→delete. User-facing generate is disabled.", "tags": ["roles", "pi3"], "source": "seed"}
+{"id": "syn-153a16e4d1b5", "input": "can pi2 chat", "answer": "No. pi2 is health/mirror/entry only. Generative fallback to pi2 is forbidden.", "tags": ["roles", "pi2"], "source": "seed"}
+{"id": "syn-b4d4dab5f78e", "input": "what is the fast path", "answer": "Normalize input → probe canned map on pi3 (or pi2 mirror) → return stored answer. No neural decode.", "tags": ["arch", "cache"], "source": "seed"}
+{"id": "syn-25c140e0d537", "input": "what is a cache hit", "answer": "A predetermined input→answer match served without calling pi4.", "tags": ["arch", "cache"], "source": "seed"}
+{"id": "syn-8ce3bf6059ed", "input": "what is a miss", "answer": "Input not in the map. Forward once to pi4; log exchange into the bounded train queue.", "tags": ["arch", "cache"], "source": "seed"}
+{"id": "syn-b13eb79bd236", "input": "what happens if pi4 is down", "answer": "Cache hits still serve. Novel misses fail closed with a named error — never demote generate to pi2/pi3.", "tags": ["arch", "fail"], "source": "seed"}
+{"id": "syn-f2227f705209", "input": "explain train then delete", "answer": "Miss shards land in a bounded queue on pi3; a job updates the map/adapters; raw shards are deleted after success.", "tags": ["arch", "train"], "source": "seed"}
+{"id": "syn-9ae4125fca4e", "input": "where do weights live", "answer": "Chat weights (and optional adapters after promote) on pi4 only. pi3 may stage adapters; pi2 does not hold gen weights.", "tags": ["arch", "storage"], "source": "seed"}
+{"id": "syn-41f8e36c2720", "input": "where is the dataset", "answer": "Primary canned map and train queue on pi3; optional read-only mirror on pi2; box/HF hold public seed mirrors.", "tags": ["arch", "storage"], "source": "seed"}
+{"id": "syn-9b2d7c3a1213", "input": "office closed cycle", "answer": "Seed/pre-train map → deploy weights on pi4 → chat/collect → post-train → delete shards → repeat.", "tags": ["arch", "cycle"], "source": "seed"}
+{"id": "syn-4466df7d369e", "input": "help", "answer": "Try: status, mesh status, who generates, what is the fast path, train then delete, or ask a novel question for pi4.", "tags": ["help"], "source": "seed"}
+{"id": "syn-14615f26dbfd", "input": "commands", "answer": "Common canned: hi, status, health, pi2/pi3/pi4 status, who generates, fast path, help.", "tags": ["help"], "source": "seed"}
+{"id": "syn-0f8fe0b6660e", "input": "how do i check health", "answer": "Ask 'health' or 'mesh status', or read pi2's health endpoint (Software owns wiring).", "tags": ["help", "health"], "source": "seed"}
+{"id": "syn-941af0e8458e", "input": "how do i add a canned answer", "answer": "Promote frequent misses via the train queue on pi3, or seed curated rows into the canned JSONL registry.", "tags": ["help", "dataset"], "source": "seed"}
+{"id": "syn-743a3197d44d", "input": "how does routing work", "answer": "Cache probe first. Hit → canned. Miss → pi4 only. Pin weak as brain → hard reject. Primary down on miss → named fail.", "tags": ["help", "arch"], "source": "seed"}
+{"id": "syn-02e03e464e71", "input": "how do i train", "answer": "Enqueue miss exchanges on pi3; run SFT/map-update job from prepared artifacts; eval gate; promote; delete raw shards.", "tags": ["help", "train"], "source": "seed"}
+{"id": "syn-cdd84900d79b", "input": "what model runs on pi4", "answer": "Start with compact chat (e.g. qwen2.5:0.5b class); graduate ~1B after health. temperature ~0.6–0.8; num_ctx ~2048; parallel 1.", "tags": ["help", "model"], "source": "seed"}
+{"id": "syn-6bf87db2a584", "input": "is this cloud", "answer": "No. Private on-prem Pi mesh. Public HF/Kaggle seeds are optional mirrors of synthetic datasets only.", "tags": ["help", "privacy"], "source": "seed"}
+{"id": "syn-a185ee190ea0", "input": "privacy", "answer": "Conversations stay on-mesh. Train shards are ephemeral (train→delete). No real user PII in hub seeds.", "tags": ["help", "privacy"], "source": "seed"}
+{"id": "syn-3265c41b7f92", "input": "latency", "answer": "Canned hits target sub-second local I/O. Misses pay prefill+decode on pi4.", "tags": ["help", "perf"], "source": "seed"}
+{"id": "syn-4ac18fdb4fa2", "input": "restart train queue", "answer": "Train queue control is on pi3 (Software). This canned reply confirms the policy: bounded pending → prepare → train → delete.", "tags": ["ops", "train"], "source": "seed"}
+{"id": "syn-48e1fc6ba965", "input": "show roles", "answer": "pi4: generate. pi3: cache/dataset/train→delete. pi2: health/entry/optional mirror.", "tags": ["roles"], "source": "seed"}
+{"id": "syn-c71bb7d1a001", "input": "list boards", "answer": "Fleet: pi2 (weak/health), pi3 (dataset/train), pi4 (brain).", "tags": ["roles", "mesh"], "source": "seed"}
+{"id": "syn-a5aac1caabc5", "input": "what is pi-pair", "answer": "pi-pair is the mesh software path: router, canned map, train lifecycle, pi4-only generate.", "tags": ["help", "software"], "source": "seed"}
+{"id": "syn-31a105e90fef", "input": "adapter promote", "answer": "Adapters stage on pi3, pass eval gate (held-out + canned), then activate for pi4 only.", "tags": ["train", "eval"], "source": "seed"}
+{"id": "syn-e2ac730e1148", "input": "eval gate", "answer": "Before promote: run held-out eval + canned regression. Fail → do not activate on pi4.", "tags": ["train", "eval"], "source": "seed"}
+{"id": "syn-c6b616bcc69e", "input": "sandbox", "answer": "Train jobs isolate from chat OOM: train on pi3 (or HF Jobs for heavy CPT); chat path never shares train memory.", "tags": ["ops", "sandbox"], "source": "seed"}
+{"id": "syn-3129f1c766fe", "input": "openai", "answer": "This mesh does not require OpenAI. Local pi4 generate + canned map.", "tags": ["help"], "source": "seed"}
+{"id": "syn-b880cd05278e", "input": "openrouter", "answer": "OpenRouter is parked unless explicitly greenlit. Default is on-Pi.", "tags": ["help", "policy"], "source": "seed"}
+{"id": "syn-f62fe825b281", "input": "hi there", "answer": "Hi there. Mesh assistant ready.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-cb2daba5e9a7", "input": "hello there", "answer": "Hello there. Ask status or help.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-02ebedf8d868", "input": "yo", "answer": "Yo. Local mesh online.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-129339a52677", "input": "sup", "answer": "All good locally. Status or help?", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-be1828379742", "input": "how are you", "answer": "Running on the mesh. Cache first; pi4 for novelty.", "tags": ["greeting", "status"], "source": "seed"}
+{"id": "syn-30e605b8be4d", "input": "what's up", "answer": "Mesh idle-ready. Try status or a novel question.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-315901c08a79", "input": "system status", "answer": "System: cache path on pi3; health on pi2; generate on pi4.", "tags": ["status"], "source": "seed"}
+{"id": "syn-e789eea5efe2", "input": "fleet status", "answer": "Fleet: 3 boards, asymmetric roles, cache-first auto path.", "tags": ["status", "mesh"], "source": "seed"}
+{"id": "syn-d708d379dfe3", "input": "board roles", "answer": "Asymmetric by measurement: only pi4 generates; pi3 dataset/train; pi2 health/mirror.", "tags": ["roles"], "source": "seed"}
+{"id": "syn-e0c9cce8be26", "input": "why not peer generate", "answer": "Weak boards thrash or reject the installer. Equal-peer generate advertises capability they lack.", "tags": ["arch", "why"], "source": "seed"}
+{"id": "syn-286d0eb59b49", "input": "why cache first", "answer": "Recurring turns become I/O the ~1 GB class can serve; avoids burning pi4 on repeats.", "tags": ["arch", "why"], "source": "seed"}
+{"id": "syn-38acaafe37db", "input": "kv cache", "answer": "KV cache is runtime working memory on pi4 during a miss decode — not the durable dataset map.", "tags": ["arch", "nn"], "source": "seed"}
+{"id": "syn-3babec04af27", "input": "working memory", "answer": "Working memory = weights + activations + KV on pi4 for the current context. Ephemeral vs dataset layer.", "tags": ["arch", "nn"], "source": "seed"}
+{"id": "syn-04460ed3b952", "input": "dataset layer", "answer": "Persistent input→answer map on pi3 (mirror optional on pi2). Hits skip the transformer.", "tags": ["arch", "dataset"], "source": "seed"}
+{"id": "syn-ca6a0bdec091", "input": "training layer", "answer": "Bounded miss queue → adapt map/adapters → delete shards. Not an unbounded chat archive.", "tags": ["arch", "train"], "source": "seed"}
+{"id": "syn-ed8ea9a91682", "input": "do you use cnn for chat", "answer": "No. Chat decode is a transformer on pi4. CNNs are deferred to optional sensor/vision adjacency.", "tags": ["arch", "nn"], "source": "seed"}
+{"id": "syn-cf36b630733a", "input": "transformer", "answer": "Decoder-style transformer on pi4 only: tokenize → embed → attention/FFN → logits → sample.", "tags": ["arch", "nn"], "source": "seed"}
+{"id": "syn-19b3f5d742c2", "input": "temperature", "answer": "pi4 decode uses moderate temperature (~0.6–0.8). Canned hits ignore temperature (no sampler).", "tags": ["model"], "source": "seed"}
+{"id": "syn-73b6a1e210a4", "input": "context length", "answer": "Interactive context ~2048 tokens on pi4 to protect RAM and latency.", "tags": ["model"], "source": "seed"}
+{"id": "syn-44149ce3b929", "input": "gguf", "answer": "Edge runtime target is quantized weights (GGUF/llama.cpp-class) on pi4 after export.", "tags": ["model", "export"], "source": "seed"}
+{"id": "syn-96e68fc485dc", "input": "lora", "answer": "Prefer LoRA/QLoRA adapters trained on pi3 (or off-mesh), promote after eval, attach/merge for pi4.", "tags": ["train"], "source": "seed"}
+{"id": "syn-69d1464c6c0a", "input": "delete shards", "answer": "After successful map/adapter update, delete raw train shards on pi3; keep metrics + compact map.", "tags": ["train", "storage"], "source": "seed"}
+{"id": "syn-45b3d989eaa8", "input": "sd card", "answer": "Flash is limited: train→delete and compact canned map protect SD lifetime and privacy.", "tags": ["storage"], "source": "seed"}
+{"id": "syn-082e9a22f341", "input": "tailscale", "answer": "Mesh may use Tailscale names (rpi-pi2/3/4). Software owns live SSH/routing.", "tags": ["ops", "mesh"], "source": "seed"}
+{"id": "syn-9dd8dc59479e", "input": "chat ui", "answer": "Local Pi IP chat UI is the shared employee workspace; traffic feeds the train queue.", "tags": ["ops", "workspace"], "source": "seed"}
+{"id": "syn-fdcc8447ed79", "input": "employee workspace", "answer": "All agents use the local chat UI daily — same path humans use — so misses become train signal.", "tags": ["ops", "workspace"], "source": "seed"}
+{"id": "syn-f82c37a4affd", "input": "continuous improve", "answer": "Standing cadence: improve via the same chat workspace; CTO coordinates; Software owns boards.", "tags": ["ops"], "source": "seed"}
+{"id": "syn-0fbf14729076", "input": "fail closed", "answer": "On miss + pi4 unreachable: named failure. Never silent weak-board generate.", "tags": ["arch", "fail"], "source": "seed"}
+{"id": "syn-9636e0268a54", "input": "pin pi3 as brain", "answer": "Hard reject. Pinning a weak board never authorizes generative completion.", "tags": ["arch", "fail"], "source": "seed"}
+{"id": "syn-bee8010bad2c", "input": "pin pi2 as brain", "answer": "Hard reject. pi2 is non-generative by lock.", "tags": ["arch", "fail"], "source": "seed"}
+{"id": "syn-990f044fabdc", "input": "direct connect", "answer": "Direct board connections are an operator escape hatch outside the mesh contract.", "tags": ["ops"], "source": "seed"}
+{"id": "syn-957f249dea38", "input": "version", "answer": "Data-stack seed package 2026-10-02 (synthetic). Software owns runtime version strings.", "tags": ["help"], "source": "seed"}
+{"id": "syn-0ae458b16013", "input": "changelog", "answer": "See handoff SoT DATA-STACK-2026-10-02.md for dataset/publish status.", "tags": ["help"], "source": "seed"}
+{"id": "syn-2a7775d325db", "input": "docs", "answer": "Paper: PAPER-DRAFT.md §4.6 layers. Arch: pi-inference-flywheel-2026-10-02.md. OSS: OSS-CODEBASE-LESSONS.md.", "tags": ["help"], "source": "seed"}
+{"id": "syn-715e5ab5a5fe", "input": "schema", "answer": "Canned rows: input, answer, tags, source. SFT: messages[]. Preference: prompt/chosen/rejected.", "tags": ["help", "dataset"], "source": "seed"}
+{"id": "syn-ceccf36870bf", "input": "held out", "answer": "Eval held-out must not duplicate canned verbatim; used as promotion gate.", "tags": ["eval"], "source": "seed"}
+{"id": "syn-148a724418d5", "input": "decontaminate", "answer": "Measure train/eval overlap before promote (Open-Instruct lesson).", "tags": ["eval"], "source": "seed"}
+{"id": "syn-85014a584df1", "input": "cpt", "answer": "Continued pretrain is optional/narrow domain text; prefer HF Jobs if too heavy for pi3.", "tags": ["train"], "source": "seed"}
+{"id": "syn-e167085de978", "input": "dpo", "answer": "Preference pairs are schema-ready for future DPO; not required for v1 map growth.", "tags": ["train"], "source": "seed"}
+{"id": "syn-17886531d68b", "input": "sft", "answer": "SFT seed teaches mesh voice and role locks; map growth also happens by promoting frequent misses.", "tags": ["train"], "source": "seed"}
+{"id": "syn-74bc86b00095", "input": "huggingface", "answer": "Public synthetic seeds may mirror to akashnaren/pi-flywheel-* when HF_TOKEN is set on the box.", "tags": ["ops", "publish"], "source": "seed"}
+{"id": "syn-1c98c71bdcec", "input": "kaggle", "answer": "Optional Kaggle mirror of the same synthetic packages when ~/.kaggle credentials exist.", "tags": ["ops", "publish"], "source": "seed"}
+{"id": "syn-97565d0b0b1e", "input": "r2", "answer": "Cloudflare R2 optional only if enabled; currently not enabled on this account path.", "tags": ["ops", "storage"], "source": "seed"}
+{"id": "syn-e17d5f8f56d8", "input": "box staging", "answer": "Canonical authoring on the agent box under handoffs/.../datasets/; sync to pi3 for serve.", "tags": ["ops", "storage"], "source": "seed"}
+{"id": "syn-73b02d6e3a53", "input": "mirror", "answer": "pi2 may hold a read-only canned mirror; writes and train remain on pi3.", "tags": ["ops", "storage"], "source": "seed"}
+{"id": "syn-352f45e6daeb", "input": "normalize", "answer": "Canned probe should lightly normalize (case/whitespace) before exact/near match — Software implements.", "tags": ["arch", "cache"], "source": "seed"}
+{"id": "syn-d84de1be31c6", "input": "near match", "answer": "Approved near-match is allowed; semantic free-for-all cache is not the v1 contract.", "tags": ["arch", "cache"], "source": "seed"}
+{"id": "syn-2133aab8e875", "input": "gibberish", "answer": "Observed failure on weak boards under gen load. That is why generate is pi4-only.", "tags": ["arch", "why"], "source": "seed"}
+{"id": "syn-6752ec8a9b70", "input": "swap thrash", "answer": "Secondary B under gen load spills to swap → incoherent chat. Banned as fallback.", "tags": ["arch", "why"], "source": "seed"}
+{"id": "syn-5c001a47ce37", "input": "32 bit", "answer": "Oldest secondary rejects generative installer on 32-bit ARM — health/mirror only.", "tags": ["arch", "why"], "source": "seed"}
+{"id": "syn-bba35662d52d", "input": "ram", "answer": "Roles follow measured RAM/arch: ~1 GB secondaries non-gen; ~8 GB primary gen.", "tags": ["arch"], "source": "seed"}
+{"id": "syn-0af1e66642ef", "input": "budget", "answer": "Keep canned map compact; one gen job at a time on pi4; delete shards after train.", "tags": ["ops", "storage"], "source": "seed"}
+{"id": "syn-a6ca7267a9ad", "input": "metrics", "answer": "Retain loss/eval metrics after delete; do not retain raw conversational shards.", "tags": ["train", "storage"], "source": "seed"}
+{"id": "syn-47397df0e3f5", "input": "tombstone", "answer": "shards/done may keep tombstones proving delete without keeping text.", "tags": ["train"], "source": "seed"}
+{"id": "syn-aecac718a088", "input": "prepare", "answer": "pi3 prepare/preprocess emits prepared artifacts; train reads prepared, not ad-hoc JSON dumps.", "tags": ["train"], "source": "seed"}
+{"id": "syn-e027804b1657", "input": "registry", "answer": "Register datasets in dataset_info.json (LLaMA-Factory style) before train configs reference them.", "tags": ["dataset"], "source": "seed"}
+{"id": "syn-af18054f66b8", "input": "smoke test", "answer": "examples/sft_smoke and canned_fastpath fixtures should run without a datacenter GPU.", "tags": ["ops", "test"], "source": "seed"}
+{"id": "syn-22f6f8d65cff", "input": "ship bar", "answer": "Product ship requires live E2E prove + acceptance slices; datasets alone are not ship.", "tags": ["ops", "product"], "source": "seed"}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/pi-flywheel/eval_heldout.schema.json",
+  "title": "PiFlywheelEvalHeldoutRow",
+  "type": "object",
+  "required": ["input", "rubric", "tags", "source", "gate"],
+  "additionalProperties": true,
+  "properties": {
+    "id": { "type": "string" },
+    "input": { "type": "string" },
+    "expected_answer_contains": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "rubric": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "source": { "type": "string" },
+    "gate": {
+      "type": "string",
+      "enum": ["promotion", "canned_or_sft"]
+    }
+  }
+}
