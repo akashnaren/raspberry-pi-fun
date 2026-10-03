@@ -1,5 +1,5 @@
 import { renderMarkdown } from "./markdown";
-import { speakText, speechReady, startListening, stopSpeaking, turnFromRecognition } from "./voice";
+import { speakText, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds } from "./voice";
 
 declare global {
   interface Window {
@@ -47,6 +47,8 @@ let stopAsked = false;
 let turnCtrl: AbortController | null = null;
 let thinking = "medium";
 let listening = false;
+let voiceOn = false;
+let voiceHold = false;
 let listenHandle: { stop: () => void } | null = null;
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
@@ -624,6 +626,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
     turns.push({ role: "user", content: text });
     paint();
   }
+  let voiced = false;
   const model = currentModel();
   const effort = thinking || "medium";
   const live = addLiveBot();
@@ -734,7 +737,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
         stages: doneStages,
       });
       paint();
-      if (spoken) speakText(answer);
+      if (spoken && speakText(answer)) voiced = true;
       return;
     }
 
@@ -829,7 +832,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       stages,
     });
     paint();
-    if (spoken) speakText(textAccum);
+    if (spoken && speakText(textAccum)) voiced = true;
   } catch (err) {
     if (stopAsked) {
       keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages);
@@ -851,6 +854,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
     turnCtrl = null;
     syncSend();
     byId<HTMLTextAreaElement>("q").focus();
+    if (voiceOn && !voiced) releaseVoice();
   }
 }
 
@@ -947,10 +951,10 @@ function voiceNote(text: string): void {
 
 function paintVoice(): void {
   const button = byId("btnVoice");
-  button.classList.toggle("on", listening);
-  button.classList.toggle("live", listening);
-  button.setAttribute("aria-pressed", listening ? "true" : "false");
-  button.setAttribute("aria-label", listening ? "Stop listening" : "Voice");
+  button.classList.toggle("on", voiceOn);
+  button.classList.toggle("live", voiceOn && listening);
+  button.setAttribute("aria-pressed", voiceOn ? "true" : "false");
+  button.setAttribute("aria-label", voiceOn ? "Stop listening" : "Voice");
 }
 
 function endListening(): void {
@@ -959,43 +963,71 @@ function endListening(): void {
   paintVoice();
 }
 
+function releaseVoice(): void {
+  voiceHold = false;
+  if (!voiceOn || sending || listening) return;
+  beginVoice();
+}
+
 function toggleVoice(): void {
-  if (listening) {
+  if (voiceOn) {
+    voiceOn = false;
+    voiceHold = false;
     listenHandle?.stop();
     endListening();
+    stopSpeaking();
     voiceNote("");
     return;
   }
   if (sending) return;
-  stopSpeaking();
-  voiceNote("");
   if (!speechReady()) {
     voiceNote("Voice needs Chrome's built-in speech recognition.");
     return;
   }
+  voiceOn = true;
+  stopSpeaking();
+  voiceNote("");
+  beginVoice();
+}
+
+function beginVoice(): void {
+  if (!voiceOn || listening || voiceHold || sending) return;
   const handle = startListening({
     onInterim(text) {
       voiceNote(text || "Listening");
     },
     onFinal(text) {
       const turn = turnFromRecognition(text);
-      endListening();
+      voiceHold = Boolean(turn);
+      const active = listenHandle;
+      listenHandle = null;
+      listening = false;
+      active?.stop();
+      paintVoice();
       if (!turn) {
-        voiceNote("Voice did not catch that. Try again.");
+        voiceHold = false;
+        if (voiceOn) beginVoice();
         return;
       }
       voiceNote("");
       void sendText(turn.content, false, true);
     },
     onError() {
-      voiceNote("Voice did not catch that. Try again.");
+      voiceOn = false;
+      voiceHold = false;
+      endListening();
+      voiceNote("Voice needs the microphone in this browser.");
     },
     onEnd() {
+      const again = voiceOn && !voiceHold && !sending;
       endListening();
+      if (again) beginVoice();
     },
   });
   if (!handle) {
+    voiceOn = false;
     voiceNote("Voice needs Chrome's built-in speech recognition.");
+    paintVoice();
     return;
   }
   listening = true;
@@ -1044,6 +1076,7 @@ document.querySelectorAll(".think-btn").forEach((btn) => {
     });
   };
 });
+whenSpeechEnds(releaseVoice);
 byId("btnVoice").onclick = () => toggleVoice();
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);

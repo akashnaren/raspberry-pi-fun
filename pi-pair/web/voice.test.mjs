@@ -79,6 +79,33 @@ if (turnFromRecognition("   ") !== null) {
   throw new Error("blank recognition must not become a turn");
 }
 
+// Chrome raises no-speech when a spoken utterance ends. That error used to
+// show "Voice did not catch that. Try again." and never send the words.
+const blocked = [];
+const rescued = [];
+const second = startListening({
+  onInterim() {},
+  onFinal(text) {
+    rescued.push(text);
+  },
+  onEnd() {},
+  onError() {
+    blocked.push("Voice did not catch that. Try again.");
+  },
+});
+if (!second) throw new Error("second recognition did not start");
+const noisy = recognizers[1];
+noisy.onresult({
+  results: [{ isFinal: false, 0: { transcript: "where is the bench?" } }],
+});
+noisy.onerror({ error: "no-speech" });
+const rescuedTurn = turnFromRecognition(rescued[0] || "");
+if (blocked.length || !rescuedTurn || rescuedTurn.content !== "where is the bench?") {
+  throw new Error(
+    "no-speech blocked the spoken turn: " + JSON.stringify({ blocked, rescued }),
+  );
+}
+
 const main = fs.readFileSync(new URL("./src/main.ts", import.meta.url), "utf8");
 const voiceFn = main.slice(main.indexOf("function toggleVoice"), main.indexOf('byId("go")'));
 if (!voiceFn.includes("turnFromRecognition") || !voiceFn.includes("sendText(turn.content, false, true)")) {
@@ -92,6 +119,9 @@ if (!main.includes("speakText(answer)") || !main.includes("speakText(textAccum)"
 }
 if (main.includes("speakText(stageText") || main.includes('speakText("Thinking"') || main.includes('speakText("Searching"') || main.includes('speakText("Answering"')) {
   throw new Error("spoken reply path uses a status label");
+}
+if (main.includes("Voice did not catch that")) {
+  throw new Error("the blocking voice message is still in the page");
 }
 
 console.log("ok");
