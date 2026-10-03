@@ -1,4 +1,4 @@
-"""Stdlib tests for Pi 0.2 High helpers and the chat HTTP contract."""
+"""Stdlib tests for the Pi GPT 1.0 helpers and the chat HTTP contract."""
 from __future__ import annotations
 
 import json
@@ -27,9 +27,29 @@ from pair.stream import llamacpp_delta, ollama_delta
 
 
 def _composer_keydown(script: str) -> str:
-    start = script.index("addEventListener('keydown'")
-    end = script.index("document.querySelectorAll('.think-btn')", start)
+    start = script.index('addEventListener("keydown"')
+    end = script.index('querySelectorAll(".think-btn")', start)
     return script[start:end]
+
+
+def _sse_payloads(raw: str) -> list[dict]:
+    payloads = []
+    for line in raw.splitlines():
+        trimmed = line.strip()
+        if not trimmed.startswith("data:"):
+            continue
+        data = trimmed[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            payloads.append(json.loads(data))
+        except json.JSONDecodeError:
+            continue
+    return payloads
+
+
+def _statuses(raw: str) -> list[str]:
+    return [str(item["pi_status"]) for item in _sse_payloads(raw) if item.get("pi_status")]
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:
@@ -373,8 +393,11 @@ class PairHttp(unittest.TestCase):
             html = response.read().decode()
         self.assertIn("/static/mesh.css", html)
         self.assertIn("/static/mesh.js", html)
-        self.assertIn("<title>Pi 0.2 High</title>", html)
-        self.assertIn("Pi 0.2 High", html)
+        self.assertIn("<title>Pi GPT 1.0</title>", html)
+        self.assertIn("Pi GPT 1.0", html)
+        self.assertIn('aria-label="Voice"', html)
+        self.assertNotIn("jsdelivr", html)
+        self.assertNotIn("katex", html.lower())
         self.assertIn(runtime.MODEL, html)
         self.assertNotIn("__MODEL__", html)
         self.assertIn('data-think="low"', html)
@@ -388,35 +411,45 @@ class PairHttp(unittest.TestCase):
             self.assertNotIn(word, lowered)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/static/mesh.js", timeout=5) as response:
             script = response.read().decode()
-        self.assertIn("MESH_DEFAULT_MODEL", script)
-        self.assertIn("if(e.key!=='Enter') return;", script)
-        self.assertIn("if(e.shiftKey) return;", script)
-        self.assertIn("if(e.ctrlKey || e.metaKey)", script)
-        self.assertNotIn("metaKey||e.ctrlKey", script)
-        self.assertIn("/v1/flywheel/feedback", script)
-        self.assertIn("Thumbs up", script)
-        self.assertIn("Thumbs down", script)
-        self.assertIn("think:effort", script)
-        self.assertIn("X-Pi-Think", script)
-        self.assertIn("let thinking='medium';", script)
-        self.assertIn("el('span','pending')", script)
-        self.assertIn("Searched", script)
-        self.assertIn("Search failed", script)
-        self.assertIn("X-Pi-Search", script)
-        self.assertIn("search-note", script)
-        self.assertIn("aria-label','Stop'", script)
-        self.assertIn("Regenerate", script)
-        self.assertIn("beginEdit", script)
-        self.assertIn("'Edit'", script)
-        handler = _composer_keydown(script)
-        shift_at = handler.index("if(e.shiftKey) return;")
-        prevent_at = handler.index("e.preventDefault();")
+        for needle in (
+            "MESH_DEFAULT_MODEL",
+            "/v1/flywheel/feedback",
+            "Thumbs up",
+            "Thumbs down",
+            "Searched",
+            "Search failed",
+            "X-Pi-Think",
+            "X-Pi-Search",
+            "search-note",
+            "Regenerate",
+            "Edit",
+            "pi_status",
+            "speechSynthesis",
+            "webkitSpeechRecognition",
+            "Stop",
+        ):
+            self.assertIn(needle, script, needle)
+        source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
+        self.assertIn('if (event.key !== "Enter") return;', source)
+        self.assertIn("if (event.shiftKey) return;", source)
+        self.assertIn("event.ctrlKey || event.metaKey", source)
+        self.assertNotIn("metaKey||e.ctrlKey", source)
+        self.assertIn("let thinking = \"medium\";", source)
+        self.assertIn("think: effort", source)
+        self.assertIn('el("span", "pending")', source)
+        self.assertIn("beginEdit", source)
+        handler = _composer_keydown(source)
+        shift_at = handler.index("if (event.shiftKey) return;")
+        prevent_at = handler.index("event.preventDefault();")
         send_at = handler.rindex("send();")
-        newline_at = handler.index("+'\\n'+")
+        newline_at = handler.index('+ "\\n" +')
         self.assertLess(shift_at, prevent_at)
         self.assertLess(prevent_at, send_at)
-        self.assertLess(handler.index("if(e.ctrlKey || e.metaKey)"), newline_at)
-        self.assertNotIn("e.shiftKey){", handler)
+        self.assertLess(handler.index("event.ctrlKey || event.metaKey"), newline_at)
+        css = (ROOT / "static" / "mesh.css").read_text(encoding="utf-8")
+        self.assertIn(".flex", css)
+        self.assertIn(".stage", css)
+        self.assertIn(".think-btn", css)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
             health_body = json.loads(response.read().decode())
         self.assertEqual(health_body["peers_up"], 1)
@@ -443,6 +476,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 2048)
         self.assertEqual(OllamaFake.last_payload["keep_alive"], "5m")
         self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 256)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_thread"], 4)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_batch"], 128)
         stream = urllib.request.Request(
             f"http://127.0.0.1:{port}/v1/chat/completions",
             data=json.dumps(
@@ -465,9 +500,12 @@ class PairHttp(unittest.TestCase):
             self.assertIn("text/event-stream", response.headers.get("content-type", ""))
             self.assertEqual(response.headers.get("X-Pi-Peer"), "pi4")
             self.assertEqual(response.headers.get("X-Pi-Chip"), "brain: pi4")
-            self.assertEqual(response.headers.get("X-Pi-Search"), "failed")
+            self.assertIsNone(response.headers.get("X-Pi-Search"))
+        self.assertEqual(_statuses(raw), ["thinking", "searching", "searching", "answering"])
+        self.assertLess(raw.index('"pi_status": "answering"'), raw.index("hel"))
         self.assertIn("hel", raw)
         self.assertIn('"pi_search": "failed"', raw)
+        self.assertIn('"pi_tool": "search"', raw)
         self.assertIn("lo", raw)
         self.assertIn("data: [DONE]", raw)
         conn = HTTPConnection("127.0.0.1", port, timeout=5)
@@ -1123,12 +1161,142 @@ class PairHttp(unittest.TestCase):
         self.assertIn("pi4 unreachable on cache miss", str(caught.exception))
         self.assertEqual(OllamaFake.posts, 0)
 
+    def _stream_raw(self, port, content, headers=None, extra=None):
+        payload = {
+            "model": "qwen2.5:0.5b",
+            "messages": [{"role": "user", "content": content}],
+            "stream": True,
+        }
+        if extra:
+            payload.update(extra)
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"content-type": "application/json", **(headers or {})},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.headers, response.read().decode()
+
+    def test_status_events_follow_the_work(self):
+        port = self._pi4()
+        headers, raw = self._stream_raw(
+            port,
+            "where is the hall bench",
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
+        self.assertIsNone(headers.get("X-Pi-Search"))
+        self.assertEqual(_statuses(raw), ["thinking", "searching", "searching", "answering"])
+        self.assertLess(raw.index('"pi_status": "thinking"'), raw.index('"pi_status": "searching"'))
+        self.assertLess(raw.index('"pi_status": "searching"'), raw.index('"pi_status": "answering"'))
+        self.assertLess(raw.index('"pi_status": "answering"'), raw.index("hel"))
+        tools = [item.get("pi_tool") for item in _sse_payloads(raw) if item.get("pi_status") == "searching"]
+        self.assertEqual(tools, ["search", "search"])
+        searched = [item for item in _sse_payloads(raw) if item.get("pi_search") == "failed"]
+        self.assertTrue(searched)
+        self.assertEqual(searched[0]["pi_sources"], [])
+        final = _sse_payloads(raw)[-1]
+        self.assertEqual(final["pi_stages"], ["thinking", "searching", "answering"])
+        self.assertIn("data: [DONE]", raw)
+
+        self.search_calls.clear()
+        OllamaFake.posts = 0
+        _headers, hit = self._stream_raw(
+            port,
+            "Hi!",
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(_statuses(hit), ["answering"])
+        self.assertNotIn("searching", _statuses(hit))
+        self.assertNotIn("pi_search", hit)
+        self.assertEqual(self.search_calls, [])
+        self.assertEqual(OllamaFake.posts, 0)
+        self.assertIn("Mesh assistant online", hit)
+
+        self.search_calls.clear()
+        _headers, direct = self._stream_raw(
+            port,
+            "a direct line",
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(_statuses(direct), ["thinking", "answering"])
+        self.assertNotIn('"pi_status": "searching"', direct)
+        self.assertEqual(self.search_calls, [])
+        self.assertEqual(OllamaFake.posts, 1)
+
+        status, response_headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": "status order on a miss"}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_stages"], ["thinking", "searching", "answering"])
+        self.assertEqual(body["pi_search"], "failed")
+        self.assertEqual(response_headers.get("X-Pi-Search"), "failed")
+
+        status, response_headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": "Hi!"}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_stages"], ["answering"])
+        self.assertNotIn("pi_search", body)
+        self.assertIsNone(response_headers.get("X-Pi-Search"))
+
+    def test_search_note_is_capped_before_prefill(self):
+        from pair.knobs import search_note_limit
+
+        limit = search_note_limit()
+        self.assertEqual(limit, 640)
+        prompt = "How wide is the east window?"
+        page = "snippet " * 400
+
+        def fake(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "sources": [{"title": "Window note", "url": "https://example.com/window"}],
+                "context": "Web search notes.\n" + page,
+            }
+
+        pair_server.lookup_web = fake
+        port = self._pi4()
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_stages"], ["thinking", "searching", "answering"])
+        self.assertEqual(body["pi_sources"][0]["url"], "https://example.com/window")
+        self.assertEqual(headers.get("X-Pi-Search"), "ok")
+        system = OllamaFake.last_payload["messages"][0]
+        self.assertEqual(system["role"], "system")
+        self.assertLessEqual(len(system["content"]), limit)
+        self.assertTrue(system["content"].startswith("Web search notes."))
+        self.assertIn("snippet", system["content"])
+        self.assertLess(len(system["content"]), len(page))
+
 
 class ProductCopy(unittest.TestCase):
-    """UI and installer keep Pi 0.2 High. READMEs stay plain and do not say Pi PAIR."""
+    """The page is Pi GPT 1.0. READMEs stay plain and do not say Pi PAIR."""
 
     def test_static_and_readmes_copy(self):
-        product = "Pi 0.2 High"
+        product = "Pi GPT 1.0"
+        retired = "Pi 0.2 High"
         files = [
             ROOT / "static" / "index.html",
             ROOT / "static" / "mesh.js",
@@ -1146,12 +1314,12 @@ class ProductCopy(unittest.TestCase):
                 problems.append(f"{rel} still says Pi PAIR")
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         if f"<title>{product}</title>" not in html:
-            problems.append("static/index.html title is not Pi 0.2 High")
+            problems.append("static/index.html title is not Pi GPT 1.0")
         if f'<div class="brand">{product}</div>' not in html:
-            problems.append("static/index.html brand is not Pi 0.2 High")
+            problems.append("static/index.html brand is not Pi GPT 1.0")
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
-        if "Description=Pi 0.2 High\n" not in install:
-            problems.append("install.sh Description is not Pi 0.2 High")
+        if "Description=Pi GPT 1.0\n" not in install:
+            problems.append("install.sh Description is not Pi GPT 1.0")
         readme_images = (
             "rack-hero.jpg",
             "rack-front.jpg",
@@ -1173,8 +1341,8 @@ class ProductCopy(unittest.TestCase):
         prefix = "pi-pair/docs/rack/"
         if not text.startswith("# pi-pair\n"):
             problems.append("README.md title is not pi-pair")
-        if product in text:
-            problems.append(f"{label} still says {product}")
+        if retired in text:
+            problems.append(f"{label} still says {retired}")
         if "3D-printed server rack" not in text:
             problems.append(f"{label} does not mention the 3D-printed rack")
         hero = f"{prefix}rack-hero.jpg"

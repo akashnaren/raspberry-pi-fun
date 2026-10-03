@@ -1,6 +1,6 @@
 # CI/CD
 
-Pi 0.2 High checks and the pi3 sync. GitHub Actions on `ubuntu-latest` only. No Jenkins and no paid runners.
+Pi GPT 1.0 checks and the pi3 sync. GitHub Actions on `ubuntu-latest` only. No Jenkins and no paid runners.
 
 Two GitHub Environments keep pull-request checks away from the deploy key.
 
