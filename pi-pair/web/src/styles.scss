@@ -300,6 +300,12 @@ header {
 .md {
   white-space: normal;
 
+  .katex-display {
+    margin: 0.75em 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
   p { margin: 0 0 0.75em; }
   p:last-child { margin-bottom: 0; }
   ul, ol { margin: 0.4em 0 0.75em; padding-left: 1.25em; }

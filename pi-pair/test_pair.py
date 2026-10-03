@@ -1294,6 +1294,123 @@ class PairHttp(unittest.TestCase):
         self.assertIn("snippet", system["content"])
         self.assertLess(len(system["content"]), len(page))
 
+    def test_math_miss_is_the_page_and_not_the_model(self):
+        from pair.ground import MISS
+
+        prompt = (
+            "A spherical balloon is being inflated with gas at a constant rate of "
+            "12 cubic centimeters per second. Find the exact rate at which the radius "
+            "is increasing when the surface area is 36 pi square centimeters."
+        )
+        page = (
+            "The balloon gains 12 cubic centimeters per second. "
+            "When the surface area is 36 pi square centimeters, r = 3. "
+            "dr/dt = 1/(3 pi) centimeters per second."
+        )
+
+        def fake(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "sources": [{"title": "Balloon note", "url": "https://example.com/balloon"}],
+                "context": "Text from the first page:\n" + page,
+            }
+
+        pair_server.lookup_web = fake
+        port = self._pi4()
+        OllamaFake.posts = 0
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        answer = body["choices"][0]["message"]["content"]
+        self.assertIn(answer, page)
+        self.assertIn("dr/dt = 1/(3 pi)", answer)
+        self.assertNotEqual(answer, "hello from peer")
+        self.assertEqual(OllamaFake.posts, 0)
+        self.assertEqual(body["pi_stages"], ["thinking", "searching", "answering"])
+        self.assertEqual(body["pi_search"], "ok")
+        self.assertEqual(body["pi_sources"][0]["url"], "https://example.com/balloon")
+        self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
+        self.assertEqual(headers.get("X-Pi-Search"), "ok")
+
+        def thin(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "sources": [{"title": "Index", "url": "https://example.com/rates"}],
+                "context": "Text from the first page:\nRelated rates include ladders and balloons.",
+            }
+
+        pair_server.lookup_web = thin
+        OllamaFake.posts = 0
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["choices"][0]["message"]["content"], MISS)
+        self.assertEqual(OllamaFake.posts, 0)
+        self.assertEqual(body["pi_stages"], ["thinking", "searching", "answering"])
+
+        OllamaFake.posts = 0
+        self.search_calls.clear()
+        _headers, direct = self._stream_raw(
+            port,
+            prompt,
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(_statuses(direct), ["thinking", "answering"])
+        self.assertNotIn('"pi_status": "searching"', direct)
+        self.assertEqual(self.search_calls, [])
+        self.assertEqual(OllamaFake.posts, 1)
+
+    def test_math_stream_reads_the_page(self):
+        prompt = (
+            "A spherical balloon is inflated at 12 cubic centimeters per second. "
+            "Find the exact rate at which the radius grows when the surface area "
+            "is 36 pi square centimeters."
+        )
+        page = (
+            "Inflated at 12 cubic centimeters per second. "
+            "Surface area 36 pi square centimeters gives r = 3. "
+            "dr/dt = 1/(3 pi) centimeters per second."
+        )
+
+        def fake(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "sources": [{"title": "Balloon note", "url": "https://example.com/balloon"}],
+                "context": "Text from the first page:\n" + page,
+            }
+
+        pair_server.lookup_web = fake
+        port = self._pi4()
+        OllamaFake.posts = 0
+        headers, raw = self._stream_raw(
+            port,
+            prompt,
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
+        self.assertEqual(_statuses(raw), ["thinking", "searching", "searching", "answering"])
+        self.assertIn("dr/dt = 1/(3 pi)", raw)
+        self.assertNotIn('"content": "hel"', raw)
+        self.assertEqual(OllamaFake.posts, 0)
+        self.assertEqual(self.search_calls, [prompt])
+
 
 class ProductCopy(unittest.TestCase):
     """The page is Pi GPT 1.0. READMEs stay plain and do not say Pi PAIR."""

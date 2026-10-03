@@ -14,6 +14,7 @@ from pathlib import Path
 from pair.canned import lookup
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
 from pair.config import STATIC_DIR
+from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.knobs import decode_effort, search_note_limit
 from pair.health import snapshot_peers
@@ -50,6 +51,9 @@ _TYPES = {
     ".svg": "image/svg+xml",
     ".png": "image/png",
     ".txt": "text/plain; charset=utf-8",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
 }
 
 
@@ -78,11 +82,19 @@ def static_file(url_path: str) -> Path | None:
     if not url_path.startswith("/static/"):
         return None
     name = url_path[len("/static/") :]
-    if not name or "/" in name or "\\" in name or name.startswith("."):
+    parts = name.split("/")
+    if not parts or any(part in ("", ".", "..") or "\\" in part for part in parts):
+        return None
+    if len(parts) == 2 and parts[0] == "fonts":
+        rel = parts
+    elif len(parts) == 1:
+        rel = parts
+    else:
         return None
     root = STATIC_DIR.resolve()
-    candidate = (root / name).resolve()
-    if candidate.parent != root or not candidate.is_file():
+    candidate = root.joinpath(*rel).resolve()
+    allowed = {root, (root / "fonts").resolve()}
+    if candidate.parent not in allowed or not candidate.is_file():
         return None
     return candidate
 
@@ -192,13 +204,14 @@ def _with_search(messages, prompt: str):
             continue
         title = str(item.get("title") or url).strip() or url
         sources.append({"title": title[:120], "url": url})
-    context = str(found.get("context") or "").strip()
+    full = str(found.get("context") or "").strip()
+    shown = full
     limit = search_note_limit()
-    if limit and len(context) > limit:
-        context = context[:limit].rstrip()
-    if status == "ok" and context:
-        messages = [{"role": "system", "content": context}, *messages]
-    return messages, {"status": status, "sources": sources}
+    if limit and len(shown) > limit:
+        shown = shown[:limit].rstrip()
+    if status == "ok" and shown:
+        messages = [{"role": "system", "content": shown}, *messages]
+    return messages, {"status": status, "sources": sources, "context": full}
 
 
 def status_event(stage: str, extra: dict | None = None) -> dict:
@@ -708,11 +721,27 @@ class Handler(BaseHTTPRequestHandler):
                 found["pi_sources"] = search_note["sources"]
             if not emit_status("searching", found):
                 return
+        grounded = None
+        if search_note is not None:
+            grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         answer_extra = dict(think_extra or {})
         if search_note:
             answer_extra["pi_search"] = search_note["status"]
             answer_extra["pi_sources"] = search_note["sources"]
         if not emit_status("answering", answer_extra or None):
+            return
+        if grounded is not None:
+            self._emit_ready_answer(
+                peer,
+                kind,
+                used,
+                prompt,
+                grounded,
+                started,
+                think_name,
+                search_note,
+                stages,
+            )
             return
         safe_write(
             self,
@@ -804,6 +833,53 @@ class Handler(BaseHTTPRequestHandler):
             safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
 
+    def _emit_ready_answer(
+        self,
+        peer,
+        kind,
+        used,
+        prompt: str,
+        answer: str,
+        started: float,
+        think_name: str,
+        search_note: dict | None,
+        stages: list[str],
+    ) -> None:
+        """Send a finished answer that was taken from the pages, not the model."""
+        chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+        chunk = {
+            "id": "pi-pair",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"content": answer}, "finish_reason": None}],
+            "pi_peer": peer["name"],
+            "pi_chip": chip,
+            "pi_model": used,
+            "pi_kind": kind,
+        }
+        if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
+            return
+        note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+        remember_completion(prompt, answer, chip, peer["name"])
+        elapsed = int((time.time() - started) * 1000)
+        final = {
+            "id": "pi-pair",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "pi_peer": peer["name"],
+            "pi_chip": chip,
+            "pi_ms": elapsed,
+            "pi_model": used,
+            "pi_kind": kind,
+            "pi_stages": list(stages),
+        }
+        if think_name:
+            final["pi_think"] = think_name
+        if search_note:
+            final["pi_search"] = search_note["status"]
+            final["pi_sources"] = search_note["sources"]
+        safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
+        safe_write(self, b"data: [DONE]\n\n", flush=True)
+
     def _complete(
         self,
         peer,
@@ -818,7 +894,12 @@ class Handler(BaseHTTPRequestHandler):
         search_note: dict | None = None,
         stages: list[str] | None = None,
     ) -> None:
-        if kind == "llamacpp":
+        grounded = None
+        if search_note is not None:
+            grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
+        if grounded is not None:
+            content, used = grounded, model
+        elif kind == "llamacpp":
             content, used = chat_llamacpp(peer, model, messages, temperature, max_tokens)
         else:
             content, used = chat_ollama(peer, model, messages, temperature, max_tokens)
