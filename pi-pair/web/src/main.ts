@@ -539,7 +539,7 @@ function addLiveBot(): LiveTurn {
         done();
       };
       node.addEventListener("animationend", onEnd);
-      window.setTimeout(done, 560);
+      window.setTimeout(done, 1100);
     });
   }
 
