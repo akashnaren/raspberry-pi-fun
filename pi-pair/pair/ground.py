@@ -11,7 +11,7 @@ import re
 MISS = "I could not get the result from the pages."
 
 _MATH_PROBLEM = re.compile(
-    r"\\[\\[(]|\$\$|"
+    r"\\[\[(]|\$\$|"
     r"\b(?:derivative|derivatives|integral|integrals|differentiate|equation|equations|"
     r"polynomial|quadratic|theorem|radius|radii)\b|"
     r"surface area|cubic centimeters|square centimeters|related rates|"
