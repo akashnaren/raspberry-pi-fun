@@ -49,13 +49,14 @@ _TYPES = {
 }
 
 
-def safe_write(handler, body: bytes, flush: bool = False) -> None:
+def safe_write(handler, body: bytes, flush: bool = False) -> bool:
     try:
         handler.wfile.write(body)
         if flush:
             handler.wfile.flush()
+        return True
     except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
-        pass
+        return False
 
 
 def static_file(url_path: str) -> Path | None:
@@ -88,6 +89,22 @@ def message_text(content) -> str:
 def _named_can_generate(target: str) -> bool:
     named = next((peer for peer in runtime.PEERS if peer["name"] == target), None)
     return named is not None and may_generate(named)
+
+
+def one_user_turn(messages) -> bool:
+    """The canned map is for a single new line. A session with history stays on pi4."""
+    users = 0
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role") or "user"
+        if role == "assistant":
+            return False
+        if role == "user":
+            users += 1
+            if users > 1:
+                return False
+    return True
 
 
 def last_user_text(messages) -> str:
@@ -231,7 +248,11 @@ class Handler(BaseHTTPRequestHandler):
                 named = next((peer for peer in runtime.PEERS if peer["name"] == target), None)
                 if named is not None and not may_generate(named):
                     raise RuntimeError(weak_brain_error(named["name"]))
-            if mesh and (not target or target == "auto" or _named_can_generate(target)):
+            if (
+                mesh
+                and one_user_turn(messages)
+                and (not target or target == "auto" or _named_can_generate(target))
+            ):
                 hit = lookup(prompt)
                 if hit is not None:
                     note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
@@ -526,6 +547,7 @@ class Handler(BaseHTTPRequestHandler):
                 gen = stream_llamacpp(peer, model, messages, temperature, max_tokens)
             else:
                 gen = stream_ollama(peer, model, messages, temperature, max_tokens)
+            closed = False
             for delta in gen:
                 parts.append(delta)
                 chunk = {
@@ -539,7 +561,16 @@ class Handler(BaseHTTPRequestHandler):
                         }
                     ],
                 }
-                safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
+                if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
+                    closed = True
+                    break
+            if closed:
+                answer = "".join(parts).strip()
+                if answer:
+                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                    remember_completion(prompt, answer, chip, peer["name"])
+                return
             elapsed = int((time.time() - started) * 1000)
             final = {
                 "id": "pi-pair",

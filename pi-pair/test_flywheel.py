@@ -311,6 +311,8 @@ class Flywheel(unittest.TestCase):
             "map hit",
             "DuckDuckGo",
             "search failed",
+            "The local model is small",
+            "facts it does not know",
         ):
             self.assertIn(phrase, text, phrase)
         self.assertNotIn("Pi 0.2 High", text)

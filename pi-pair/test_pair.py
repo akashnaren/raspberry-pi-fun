@@ -367,6 +367,10 @@ class PairHttp(unittest.TestCase):
         self.assertIn("Search failed", script)
         self.assertIn("X-Pi-Search", script)
         self.assertIn("search-note", script)
+        self.assertIn("aria-label','Stop'", script)
+        self.assertIn("Regenerate", script)
+        self.assertIn("beginEdit", script)
+        self.assertIn("'Edit'", script)
         handler = _composer_keydown(script)
         shift_at = handler.index("if(e.shiftKey) return;")
         prevent_at = handler.index("e.preventDefault();")
@@ -884,6 +888,30 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertEqual(body["pi_search"], "failed")
         self.assertNotIn("Web search notes", json.dumps(OllamaFake.last_payload["messages"]))
+
+    def test_followup_keeps_earlier_turns_on_pi4(self):
+        port = self._pi4()
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [
+                    {"role": "user", "content": "What changed?"},
+                    {"role": "assistant", "content": "A short note."},
+                    {"role": "user", "content": "Hi!"},
+                ],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertNotEqual(headers.get("X-Pi-Chip"), "cache")
+        self.assertEqual(OllamaFake.posts, 1)
+        blob = json.dumps(OllamaFake.last_payload["messages"])
+        self.assertIn("What changed?", blob)
+        self.assertIn("A short note.", blob)
+        self.assertIn("Hi!", blob)
 
 
 class ProductCopy(unittest.TestCase):

@@ -229,6 +229,16 @@ footer::before{
 }
 .send-btn:hover{opacity:.92}
 .send-btn:disabled{background:#2a2a2a; color:var(--dim); opacity:1}
+.send-btn .stop-mark{display:none}
+.send-btn.stop .send-mark{display:none}
+.send-btn.stop .stop-mark{display:block}
+.send-btn.stop{background:#fff; color:var(--bg); opacity:1}
+.edit-box{
+  width:min(32rem, 100%); min-height:72px; resize:vertical;
+  background:var(--bubble); color:#fff; border:1px solid rgba(255,255,255,.16);
+  border-radius:22px; padding:12px 16px; outline:none; line-height:1.5;
+}
+.edit-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:8px}
 #attach{display:none}
 .empty{
   flex:1; display:flex; align-items:center; justify-content:center;

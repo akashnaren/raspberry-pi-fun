@@ -2,6 +2,8 @@
 
 Chat router for the pi2, pi3, and pi4 fleet. Stdlib Python only (no pip). It listens on **18080**. A known line is answered from the canned map. Anything the map does not contain is generated on pi4 and only on pi4.
 
+The local model is small. Search and the canned map are how it answers facts it does not know.
+
 This tree is the software half of that loop. [PR #23](https://github.com/akashnaren/raspberry-pi-fun/pull/23) merged on 2026-10-02 (`45050ee`). After that deploy of main, live end-to-end stages 1–5 on the boards were GREEN. Product Ship was YES the same day, about 13:40 PT. The prove packet for that run is the post-#23 board record at `45050ee` (fleet handoff; not a file in this tree). Hugging Face holds datasets only so far; this document does not claim published model weights.
 
 ## Hardware
@@ -196,7 +198,7 @@ DeepSpeed, FSDP, and multi-node launchers from those repos are not imported. The
 
 The daily tool is the page on port 18080, on the LAN addresses in the fleet map. Tailscale names work the same way when the tailnet is up. The page is one column: messages, a composer fixed at the bottom, and a Low / Medium / High control beside that composer. The control defaults to Medium. qwen2.5:0.5b has no separate reasoning channel, so the router sends the level as Ollama `num_predict` and temperature: Low is 64 tokens at 0.6, Medium is 256 at 0.7, High is 768 at 0.8. Those are different decode requests. The reply is marked with the level that was used. All three still go through Auto. The page does not say which board answered. That stays on the response headers.
 
-Enter sends the line. Shift+Enter, or Ctrl+Enter, inserts a newline.
+The composer keeps the whole session. Each new line is sent with the earlier turns, and a follow-up is not answered from the canned map. Enter sends the line. Shift+Enter, or Ctrl+Enter, inserts a newline. Stop ends the reply that is still arriving. Regenerate asks the same line again. Edit changes an earlier line and sends from there, dropping the turns after it. Copy is on each message.
 
 When the map misses, the reply shows a short searched note and the source links. If the lookup fails, the note says search failed and the answer is still from the local model.
 

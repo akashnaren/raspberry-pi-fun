@@ -1,4 +1,6 @@
 let sending=false;
+let stopAsked=false;
+let turnCtrl=null;
 let lastRaw=null;
 const DEFAULT_MODEL=window.MESH_DEFAULT_MODEL||'qwen2.5:0.5b';
 const thread=[]; // {role, content, meta?}
@@ -250,35 +252,133 @@ function attachLabel(parent, prompt, answer){
   parent.appendChild(box);
 }
 
-function addMsg(role,text,extraClass,prompt,effort){
-  hideEmpty();
-  const d=el('div','msg '+role+(extraClass?(' '+extraClass):''));
-  const body=el('div','body');
-  if(role==='bot') setBodyContent(body, text, true);
-  else body.textContent=text;
-  d.appendChild(body);
-  if(role==='user'){
-    const acts=el('div','msg-actions');
-    const copy=el('button','text-btn','Copy');
-    copy.type='button';
-    copy.setAttribute('aria-label','Copy');
-    copy.onclick=async()=>{
-      try{
-        await navigator.clipboard.writeText(text);
-        copy.textContent='Copied';
-        setTimeout(()=>{ copy.textContent='Copy'; }, 1200);
-      }catch(_){
-        copy.textContent='Copy failed';
-      }
-    };
-    acts.appendChild(copy);
-    d.appendChild(acts);
+function copyButton(text){
+  const copy=el('button','text-btn','Copy');
+  copy.type='button';
+  copy.setAttribute('aria-label','Copy');
+  copy.onclick=async()=>{
+    try{
+      await navigator.clipboard.writeText(text);
+      copy.textContent='Copied';
+      setTimeout(()=>{ if(copy.textContent==='Copied') copy.textContent='Copy'; }, 1200);
+    }catch(_){
+      copy.textContent='Copy failed';
+    }
+  };
+  return copy;
+}
+
+function promptBefore(index){
+  for(let i=index-1;i>=0;i--){
+    if(thread[i].role==='user') return thread[i].content;
   }
-  if(role==='bot' && !extraClass && prompt) attachLabel(d, prompt, text);
-  if(role==='bot' && !extraClass) showEffort(d, effort);
+  return '';
+}
+
+function paint(){
+  const log=document.getElementById('log');
+  log.replaceChildren();
+  if(!thread.length){
+    const empty=el('div','empty');
+    empty.id='empty';
+    empty.appendChild(el('p','','Ask anything.'));
+    log.appendChild(empty);
+    return;
+  }
+  thread.forEach((item, index)=>{
+    if(item.role==='user') addUser(item.content, index);
+    else addFinishedBot(item, index);
+  });
+  const last=log.lastElementChild;
+  if(last) last.scrollIntoView({block:'end'});
+}
+
+function addUser(text, index){
+  hideEmpty();
+  const d=el('div','msg user');
+  d.dataset.index=String(index);
+  const body=el('div','body');
+  body.textContent=text;
+  d.appendChild(body);
+  const acts=el('div','msg-actions');
+  acts.appendChild(copyButton(text));
+  const edit=el('button','text-btn','Edit');
+  edit.type='button';
+  edit.setAttribute('aria-label','Edit');
+  edit.onclick=()=>beginEdit(index);
+  acts.appendChild(edit);
+  d.appendChild(acts);
   document.getElementById('log').appendChild(d);
-  d.scrollIntoView({block:'end', behavior:'smooth'});
   return d;
+}
+
+function beginEdit(index){
+  if(sending) return;
+  const item=thread[index];
+  if(!item || item.role!=='user') return;
+  const d=document.querySelector('.msg.user[data-index="'+index+'"]');
+  if(!d) return;
+  const body=d.querySelector('.body');
+  const box=document.createElement('textarea');
+  box.className='edit-box';
+  box.value=item.content;
+  box.rows=3;
+  if(body) body.replaceWith(box);
+  const acts=d.querySelector('.msg-actions');
+  if(acts) acts.remove();
+  const row=el('div','edit-actions');
+  const cancel=el('button','text-btn','Cancel');
+  const save=el('button','mini','Send');
+  cancel.type=save.type='button';
+  cancel.onclick=()=>paint();
+  save.onclick=()=>{
+    const next=box.value.trim();
+    if(!next) return;
+    thread.splice(index);
+    sendText(next, false);
+  };
+  row.appendChild(cancel);
+  row.appendChild(save);
+  d.appendChild(row);
+  box.focus();
+}
+
+function addFinishedBot(item, index){
+  hideEmpty();
+  const d=el('div','msg bot');
+  d.dataset.index=String(index);
+  const body=el('div','body');
+  setBodyContent(body, item.content, true);
+  d.appendChild(body);
+  if(item.search) showSearch(d, item.search.status, item.search.sources);
+  const asked=promptBefore(index);
+  if(asked) attachLabel(d, asked, item.content);
+  showEffort(d, item.effort);
+  let row=d.querySelector('.label-row');
+  if(!row){
+    row=el('div','label-row');
+    d.appendChild(row);
+  }
+  row.appendChild(copyButton(item.content));
+  if(index===thread.length-1){
+    const again=el('button','text-btn','Regenerate');
+    again.type='button';
+    again.setAttribute('aria-label','Regenerate');
+    again.onclick=()=>regenerate();
+    row.appendChild(again);
+  }
+  document.getElementById('log').appendChild(d);
+  return d;
+}
+
+function regenerate(){
+  if(sending) return;
+  if(!thread.length || thread[thread.length-1].role!=='assistant') return;
+  thread.pop();
+  const last=thread[thread.length-1];
+  if(!last || last.role!=='user') return;
+  paint();
+  sendText(last.content, true);
 }
 
 function addLiveBot(){
@@ -312,17 +412,30 @@ function addLiveBot(){
   };
 }
 
+function keepPartial(live, text, prompt, effort, search){
+  if(text){
+    thread.push({role:'assistant', content:text, effort:effort, search:search});
+    paint();
+    return;
+  }
+  if(live && live.root) live.root.remove();
+}
+
 async function sendText(t, isRetry){
   if(sending) return;
   sending=true;
-  const go=document.getElementById('go'); go.disabled=true;
+  stopAsked=false;
+  syncSend();
   if(!isRetry){
     thread.push({role:'user', content:t});
-    addMsg('user', t);
+    paint();
   }
   const model=currentModel();
   const effort=thinking||'medium';
   const live=addLiveBot();
+  let textAccum='';
+  let searchStatus='';
+  let searchSources=[];
   refresh().catch(()=>{});
   try{
     const body={
@@ -339,29 +452,35 @@ async function sendText(t, isRetry){
 
     let r=null, lastErr=null;
     for(let i=0;i<=2;i++){
+      if(stopAsked) break;
       try{
-        const ctrl=new AbortController();
-        const to=setTimeout(()=>ctrl.abort(), 180000);
+        turnCtrl=new AbortController();
+        const to=setTimeout(()=>{ if(turnCtrl) turnCtrl.abort(); }, 180000);
         r=await fetch('/v1/chat/completions',{
           method:'POST',
           headers:{'content-type':'application/json','X-Pi-Target':'auto','X-Pi-Mesh':'on'},
           body:JSON.stringify(body),
-          signal:ctrl.signal,
+          signal:turnCtrl.signal,
           cache:'no-store'
         });
         clearTimeout(to);
         lastErr=null;
         break;
       }catch(e){
+        if(stopAsked) throw e;
         lastErr=e;
         if(i<2) await new Promise(res=>setTimeout(res, 600*(i+1)));
       }
     }
+    if(stopAsked){
+      keepPartial(live, textAccum, t, effort, null);
+      return;
+    }
     if(lastErr) throw lastErr;
 
     const effortUsed=r.headers.get('X-Pi-Think')||effort;
-    let searchStatus=r.headers.get('X-Pi-Search')||'';
-    let searchSources=[];
+    searchStatus=r.headers.get('X-Pi-Search')||'';
+    searchSources=[];
     const ct=(r.headers.get('content-type')||'').toLowerCase();
     const isSSE=ct.includes('event-stream');
 
@@ -382,22 +501,25 @@ async function sendText(t, isRetry){
         return;
       }
       const text=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||'';
-      thread.push({role:'assistant', content:text});
-      live.finish(text, false, t, j.pi_think||effortUsed, {
-        status:j.pi_search||searchStatus,
-        sources:j.pi_sources||searchSources
+      thread.push({
+        role:'assistant',
+        content:text,
+        effort:j.pi_think||effortUsed,
+        search:{status:j.pi_search||searchStatus, sources:j.pi_sources||searchSources}
       });
+      paint();
       return;
     }
 
-    let textAccum='';
     let lastChunk=null;
+    let streamedEffort=effortUsed;
     const reader=r.body.getReader();
     const dec=new TextDecoder();
     let buf='';
     let streamDone=false;
     let streamErr=null;
     while(!streamDone){
+      if(stopAsked) break;
       const {value, done}=await reader.read();
       if(done) break;
       buf+=dec.decode(value,{stream:true});
@@ -423,6 +545,10 @@ async function sendText(t, isRetry){
       }
     }
     lastRaw=lastChunk;
+    if(stopAsked){
+      keepPartial(live, textAccum, t, streamedEffort||effort, {status:searchStatus, sources:searchSources});
+      return;
+    }
     if(streamErr || (!r.ok && !textAccum)){
       const msg=shownError(streamErr||('HTTP '+r.status));
       live.setText(msg);
@@ -434,11 +560,19 @@ async function sendText(t, isRetry){
       live.root.appendChild(btn);
       return;
     }
-    let streamedEffort=effortUsed;
     if(lastChunk && lastChunk.pi_think) streamedEffort=lastChunk.pi_think;
-    thread.push({role:'assistant', content:textAccum});
-    live.finish(textAccum, false, t, streamedEffort, {status:searchStatus, sources:searchSources});
+    thread.push({
+      role:'assistant',
+      content:textAccum,
+      effort:streamedEffort,
+      search:{status:searchStatus, sources:searchSources}
+    });
+    paint();
   }catch(e){
+    if(stopAsked){
+      keepPartial(live, textAccum, t, effort, {status:searchStatus, sources:searchSources});
+      return;
+    }
     const msg=shownError(e);
     live.setText(msg);
     live.markErr();
@@ -449,6 +583,8 @@ async function sendText(t, isRetry){
     live.root.appendChild(btn);
   }finally{
     sending=false;
+    stopAsked=false;
+    turnCtrl=null;
     syncSend();
     document.getElementById('q').focus();
   }
@@ -472,7 +608,15 @@ function syncSend(){
   const q=document.getElementById('q');
   const go=document.getElementById('go');
   const has=(q.value||'').trim() || q.dataset.attachText;
-  go.disabled=sending || !has;
+  if(sending){
+    go.disabled=false;
+    go.classList.add('stop');
+    go.setAttribute('aria-label','Stop');
+    return;
+  }
+  go.classList.remove('stop');
+  go.setAttribute('aria-label','Send');
+  go.disabled=!has;
 }
 
 function autoGrow(ta){
@@ -518,7 +662,14 @@ function loadFile(file){
   reader.readAsText(file);
 }
 
-document.getElementById('go').onclick=send;
+document.getElementById('go').onclick=()=>{
+  if(sending){
+    stopAsked=true;
+    if(turnCtrl) turnCtrl.abort();
+    return;
+  }
+  send();
+};
 document.getElementById('q').addEventListener('input', e=>{ autoGrow(e.target); syncSend(); });
 syncSend();
 document.getElementById('q').addEventListener('keydown', e=>{
@@ -549,10 +700,7 @@ document.getElementById('btnCloseIo').onclick=()=>setSettingsOpen(false);
 document.getElementById('overlay').onclick=()=>setSettingsOpen(false);
 document.getElementById('btnClear').onclick=()=>{
   thread.length=0; lastRaw=null;
-  const log=document.getElementById('log'); log.innerHTML='';
-  const empty=el('div','empty'); empty.id='empty';
-  empty.appendChild(el('p', '', 'Ask anything.'));
-  log.appendChild(empty);
+  paint();
   setSettingsOpen(false);
 };
 document.getElementById('btnMd').onclick=()=>{
