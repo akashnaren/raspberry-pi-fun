@@ -1,5 +1,5 @@
 import { renderMarkdown } from "./markdown";
-import { speakText, speechReady, startListening, stopSpeaking } from "./voice";
+import { speakText, speechReady, startListening, stopSpeaking, turnFromRecognition } from "./voice";
 
 declare global {
   interface Window {
@@ -47,7 +47,6 @@ let stopAsked = false;
 let turnCtrl: AbortController | null = null;
 let thinking = "medium";
 let listening = false;
-let speakThisReply = false;
 let listenHandle: { stop: () => void } | null = null;
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
@@ -421,31 +420,8 @@ function regenerate(): void {
   void sendText(last.content, true);
 }
 
-function syncStageNodes(live: { stagesEl: HTMLElement; seen: StageName[]; search: SearchInfo | null; body: HTMLElement }): void {
-  const hideAnswer = live.body.textContent !== "" && !live.body.querySelector(".pending");
-  const visible = live.seen.filter((name) => !(hideAnswer && name === "answering"));
-  visible.forEach((name) => {
-    let node = live.stagesEl.querySelector('[data-stage="' + name + '"]') as HTMLElement | null;
-    if (!node) {
-      node = el("div", "stage");
-      node.dataset.stage = name;
-      node.appendChild(el("span", "stage-dot"));
-      node.appendChild(el("span", "stage-label"));
-      live.stagesEl.appendChild(node);
-    }
-    const label = node.querySelector(".stage-label");
-    if (label) label.textContent = stageText(name, live.search);
-  });
-  live.stagesEl.querySelectorAll(".stage").forEach((node) => {
-    const name = (node as HTMLElement).dataset.stage || "";
-    if (!visible.includes(name as StageName)) {
-      node.remove();
-      return;
-    }
-    const current = visible[visible.length - 1];
-    node.classList.toggle("on", name === current);
-    node.classList.toggle("done", name !== current);
-  });
+function motionReduced(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function addLiveBot(): LiveTurn {
@@ -453,16 +429,132 @@ function addLiveBot(): LiveTurn {
   const row = el("div", "msg bot streaming");
   const stagesEl = el("div", "stages");
   stagesEl.setAttribute("aria-live", "polite");
-  const body = el("div", "body");
+  const viewport = el("div", "stage-viewport");
   const dots = el("span", "pending");
   dots.appendChild(el("i"));
   dots.appendChild(el("i"));
   dots.appendChild(el("i"));
-  body.appendChild(dots);
+  viewport.appendChild(dots);
+  stagesEl.appendChild(viewport);
+  const body = el("div", "body");
   row.appendChild(stagesEl);
   row.appendChild(body);
   byId("log").appendChild(row);
   row.scrollIntoView({ block: "end" });
+
+  let shown: StageName | null = null;
+  const queued: StageName[] = [];
+  let holding = false;
+
+  function retire(node: HTMLElement): void {
+    if (node.classList.contains("leave")) return;
+    if (motionReduced()) {
+      node.remove();
+      return;
+    }
+    node.classList.remove("on", "enter");
+    node.classList.add("leave");
+    node.addEventListener("animationend", (event) => {
+      if (event.target !== node) return;
+      node.remove();
+    });
+  }
+
+  function stageLabel(node: HTMLElement, text: string): void {
+    if (node.dataset.label === text) return;
+    const label = node.querySelector(".stage-label");
+    if (!label) return;
+    node.dataset.label = text;
+    if (motionReduced()) {
+      label.textContent = text;
+      return;
+    }
+    const current = label.querySelector(".label-in");
+    if (current) {
+      current.classList.remove("label-in");
+      current.classList.add("label-out");
+      current.addEventListener("animationend", () => current.remove(), { once: true });
+    } else {
+      label.replaceChildren();
+    }
+    label.appendChild(el("span", "label-in", text));
+  }
+
+  function renderStage(name: StageName): HTMLElement {
+    viewport.querySelectorAll(".pending, .stage:not(.leave)").forEach((node) => {
+      retire(node as HTMLElement);
+    });
+    const node = el("div", motionReduced() ? "stage on" : "stage enter on");
+    node.dataset.stage = name;
+    node.appendChild(el("span", "stage-dot"));
+    const text = stageText(name, live.search);
+    const label = el("span", "stage-label");
+    label.appendChild(el("span", motionReduced() ? "" : "label-in", text));
+    node.appendChild(label);
+    node.dataset.label = text;
+    viewport.appendChild(node);
+    shown = name;
+    return node;
+  }
+
+  function yieldIfAnswer(): void {
+    if (shown === "answering" && body.textContent && !queued.length && !holding) {
+      stagesEl.classList.add("yield");
+    }
+  }
+
+  function pump(): void {
+    if (holding || !row.isConnected) return;
+    const name = queued.shift();
+    if (!name) {
+      yieldIfAnswer();
+      return;
+    }
+    const node = renderStage(name);
+    holding = true;
+    const finish = () => {
+      if (!holding) return;
+      holding = false;
+      if (!row.isConnected) return;
+      pump();
+    };
+    if (motionReduced()) {
+      finish();
+      return;
+    }
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      finish();
+    };
+    requestAnimationFrame(() => {
+      if (!row.isConnected) {
+        holding = false;
+        return;
+      }
+      const onEnd = (event: AnimationEvent) => {
+        if (event.target !== node || event.animationName !== "stage-enter") return;
+        node.removeEventListener("animationend", onEnd);
+        done();
+      };
+      node.addEventListener("animationend", onEnd);
+      window.setTimeout(done, 560);
+    });
+  }
+
+  function enqueue(name: StageName): void {
+    const current = viewport.querySelector(".stage:not(.leave)") as HTMLElement | null;
+    if (shown === name && current) {
+      stageLabel(current, stageText(name, live.search));
+      if (!holding && !queued.length) yieldIfAnswer();
+      return;
+    }
+    if (queued[queued.length - 1] === name) return;
+    queued.push(name);
+    pump();
+  }
+
   const live: LiveTurn = {
     root: row,
     body,
@@ -472,15 +564,18 @@ function addLiveBot(): LiveTurn {
     pushStatus(name, search) {
       if (search && (search.status === "ok" || search.status === "failed")) live.search = search;
       if (!live.seen.includes(name)) live.seen.push(name);
-      const pending = body.querySelector(".pending");
-      if (pending) pending.remove();
-      syncStageNodes(live);
+      enqueue(name);
       row.scrollIntoView({ block: "end" });
     },
     setText(text) {
+      const first = !body.dataset.filled;
       body.classList.remove("md");
       body.textContent = text;
-      syncStageNodes(live);
+      if (text) {
+        body.dataset.filled = "1";
+        if (first) body.classList.add("arrived");
+      }
+      yieldIfAnswer();
       row.scrollIntoView({ block: "end" });
     },
     finish(text, failed, prompt, effort, search, stages) {
@@ -524,7 +619,6 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
   sending = true;
   stopAsked = false;
   stopSpeaking();
-  speakThisReply = false;
   syncSend();
   if (!isRetry) {
     turns.push({ role: "user", content: text });
@@ -769,15 +863,10 @@ async function send(): Promise<void> {
     text = text ? text + "\n\n---\n" + attached : attached;
     clearAttach();
   }
-  if (!text) {
-    speakThisReply = false;
-    return;
-  }
-  const spoken = speakThisReply;
-  speakThisReply = false;
+  if (!text) return;
   box.value = "";
   autoGrow(box);
-  await sendText(text, false, spoken);
+  await sendText(text, false);
 }
 
 function syncSend(): void {
@@ -864,41 +953,45 @@ function paintVoice(): void {
   button.setAttribute("aria-label", listening ? "Stop listening" : "Voice");
 }
 
+function endListening(): void {
+  listening = false;
+  listenHandle = null;
+  paintVoice();
+}
+
 function toggleVoice(): void {
   if (listening) {
     listenHandle?.stop();
-    listening = false;
-    listenHandle = null;
-    paintVoice();
+    endListening();
+    voiceNote("");
     return;
   }
+  if (sending) return;
   stopSpeaking();
   voiceNote("");
   if (!speechReady()) {
     voiceNote("Voice needs Chrome's built-in speech recognition.");
     return;
   }
-  const box = byId<HTMLTextAreaElement>("q");
   const handle = startListening({
     onInterim(text) {
-      box.value = text;
-      autoGrow(box);
-      syncSend();
+      voiceNote(text || "Listening");
     },
     onFinal(text) {
-      box.value = text;
-      autoGrow(box);
-      speakThisReply = true;
+      const turn = turnFromRecognition(text);
+      endListening();
+      if (!turn) {
+        voiceNote("Voice did not catch that. Try again.");
+        return;
+      }
       voiceNote("");
-      void send();
+      void sendText(turn.content, false, true);
     },
     onError() {
       voiceNote("Voice did not catch that. Try again.");
     },
     onEnd() {
-      listening = false;
-      listenHandle = null;
-      paintVoice();
+      endListening();
     },
   });
   if (!handle) {
@@ -907,6 +1000,7 @@ function toggleVoice(): void {
   }
   listening = true;
   listenHandle = handle;
+  voiceNote("Listening");
   paintVoice();
 }
 
