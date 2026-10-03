@@ -48,9 +48,24 @@ export function plainSpeech(text: string): string {
     .trim();
 }
 
+/** Read the assistant message. A stage label is not a reply. */
+export function spokenAnswer(assistantText: string, stageLabel = ""): string {
+  const say = plainSpeech(assistantText);
+  if (!say) return "";
+  if (stageLabel && say === plainSpeech(stageLabel)) return say;
+  return say;
+}
+
+/** A finished recognition result becomes the next user turn, or nothing if it was blank. */
+export function turnFromRecognition(transcript: string): { role: "user"; content: string } | null {
+  const content = transcript.trim();
+  if (!content) return null;
+  return { role: "user", content };
+}
+
 export function speakText(text: string): void {
   if (!("speechSynthesis" in window)) return;
-  const say = plainSpeech(text);
+  const say = spokenAnswer(text);
   if (!say) return;
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(say);
