@@ -11,6 +11,7 @@ from pair.canned import lookup
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
 from pair.config import STATIC_DIR
 from pair.guard import may_generate, weak_brain_error
+from pair.knobs import decode_effort
 from pair.health import snapshot_peers
 from pair.peers import pick
 from pair.queue import append_row, apply_label, node_role, note_exchange
@@ -183,8 +184,16 @@ class Handler(BaseHTTPRequestHandler):
         )
         model = data.get("model") or runtime.MODEL
         messages = data.get("messages") or []
-        temperature = float(data.get("temperature") if data.get("temperature") is not None else 0.7)
-        max_tokens = int(data.get("max_tokens") or data.get("max_completion_tokens") or 256)
+        effort = decode_effort(str(data.pop("think", "") or ""))
+        if effort:
+            think_name, temperature, max_tokens = effort
+            data.pop("temperature", None)
+            data.pop("max_tokens", None)
+            data.pop("max_completion_tokens", None)
+        else:
+            think_name = ""
+            temperature = float(data.get("temperature") if data.get("temperature") is not None else 0.7)
+            max_tokens = int(data.get("max_tokens") or data.get("max_completion_tokens") or 256)
         started = time.time()
         want_stream = bool(data.get("stream"))
         prompt = last_user_text(messages)
@@ -198,7 +207,7 @@ class Handler(BaseHTTPRequestHandler):
                 if hit is not None:
                     note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
                     remember_completion(prompt, hit, "cache", "cache")
-                    self._cached(hit, want_stream, started)
+                    self._cached(hit, want_stream, started, think_name)
                     return
         except Exception as error:
             self._error(str(error))
@@ -223,9 +232,13 @@ class Handler(BaseHTTPRequestHandler):
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             if want_stream:
-                self._stream(peer, kind, model, used, outbound, temperature, max_tokens, started, prompt)
+                self._stream(
+                    peer, kind, model, used, outbound, temperature, max_tokens, started, prompt, think_name
+                )
             else:
-                self._complete(peer, kind, model, outbound, temperature, max_tokens, started, prompt)
+                self._complete(
+                    peer, kind, model, outbound, temperature, max_tokens, started, prompt, think_name
+                )
         except Exception as error:
             self._error(str(error))
         finally:
@@ -334,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-    def _cached(self, answer: str, want_stream: bool, started: float) -> None:
+    def _cached(self, answer: str, want_stream: bool, started: float, think_name: str = "") -> None:
         elapsed = int((time.time() - started) * 1000)
         if not want_stream:
             resp = {
@@ -353,12 +366,16 @@ class Handler(BaseHTTPRequestHandler):
                 "pi_model": "canned",
                 "pi_kind": "dataset",
             }
+            if think_name:
+                resp["pi_think"] = think_name
             body = json.dumps(resp).encode()
             self.send_response(200)
             self._cors()
             self.send_header("content-type", "application/json")
             self.send_header("X-Pi-Peer", "cache")
             self.send_header("X-Pi-Chip", "cache")
+            if think_name:
+                self.send_header("X-Pi-Think", think_name)
             self.send_header("content-length", str(len(body)))
             self.end_headers()
             safe_write(self, body)
@@ -370,6 +387,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("X-Pi-Peer", "cache")
         self.send_header("X-Pi-Chip", "cache")
+        if think_name:
+            self.send_header("X-Pi-Think", think_name)
         self.end_headers()
         first = {
             "id": "pi-pair",
@@ -380,6 +399,8 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": "canned",
             "pi_kind": "dataset",
         }
+        if think_name:
+            first["pi_think"] = think_name
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         final = {
             "id": "pi-pair",
@@ -391,10 +412,14 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": "canned",
             "pi_kind": "dataset",
         }
+        if think_name:
+            final["pi_think"] = think_name
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
-    def _stream(self, peer, kind, model, used, messages, temperature, max_tokens, started, prompt: str) -> None:
+    def _stream(
+        self, peer, kind, model, used, messages, temperature, max_tokens, started, prompt: str, think_name: str = ""
+    ) -> None:
         self.send_response(200)
         self._cors()
         self.send_header("Content-Type", "text/event-stream")
@@ -402,6 +427,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("X-Pi-Peer", peer["name"])
         self.send_header("X-Pi-Chip", "brain: pi4" if peer["name"] == "pi4" else peer["name"])
+        if think_name:
+            self.send_header("X-Pi-Think", think_name)
         self.end_headers()
         safe_write(
             self,
@@ -423,6 +450,8 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
+        if think_name:
+            first["pi_think"] = think_name
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         parts: list[str] = []
         try:
@@ -461,6 +490,8 @@ class Handler(BaseHTTPRequestHandler):
                 "pi_model": used,
                 "pi_kind": kind,
             }
+            if think_name:
+                final["pi_think"] = think_name
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
             answer = "".join(parts)
             note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
@@ -472,7 +503,9 @@ class Handler(BaseHTTPRequestHandler):
             safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
 
-    def _complete(self, peer, kind, model, messages, temperature, max_tokens, started, prompt: str) -> None:
+    def _complete(
+        self, peer, kind, model, messages, temperature, max_tokens, started, prompt: str, think_name: str = ""
+    ) -> None:
         if kind == "llamacpp":
             content, used = chat_llamacpp(peer, model, messages, temperature, max_tokens)
         else:
@@ -497,12 +530,16 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
+        if think_name:
+            resp["pi_think"] = think_name
         body = json.dumps(resp).encode()
         self.send_response(200)
         self._cors()
         self.send_header("content-type", "application/json")
         self.send_header("X-Pi-Peer", peer["name"])
         self.send_header("X-Pi-Chip", chip)
+        if think_name:
+            self.send_header("X-Pi-Think", think_name)
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         safe_write(self, body)

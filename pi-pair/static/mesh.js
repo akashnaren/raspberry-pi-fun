@@ -94,11 +94,22 @@ async function fetchJson(url, opts, retries){
 }
 
 let thinking='medium';
-const THINK={
-  low:{temperature:0.6, max_tokens:128},
-  medium:{temperature:0.7, max_tokens:256},
-  high:{temperature:0.8, max_tokens:512}
-};
+
+function effortLabel(name){
+  const key=String(name||'').toLowerCase();
+  if(key==='low') return 'Low';
+  if(key==='medium') return 'Medium';
+  if(key==='high') return 'High';
+  return '';
+}
+function showEffort(parent, name){
+  const label=effortLabel(name);
+  if(!label || !parent) return;
+  const node=el('div','effort', label);
+  const labels=parent.querySelector('.label-row');
+  if(labels) parent.insertBefore(node, labels);
+  else parent.appendChild(node);
+}
 
 function shownError(msg){
   const s=String(msg&&msg.message||msg||'');
@@ -212,7 +223,7 @@ function attachLabel(parent, prompt, answer){
   parent.appendChild(box);
 }
 
-function addMsg(role,text,extraClass,prompt){
+function addMsg(role,text,extraClass,prompt,effort){
   hideEmpty();
   const d=el('div','msg '+role+(extraClass?(' '+extraClass):''));
   const body=el('div','body');
@@ -231,6 +242,7 @@ function addMsg(role,text,extraClass,prompt){
     d.appendChild(acts);
   }
   if(role==='bot' && !extraClass && prompt) attachLabel(d, prompt, text);
+  if(role==='bot' && !extraClass) showEffort(d, effort);
   document.getElementById('log').appendChild(d);
   d.scrollIntoView({block:'end', behavior:'smooth'});
   return d;
@@ -245,10 +257,11 @@ function addLiveBot(){
   return {
     root:d, body,
     setText(t){ body.classList.remove('md'); body.textContent=t; d.scrollIntoView({block:'end'}); },
-    finish(text, failed, prompt){
+    finish(text, failed, prompt, effort){
       d.classList.remove('streaming');
       setBodyContent(body, text, !failed);
       if(prompt && !failed) attachLabel(d, prompt, text);
+      if(!failed) showEffort(d, effort);
       d.scrollIntoView({block:'end', behavior:'smooth'});
     },
     markErr(){ d.classList.add('err'); d.classList.remove('streaming'); }
@@ -264,15 +277,14 @@ async function sendText(t, isRetry){
     addMsg('user', t);
   }
   const model=currentModel();
-  const knobs=THINK[thinking]||THINK.medium;
+  const effort=thinking||'medium';
   refresh().catch(()=>{});
   try{
     const body={
       model:model,
       messages:[],
       stream:true,
-      temperature:knobs.temperature,
-      max_tokens:knobs.max_tokens,
+      think:effort,
       pi_target:'auto',
       pi_mesh:'on'
     };
@@ -302,6 +314,7 @@ async function sendText(t, isRetry){
     }
     if(lastErr) throw lastErr;
 
+    const effortUsed=r.headers.get('X-Pi-Think')||effort;
     const ct=(r.headers.get('content-type')||'').toLowerCase();
     const isSSE=ct.includes('event-stream');
 
@@ -321,7 +334,7 @@ async function sendText(t, isRetry){
       }
       const text=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||'';
       thread.push({role:'assistant', content:text});
-      addMsg('bot', text, '', t);
+      addMsg('bot', text, '', t, j.pi_think||effortUsed);
       return;
     }
 
@@ -366,8 +379,10 @@ async function sendText(t, isRetry){
       live.root.appendChild(btn);
       return;
     }
+    let streamedEffort=effortUsed;
+    if(lastChunk && lastChunk.pi_think) streamedEffort=lastChunk.pi_think;
     thread.push({role:'assistant', content:textAccum});
-    live.finish(textAccum, false, t);
+    live.finish(textAccum, false, t, streamedEffort);
   }catch(e){
     const msg=shownError(e);
     const bot=addMsg('bot', msg, 'err');

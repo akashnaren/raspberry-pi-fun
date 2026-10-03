@@ -180,7 +180,9 @@ def _gate(table: dict[str, str], heldout: set[str], before: dict[str, str]) -> N
         raise GateError("eval gate failed: existing canned keys dropped")
 
 
-def _tombstone(root: Path, run_id: str, added: int, rejected: int, digest: str, rows_after: int) -> Path:
+def _tombstone(
+    root: Path, run_id: str, added: int, rejected: int, digest: str, rows_after: int, labeled: int = 0
+) -> Path:
     path = root / "train" / "done" / f"{run_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -189,6 +191,7 @@ def _tombstone(root: Path, run_id: str, added: int, rejected: int, digest: str, 
         "added": added,
         "rejected": rejected,
         "rows_after": rows_after,
+        "labeled": labeled,
         "map_sha256": digest,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -263,6 +266,7 @@ def post_train(
                 "promoted": False,
             }
         prepared, rows = _prepare(active, base, run_id)
+        labeled = sum(1 for row in rows if row.get("vote"))
         before = load_map(base / "canned" / "canned_map.json")
         candidate = dict(before)
         candidate, added, rejected = _fold(candidate, rows, heldout)
@@ -307,11 +311,12 @@ def post_train(
         removed = _delete_consumed(active, prepared)
         active = None
         prepared = None
-        _tombstone(base, run_id, added, rejected, digest, len(candidate))
+        _tombstone(base, run_id, added, rejected, digest, len(candidate), labeled)
         return {
             "id": run_id,
             "added": added,
             "rejected": rejected,
+            "labeled": labeled,
             "rows_before": len(before),
             "rows_after": len(candidate),
             "deleted": removed,

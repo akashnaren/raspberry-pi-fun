@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import threading
 import urllib.request
 from pathlib import Path
@@ -50,6 +51,82 @@ def _bump(root: Path, field: str) -> None:
     path.write_text(json.dumps(current) + "\n", encoding="utf-8")
 
 
+def label_high_water_bytes() -> int:
+    raw = os.environ.get("PI_PAIR_LABEL_HIGH_WATER_BYTES", "").strip()
+    if raw:
+        return max(0, int(raw))
+    return 1_048_576
+
+
+def disk_high_water() -> float:
+    raw = os.environ.get("PI_PAIR_DISK_HIGH_WATER", "").strip()
+    if raw:
+        return float(raw)
+    return 0.85
+
+
+def _pending_jsonl(root: Path) -> list[Path]:
+    pending = root / "train" / "pending"
+    if not pending.is_dir():
+        return []
+    files = [path for path in pending.iterdir() if path.is_file() and path.suffix == ".jsonl"]
+    files.sort(key=lambda path: (path.stat().st_mtime, path.name))
+    return files
+
+
+def _label_bytes(root: Path) -> int:
+    return sum(path.stat().st_size for path in _pending_jsonl(root))
+
+
+def _disk_over(root: Path) -> bool:
+    pending = root / "train" / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    usage = shutil.disk_usage(pending)
+    if usage.total <= 0:
+        return False
+    return (usage.used / usage.total) >= disk_high_water()
+
+
+def shed_raw_labels(root: Path) -> list[str]:
+    """Drop the oldest raw queue text when the card or the label files are past the mark.
+
+    The canned map is not in this directory and is not deleted. Caller holds _LOCK.
+    """
+    removed: list[str] = []
+    for _ in range(10000):
+        over_bytes = _label_bytes(root) > label_high_water_bytes()
+        over_disk = _disk_over(root)
+        if not over_bytes and not over_disk:
+            break
+        files = _pending_jsonl(root)
+        siblings = [path for path in files if path.name != "queue.jsonl"]
+        if siblings:
+            siblings[0].unlink()
+            removed.append(siblings[0].name)
+            continue
+        queue = queue_path(root)
+        if not queue.is_file():
+            break
+        lines = [line for line in queue.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not lines:
+            queue.unlink()
+            removed.append(queue.name)
+            break
+        lines = lines[1:]
+        if lines:
+            queue.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        else:
+            queue.unlink()
+        removed.append("oldest-row")
+        if over_disk and not over_bytes:
+            # One row will not free a full card. Stop once the raw queue is gone.
+            if not lines:
+                break
+            if _label_bytes(root) == 0:
+                break
+    return removed
+
+
 def append_row(row: dict, root: Path | None = None, bound: int = QUEUE_BOUND) -> int:
     path = queue_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +139,11 @@ def append_row(row: dict, root: Path | None = None, bound: int = QUEUE_BOUND) ->
             lines = lines[-bound:]
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         _bump(root or data_root(), "misses")
-        return len(lines)
+        shed_raw_labels(root or data_root())
+        if not path.exists():
+            return 0
+        kept = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return len(kept)
 
 
 def note_hit(root: Path | None = None) -> None:
@@ -180,6 +261,7 @@ def apply_label(
             if len(raw_lines) > bound:
                 raw_lines = raw_lines[-bound:]
         path.write_text("\n".join(raw_lines) + "\n", encoding="utf-8")
+        shed_raw_labels(root or data_root())
         return {
             "ok": True,
             "forwarded": False,

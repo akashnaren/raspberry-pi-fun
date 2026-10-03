@@ -95,6 +95,9 @@ header{
 .md .katex-display{margin:.8em 0; overflow-x:auto; overflow-y:hidden}
 .md hr{border:none; border-top:1px solid var(--line); margin:1em 0}
 
+.effort{
+  margin-top:8px; font-size:12px; line-height:1; color:var(--think); letter-spacing:.01em;
+}
 .label-row{display:flex; gap:2px; align-items:center; margin-top:8px}
 .label-note{font-size:12px; color:var(--dim); padding:0 6px}
 .fix-box{display:none; gap:8px; align-items:flex-end; margin-top:8px}

@@ -26,7 +26,15 @@ class Flywheel(unittest.TestCase):
     def setUp(self):
         self._env = {
             key: os.environ.get(key)
-            for key in ("PI_PAIR_DATA", "PI_PAIR_ROLE", "PI_PAIR_ADAPTERS", "PI_PAIR_TRAIN_CONFIG", "PI_PAIR_NAME")
+            for key in (
+                "PI_PAIR_DATA",
+                "PI_PAIR_ROLE",
+                "PI_PAIR_ADAPTERS",
+                "PI_PAIR_TRAIN_CONFIG",
+                "PI_PAIR_NAME",
+                "PI_PAIR_LABEL_HIGH_WATER_BYTES",
+                "PI_PAIR_DISK_HIGH_WATER",
+            )
         }
         self.tmp = tempfile.TemporaryDirectory()
         self.base = Path(self.tmp.name)
@@ -232,6 +240,25 @@ class Flywheel(unittest.TestCase):
         self.assertNotIn("zzz labeled novel", blob)
         self.assertNotIn("the corrected sentence", blob)
 
+    def test_high_water_drops_oldest_labels_and_keeps_the_map(self):
+        os.environ["PI_PAIR_LABEL_HIGH_WATER_BYTES"] = "100000"
+        os.environ["PI_PAIR_DISK_HIGH_WATER"] = "2"
+        data = self._copy_data()
+        map_before = (data / "canned" / "canned_map.json").read_text(encoding="utf-8")
+        apply_label("oldest prompt aaa", "a" * 40, "down", root=data)
+        apply_label("newest prompt bbb", "b" * 20, "up", "the corrected sentence", root=data)
+        pending = data / "train" / "pending" / "queue.jsonl"
+        total = pending.stat().st_size
+        os.environ["PI_PAIR_LABEL_HIGH_WATER_BYTES"] = str(total - 1)
+        apply_label("newest prompt bbb", "b" * 20, "up", "the corrected sentence", root=data)
+        text = pending.read_text(encoding="utf-8")
+        self.assertNotIn("oldest prompt aaa", text)
+        self.assertIn("newest prompt bbb", text)
+        self.assertIn('"vote": "up"', text)
+        self.assertIn("the corrected sentence", text)
+        self.assertEqual((data / "canned" / "canned_map.json").read_text(encoding="utf-8"), map_before)
+        self.assertLess(pending.stat().st_size, total)
+
     def test_brain_forwards_a_label_and_does_not_write_it(self):
         data = self._copy_data()
         os.environ["PI_PAIR_ROLE"] = "brain"
@@ -278,6 +305,10 @@ class Flywheel(unittest.TestCase):
             "/v1/flywheel/feedback",
             "vote",
             "correction",
+            "does not make the model larger or smaller",
+            "full fine-tune is not",
+            "data/train/done",
+            "map hit",
         ):
             self.assertIn(phrase, text, phrase)
         self.assertNotIn("Pi 0.2 High", text)

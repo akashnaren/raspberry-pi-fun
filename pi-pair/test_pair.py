@@ -338,6 +338,8 @@ class PairHttp(unittest.TestCase):
         self.assertIn("/v1/flywheel/feedback", script)
         self.assertIn("Thumbs up", script)
         self.assertIn("Thumbs down", script)
+        self.assertIn("think:effort", script)
+        self.assertIn("X-Pi-Think", script)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
             health_body = json.loads(response.read().decode())
         self.assertEqual(health_body["peers_up"], 1)
@@ -361,6 +363,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_chip"], "brain: pi4")
         self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 2048)
         self.assertEqual(OllamaFake.last_payload["keep_alive"], "5m")
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 256)
         stream = urllib.request.Request(
             f"http://127.0.0.1:{port}/v1/chat/completions",
             data=json.dumps(
@@ -568,6 +571,47 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(OllamaFake.posts, 1)
         queued = (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl").read_text()
         self.assertIn("Hi!", queued)
+
+    def test_think_level_changes_num_predict(self):
+        peer_port = self._listen(OllamaFake)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        seen = {}
+        for level in ("low", "high"):
+            status, headers, body = self._post(
+                port,
+                {
+                    "model": "qwen2.5:0.5b",
+                    "messages": [{"role": "user", "content": "think " + level}],
+                    "stream": False,
+                    "think": level,
+                    "temperature": 0.7,
+                    "max_tokens": 256,
+                },
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(headers.get("X-Pi-Think"), level)
+            self.assertEqual(body["pi_think"], level)
+            seen[level] = OllamaFake.last_payload["options"]
+        self.assertNotEqual(seen["low"]["num_predict"], seen["high"]["num_predict"])
+        self.assertEqual(seen["low"]["num_predict"], 64)
+        self.assertEqual(seen["high"]["num_predict"], 768)
+        self.assertEqual(seen["low"]["temperature"], 0.6)
+        self.assertEqual(seen["high"]["temperature"], 0.8)
+        self.assertNotIn("think", OllamaFake.last_payload)
 
     def test_feedback_rates_the_last_completion(self):
         peer_port = self._listen(OllamaFake)
