@@ -2,19 +2,45 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.canned import lookup
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
 from pair.config import STATIC_DIR
-from pair.guard import may_generate, weak_brain_error
+from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
+from pair.knobs import decode_effort
 from pair.health import snapshot_peers
 from pair.peers import pick
-from pair.queue import append_row, node_role, note_exchange
+from pair.queue import append_row, apply_label, node_role, note_exchange
+from pair.search import lookup_web
 from pair import runtime
 from pair.stream import stream_llamacpp, stream_ollama
+
+_LAST_LOCK = threading.Lock()
+_LAST = {"prompt": "", "answer": "", "chip": "", "peer": ""}
+
+
+def remember_completion(prompt: str, answer: str, chip: str, peer: str) -> None:
+    text = (prompt or "").strip()
+    reply = (answer or "").strip()
+    if not text or not reply:
+        return
+    with _LAST_LOCK:
+        _LAST["prompt"] = text
+        _LAST["answer"] = reply
+        _LAST["chip"] = chip
+        _LAST["peer"] = peer
+
+
+def last_completion() -> dict:
+    with _LAST_LOCK:
+        return dict(_LAST)
 
 _TYPES = {
     ".css": "text/css; charset=utf-8",
@@ -26,13 +52,14 @@ _TYPES = {
 }
 
 
-def safe_write(handler, body: bytes, flush: bool = False) -> None:
+def safe_write(handler, body: bytes, flush: bool = False) -> bool:
     try:
         handler.wfile.write(body)
         if flush:
             handler.wfile.flush()
+        return True
     except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
-        pass
+        return False
 
 
 def static_file(url_path: str) -> Path | None:
@@ -67,6 +94,22 @@ def _named_can_generate(target: str) -> bool:
     return named is not None and may_generate(named)
 
 
+def one_user_turn(messages) -> bool:
+    """The canned map is for a single new line. A session with history stays on pi4."""
+    users = 0
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role") or "user"
+        if role == "assistant":
+            return False
+        if role == "user":
+            users += 1
+            if users > 1:
+                return False
+    return True
+
+
 def last_user_text(messages) -> str:
     for message in reversed(messages or []):
         if not isinstance(message, dict):
@@ -74,6 +117,73 @@ def last_user_text(messages) -> str:
         if message.get("role", "user") == "user":
             return message_text(message.get("content"))
     return ""
+
+
+def brain_chat_url() -> str:
+    """pi4's page, not its Ollama port. Search and decode both happen there."""
+    peer = next((item for item in runtime.PEERS if item.get("name") == "pi4"), None)
+    if peer is None or not may_generate(peer):
+        raise RuntimeError(PI4_MISS_DOWN)
+    port = int(os.environ.get("PI_PAIR_BRAIN_PORT", "18080"))
+    return f"http://{peer['host']}:{port}/v1/chat/completions"
+
+
+def relay_chat(payload: bytes, target: str, mesh: str) -> tuple[int, dict[str, str], bytes]:
+    """Hand the chat to pi4. This process does not search and does not generate."""
+    request = urllib.request.Request(
+        brain_chat_url(),
+        data=payload,
+        headers={
+            "content-type": "application/json",
+            "X-Pi-Target": target or "auto",
+            "X-Pi-Mesh": mesh or "on",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            raw = response.read()
+            headers = {
+                "content-type": response.headers.get("content-type", "application/json"),
+            }
+            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search"):
+                value = response.headers.get(name)
+                if value:
+                    headers[name] = value
+            return response.status, headers, raw
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        kind = error.headers.get("content-type", "application/json")
+        return error.code, {"content-type": kind}, raw
+    except Exception:
+        raise RuntimeError(PI4_MISS_DOWN) from None
+
+
+def _with_search(messages, prompt: str):
+    """On pi4, after a miss, attach public notes. Failures stay on the local model."""
+    if not (prompt or "").strip():
+        return messages, None
+    try:
+        found = lookup_web(prompt)
+    except Exception:
+        found = None
+    if not isinstance(found, dict):
+        found = {"status": "failed", "sources": [], "context": ""}
+    status = found.get("status")
+    if status not in ("ok", "failed"):
+        status = "failed"
+    sources = []
+    for item in (found.get("sources") or [])[:3]:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url.startswith("http"):
+            continue
+        title = str(item.get("title") or url).strip() or url
+        sources.append({"title": title[:120], "url": url})
+    context = str(found.get("context") or "").strip()
+    if status == "ok" and context:
+        messages = [{"role": "system", "content": context}, *messages]
+    return messages, {"status": status, "sources": sources}
 
 
 def index_body() -> bytes:
@@ -144,12 +254,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/v1/flywheel/enqueue":
             self._enqueue()
             return
+        if path == "/v1/flywheel/feedback":
+            self._feedback()
+            return
         if path != "/v1/chat/completions":
             self.send_response(404)
             self.end_headers()
             return
         length = int(self.headers.get("content-length") or 0)
-        data = json.loads(self.rfile.read(length).decode() or "{}")
+        raw = self.rfile.read(length)
+        data = json.loads(raw.decode() or "{}")
         target = (self.headers.get("X-Pi-Target") or data.pop("pi_target", None) or "auto").strip()
         mesh = (self.headers.get("X-Pi-Mesh") or data.pop("pi_mesh", None) or "on").strip().lower() not in (
             "0",
@@ -159,8 +273,16 @@ class Handler(BaseHTTPRequestHandler):
         )
         model = data.get("model") or runtime.MODEL
         messages = data.get("messages") or []
-        temperature = float(data.get("temperature") if data.get("temperature") is not None else 0.7)
-        max_tokens = int(data.get("max_tokens") or data.get("max_completion_tokens") or 256)
+        effort = decode_effort(str(data.pop("think", "") or ""))
+        if effort:
+            think_name, temperature, max_tokens = effort
+            data.pop("temperature", None)
+            data.pop("max_tokens", None)
+            data.pop("max_completion_tokens", None)
+        else:
+            think_name = ""
+            temperature = float(data.get("temperature") if data.get("temperature") is not None else 0.7)
+            max_tokens = int(data.get("max_tokens") or data.get("max_completion_tokens") or 256)
         started = time.time()
         want_stream = bool(data.get("stream"))
         prompt = last_user_text(messages)
@@ -169,14 +291,22 @@ class Handler(BaseHTTPRequestHandler):
                 named = next((peer for peer in runtime.PEERS if peer["name"] == target), None)
                 if named is not None and not may_generate(named):
                     raise RuntimeError(weak_brain_error(named["name"]))
-            if mesh and (not target or target == "auto" or _named_can_generate(target)):
+            if (
+                mesh
+                and one_user_turn(messages)
+                and (not target or target == "auto" or _named_can_generate(target))
+            ):
                 hit = lookup(prompt)
                 if hit is not None:
                     note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
-                    self._cached(hit, want_stream, started)
+                    remember_completion(prompt, hit, "cache", "cache")
+                    self._cached(hit, want_stream, started, think_name)
                     return
         except Exception as error:
             self._error(str(error))
+            return
+        if node_role() != "brain":
+            self._relay_to_brain(raw)
             return
         acquired = runtime._infer_sem.acquire(timeout=120)
         if not acquired:
@@ -197,14 +327,56 @@ class Handler(BaseHTTPRequestHandler):
             ]
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
+            search_note = None
+            if mesh and node_role() == "brain":
+                outbound, search_note = _with_search(outbound, prompt)
             if want_stream:
-                self._stream(peer, kind, model, used, outbound, temperature, max_tokens, started, prompt)
+                self._stream(
+                    peer,
+                    kind,
+                    model,
+                    used,
+                    outbound,
+                    temperature,
+                    max_tokens,
+                    started,
+                    prompt,
+                    think_name,
+                    search_note,
+                )
             else:
-                self._complete(peer, kind, model, outbound, temperature, max_tokens, started, prompt)
+                self._complete(
+                    peer,
+                    kind,
+                    model,
+                    outbound,
+                    temperature,
+                    max_tokens,
+                    started,
+                    prompt,
+                    think_name,
+                    search_note,
+                )
         except Exception as error:
             self._error(str(error))
         finally:
             runtime._infer_sem.release()
+
+    def _relay_to_brain(self, payload: bytes) -> None:
+        target = (self.headers.get("X-Pi-Target") or "auto").strip()
+        mesh = (self.headers.get("X-Pi-Mesh") or "on").strip()
+        try:
+            status, headers, body = relay_chat(payload, target, mesh)
+        except RuntimeError as error:
+            self._error(str(error))
+            return
+        self.send_response(status)
+        self._cors()
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
 
     def _enqueue(self) -> None:
         if node_role() != "dataset":
@@ -240,6 +412,63 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         safe_write(self, body)
 
+    def _feedback(self) -> None:
+        length = int(self.headers.get("content-length") or 0)
+        try:
+            row = json.loads(self.rfile.read(length).decode() or "{}")
+        except json.JSONDecodeError:
+            self._error("feedback must be JSON", status=400)
+            return
+        if not isinstance(row, dict):
+            self._error("feedback must be an object", status=400)
+            return
+        prompt = str(row.get("prompt") or "").strip()
+        answer = str(row.get("answer") or "").strip()
+        chip = str(row.get("chip") or "")
+        peer = str(row.get("peer") or "")
+        if not prompt and not answer:
+            last = last_completion()
+            prompt = str(last.get("prompt") or "")
+            answer = str(last.get("answer") or "")
+            chip = chip or str(last.get("chip") or "")
+            peer = peer or str(last.get("peer") or "")
+        elif not prompt or not answer:
+            self._error("feedback needs both prompt and answer, or neither", status=400)
+            return
+        try:
+            result = apply_label(
+                prompt,
+                answer,
+                str(row.get("vote") or ""),
+                str(row.get("correction") or ""),
+                chip=chip,
+                peer=peer,
+            )
+        except ValueError as error:
+            self._error(str(error), status=400)
+            return
+        if result.get("forwarded") and not result.get("ok"):
+            self._error("dataset host did not accept the label", status=502)
+            return
+        stored = result.get("row") if isinstance(result.get("row"), dict) else {}
+        body = json.dumps(
+            {
+                "ok": True,
+                "labeled": True,
+                "queued": result.get("queued") or 0,
+                "prompt": stored.get("prompt") or prompt,
+                "answer": stored.get("answer") or answer,
+                "vote": stored.get("vote") or "",
+                "correction": stored.get("correction") or "",
+            }
+        ).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
     def _error(self, message: str, status: int = 502) -> None:
         body = json.dumps({"error": message}).encode()
         try:
@@ -252,7 +481,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-    def _cached(self, answer: str, want_stream: bool, started: float) -> None:
+    def _cached(self, answer: str, want_stream: bool, started: float, think_name: str = "") -> None:
         elapsed = int((time.time() - started) * 1000)
         if not want_stream:
             resp = {
@@ -271,12 +500,16 @@ class Handler(BaseHTTPRequestHandler):
                 "pi_model": "canned",
                 "pi_kind": "dataset",
             }
+            if think_name:
+                resp["pi_think"] = think_name
             body = json.dumps(resp).encode()
             self.send_response(200)
             self._cors()
             self.send_header("content-type", "application/json")
             self.send_header("X-Pi-Peer", "cache")
             self.send_header("X-Pi-Chip", "cache")
+            if think_name:
+                self.send_header("X-Pi-Think", think_name)
             self.send_header("content-length", str(len(body)))
             self.end_headers()
             safe_write(self, body)
@@ -288,6 +521,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("X-Pi-Peer", "cache")
         self.send_header("X-Pi-Chip", "cache")
+        if think_name:
+            self.send_header("X-Pi-Think", think_name)
         self.end_headers()
         first = {
             "id": "pi-pair",
@@ -298,6 +533,8 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": "canned",
             "pi_kind": "dataset",
         }
+        if think_name:
+            first["pi_think"] = think_name
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         final = {
             "id": "pi-pair",
@@ -309,10 +546,25 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": "canned",
             "pi_kind": "dataset",
         }
+        if think_name:
+            final["pi_think"] = think_name
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
-    def _stream(self, peer, kind, model, used, messages, temperature, max_tokens, started, prompt: str) -> None:
+    def _stream(
+        self,
+        peer,
+        kind,
+        model,
+        used,
+        messages,
+        temperature,
+        max_tokens,
+        started,
+        prompt: str,
+        think_name: str = "",
+        search_note: dict | None = None,
+    ) -> None:
         self.send_response(200)
         self._cors()
         self.send_header("Content-Type", "text/event-stream")
@@ -320,6 +572,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("X-Pi-Peer", peer["name"])
         self.send_header("X-Pi-Chip", "brain: pi4" if peer["name"] == "pi4" else peer["name"])
+        if think_name:
+            self.send_header("X-Pi-Think", think_name)
+        if search_note:
+            self.send_header("X-Pi-Search", search_note["status"])
         self.end_headers()
         safe_write(
             self,
@@ -341,6 +597,11 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
+        if think_name:
+            first["pi_think"] = think_name
+        if search_note:
+            first["pi_search"] = search_note["status"]
+            first["pi_sources"] = search_note["sources"]
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         parts: list[str] = []
         try:
@@ -348,6 +609,7 @@ class Handler(BaseHTTPRequestHandler):
                 gen = stream_llamacpp(peer, model, messages, temperature, max_tokens)
             else:
                 gen = stream_ollama(peer, model, messages, temperature, max_tokens)
+            closed = False
             for delta in gen:
                 parts.append(delta)
                 chunk = {
@@ -361,7 +623,16 @@ class Handler(BaseHTTPRequestHandler):
                         }
                     ],
                 }
-                safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
+                if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
+                    closed = True
+                    break
+            if closed:
+                answer = "".join(parts).strip()
+                if answer:
+                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                    remember_completion(prompt, answer, chip, peer["name"])
+                return
             elapsed = int((time.time() - started) * 1000)
             final = {
                 "id": "pi-pair",
@@ -379,27 +650,42 @@ class Handler(BaseHTTPRequestHandler):
                 "pi_model": used,
                 "pi_kind": kind,
             }
+            if think_name:
+                final["pi_think"] = think_name
+            if search_note:
+                final["pi_search"] = search_note["status"]
+                final["pi_sources"] = search_note["sources"]
+            chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+            answer = "".join(parts)
+            note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+            remember_completion(prompt, answer, chip, peer["name"])
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
-            note_exchange(
-                prompt,
-                "".join(parts),
-                chip="brain: pi4" if peer["name"] == "pi4" else peer["name"],
-                peer=peer["name"],
-                train=True,
-            )
         except Exception as error:
             err = {"error": str(error)}
             safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
 
-    def _complete(self, peer, kind, model, messages, temperature, max_tokens, started, prompt: str) -> None:
+    def _complete(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        started,
+        prompt: str,
+        think_name: str = "",
+        search_note: dict | None = None,
+    ) -> None:
         if kind == "llamacpp":
             content, used = chat_llamacpp(peer, model, messages, temperature, max_tokens)
         else:
             content, used = chat_ollama(peer, model, messages, temperature, max_tokens)
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
         note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
+        remember_completion(prompt, content, chip, peer["name"])
         elapsed = int((time.time() - started) * 1000)
         resp = {
             "id": "pi-pair",
@@ -417,12 +703,21 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
+        if think_name:
+            resp["pi_think"] = think_name
+        if search_note:
+            resp["pi_search"] = search_note["status"]
+            resp["pi_sources"] = search_note["sources"]
         body = json.dumps(resp).encode()
         self.send_response(200)
         self._cors()
         self.send_header("content-type", "application/json")
         self.send_header("X-Pi-Peer", peer["name"])
         self.send_header("X-Pi-Chip", chip)
+        if think_name:
+            self.send_header("X-Pi-Think", think_name)
+        if search_note:
+            self.send_header("X-Pi-Search", search_note["status"])
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         safe_write(self, body)

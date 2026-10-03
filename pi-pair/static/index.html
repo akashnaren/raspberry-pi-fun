@@ -2,7 +2,7 @@
 <html lang="en"><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<meta name="theme-color" content="#212121"/>
+<meta name="theme-color" content="#0a0a0a"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <title>Pi 0.2 High</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"/>
@@ -15,27 +15,34 @@
 <div class="app">
   <header>
     <div class="brand">Pi 0.2 High</div>
-    <div class="hdr-right">
-      <span id="modeChip" class="chip chip-neutral">Auto</span>
-      <select id="peerSel" title="Peer" aria-label="Peer">
-        <option value="auto">Auto</option>
-      </select>
-      <span id="status">…</span>
-    </div>
+    <button class="head-btn" id="btnIo" type="button" aria-label="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M5.8 5.8l1.6 1.6M16.6 16.6l1.6 1.6M18.2 5.8l-1.6 1.6M7.4 16.6l-1.6 1.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
   </header>
-  <div id="log"><div class="empty" id="empty"><p class="empty-kicker">Local mesh</p><p>Auto answers from the canned map when the line is known. New lines are written on pi4. pi2 and pi3 do not generate.</p></div></div>
+  <div id="log"><div class="empty" id="empty"><p>Ask anything.</p></div></div>
   <footer>
     <div class="composer-wrap">
-      <div class="toolbar">
-        <button class="link-btn" id="btnAttach" type="button">Attach</button>
-        <button class="link-btn" id="btnIo" type="button">Settings</button>
+      <div class="file-tag" id="fileTag"><span id="fileName"></span><button type="button" id="fileClear" aria-label="Remove">×</button></div>
+      <div class="composer">
+        <textarea id="q" placeholder="Message" rows="1" enterkeyhint="send" aria-label="Message"></textarea>
+        <div class="composer-bar">
+          <div class="think-set" role="group" aria-label="Thinking">
+            <button type="button" class="think-btn" data-think="low">Low</button>
+            <button type="button" class="think-btn on" data-think="medium">Medium</button>
+            <button type="button" class="think-btn" data-think="high">High</button>
+          </div>
+          <div class="composer-tools">
+            <button class="tool" id="btnAttach" type="button" aria-label="Attach">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8.5 12.5l6-6a3 3 0 0 1 4.2 4.2l-7.3 7.3a4.5 4.5 0 0 1-6.4-6.4l6.8-6.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="send-btn" id="go" type="button" aria-label="Send">
+              <svg class="send-mark" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <svg class="stop-mark" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
-      <div class="file-chip" id="fileChip"><span id="fileName"></span><button type="button" id="fileClear" aria-label="Remove">×</button></div>
-      <div class="composer-row">
-        <textarea id="q" placeholder="Message…" rows="1" enterkeyhint="enter"></textarea>
-        <input type="file" id="attach" accept=".txt,.md,.csv,.json,.log,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,text/plain"/>
-        <button class="send-btn" id="go" type="button">Send</button>
-      </div>
+      <input type="file" id="attach" accept=".txt,.md,.csv,.json,.log,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,text/plain"/>
     </div>
   </footer>
 </div>
@@ -48,21 +55,12 @@
   <div class="drawer-body">
     <div class="field">
       <label for="sys">System prompt</label>
-      <textarea id="sys" placeholder="Optional system instructions…" rows="3"></textarea>
+      <textarea id="sys" placeholder="Optional system instructions" rows="3"></textarea>
     </div>
     <div class="field">
       <label for="modelSel">Model</label>
       <select id="modelSel"><option value="">__MODEL__</option></select>
     </div>
-    <div class="field">
-      <label for="temp">Temperature</label>
-      <input id="temp" type="number" min="0" max="2" step="0.1" value="0.7"/>
-    </div>
-    <div class="field">
-      <label for="maxt">Max tokens</label>
-      <input id="maxt" type="number" min="16" max="8192" step="16" value="256"/>
-    </div>
-    <label class="row-check"><input type="checkbox" id="mesh" checked/> Mesh routing</label>
     <div class="drawer-actions">
       <button type="button" id="btnMd">Export .md</button>
       <button type="button" id="btnTxt">Export .txt</button>

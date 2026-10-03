@@ -125,13 +125,18 @@ def _prepare(active: Path | None, root: Path, run_id: str) -> tuple[Path, list[d
         for row in _read_jsonl(active):
             prompt = str(row.get("prompt") or row.get("input") or row.get("q") or "")
             answer = str(row.get("answer") or row.get("a") or row.get("output") or "")
-            rows.append(
-                {
-                    "prompt": prompt.strip(),
-                    "answer": answer.strip(),
-                    "q": normalize_key(prompt),
-                }
-            )
+            prepared_row = {
+                "prompt": prompt.strip(),
+                "answer": answer.strip(),
+                "q": normalize_key(prompt),
+            }
+            vote = str(row.get("vote") or "").strip().lower()
+            correction = str(row.get("correction") or "").strip()
+            if vote:
+                prepared_row["vote"] = vote
+            if correction:
+                prepared_row["correction"] = correction
+            rows.append(prepared_row)
     prepared = root / "prepared" / f"{run_id}.jsonl"
     prepared.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
@@ -144,11 +149,22 @@ def _fold(table: dict[str, str], rows: list[dict], heldout: set[str]) -> tuple[d
     rejected = 0
     for row in rows:
         key = row.get("q") or ""
-        answer = row.get("answer") or ""
+        correction = str(row.get("correction") or "").strip()
+        vote = str(row.get("vote") or "").strip().lower()
+        if correction:
+            answer = correction
+        elif vote == "down":
+            rejected += 1
+            continue
+        else:
+            answer = row.get("answer") or ""
         if not _usable(key, answer) or key in heldout:
             rejected += 1
             continue
         if key in table:
+            if correction and table[key] != answer:
+                table[key] = answer
+                added += 1
             continue
         table[key] = answer
         added += 1
@@ -164,7 +180,9 @@ def _gate(table: dict[str, str], heldout: set[str], before: dict[str, str]) -> N
         raise GateError("eval gate failed: existing canned keys dropped")
 
 
-def _tombstone(root: Path, run_id: str, added: int, rejected: int, digest: str, rows_after: int) -> Path:
+def _tombstone(
+    root: Path, run_id: str, added: int, rejected: int, digest: str, rows_after: int, labeled: int = 0
+) -> Path:
     path = root / "train" / "done" / f"{run_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -173,6 +191,7 @@ def _tombstone(root: Path, run_id: str, added: int, rejected: int, digest: str, 
         "added": added,
         "rejected": rejected,
         "rows_after": rows_after,
+        "labeled": labeled,
         "map_sha256": digest,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -247,6 +266,7 @@ def post_train(
                 "promoted": False,
             }
         prepared, rows = _prepare(active, base, run_id)
+        labeled = sum(1 for row in rows if row.get("vote"))
         before = load_map(base / "canned" / "canned_map.json")
         candidate = dict(before)
         candidate, added, rejected = _fold(candidate, rows, heldout)
@@ -291,11 +311,12 @@ def post_train(
         removed = _delete_consumed(active, prepared)
         active = None
         prepared = None
-        _tombstone(base, run_id, added, rejected, digest, len(candidate))
+        _tombstone(base, run_id, added, rejected, digest, len(candidate), labeled)
         return {
             "id": run_id,
             "added": added,
             "rejected": rejected,
+            "labeled": labeled,
             "rows_before": len(before),
             "rows_after": len(candidate),
             "deleted": removed,

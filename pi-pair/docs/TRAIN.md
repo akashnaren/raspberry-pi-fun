@@ -8,7 +8,7 @@ python3 scripts/eval/run_gate.py
 python3 scripts/lifecycle/post_train.py
 ```
 
-`prepare_queue.py` only checks the registry and prints counts. `run_gate.py` checks the live map against the held-out file and does not edit it. `post_train.py` moves `data/train/pending/queue.jsonl` to `data/train/active/`, writes `data/prepared/<id>.jsonl`, folds new pairs into the canned map, promotes `adapters/active/manifest.json`, deletes the shard and the prepared file, and writes a tombstone in `data/train/done/` with no prompt text.
+`prepare_queue.py` only checks the registry and prints counts. `run_gate.py` checks the live map against the held-out file and does not edit it. `post_train.py` moves `data/train/pending/queue.jsonl` to `data/train/active/`, writes `data/prepared/<id>.jsonl`, folds new pairs into the canned map, promotes `adapters/active/manifest.json`, deletes the shard and the prepared file, and writes a tombstone in `data/train/done/` with no prompt text. A queued row may also carry `vote` (`up` or `down`) and `correction`. A down vote with no correction is not folded. A correction replaces the stored sentence for that line.
 
 `scripts/lifecycle/delete_shards.py` removes leftovers in `data/train/active` and `data/prepared`. It leaves `data/train/pending` alone.
 
