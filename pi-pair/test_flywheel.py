@@ -313,6 +313,9 @@ class Flywheel(unittest.TestCase):
             "search failed",
             "The local model is small",
             "facts it does not know",
+            "scripts/chat_label.py",
+            "--dry-run",
+            "another caller",
         ):
             self.assertIn(phrase, text, phrase)
         self.assertNotIn("Pi 0.2 High", text)

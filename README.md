@@ -326,7 +326,16 @@ JSON fields `pi_target` and `pi_mesh` are accepted and stripped before a worker 
 
 ## Agents
 
-Other agents on this fleet use the same router. There is no second bot, no schedule, and no paid model. POST a chat turn to any board's port 18080. A miss is still generated only on pi4, and the row is still queued on pi3.
+Other agents on this fleet use the same router. A bot is another caller of this HTTP API. There is no second page, no schedule, and no paid model. POST a chat turn to any board's port 18080. A miss is still generated only on pi4, and the row is still queued on pi3.
+
+`pi-pair/scripts/chat_label.py` does what the page does for one line. It POSTs the turn with Auto and mesh on, then POSTs a thumbs vote, and a correction when you pass one, so the row on pi3 has the label `post_train` reads. It does not pin pi2 or pi3.
+
+```bash
+python3 pi-pair/scripts/chat_label.py --base http://127.0.0.1:18080 --prompt 'status' --vote up
+python3 pi-pair/scripts/chat_label.py --dry-run --prompt 'status' --vote down --correction 'the sentence you wanted'
+```
+
+`--dry-run` prints those two posts and does not open a connection.
 
 ```bash
 curl -sS http://127.0.0.1:18080/v1/chat/completions \

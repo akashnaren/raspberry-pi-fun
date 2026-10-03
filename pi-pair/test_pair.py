@@ -913,6 +913,75 @@ class PairHttp(unittest.TestCase):
         self.assertIn("A short note.", blob)
         self.assertIn("Hi!", blob)
 
+    def test_chat_label_script_votes_the_reply(self):
+        import subprocess
+
+        port = self._pi4()
+        script = ROOT / "scripts" / "chat_label.py"
+        dry = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--dry-run",
+                "--base",
+                "http://127.0.0.1:1",
+                "--prompt",
+                "label from a bot",
+                "--vote",
+                "down",
+                "--correction",
+                "the sentence you wanted",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(dry.returncode, 0, dry.stderr)
+        planned = json.loads(dry.stdout)
+        self.assertTrue(planned["dry_run"])
+        self.assertEqual(planned["chat"]["headers"]["X-Pi-Target"], "auto")
+        self.assertEqual(planned["chat"]["headers"]["X-Pi-Mesh"], "on")
+        self.assertEqual(planned["chat"]["body"]["messages"][0]["content"], "label from a bot")
+        self.assertEqual(planned["chat"]["body"]["pi_target"], "auto")
+        self.assertFalse(planned["chat"]["body"]["stream"])
+        self.assertEqual(planned["feedback"]["body"]["vote"], "down")
+        self.assertEqual(planned["feedback"]["body"]["correction"], "the sentence you wanted")
+        self.assertIn("/v1/chat/completions", planned["chat"]["url"])
+        self.assertIn("/v1/flywheel/feedback", planned["feedback"]["url"])
+        live = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--base",
+                f"http://127.0.0.1:{port}",
+                "--prompt",
+                "label from a bot",
+                "--vote",
+                "up",
+                "--timeout",
+                "10",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(live.returncode, 0, live.stderr)
+        labeled = json.loads(live.stdout)
+        self.assertEqual(labeled["vote"], "up")
+        self.assertEqual(labeled["prompt"], "label from a bot")
+        self.assertEqual(labeled["answer"], "hello from peer")
+        rows = [
+            json.loads(line)
+            for line in (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["prompt"], "label from a bot")
+        self.assertEqual(rows[0]["answer"], "hello from peer")
+        self.assertEqual(rows[0]["vote"], "up")
+        self.assertEqual(OllamaFake.posts, 1)
+
 
 class ProductCopy(unittest.TestCase):
     """UI and installer keep Pi 0.2 High. READMEs stay plain and do not say Pi PAIR."""
