@@ -572,7 +572,10 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(headers.get("X-Pi-Chip"), "cache")
         self.assertEqual(headers.get("X-Pi-Peer"), "cache")
         self.assertEqual(body["pi_chip"], "cache")
-        self.assertIn("Mesh assistant online", body["choices"][0]["message"]["content"])
+        self.assertEqual(body["choices"][0]["message"]["content"], "Hi. What can I help you with?")
+        lowered_hit = body["choices"][0]["message"]["content"].lower()
+        for word in ("mesh", "board", "cache", "brain", "chip", "peer"):
+            self.assertNotIn(word, lowered_hit)
         self.assertEqual(OllamaFake.posts, 0)
         self.assertEqual(self.search_calls, [])
         self.assertIsNone(headers.get("X-Pi-Search"))
@@ -811,7 +814,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(rows[0]["vote"], "up")
         self.assertNotIn("correction", rows[0])
         canned = json.loads((ROOT / "data" / "canned" / "canned_map.json").read_text(encoding="utf-8"))
-        self.assertIn("Mesh assistant online", canned["hi"])
+        self.assertEqual(canned["hi"], "Hi. What can I help you with?")
 
     def test_llamacpp_rewrites_model(self):
         peer_port = self._listen(LlamaFake)
@@ -1211,7 +1214,8 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn("pi_search", hit)
         self.assertEqual(self.search_calls, [])
         self.assertEqual(OllamaFake.posts, 0)
-        self.assertIn("Mesh assistant online", hit)
+        self.assertIn("Hi. What can I help you with?", hit)
+        self.assertNotIn("mesh", hit.lower())
 
         self.search_calls.clear()
         _headers, direct = self._stream_raw(
