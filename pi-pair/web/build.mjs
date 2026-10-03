@@ -22,14 +22,14 @@ const compiled = sass.compile(path.join(root, "src/styles.scss"), {
   style: "compressed",
 });
 const katexRoot = path.dirname(require.resolve("katex/package.json"));
-const katexCss = fs.readFileSync(path.join(katexRoot, "dist/katex.min.css"), "utf8");
 const fontSrc = path.join(katexRoot, "dist/fonts");
-const fontDest = path.join(outDir, "fonts");
-fs.mkdirSync(fontDest, { recursive: true });
-for (const name of fs.readdirSync(fontSrc)) {
-  fs.copyFileSync(path.join(fontSrc, name), path.join(fontDest, name));
-}
-fs.copyFileSync(path.join(katexRoot, "LICENSE"), path.join(fontDest, "LICENSE"));
+let katexCss = fs.readFileSync(path.join(katexRoot, "dist/katex.min.css"), "utf8");
+katexCss = katexCss.replace(/url\(fonts\/(KaTeX_[^)]+\.woff2)\)/g, (_all, file) => {
+  const bytes = fs.readFileSync(path.join(fontSrc, file));
+  return `url(data:font/woff2;base64,${bytes.toString("base64")})`;
+});
+katexCss = katexCss.replace(/,url\(fonts\/KaTeX_[^)]+\.(?:woff|ttf)\) format\("[^"]+"\)/g, "");
+fs.copyFileSync(path.join(katexRoot, "LICENSE"), path.join(outDir, "katex-license.txt"));
 fs.writeFileSync(path.join(outDir, "mesh.css"), `${tw.css}\n${compiled.css}\n${katexCss}`);
 fs.copyFileSync(path.join(root, "index.html"), path.join(outDir, "index.html"));
 
