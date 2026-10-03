@@ -28,7 +28,7 @@ Working memory and the dataset are different things, and mixing them up is how a
 
 The fleet inventory for this rack, recorded in 2026-10-02, is the reason the router is not a round-robin.
 
-pi2 is about 1GB of RAM and an armv7 userland. Ollama does not support that board. Its job is health probes and, if wanted, a read-only mirror of the canned map. It does not generate.
+pi2 is about 1GB of RAM and an armv7 userland. Ollama does not support that board. Its job is health probes and, if wanted, a read-only mirror of the canned map. It does not search and it does not generate.
 
 pi3 is about 1GB of RAM and arm64. A 0.5B model can be loaded there. Generation is not reliable: short prompts come back as non-answers. pi3 keeps the dataset, the bounded miss queue, the prepared files, and the train-then-delete job. It does not emit chat tokens for a user.
 
@@ -68,7 +68,7 @@ The person is on the phone, on the page served at port 18080. The router is whic
 
 If the mode is Auto, the router normalizes the latest user turn (lowercase, collapsed whitespace, trailing punctuation removed) and looks it up in `data/canned/canned_map.json`. A hit returns that sentence with the chip `cache`. pi4 is not called. A miss is sent only to pi4. The chip on that answer is `brain: pi4`. The prompt and the answer are appended to the bounded queue on pi3 (at most 128 rows; older rows fall off the front). If this router is itself running as the dataset role, it writes the file locally. If it is running as the brain or as health, it forwards the row to pi3 and does not keep a copy.
 
-On a miss, before pi4 is called, the router may look the line up on DuckDuckGo. It keeps a few result titles, links, and short snippets. It may read one of those pages as plain text, with a size cap and a short timeout, and it does not follow links from that page. That text is added only to the prompt pi4 sees. The queue still stores the person's line and the model's answer. If the lookup fails, pi4 still answers from the local model and the page says search failed. This is not a hosted chat API and it is not a second generator.
+On a miss, pi4 looks the line up on DuckDuckGo and then generates. It keeps a few result titles, links, and short snippets. It may read one of those pages as plain text, with a size cap and a short timeout, and it does not follow links from that page. That text is added only to the prompt pi4 sees. The queue still stores the person's line and the model's answer. If the lookup fails, pi4 still answers from the local model and the page says search failed. This is not a hosted chat API and it is not a second generator. pi2 does not search and does not generate. A chat that arrives on pi2 or pi3 is forwarded to pi4's page, so the lookup and the decode stay on pi4. pi3 stores the label row. `post_train` deletes those raw rows and does not delete the canned map.
 
 If the mode is a pin of pi4, the same map may still answer, and a miss still goes to pi4. If the mode is a pin of pi2 or pi3, the router refuses before any map read and before any HTTP call to a model. Mesh off is the direct path: the canned map is skipped and the named peer is called, but only if that peer is allowed to generate. Direct to pi2 or pi3 is the same refusal. Direct to pi4 is pi4's Ollama, through this router, with the chip `brain: pi4`.
 
@@ -104,7 +104,7 @@ The loop is meant to be run, not only drawn.
 9. **Delete.** The active shard and the prepared file are removed. `data/train/done/<id>.json` is a tombstone: counts and a hash of the map, no prompt and no answer. `scripts/lifecycle/delete_shards.py` can sweep leftovers in `data/train/active` and `data/prepared`. It does not delete `data/train/pending`, so a new queue is safe. It does not delete `data/canned/canned_map.json`.
 10. **Repeat.** The next Auto turn can hit the line that was just folded.
 
-Deleting the queue does not make the model larger or smaller. The served weights stay the Ollama model on pi4. This job folds accepted pairs into the canned map. A full fine-tune is not what this 1GB board runs.
+Deleting the queue does not make the model larger or smaller. The served weights stay the Ollama model on pi4. This job folds accepted pairs into the canned map. A full fine-tune is not what this 1GB board runs. This is still stock Qwen 2.5 0.5B. The canned map is not a custom model. It becomes a fine-tune of that open-source model only when a run updates weights, which this board does not do.
 
 You can tell the cycle worked. The queue row on pi3 had the prompt, the answer, and the vote. `post_train` added a key, or the tombstone recorded the label count. The active shard and the prepared file are gone. A tombstone is under `data/train/done`. Asking that line again is a map hit.
 

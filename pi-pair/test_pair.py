@@ -266,7 +266,7 @@ class PairHttp(unittest.TestCase):
         self.servers = []
         self._tmp = tempfile.TemporaryDirectory()
         os.environ["PI_PAIR_DATA"] = self._tmp.name
-        os.environ["PI_PAIR_ROLE"] = "dataset"
+        os.environ["PI_PAIR_ROLE"] = "brain"
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         OllamaFake.posts = 0
         OllamaFake.last_payload = None
@@ -289,6 +289,7 @@ class PairHttp(unittest.TestCase):
         os.environ.pop("PI_PAIR_DATA", None)
         os.environ.pop("PI_PAIR_ROLE", None)
         os.environ.pop("PI_PAIR_CANNED", None)
+        os.environ.pop("PI_PAIR_BRAIN_PORT", None)
         self._tmp.cleanup()
 
     def _listen(self, handler):
@@ -302,6 +303,42 @@ class PairHttp(unittest.TestCase):
         self.servers.append(httpd)
         _start(httpd)
         return httpd.server_address[1]
+
+    def _pi3_accepts_forwarded_rows(self):
+        """Stand in for pi3 so a brain-role server can be checked for the queued row."""
+        import pair.queue as queue
+
+        original_row = queue.forward_row
+        original_feedback = queue.forward_feedback
+
+        def _row(payload, opener=None, timeout=1.5):
+            queue.append_row(payload)
+            return True
+
+        def _feedback(payload, opener=None, timeout=1.5):
+            os.environ["PI_PAIR_ROLE"] = "dataset"
+            try:
+                queue.apply_label(
+                    str(payload.get("prompt") or ""),
+                    str(payload.get("answer") or ""),
+                    str(payload.get("vote") or ""),
+                    str(payload.get("correction") or ""),
+                    chip=str(payload.get("chip") or ""),
+                    peer=str(payload.get("peer") or ""),
+                )
+            finally:
+                os.environ["PI_PAIR_ROLE"] = "brain"
+            return True
+
+        queue.forward_row = _row
+        queue.forward_feedback = _feedback
+
+        def _restore():
+            queue.forward_row = original_row
+            queue.forward_feedback = original_feedback
+            os.environ["PI_PAIR_ROLE"] = "brain"
+
+        self.addCleanup(_restore)
 
     def _post(self, port, payload, headers=None):
         request = urllib.request.Request(
@@ -587,6 +624,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(OllamaFake.posts, 0)
 
     def test_direct_ollama_bypasses_cache(self):
+        self._pi3_accepts_forwarded_rows()
         peer_port = self._listen(OllamaFake)
         OllamaFake.posts = 0
         runtime.set_peers(
@@ -663,6 +701,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(len(set(seen.values())), 3)
 
     def test_feedback_rates_the_last_completion(self):
+        self._pi3_accepts_forwarded_rows()
         peer_port = self._listen(OllamaFake)
         runtime.set_peers(
             [
@@ -805,6 +844,7 @@ class PairHttp(unittest.TestCase):
         return self._pair()
 
     def test_miss_puts_search_snippets_in_the_prompt(self):
+        self._pi3_accepts_forwarded_rows()
         prompt = "How tall is the bench in the hall?"
 
         def fake(query, opener=None):
@@ -916,6 +956,8 @@ class PairHttp(unittest.TestCase):
     def test_chat_label_script_votes_the_reply(self):
         import subprocess
 
+        self._pi3_accepts_forwarded_rows()
+
         port = self._pi4()
         script = ROOT / "scripts" / "chat_label.py"
         dry = subprocess.run(
@@ -981,6 +1023,105 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(rows[0]["answer"], "hello from peer")
         self.assertEqual(rows[0]["vote"], "up")
         self.assertEqual(OllamaFake.posts, 1)
+
+    def test_health_and_dataset_forward_and_do_not_search(self):
+        peer_port = self._listen(OllamaFake)
+        OllamaFake.posts = 0
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "10.0.0.166",
+                    "port": 11434,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        self.assertEqual(
+            pair_server.brain_chat_url(),
+            "http://10.0.0.166:18080/v1/chat/completions",
+        )
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        relayed = []
+        original = pair_server.relay_chat
+
+        def fake_relay(payload, target, mesh):
+            relayed.append(
+                {
+                    "target": target,
+                    "mesh": mesh,
+                    "body": json.loads(payload.decode() or "{}"),
+                }
+            )
+            body = json.dumps(
+                {
+                    "choices": [{"message": {"content": "from pi4"}}],
+                    "pi_search": "ok",
+                }
+            ).encode()
+            return 200, {"content-type": "application/json", "X-Pi-Search": "ok"}, body
+
+        pair_server.relay_chat = fake_relay
+        self.addCleanup(lambda: setattr(pair_server, "relay_chat", original))
+        for role in ("health", "dataset"):
+            os.environ["PI_PAIR_ROLE"] = role
+            port = self._pair()
+            status, headers, body = self._post(
+                port,
+                {
+                    "model": "qwen2.5:0.5b",
+                    "messages": [{"role": "user", "content": "Hi!"}],
+                    "stream": False,
+                },
+                {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+            )
+            self.assertEqual(status, 200, role)
+            self.assertEqual(headers.get("X-Pi-Chip"), "cache", role)
+            self.assertEqual(relayed, [], role)
+            status, headers, body = self._post(
+                port,
+                {
+                    "model": "qwen2.5:0.5b",
+                    "messages": [{"role": "user", "content": "a question the map has never seen"}],
+                    "stream": False,
+                },
+                {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+            )
+            self.assertEqual(status, 200, role)
+            self.assertEqual(body["choices"][0]["message"]["content"], "from pi4", role)
+            self.assertEqual(headers.get("X-Pi-Search"), "ok", role)
+            self.assertEqual(len(relayed), 1, role)
+            self.assertEqual(relayed[0]["target"], "auto", role)
+            self.assertEqual(relayed[0]["mesh"], "on", role)
+            self.assertEqual(
+                relayed[0]["body"]["messages"][0]["content"],
+                "a question the map has never seen",
+            )
+            relayed.clear()
+        self.assertEqual(self.search_calls, [])
+        self.assertEqual(OllamaFake.posts, 0)
+        pair_server.relay_chat = original
+        os.environ["PI_PAIR_ROLE"] = "brain"
+        os.environ["PI_PAIR_BRAIN_PORT"] = "1"
+        with self.assertRaises(RuntimeError) as caught:
+            original(b"{}", "auto", "on")
+        self.assertIn("pi4 unreachable on cache miss", str(caught.exception))
+        self.assertEqual(OllamaFake.posts, 0)
 
 
 class ProductCopy(unittest.TestCase):

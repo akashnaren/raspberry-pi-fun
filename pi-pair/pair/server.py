@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.canned import lookup
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
 from pair.config import STATIC_DIR
-from pair.guard import may_generate, weak_brain_error
+from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.knobs import decode_effort
 from pair.health import snapshot_peers
 from pair.peers import pick
@@ -116,8 +119,47 @@ def last_user_text(messages) -> str:
     return ""
 
 
+def brain_chat_url() -> str:
+    """pi4's page, not its Ollama port. Search and decode both happen there."""
+    peer = next((item for item in runtime.PEERS if item.get("name") == "pi4"), None)
+    if peer is None or not may_generate(peer):
+        raise RuntimeError(PI4_MISS_DOWN)
+    port = int(os.environ.get("PI_PAIR_BRAIN_PORT", "18080"))
+    return f"http://{peer['host']}:{port}/v1/chat/completions"
+
+
+def relay_chat(payload: bytes, target: str, mesh: str) -> tuple[int, dict[str, str], bytes]:
+    """Hand the chat to pi4. This process does not search and does not generate."""
+    request = urllib.request.Request(
+        brain_chat_url(),
+        data=payload,
+        headers={
+            "content-type": "application/json",
+            "X-Pi-Target": target or "auto",
+            "X-Pi-Mesh": mesh or "on",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            raw = response.read()
+            headers = {
+                "content-type": response.headers.get("content-type", "application/json"),
+            }
+            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search"):
+                value = response.headers.get(name)
+                if value:
+                    headers[name] = value
+            return response.status, headers, raw
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        kind = error.headers.get("content-type", "application/json")
+        return error.code, {"content-type": kind}, raw
+    except Exception:
+        raise RuntimeError(PI4_MISS_DOWN) from None
+
+
 def _with_search(messages, prompt: str):
-    """On a miss, attach public notes for the generative model. Failures stay local."""
+    """On pi4, after a miss, attach public notes. Failures stay on the local model."""
     if not (prompt or "").strip():
         return messages, None
     try:
@@ -220,7 +262,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         length = int(self.headers.get("content-length") or 0)
-        data = json.loads(self.rfile.read(length).decode() or "{}")
+        raw = self.rfile.read(length)
+        data = json.loads(raw.decode() or "{}")
         target = (self.headers.get("X-Pi-Target") or data.pop("pi_target", None) or "auto").strip()
         mesh = (self.headers.get("X-Pi-Mesh") or data.pop("pi_mesh", None) or "on").strip().lower() not in (
             "0",
@@ -262,6 +305,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(str(error))
             return
+        if node_role() != "brain":
+            self._relay_to_brain(raw)
+            return
         acquired = runtime._infer_sem.acquire(timeout=120)
         if not acquired:
             body = json.dumps({"error": "inference slots busy — try again"}).encode()
@@ -282,7 +328,7 @@ class Handler(BaseHTTPRequestHandler):
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             search_note = None
-            if mesh:
+            if mesh and node_role() == "brain":
                 outbound, search_note = _with_search(outbound, prompt)
             if want_stream:
                 self._stream(
@@ -315,6 +361,22 @@ class Handler(BaseHTTPRequestHandler):
             self._error(str(error))
         finally:
             runtime._infer_sem.release()
+
+    def _relay_to_brain(self, payload: bytes) -> None:
+        target = (self.headers.get("X-Pi-Target") or "auto").strip()
+        mesh = (self.headers.get("X-Pi-Mesh") or "on").strip()
+        try:
+            status, headers, body = relay_chat(payload, target, mesh)
+        except RuntimeError as error:
+            self._error(str(error))
+            return
+        self.send_response(status)
+        self._cors()
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
 
     def _enqueue(self) -> None:
         if node_role() != "dataset":
