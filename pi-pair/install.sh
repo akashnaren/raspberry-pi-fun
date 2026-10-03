@@ -41,7 +41,14 @@ mkdir -p "$INSTALL_DIR/pair" "$INSTALL_DIR/static" \
   "$INSTALL_DIR/data/prepared" \
   "$INSTALL_DIR/adapters/staging" "$INSTALL_DIR/adapters/active"
 
-cp -f "$ROOT/mini_chat.py" "$ROOT/start.sh" "$ROOT/mesh-hello.sh" "$ROOT/README.md" "$INSTALL_DIR/"
+cp -f "$ROOT/mini_chat.py" "$ROOT/start.sh" "$ROOT/mesh-hello.sh" "$INSTALL_DIR/"
+readme_src="$ROOT/README.md"
+if [[ ! -f "$readme_src" && -f "$ROOT/../README.md" ]]; then
+  readme_src="$ROOT/../README.md"
+fi
+if [[ -f "$readme_src" ]]; then
+  cp -f "$readme_src" "$INSTALL_DIR/README.md"
+fi
 cp -f "$ROOT/pair/"*.py "$INSTALL_DIR/pair/"
 cp -f "$ROOT/static/"* "$INSTALL_DIR/static/"
 cp -a "$ROOT/scripts/." "$INSTALL_DIR/scripts/"

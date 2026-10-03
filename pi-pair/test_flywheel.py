@@ -16,8 +16,8 @@ if str(ROOT) not in sys.path:
 from pair.canned import lookup, normalize_key
 from pair.chat import chat_ollama
 from pair.guard import may_generate
-from pair.lifecycle import GateError, post_train
-from pair.queue import QUEUE_BOUND, append_row, note_exchange
+from pair.lifecycle import GateError, _prepare, post_train
+from pair.queue import QUEUE_BOUND, append_row, apply_label, note_exchange
 from pair.registry import RegistryError, require_registered
 from pair.yaml_lite import load_path
 
@@ -178,8 +178,79 @@ class Flywheel(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "pi3"):
             post_train(root=self._copy_data(), adapters=self.base / "adapters")
 
+    def test_labeled_row_is_queued_for_post_train(self):
+        data = self._copy_data()
+        adapters = self.base / "adapters"
+        apply_label(
+            "zzz labeled novel",
+            "the bad reply",
+            "down",
+            "the corrected sentence",
+            chip="brain: pi4",
+            peer="pi4",
+            root=data,
+        )
+        apply_label("zzz labeled reject", "do not keep", "down", root=data)
+        apply_label("zzz labeled up", "keep this", "up", root=data)
+        pending = data / "train" / "pending" / "queue.jsonl"
+        rows = [json.loads(line) for line in pending.read_text(encoding="utf-8").splitlines()]
+        labeled = rows[0]
+        self.assertEqual(labeled["prompt"], "zzz labeled novel")
+        self.assertEqual(labeled["answer"], "the bad reply")
+        self.assertEqual(labeled["vote"], "down")
+        self.assertEqual(labeled["correction"], "the corrected sentence")
+        self.assertEqual(rows[1]["vote"], "down")
+        self.assertNotIn("correction", rows[1])
+        self.assertEqual(rows[2]["vote"], "up")
+        active = data / "train" / "active" / "sample.jsonl"
+        active.parent.mkdir(parents=True, exist_ok=True)
+        active.write_text(pending.read_text(encoding="utf-8"), encoding="utf-8")
+        _prepared, prepared_rows = _prepare(active, data, "sample")
+        self.assertEqual(prepared_rows[0]["prompt"], "zzz labeled novel")
+        self.assertEqual(prepared_rows[0]["answer"], "the bad reply")
+        self.assertEqual(prepared_rows[0]["vote"], "down")
+        self.assertEqual(prepared_rows[0]["correction"], "the corrected sentence")
+        result = post_train(root=data, adapters=adapters)
+        self.assertGreaterEqual(result["added"], 2)
+        after = json.loads((data / "canned" / "canned_map.json").read_text(encoding="utf-8"))
+        self.assertEqual(after["zzz labeled novel"], "the corrected sentence")
+        self.assertEqual(after["zzz labeled up"], "keep this")
+        self.assertNotIn("zzz labeled reject", after)
+        self.assertNotIn("the bad reply", json.dumps(after))
+        apply_label(
+            "hi",
+            after["hi"],
+            "down",
+            "Hello from the bench.",
+            root=data,
+        )
+        post_train(root=data, adapters=adapters)
+        replaced = json.loads((data / "canned" / "canned_map.json").read_text(encoding="utf-8"))
+        self.assertEqual(replaced["hi"], "Hello from the bench.")
+        done = list((data / "train" / "done").glob("*.json"))
+        blob = "\n".join(path.read_text(encoding="utf-8") for path in done)
+        self.assertNotIn("zzz labeled novel", blob)
+        self.assertNotIn("the corrected sentence", blob)
+
+    def test_brain_forwards_a_label_and_does_not_write_it(self):
+        data = self._copy_data()
+        os.environ["PI_PAIR_ROLE"] = "brain"
+        seen = []
+        import pair.queue as queue
+
+        original = queue.forward_feedback
+        queue.forward_feedback = lambda payload, opener=None, timeout=1.5: seen.append(payload) or True
+        try:
+            result = apply_label("secret prompt", "secret answer", "up", root=data)
+        finally:
+            queue.forward_feedback = original
+        self.assertTrue(result["forwarded"])
+        self.assertEqual(seen[0]["prompt"], "secret prompt")
+        self.assertEqual(seen[0]["vote"], "up")
+        self.assertFalse((data / "train" / "pending" / "queue.jsonl").exists())
+
     def test_readme_covers_gates(self):
-        text = (ROOT / "README.md").read_text(encoding="utf-8")
+        text = (ROOT.parent / "README.md").read_text(encoding="utf-8")
         for phrase in (
             "armv7",
             "~1GB",
@@ -203,9 +274,14 @@ class Flywheel(unittest.TestCase):
             "nanoGPT",
             "CNN",
             "24 layers",
+            "/v1/chat/completions",
+            "/v1/flywheel/feedback",
+            "vote",
+            "correction",
         ):
             self.assertIn(phrase, text, phrase)
         self.assertNotIn("Pi 0.2 High", text)
+        self.assertFalse((ROOT / "README.md").exists())
         peers = json.loads((ROOT / "peers.example.json").read_text(encoding="utf-8"))
         by_name = {peer["name"]: peer for peer in peers}
         self.assertFalse(by_name["pi2"]["generative"])

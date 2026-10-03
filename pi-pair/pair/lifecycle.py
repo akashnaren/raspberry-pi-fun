@@ -125,13 +125,18 @@ def _prepare(active: Path | None, root: Path, run_id: str) -> tuple[Path, list[d
         for row in _read_jsonl(active):
             prompt = str(row.get("prompt") or row.get("input") or row.get("q") or "")
             answer = str(row.get("answer") or row.get("a") or row.get("output") or "")
-            rows.append(
-                {
-                    "prompt": prompt.strip(),
-                    "answer": answer.strip(),
-                    "q": normalize_key(prompt),
-                }
-            )
+            prepared_row = {
+                "prompt": prompt.strip(),
+                "answer": answer.strip(),
+                "q": normalize_key(prompt),
+            }
+            vote = str(row.get("vote") or "").strip().lower()
+            correction = str(row.get("correction") or "").strip()
+            if vote:
+                prepared_row["vote"] = vote
+            if correction:
+                prepared_row["correction"] = correction
+            rows.append(prepared_row)
     prepared = root / "prepared" / f"{run_id}.jsonl"
     prepared.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
@@ -144,11 +149,22 @@ def _fold(table: dict[str, str], rows: list[dict], heldout: set[str]) -> tuple[d
     rejected = 0
     for row in rows:
         key = row.get("q") or ""
-        answer = row.get("answer") or ""
+        correction = str(row.get("correction") or "").strip()
+        vote = str(row.get("vote") or "").strip().lower()
+        if correction:
+            answer = correction
+        elif vote == "down":
+            rejected += 1
+            continue
+        else:
+            answer = row.get("answer") or ""
         if not _usable(key, answer) or key in heldout:
             rejected += 1
             continue
         if key in table:
+            if correction and table[key] != answer:
+                table[key] = answer
+                added += 1
             continue
         table[key] = answer
         added += 1

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,9 +13,29 @@ from pair.config import STATIC_DIR
 from pair.guard import may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.peers import pick
-from pair.queue import append_row, node_role, note_exchange
+from pair.queue import append_row, apply_label, node_role, note_exchange
 from pair import runtime
 from pair.stream import stream_llamacpp, stream_ollama
+
+_LAST_LOCK = threading.Lock()
+_LAST = {"prompt": "", "answer": "", "chip": "", "peer": ""}
+
+
+def remember_completion(prompt: str, answer: str, chip: str, peer: str) -> None:
+    text = (prompt or "").strip()
+    reply = (answer or "").strip()
+    if not text or not reply:
+        return
+    with _LAST_LOCK:
+        _LAST["prompt"] = text
+        _LAST["answer"] = reply
+        _LAST["chip"] = chip
+        _LAST["peer"] = peer
+
+
+def last_completion() -> dict:
+    with _LAST_LOCK:
+        return dict(_LAST)
 
 _TYPES = {
     ".css": "text/css; charset=utf-8",
@@ -144,6 +165,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/v1/flywheel/enqueue":
             self._enqueue()
             return
+        if path == "/v1/flywheel/feedback":
+            self._feedback()
+            return
         if path != "/v1/chat/completions":
             self.send_response(404)
             self.end_headers()
@@ -173,6 +197,7 @@ class Handler(BaseHTTPRequestHandler):
                 hit = lookup(prompt)
                 if hit is not None:
                     note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
+                    remember_completion(prompt, hit, "cache", "cache")
                     self._cached(hit, want_stream, started)
                     return
         except Exception as error:
@@ -233,6 +258,63 @@ class Handler(BaseHTTPRequestHandler):
             }
         )
         body = json.dumps({"ok": True, "queued": kept}).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _feedback(self) -> None:
+        length = int(self.headers.get("content-length") or 0)
+        try:
+            row = json.loads(self.rfile.read(length).decode() or "{}")
+        except json.JSONDecodeError:
+            self._error("feedback must be JSON", status=400)
+            return
+        if not isinstance(row, dict):
+            self._error("feedback must be an object", status=400)
+            return
+        prompt = str(row.get("prompt") or "").strip()
+        answer = str(row.get("answer") or "").strip()
+        chip = str(row.get("chip") or "")
+        peer = str(row.get("peer") or "")
+        if not prompt and not answer:
+            last = last_completion()
+            prompt = str(last.get("prompt") or "")
+            answer = str(last.get("answer") or "")
+            chip = chip or str(last.get("chip") or "")
+            peer = peer or str(last.get("peer") or "")
+        elif not prompt or not answer:
+            self._error("feedback needs both prompt and answer, or neither", status=400)
+            return
+        try:
+            result = apply_label(
+                prompt,
+                answer,
+                str(row.get("vote") or ""),
+                str(row.get("correction") or ""),
+                chip=chip,
+                peer=peer,
+            )
+        except ValueError as error:
+            self._error(str(error), status=400)
+            return
+        if result.get("forwarded") and not result.get("ok"):
+            self._error("dataset host did not accept the label", status=502)
+            return
+        stored = result.get("row") if isinstance(result.get("row"), dict) else {}
+        body = json.dumps(
+            {
+                "ok": True,
+                "labeled": True,
+                "queued": result.get("queued") or 0,
+                "prompt": stored.get("prompt") or prompt,
+                "answer": stored.get("answer") or answer,
+                "vote": stored.get("vote") or "",
+                "correction": stored.get("correction") or "",
+            }
+        ).encode()
         self.send_response(200)
         self._cors()
         self.send_header("content-type", "application/json")
@@ -379,15 +461,12 @@ class Handler(BaseHTTPRequestHandler):
                 "pi_model": used,
                 "pi_kind": kind,
             }
+            chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+            answer = "".join(parts)
+            note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+            remember_completion(prompt, answer, chip, peer["name"])
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
-            note_exchange(
-                prompt,
-                "".join(parts),
-                chip="brain: pi4" if peer["name"] == "pi4" else peer["name"],
-                peer=peer["name"],
-                train=True,
-            )
         except Exception as error:
             err = {"error": str(error)}
             safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
@@ -400,6 +479,7 @@ class Handler(BaseHTTPRequestHandler):
             content, used = chat_ollama(peer, model, messages, temperature, max_tokens)
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
         note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
+        remember_completion(prompt, content, chip, peer["name"])
         elapsed = int((time.time() - started) * 1000)
         resp = {
             "id": "pi-pair",

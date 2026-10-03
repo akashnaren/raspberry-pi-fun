@@ -79,15 +79,15 @@ def _dataset_peer() -> dict | None:
     return None
 
 
-def forward_row(row: dict, opener=None, timeout: float = 1.5) -> bool:
+def _post_dataset(path: str, payload: dict, opener=None, timeout: float = 1.5) -> bool:
     peer = _dataset_peer()
     if not peer:
         return False
     port = int(os.environ.get("PI_PAIR_DATASET_PORT", str(peer.get("port") or 18080)))
-    url = f"http://{peer['host']}:{port}/v1/flywheel/enqueue"
+    url = f"http://{peer['host']}:{port}{path}"
     request = urllib.request.Request(
         url,
-        data=json.dumps(row).encode(),
+        data=json.dumps(payload).encode(),
         headers={"content-type": "application/json"},
     )
     open_url = opener or urllib.request.urlopen
@@ -96,6 +96,97 @@ def forward_row(row: dict, opener=None, timeout: float = 1.5) -> bool:
             return True
     except Exception:
         return False
+
+
+def forward_row(row: dict, opener=None, timeout: float = 1.5) -> bool:
+    return _post_dataset("/v1/flywheel/enqueue", row, opener, timeout)
+
+
+def forward_feedback(payload: dict, opener=None, timeout: float = 1.5) -> bool:
+    return _post_dataset("/v1/flywheel/feedback", payload, opener, timeout)
+
+
+def apply_label(
+    prompt: str,
+    answer: str,
+    vote: str,
+    correction: str = "",
+    *,
+    chip: str = "",
+    peer: str = "",
+    root: Path | None = None,
+    bound: int = QUEUE_BOUND,
+) -> dict:
+    """Attach a human vote to a queue row post_train already reads.
+
+    A down vote with no correction stays on the row and is dropped at fold time.
+    A correction is stored beside the original answer. The dataset role writes
+    the file. Any other role forwards the same object to pi3.
+    """
+    choice = str(vote or "").strip().lower()
+    if choice not in ("up", "down"):
+        raise ValueError("vote must be up or down")
+    text = (prompt or "").strip()
+    reply = (answer or "").strip()
+    fixed = str(correction or "").strip()
+    if not text or not reply:
+        raise ValueError("label needs the prompt and the answer")
+    if len(text) > 4000 or len(reply) > 8000 or len(fixed) > 8000:
+        raise ValueError("label is too long")
+    payload = {
+        "prompt": text,
+        "answer": reply,
+        "vote": choice,
+        "chip": chip or "",
+        "peer": peer or "",
+    }
+    if fixed:
+        payload["correction"] = fixed
+    if node_role() != "dataset":
+        return {"ok": forward_feedback(payload), "forwarded": True, "queued": 0, "row": payload}
+    path = queue_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _LOCK:
+        raw_lines = []
+        if path.exists():
+            raw_lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        updated = False
+        for index in range(len(raw_lines) - 1, -1, -1):
+            try:
+                item = json.loads(raw_lines[index])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("prompt") or "").strip() != text:
+                continue
+            if str(item.get("answer") or "").strip() != reply:
+                continue
+            item["vote"] = choice
+            if fixed:
+                item["correction"] = fixed
+            else:
+                item.pop("correction", None)
+            if chip:
+                item["chip"] = chip
+            if peer:
+                item["peer"] = peer
+            raw_lines[index] = json.dumps(item, ensure_ascii=False)
+            payload = item
+            updated = True
+            break
+        if not updated:
+            raw_lines.append(json.dumps(payload, ensure_ascii=False))
+            if len(raw_lines) > bound:
+                raw_lines = raw_lines[-bound:]
+        path.write_text("\n".join(raw_lines) + "\n", encoding="utf-8")
+        return {
+            "ok": True,
+            "forwarded": False,
+            "queued": len(raw_lines),
+            "updated": updated,
+            "row": payload,
+        }
 
 
 def note_exchange(prompt: str, answer: str, *, chip: str, peer: str, train: bool) -> None:

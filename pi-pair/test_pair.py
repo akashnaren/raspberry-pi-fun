@@ -321,9 +321,23 @@ class PairHttp(unittest.TestCase):
         self.assertIn("Pi 0.2 High", html)
         self.assertIn(runtime.MODEL, html)
         self.assertNotIn("__MODEL__", html)
+        self.assertIn('data-think="low"', html)
+        self.assertIn('data-think="medium"', html)
+        self.assertIn('data-think="high"', html)
+        self.assertIn('aria-label="Thinking"', html)
+        lowered = html.lower()
+        for word in ("cache", "brain", "chip", "peer", "pi2", "pi3", "pi4"):
+            self.assertNotIn(word, lowered)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/static/mesh.js", timeout=5) as response:
             script = response.read().decode()
         self.assertIn("MESH_DEFAULT_MODEL", script)
+        self.assertIn("if(e.key!=='Enter') return;", script)
+        self.assertIn("if(e.shiftKey) return;", script)
+        self.assertIn("if(e.ctrlKey || e.metaKey)", script)
+        self.assertNotIn("metaKey||e.ctrlKey", script)
+        self.assertIn("/v1/flywheel/feedback", script)
+        self.assertIn("Thumbs up", script)
+        self.assertIn("Thumbs down", script)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
             health_body = json.loads(response.read().decode())
         self.assertEqual(health_body["peers_up"], 1)
@@ -555,6 +569,57 @@ class PairHttp(unittest.TestCase):
         queued = (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl").read_text()
         self.assertIn("Hi!", queued)
 
+    def test_feedback_rates_the_last_completion(self):
+        peer_port = self._listen(OllamaFake)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        status, _headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": "label this miss"}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(status, 200)
+        answer = body["choices"][0]["message"]["content"]
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/flywheel/feedback",
+            data=json.dumps({"vote": "down", "correction": "the corrected sentence"}).encode(),
+            headers={"content-type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            labeled = json.loads(response.read().decode())
+            self.assertEqual(response.status, 200)
+        self.assertEqual(labeled["prompt"], "label this miss")
+        self.assertEqual(labeled["answer"], answer)
+        self.assertEqual(labeled["vote"], "down")
+        self.assertEqual(labeled["correction"], "the corrected sentence")
+        rows = [
+            json.loads(line)
+            for line in (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["prompt"], "label this miss")
+        self.assertEqual(rows[0]["answer"], answer)
+        self.assertEqual(rows[0]["vote"], "down")
+        self.assertEqual(rows[0]["correction"], "the corrected sentence")
+
     def test_llamacpp_rewrites_model(self):
         peer_port = self._listen(LlamaFake)
         runtime.set_peers(
@@ -597,7 +662,6 @@ class ProductCopy(unittest.TestCase):
             ROOT / "static" / "index.html",
             ROOT / "static" / "mesh.js",
             ROOT / "static" / "mesh.css",
-            ROOT / "README.md",
             ROOT.parent / "README.md",
             ROOT / "install.sh",
             ROOT / "mesh-hello.sh",
@@ -622,29 +686,37 @@ class ProductCopy(unittest.TestCase):
             "rack-front.jpg",
             "rack-top.jpg",
         )
-        pi_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        if (ROOT / "README.md").exists():
+            problems.append("pi-pair/README.md competes with the repo root README")
+        root_names = [
+            path.name
+            for path in ROOT.parent.iterdir()
+            if path.is_file() and path.name.lower() == "readme.md"
+        ]
+        if root_names != ["README.md"]:
+            problems.append(f"repo root README set is {root_names}")
         root_readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
-        if not pi_readme.startswith("# pi-pair\n"):
-            problems.append("pi-pair/README.md title is not pi-pair")
-        for label, text, readme_dir, prefix in (
-            ("pi-pair/README.md", pi_readme, ROOT, "docs/rack/"),
-            ("README.md", root_readme, ROOT.parent, "pi-pair/docs/rack/"),
-        ):
-            if product in text:
-                problems.append(f"{label} still says {product}")
-            if "3D-printed server rack" not in text:
-                problems.append(f"{label} does not mention the 3D-printed rack")
-            hero = f"{prefix}rack-hero.jpg"
-            if text.find(hero) == -1 or text.find(hero) > text.find(f"{prefix}rack-front.jpg"):
-                problems.append(f"{label} hero is not rack-hero.jpg")
-            if "-render.jpg" in text:
-                problems.append(f"{label} still links a CGI render")
-            for name in readme_images:
-                rel = f"{prefix}{name}"
-                if f"]({rel})" not in text:
-                    problems.append(f"{label} missing image {rel}")
-                if not (readme_dir / rel).is_file():
-                    problems.append(f"missing {rel}")
+        label = "README.md"
+        text = root_readme
+        readme_dir = ROOT.parent
+        prefix = "pi-pair/docs/rack/"
+        if not text.startswith("# pi-pair\n"):
+            problems.append("README.md title is not pi-pair")
+        if product in text:
+            problems.append(f"{label} still says {product}")
+        if "3D-printed server rack" not in text:
+            problems.append(f"{label} does not mention the 3D-printed rack")
+        hero = f"{prefix}rack-hero.jpg"
+        if text.find(hero) == -1 or text.find(hero) > text.find(f"{prefix}rack-front.jpg"):
+            problems.append(f"{label} hero is not rack-hero.jpg")
+        if "-render.jpg" in text:
+            problems.append(f"{label} still links a CGI render")
+        for name in readme_images:
+            rel = f"{prefix}{name}"
+            if f"]({rel})" not in text:
+                problems.append(f"{label} missing image {rel}")
+            if not (readme_dir / rel).is_file():
+                problems.append(f"missing {rel}")
         for name in (
             "rack-hero-render.jpg",
             "rack-front-render.jpg",

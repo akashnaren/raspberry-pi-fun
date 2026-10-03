@@ -1,4 +1,3 @@
-let target='auto';
 let sending=false;
 let lastRaw=null;
 const DEFAULT_MODEL=window.MESH_DEFAULT_MODEL||'qwen2.5:0.5b';
@@ -94,12 +93,27 @@ async function fetchJson(url, opts, retries){
   throw last;
 }
 
-function fillModels(peers){
+let thinking='medium';
+const THINK={
+  low:{temperature:0.6, max_tokens:128},
+  medium:{temperature:0.7, max_tokens:256},
+  high:{temperature:0.8, max_tokens:512}
+};
+
+function shownError(msg){
+  const s=String(msg&&msg.message||msg||'');
+  if(/Load failed|Failed to fetch|NetworkError|network|abort|AbortError/i.test(s))
+    return 'Connection dropped. Try again.';
+  return 'The reply did not come back. Try again.';
+}
+
+function fillModels(rows){
   const sel=document.getElementById('modelSel');
+  if(!sel) return;
   const prev=sel.value||DEFAULT_MODEL;
   const set=new Set();
   set.add(DEFAULT_MODEL);
-  (peers||[]).forEach(p=>{(p.models||[]).forEach(m=>{ if(m) set.add(m); });});
+  (rows||[]).forEach(p=>{(p.models||[]).forEach(m=>{ if(m) set.add(m); });});
   const list=[...set].sort((a,b)=>{
     if(a===DEFAULT_MODEL) return -1;
     if(b===DEFAULT_MODEL) return 1;
@@ -112,181 +126,129 @@ function fillModels(peers){
   if(list.includes(prev)) sel.value=prev; else sel.value=DEFAULT_MODEL;
 }
 
-function chipClass(label){
-  const text=String(label||'');
-  if(text==='cache') return 'chip chip-cache';
-  if(text.indexOf('brain')===0 || text==='pi4') return 'chip chip-brain';
-  if(text==='no gen') return 'chip chip-weak';
-  if(text==='Direct') return 'chip chip-direct';
-  return 'chip chip-neutral';
-}
-function chipNode(label){
-  return el('span', chipClass(label), label);
-}
-function paintMode(){
-  const node=document.getElementById('modeChip');
-  if(!node) return;
-  const meshOn=document.getElementById('mesh').checked;
-  let label='Auto';
-  if(!meshOn) label='Direct';
-  else if(target==='pi4') label='pi4';
-  else if(target && target!=='auto') label='no gen';
-  node.textContent=label;
-  node.className=chipClass(label==='pi4'?'brain: pi4':label);
-}
-function fillPeers(peers){
-  const sel=document.getElementById('peerSel');
-  const meshOn=document.getElementById('mesh').checked;
-  const prev=target;
-  sel.innerHTML='';
-  if(meshOn){
-    const o=document.createElement('option'); o.value='auto'; o.textContent='Auto'; sel.appendChild(o);
-  } else if(target==='auto'){
-    target=(peers&&peers[0]&&peers[0].name)||'pi3';
-  }
-  let up=0;
-  (peers||[]).forEach(p=>{
-    if(p.ok) up++;
-    const o=document.createElement('option');
-    o.value=p.name;
-    const kind=p.generative===false?'no gen':(p.kind==='llamacpp'?'llama':(p.kind||'ollama'));
-    o.textContent=p.name+(p.ok?'':' (off)')+' · '+kind;
-    o.disabled=!p.ok && !meshOn;
-    o.title=(p.models||[]).join(', ')||p.note||p.kind||'';
-    sel.appendChild(o);
-  });
-  const values=[...sel.options].map(x=>x.value);
-  if(values.includes(prev)) sel.value=prev;
-  else if(meshOn){ sel.value='auto'; target='auto'; }
-  else if(values.length){ sel.value=values[0]; target=values[0]; }
-  paintMode();
-  return up;
+function thumbIcon(){
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('viewBox','0 0 24 24');
+  svg.setAttribute('width','16');
+  svg.setAttribute('height','16');
+  svg.setAttribute('aria-hidden','true');
+  const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+  path.setAttribute('fill','none');
+  path.setAttribute('stroke','currentColor');
+  path.setAttribute('stroke-width','1.6');
+  path.setAttribute('stroke-linecap','round');
+  path.setAttribute('stroke-linejoin','round');
+  path.setAttribute('d','M8 11v8a1 1 0 0 0 1 1h7.2a2 2 0 0 0 1.9-1.4l1.3-5.2A2 2 0 0 0 17.5 11H14V7.2A2.2 2.2 0 0 0 11.8 5c-.5 0-.9.3-1.1.7L8 11zM8 11H5.5A1.5 1.5 0 0 0 4 12.5v5A1.5 1.5 0 0 0 5.5 19H8');
+  svg.appendChild(path);
+  return svg;
 }
 
 async function refresh(){
   try{
-    const {r,j}=await fetchJson('/peers', {method:'GET'}, 1);
-    if(!r.ok) throw new Error('peers '+r.status);
+    const {r,j}=await fetchJson('/health', {method:'GET'}, 1);
+    if(!r.ok) throw new Error('offline');
     document.getElementById('banner').className='';
-    const up=fillPeers(j.peers);
     fillModels(j.peers);
-    document.getElementById('status').textContent=
-      currentModel()+' · '+up+'/'+(j.peers||[]).length+' up';
   }catch(e){
     const b=document.getElementById('banner');
-    b.textContent='Pi 0.2 High offline from this phone — '+friendlyNet(e);
+    b.textContent='Offline. '+friendlyNet(e);
     b.className='on';
   }
 }
 
-function addMsg(role,text,meta,extraClass){
+function attachLabel(parent, prompt, answer){
+  const row=el('div','label-row');
+  const up=el('button','icon-btn');
+  const down=el('button','icon-btn down');
+  const fix=el('button','text-btn','Correct');
+  const note=el('span','label-note','');
+  up.type=down.type=fix.type='button';
+  up.appendChild(thumbIcon());
+  down.appendChild(thumbIcon());
+  up.setAttribute('aria-label','Thumbs up');
+  down.setAttribute('aria-label','Thumbs down');
+  fix.setAttribute('aria-label','Corrected answer');
+  const box=el('div','fix-box');
+  const input=document.createElement('textarea');
+  input.rows=2;
+  input.placeholder='Corrected answer';
+  const save=el('button','mini','Save');
+  save.type='button';
+  box.appendChild(input);
+  box.appendChild(save);
+  let vote='';
+  function paint(){
+    up.classList.toggle('on', vote==='up');
+    down.classList.toggle('on', vote==='down');
+  }
+  async function sendLabel(next){
+    vote=next;
+    paint();
+    note.textContent='saving';
+    const correction=(input.value||'').trim();
+    try{
+      const r=await fetch('/v1/flywheel/feedback',{
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({vote:vote, prompt:prompt, answer:answer, correction:correction})
+      });
+      let j={};
+      try{ j=await r.json(); }catch(_){ j={}; }
+      if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+      note.textContent='saved';
+    }catch(_){
+      note.textContent='not saved';
+    }
+  }
+  up.onclick=()=>sendLabel('up');
+  down.onclick=()=>{ box.classList.add('on'); sendLabel('down'); };
+  fix.onclick=()=>box.classList.toggle('on');
+  save.onclick=()=>sendLabel(vote||'down');
+  row.appendChild(up);
+  row.appendChild(down);
+  row.appendChild(fix);
+  row.appendChild(note);
+  parent.appendChild(row);
+  parent.appendChild(box);
+}
+
+function addMsg(role,text,extraClass,prompt){
   hideEmpty();
   const d=el('div','msg '+role+(extraClass?(' '+extraClass):''));
   const body=el('div','body');
   if(role==='bot') setBodyContent(body, text, true);
   else body.textContent=text;
   d.appendChild(body);
-  if(meta){
-    const m=el('div','meta');
-    if(meta.peer){ m.appendChild(chipNode(meta.peer)); }
-    const bits=[];
-    if(meta.model) bits.push(meta.model);
-    if(meta.ms!=null) bits.push(meta.ms+' ms');
-    if(meta.kind) bits.push(meta.kind);
-    if(meta.extra) bits.push(meta.extra);
-    if(bits.length){
-      if(meta.peer) m.appendChild(document.createTextNode(' · '));
-      m.appendChild(document.createTextNode(bits.join(' · ')));
-    }
-    d.appendChild(m);
-  }
-  if(role==='bot' || role==='user'){
+  if(role==='user'){
     const acts=el('div','msg-actions');
     const copy=el('button','mini','Copy');
+    copy.type='button';
     copy.onclick=async()=>{
       try{ await navigator.clipboard.writeText(text); copy.textContent='Copied'; setTimeout(()=>copy.textContent='Copy',1200);}
       catch(_){ copy.textContent='Fail'; }
     };
     acts.appendChild(copy);
-    if(role==='bot' && meta && meta.raw){
-      const rawBtn=el('button','mini','Raw');
-      const rawBox=el('pre','raw-box', typeof meta.raw==='string'?meta.raw:JSON.stringify(meta.raw,null,2));
-      rawBtn.onclick=()=>{ rawBox.classList.toggle('on'); };
-      acts.appendChild(rawBtn);
-      d.appendChild(acts);
-      d.appendChild(rawBox);
-    } else {
-      d.appendChild(acts);
-    }
+    d.appendChild(acts);
   }
+  if(role==='bot' && !extraClass && prompt) attachLabel(d, prompt, text);
   document.getElementById('log').appendChild(d);
   d.scrollIntoView({block:'end', behavior:'smooth'});
   return d;
-}
-
-function addThink(){
-  hideEmpty();
-  const d=el('div','msg think');
-  const head=el('div','th-head');
-  head.appendChild(el('span','pulse'));
-  head.appendChild(el('span','th-title','Thinking'));
-  const chev=el('span','th-chev','▾');
-  head.appendChild(chev);
-  d.appendChild(head);
-  const steps=el('div','steps'); d.appendChild(steps);
-  head.onclick=()=>d.classList.toggle('collapsed');
-  document.getElementById('log').appendChild(d); d.scrollIntoView({block:'end'});
-  return {root:d, steps, add(label, detail){
-    const row=el('div','step');
-    row.appendChild(el('span','t',new Date().toLocaleTimeString()));
-    row.appendChild(el('span','',label+(detail?(' — '+detail):'')));
-    steps.appendChild(row); d.scrollIntoView({block:'end'});
-  }, done(){
-    d.classList.add('collapsed');
-    const t=head.querySelector('.th-title'); if(t) t.textContent='Tools';
-    const p=head.querySelector('.pulse'); if(p) p.style.animation='none';
-  }};
 }
 
 function addLiveBot(){
   hideEmpty();
   const d=el('div','msg bot streaming');
   const body=el('div','body',''); d.appendChild(body);
-  const meta=el('div','meta'); d.appendChild(meta);
-  const acts=el('div','msg-actions');
-  const copy=el('button','mini','Copy');
-  acts.appendChild(copy);
-  d.appendChild(acts);
   document.getElementById('log').appendChild(d);
   d.scrollIntoView({block:'end'});
   return {
-    root:d, body, meta, acts, copy,
+    root:d, body,
     setText(t){ body.classList.remove('md'); body.textContent=t; d.scrollIntoView({block:'end'}); },
-    finish(text, m, raw){
+    finish(text, failed, prompt){
       d.classList.remove('streaming');
-      setBodyContent(body, text, true);
-      meta.innerHTML='';
-      if(m && m.peer){ meta.appendChild(chipNode(m.peer)); }
-      const bits=[];
-      if(m && m.model) bits.push(m.model);
-      if(m && m.ms!=null) bits.push(m.ms+' ms');
-      if(m && m.kind) bits.push(m.kind);
-      if(m && m.extra) bits.push(m.extra);
-      if(bits.length){
-        if(m && m.peer) meta.appendChild(document.createTextNode(' · '));
-        meta.appendChild(document.createTextNode(bits.join(' · ')));
-      }
-      copy.onclick=async()=>{
-        try{ await navigator.clipboard.writeText(text); copy.textContent='Copied'; setTimeout(()=>copy.textContent='Copy',1200);}
-        catch(_){ copy.textContent='Fail'; }
-      };
-      if(raw){
-        const rawBtn=el('button','mini','Raw');
-        const rawBox=el('pre','raw-box', typeof raw==='string'?raw:JSON.stringify(raw,null,2));
-        rawBtn.onclick=()=>{ rawBox.classList.toggle('on'); };
-        acts.appendChild(rawBtn);
-        d.appendChild(rawBox);
-      }
+      setBodyContent(body, text, !failed);
+      if(prompt && !failed) attachLabel(d, prompt, text);
       d.scrollIntoView({block:'end', behavior:'smooth'});
     },
     markErr(){ d.classList.add('err'); d.classList.remove('streaming'); }
@@ -301,29 +263,18 @@ async function sendText(t, isRetry){
     thread.push({role:'user', content:t});
     addMsg('user', t);
   }
-  const think=addThink();
-  const mesh=document.getElementById('mesh').checked?'on':'off';
   const model=currentModel();
-  const temp=parseFloat(document.getElementById('temp').value)||0.7;
-  const maxt=parseInt(document.getElementById('maxt').value,10)||256;
-  think.add('tool: /peers', 'refresh fleet health');
-  try{ await refresh(); think.add('fleet', document.getElementById('status').textContent); }
-  catch(e){ think.add('fleet', friendlyNet(e)); }
-  think.add('plan', mesh==='on'
-    ?(target==='auto'?'Auto — canned map, else pi4':(target==='pi4'?'Pin pi4':'Pin '+target+' — generation will be rejected'))
-    :('Direct Ollama → '+target));
-  think.add('params', 'temp '+temp+' · max_tokens '+maxt+' · model '+model);
-  think.add('tool: chat', 'via mesh proxy (SSE stream)');
-  const t0=performance.now();
+  const knobs=THINK[thinking]||THINK.medium;
+  refresh().catch(()=>{});
   try{
     const body={
       model:model,
       messages:[],
       stream:true,
-      temperature:temp,
-      max_tokens:maxt,
-      pi_target:target,
-      pi_mesh:mesh
+      temperature:knobs.temperature,
+      max_tokens:knobs.max_tokens,
+      pi_target:'auto',
+      pi_mesh:'on'
     };
     const sys=(document.getElementById('sys').value||'').trim();
     if(sys) body.messages.push({role:'system', content:sys});
@@ -336,7 +287,7 @@ async function sendText(t, isRetry){
         const to=setTimeout(()=>ctrl.abort(), 180000);
         r=await fetch('/v1/chat/completions',{
           method:'POST',
-          headers:{'content-type':'application/json','X-Pi-Target':target,'X-Pi-Mesh':mesh},
+          headers:{'content-type':'application/json','X-Pi-Target':'auto','X-Pi-Mesh':'on'},
           body:JSON.stringify(body),
           signal:ctrl.signal,
           cache:'no-store'
@@ -351,42 +302,29 @@ async function sendText(t, isRetry){
     }
     if(lastErr) throw lastErr;
 
-    const chipHeader=r.headers.get('X-Pi-Chip')||'';
     const ct=(r.headers.get('content-type')||'').toLowerCase();
     const isSSE=ct.includes('event-stream');
 
     if(!isSSE){
       const textBody=await r.text();
       let j={};
-      try{j=textBody?JSON.parse(textBody):{};}catch(_){j={raw:textBody};}
+      try{j=textBody?JSON.parse(textBody):{};}catch(_){j={};}
       lastRaw=j;
-      const ms=Math.round(performance.now()-t0);
       if(!r.ok){
-        const msg=j.error||JSON.stringify(j)||('HTTP '+r.status);
-        think.add('error', msg);
-        think.done();
-        const bot=addMsg('bot', msg, {extra:'error', raw:j}, 'err');
+        const msg=shownError(j.error||('HTTP '+r.status));
+        const bot=addMsg('bot', msg, 'err');
         const btn=el('button','retry','Retry');
-        btn.onclick=()=>{bot.remove(); think.root.remove(); sendText(t,true);};
+        btn.type='button';
+        btn.onclick=()=>{bot.remove(); sendText(t,true);};
         bot.appendChild(btn);
         return;
       }
-      const peer=j.pi_chip||chipHeader||j.pi_peer||r.headers.get('X-Pi-Peer')||'?';
-      const used=j.pi_model||model;
-      const msServer=j.pi_ms!=null?j.pi_ms:ms;
-      const kind=j.pi_kind||'';
-      think.add('routed', 'peer '+peer+' · '+msServer+' ms server · '+ms+' ms wall');
-      think.add('done', 'assistant reply (json)');
-      think.done();
-      const text=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||JSON.stringify(j);
-      thread.push({role:'assistant', content:text, meta:{peer, model:used, ms:msServer, kind}});
-      addMsg('bot', text, {peer, model:used, ms:msServer, kind, raw:j});
+      const text=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||'';
+      thread.push({role:'assistant', content:text});
+      addMsg('bot', text, '', t);
       return;
     }
 
-    let peer=chipHeader||r.headers.get('X-Pi-Peer')||'?';
-    let used=model, kind='', msServer=null;
-    think.add('stream', 'SSE live from '+peer);
     const live=addLiveBot();
     let textAccum='';
     let lastChunk=null;
@@ -412,42 +350,30 @@ async function sendText(t, isRetry){
         try{ j=JSON.parse(payload); }catch(_){ continue; }
         lastChunk=j;
         if(j.error){ streamErr=String(j.error); streamDone=true; break; }
-        if(j.pi_chip) peer=j.pi_chip;
-        else if(j.pi_peer) peer=j.pi_peer;
-        if(j.pi_model) used=j.pi_model;
-        if(j.pi_kind) kind=j.pi_kind;
-        if(j.pi_ms!=null) msServer=j.pi_ms;
         const delta=j.choices&&j.choices[0]&&j.choices[0].delta&&j.choices[0].delta.content;
         if(delta){ textAccum+=delta; live.setText(textAccum); }
       }
     }
     lastRaw=lastChunk;
-    const ms=Math.round(performance.now()-t0);
-    if(msServer==null) msServer=ms;
     if(streamErr || (!r.ok && !textAccum)){
-      const msg=streamErr||('HTTP '+r.status);
-      think.add('error', msg);
-      think.done();
+      const msg=shownError(streamErr||('HTTP '+r.status));
       live.setText(msg);
       live.markErr();
-      live.finish(msg, {extra:'error', peer, model:used, ms:msServer, kind}, lastChunk);
+      live.finish(msg, true);
       const btn=el('button','retry','Retry');
-      btn.onclick=()=>{live.root.remove(); think.root.remove(); sendText(t,true);};
+      btn.type='button';
+      btn.onclick=()=>{live.root.remove(); sendText(t,true);};
       live.root.appendChild(btn);
       return;
     }
-    think.add('routed', 'peer '+peer+' · '+msServer+' ms server · '+ms+' ms wall');
-    think.add('done', 'assistant reply (stream)');
-    think.done();
-    thread.push({role:'assistant', content:textAccum, meta:{peer, model:used, ms:msServer, kind}});
-    live.finish(textAccum, {peer, model:used, ms:msServer, kind}, lastChunk);
+    thread.push({role:'assistant', content:textAccum});
+    live.finish(textAccum, false, t);
   }catch(e){
-    const msg=friendlyNet(e);
-    think.add('error', msg);
-    think.done();
-    const bot=addMsg('bot', msg, {extra:'network'}, 'err');
+    const msg=shownError(e);
+    const bot=addMsg('bot', msg, 'err');
     const btn=el('button','retry','Retry');
-    btn.onclick=()=>{bot.remove(); think.root.remove(); sendText(t,true);};
+    btn.type='button';
+    btn.onclick=()=>{bot.remove(); sendText(t,true);};
     bot.appendChild(btn);
   }finally{
     sending=false; go.disabled=false; document.getElementById('q').focus();
@@ -477,10 +403,6 @@ function threadAsMd(){
   let out='# Pi 0.2 High\n\n';
   thread.forEach(t=>{
     out+='### '+(t.role==='user'?'You':'Assistant')+'\n\n'+t.content+'\n\n';
-    if(t.meta){
-      const bits=[t.meta.peer,t.meta.model,t.meta.ms!=null?(t.meta.ms+' ms'):''].filter(Boolean);
-      if(bits.length) out+='_'+bits.join(' · ')+'_\n\n';
-    }
   });
   return out;
 }
@@ -500,7 +422,7 @@ function download(name, text, mime){
 function clearAttach(){
   const q=document.getElementById('q');
   delete q.dataset.attachText;
-  document.getElementById('fileChip').classList.remove('on');
+  document.getElementById('fileTag').classList.remove('on');
   document.getElementById('attach').value='';
 }
 function loadFile(file){
@@ -510,7 +432,7 @@ function loadFile(file){
     const text=String(reader.result||'');
     document.getElementById('q').dataset.attachText=text;
     document.getElementById('fileName').textContent=file.name+' ('+Math.round(text.length/1024*10)/10+' KB)';
-    document.getElementById('fileChip').classList.add('on');
+    document.getElementById('fileTag').classList.add('on');
   };
   reader.readAsText(file);
 }
@@ -518,10 +440,28 @@ function loadFile(file){
 document.getElementById('go').onclick=send;
 document.getElementById('q').addEventListener('input', e=>autoGrow(e.target));
 document.getElementById('q').addEventListener('keydown', e=>{
-  if(e.key==='Enter' && (e.metaKey||e.ctrlKey)){ e.preventDefault(); send(); }
+  if(e.key!=='Enter') return;
+  if(e.shiftKey) return;
+  if(e.ctrlKey || e.metaKey){
+    e.preventDefault();
+    const ta=e.target;
+    const start=ta.selectionStart;
+    const end=ta.selectionEnd;
+    const next=ta.value.slice(0,start)+'\n'+ta.value.slice(end);
+    ta.value=next;
+    ta.selectionStart=ta.selectionEnd=start+1;
+    autoGrow(ta);
+    return;
+  }
+  e.preventDefault();
+  send();
 });
-document.getElementById('mesh').onchange=()=>{ paintMode(); refresh(); };
-document.getElementById('peerSel').onchange=e=>{ target=e.target.value; paintMode(); refresh(); };
+document.querySelectorAll('.think-btn').forEach(btn=>{
+  btn.onclick=()=>{
+    thinking=btn.getAttribute('data-think')||'medium';
+    document.querySelectorAll('.think-btn').forEach(other=>other.classList.toggle('on', other===btn));
+  };
+});
 document.getElementById('btnIo').onclick=()=>setSettingsOpen(true);
 document.getElementById('btnCloseIo').onclick=()=>setSettingsOpen(false);
 document.getElementById('overlay').onclick=()=>setSettingsOpen(false);
@@ -529,7 +469,7 @@ document.getElementById('btnClear').onclick=()=>{
   thread.length=0; lastRaw=null;
   const log=document.getElementById('log'); log.innerHTML='';
   const empty=el('div','empty'); empty.id='empty';
-  empty.innerHTML='<p>Chat cleared.</p>';
+  empty.innerHTML='<p>Send a message.</p>';
   log.appendChild(empty);
   setSettingsOpen(false);
 };
