@@ -1,5 +1,5 @@
 import fs from "fs";
-import { isSoloStop, speakText, spokenAnswer, startListening, turnFromRecognition } from "./src/voice.ts";
+import { ENDPOINT_MS, isSoloStop, speakText, spokenAnswer, startListening, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
 
 const assistant = "The hall bench is by the east window.";
 const labels = ["Thinking", "Searching", "Searched", "Search failed", "Answering"];
@@ -181,6 +181,88 @@ if (main.includes("speakText(stageText") || main.includes('speakText("Thinking"'
 }
 if (main.includes("Voice did not catch that")) {
   throw new Error("the blocking voice message is still in the page");
+}
+
+const voiceSrc = fs.readFileSync(new URL("./src/voice.ts", import.meta.url), "utf8");
+if (!Number.isFinite(ENDPOINT_MS) || ENDPOINT_MS >= 1000) {
+  throw new Error("wake-to-listen still waits on a long silence");
+}
+const woke = [];
+const beforeRec = recognizers.length;
+const wakeHandle = startListening({
+  onInterim() {},
+  onFinal(text) { woke.push(text); },
+  onEnd() {},
+  onError() { woke.push("error"); },
+});
+if (!wakeHandle) throw new Error("wake listen did not start");
+recognizers[beforeRec].onresult({
+  results: [{ isFinal: false, 0: { transcript: "where is the bench?" } }],
+});
+await new Promise((resolve) => setTimeout(resolve, ENDPOINT_MS + 250));
+if (woke[0] !== "where is the bench?") {
+  throw new Error("wake-to-listen waited on the long silence: " + JSON.stringify(woke));
+}
+recognizers[beforeRec].onresult({
+  results: [{ isFinal: true, 0: { transcript: "where is the bench?" } }],
+});
+if (woke.length !== 1) {
+  throw new Error("the quiet commit was sent twice: " + JSON.stringify(woke));
+}
+wakeHandle.stop();
+
+const order = [];
+let uttered = null;
+let phase = "before";
+let pulses = 0;
+whenSpeechStarts(() => { phase = "audio"; });
+whenSpeechPulses(() => { pulses += 1; });
+window.speechSynthesis = {
+  speaking: false,
+  pending: false,
+  getVoices() {
+    return [{ default: true, lang: "en-US", localService: true, name: "Default" }];
+  },
+  cancel() { order.push("cancel"); },
+  resume() { order.push("resume"); },
+  speak(utter) { order.push("speak"); uttered = utter; },
+};
+if (!speakText("Hello from the speaker.")) {
+  throw new Error("reply was not spoken");
+}
+const speakAt = order.indexOf("speak");
+if (speakAt < 0 || order[speakAt - 1] === "cancel") {
+  throw new Error("cancel silenced the speaker: " + order.join(","));
+}
+if (!uttered || !uttered.voice || uttered.voice.default !== true || uttered.volume !== 1) {
+  throw new Error("spoken output is not aimed at the default speaker");
+}
+if (order[speakAt - 1] !== "resume") {
+  throw new Error("speaker was not resumed onto the default output: " + order.join(","));
+}
+if (phase !== "before" || pulses !== 0) {
+  throw new Error("speaking state started before the audio");
+}
+uttered.onstart();
+if (phase !== "audio") {
+  throw new Error("speaking state did not follow the reply audio");
+}
+uttered.onboundary();
+if (pulses !== 1) {
+  throw new Error("speaking cue did not move with the audio");
+}
+if (!voiceSrc.includes("utter.onstart") || !voiceSrc.includes("utter.onboundary")) {
+  throw new Error("speaking cue is not tied to the reply audio");
+}
+if (!main.includes('classList.toggle("speaking"') || !main.includes('classList.add("beat")')) {
+  throw new Error("the UI has no distinct speaking state");
+}
+if (!scss.includes(".voice-stage.speaking") || !scss.includes(".voice-dots")) {
+  throw new Error("speaking state does not keep the five-dot look");
+}
+const dotMarkup = html.slice(html.indexOf('class="voice-dots"'), html.indexOf('class="voice-dots"') + 120);
+if ((dotMarkup.match(/<i>/g) || []).length !== 5) {
+  throw new Error("speaking state replaced the five dots");
 }
 
 console.log("ok");

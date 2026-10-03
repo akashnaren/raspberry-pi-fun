@@ -73,30 +73,74 @@ export function isSoloStop(transcript: string): boolean {
   return transcript.trim().toLowerCase().replace(/[^a-z]/g, "") === "stop";
 }
 
+/** Quiet gap after the last heard word before a turn is sent. Chrome's own silence is much longer. */
+export const ENDPOINT_MS = 450;
+
 let beforeSpeech: ((text: string) => void) | null = null;
 let afterSpeech: (() => void) | null = null;
+let duringSpeech: (() => void) | null = null;
 
 export function whenSpeechStarts(fn: (text: string) => void): void {
   beforeSpeech = fn;
+}
+
+export function whenSpeechPulses(fn: () => void): void {
+  duringSpeech = fn;
 }
 
 export function whenSpeechEnds(fn: () => void): void {
   afterSpeech = fn;
 }
 
+function pickSpeaker(synth: SpeechSynthesis): SpeechSynthesisVoice | null {
+  const voices = typeof synth.getVoices === "function" ? synth.getVoices() : [];
+  return voices.find((voice) => voice.default) || voices.find((voice) => voice.localService) || null;
+}
+
 export function speakText(text: string): boolean {
   if (!("speechSynthesis" in window)) return false;
   const say = spokenAnswer(text);
   if (!say) return false;
-  window.speechSynthesis.cancel();
+  const synth = window.speechSynthesis;
   const utter = new SpeechSynthesisUtterance(say);
   utter.rate = 1;
+  utter.volume = 1;
   const started = beforeSpeech;
+  const pulse = duringSpeech;
   const done = afterSpeech;
-  utter.onend = () => done?.();
-  utter.onerror = () => done?.();
-  window.speechSynthesis.speak(utter);
-  started?.(say);
+  let settled = false;
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    done?.();
+  };
+  utter.onstart = () => started?.(say);
+  utter.onboundary = () => pulse?.();
+  utter.onend = () => finish();
+  utter.onerror = () => finish();
+  let played = false;
+  const play = () => {
+    if (played) return;
+    played = true;
+    const speaker = pickSpeaker(synth);
+    if (speaker) utter.voice = speaker;
+    if (typeof synth.resume === "function") synth.resume();
+    synth.speak(utter);
+  };
+  // cancel() in the same turn as speak() drops the utterance on Chrome, so the reply stays silent.
+  if (synth.speaking || synth.pending) {
+    synth.cancel();
+    setTimeout(play, 60);
+  } else if (!pickSpeaker(synth) && typeof synth.addEventListener === "function") {
+    const onVoices = () => {
+      synth.removeEventListener("voiceschanged", onVoices);
+      play();
+    };
+    synth.addEventListener("voiceschanged", onVoices);
+    setTimeout(play, 200);
+  } else {
+    play();
+  }
   return true;
 }
 
@@ -120,11 +164,31 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
   rec.continuous = true;
   let pending = "";
   let stopped = false;
+  let echo = "";
+  let echoAt = 0;
+  let quietTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearQuiet = () => {
+    if (quietTimer == null) return;
+    clearTimeout(quietTimer);
+    quietTimer = null;
+  };
   const deliver = (text: string) => {
     const said = text.trim();
     pending = "";
+    clearQuiet();
     if (!said) return;
+    const now = Date.now();
+    if (said === echo && now - echoAt < 800) return;
+    echo = said;
+    echoAt = now;
     handlers.onFinal(said);
+  };
+  const armQuiet = () => {
+    clearQuiet();
+    quietTimer = setTimeout(() => {
+      quietTimer = null;
+      if (!stopped && pending) deliver(pending);
+    }, ENDPOINT_MS);
   };
   rec.onresult = (event: SpeechEvent) => {
     const start = event.resultIndex ?? 0;
@@ -135,7 +199,10 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
       else interim += said;
     }
     pending = interim.trim();
-    if (pending) handlers.onInterim(pending);
+    if (pending) {
+      handlers.onInterim(pending);
+      armQuiet();
+    }
   };
   rec.onerror = (event: SpeechError) => {
     const code = event.error || "";
@@ -161,6 +228,7 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
     stop: () => {
       stopped = true;
       pending = "";
+      clearQuiet();
       try {
         rec.abort();
       } catch {

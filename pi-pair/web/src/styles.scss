@@ -547,11 +547,34 @@ footer {
   animation: voice-dot 0.9s ease-in-out infinite;
 }
 
-.voice-stage.heard .voice-dots i:nth-child(1) { animation-delay: 0s; }
-.voice-stage.heard .voice-dots i:nth-child(2) { animation-delay: -0.16s; }
-.voice-stage.heard .voice-dots i:nth-child(3) { animation-delay: -0.32s; }
-.voice-stage.heard .voice-dots i:nth-child(4) { animation-delay: -0.48s; }
-.voice-stage.heard .voice-dots i:nth-child(5) { animation-delay: -0.64s; }
+.voice-dots i:nth-child(1) { animation-delay: 0s; }
+.voice-dots i:nth-child(2) { animation-delay: -0.16s; }
+.voice-dots i:nth-child(3) { animation-delay: -0.32s; }
+.voice-dots i:nth-child(4) { animation-delay: -0.48s; }
+.voice-dots i:nth-child(5) { animation-delay: -0.64s; }
+
+.voice-stage.speaking .voice-dots {
+  transition: transform 0.08s linear;
+}
+
+.voice-stage.speaking .voice-dots i {
+  width: 22px;
+  height: 22px;
+  background: #fff;
+  box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.16), 0 0 22px rgba(255, 255, 255, 0.9);
+  animation: voice-dot 0.45s ease-in-out infinite;
+}
+
+.voice-stage.speaking.beat .voice-dots {
+  transform: scale(1.14);
+}
+
+.voice-stage.speaking .voice-live {
+  color: #fff;
+  font-size: 1.15rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
 
 .voice-live {
   margin: 0;
