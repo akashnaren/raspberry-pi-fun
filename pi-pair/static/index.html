@@ -15,6 +15,9 @@
 <div class="app">
   <header>
     <div class="brand">Pi 0.2 High</div>
+    <button class="head-btn" id="btnIo" type="button" aria-label="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M5.8 5.8l1.6 1.6M16.6 16.6l1.6 1.6M18.2 5.8l-1.6 1.6M7.4 16.6l-1.6 1.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
   </header>
   <div id="log"><div class="empty" id="empty"><p>Ask anything.</p></div></div>
   <footer>
@@ -29,8 +32,9 @@
             <button type="button" class="think-btn" data-think="high">High</button>
           </div>
           <div class="composer-tools">
-            <button class="tool" id="btnAttach" type="button">Attach</button>
-            <button class="tool" id="btnIo" type="button">Settings</button>
+            <button class="tool" id="btnAttach" type="button" aria-label="Attach">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8.5 12.5l6-6a3 3 0 0 1 4.2 4.2l-7.3 7.3a4.5 4.5 0 0 1-6.4-6.4l6.8-6.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
             <button class="send-btn" id="go" type="button" aria-label="Send">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>

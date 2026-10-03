@@ -15,6 +15,7 @@ from pair.knobs import decode_effort
 from pair.health import snapshot_peers
 from pair.peers import pick
 from pair.queue import append_row, apply_label, node_role, note_exchange
+from pair.search import lookup_web
 from pair import runtime
 from pair.stream import stream_llamacpp, stream_ollama
 
@@ -96,6 +97,34 @@ def last_user_text(messages) -> str:
         if message.get("role", "user") == "user":
             return message_text(message.get("content"))
     return ""
+
+
+def _with_search(messages, prompt: str):
+    """On a miss, attach public notes for the generative model. Failures stay local."""
+    if not (prompt or "").strip():
+        return messages, None
+    try:
+        found = lookup_web(prompt)
+    except Exception:
+        found = None
+    if not isinstance(found, dict):
+        found = {"status": "failed", "sources": [], "context": ""}
+    status = found.get("status")
+    if status not in ("ok", "failed"):
+        status = "failed"
+    sources = []
+    for item in (found.get("sources") or [])[:3]:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url.startswith("http"):
+            continue
+        title = str(item.get("title") or url).strip() or url
+        sources.append({"title": title[:120], "url": url})
+    context = str(found.get("context") or "").strip()
+    if status == "ok" and context:
+        messages = [{"role": "system", "content": context}, *messages]
+    return messages, {"status": status, "sources": sources}
 
 
 def index_body() -> bytes:
@@ -231,13 +260,35 @@ class Handler(BaseHTTPRequestHandler):
             ]
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
+            search_note = None
+            if mesh:
+                outbound, search_note = _with_search(outbound, prompt)
             if want_stream:
                 self._stream(
-                    peer, kind, model, used, outbound, temperature, max_tokens, started, prompt, think_name
+                    peer,
+                    kind,
+                    model,
+                    used,
+                    outbound,
+                    temperature,
+                    max_tokens,
+                    started,
+                    prompt,
+                    think_name,
+                    search_note,
                 )
             else:
                 self._complete(
-                    peer, kind, model, outbound, temperature, max_tokens, started, prompt, think_name
+                    peer,
+                    kind,
+                    model,
+                    outbound,
+                    temperature,
+                    max_tokens,
+                    started,
+                    prompt,
+                    think_name,
+                    search_note,
                 )
         except Exception as error:
             self._error(str(error))
@@ -418,7 +469,18 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
     def _stream(
-        self, peer, kind, model, used, messages, temperature, max_tokens, started, prompt: str, think_name: str = ""
+        self,
+        peer,
+        kind,
+        model,
+        used,
+        messages,
+        temperature,
+        max_tokens,
+        started,
+        prompt: str,
+        think_name: str = "",
+        search_note: dict | None = None,
     ) -> None:
         self.send_response(200)
         self._cors()
@@ -429,6 +491,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Pi-Chip", "brain: pi4" if peer["name"] == "pi4" else peer["name"])
         if think_name:
             self.send_header("X-Pi-Think", think_name)
+        if search_note:
+            self.send_header("X-Pi-Search", search_note["status"])
         self.end_headers()
         safe_write(
             self,
@@ -452,6 +516,9 @@ class Handler(BaseHTTPRequestHandler):
         }
         if think_name:
             first["pi_think"] = think_name
+        if search_note:
+            first["pi_search"] = search_note["status"]
+            first["pi_sources"] = search_note["sources"]
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         parts: list[str] = []
         try:
@@ -492,6 +559,9 @@ class Handler(BaseHTTPRequestHandler):
             }
             if think_name:
                 final["pi_think"] = think_name
+            if search_note:
+                final["pi_search"] = search_note["status"]
+                final["pi_sources"] = search_note["sources"]
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
             answer = "".join(parts)
             note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
@@ -504,7 +574,17 @@ class Handler(BaseHTTPRequestHandler):
             safe_write(self, b"data: [DONE]\n\n", flush=True)
 
     def _complete(
-        self, peer, kind, model, messages, temperature, max_tokens, started, prompt: str, think_name: str = ""
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        started,
+        prompt: str,
+        think_name: str = "",
+        search_note: dict | None = None,
     ) -> None:
         if kind == "llamacpp":
             content, used = chat_llamacpp(peer, model, messages, temperature, max_tokens)
@@ -532,6 +612,9 @@ class Handler(BaseHTTPRequestHandler):
         }
         if think_name:
             resp["pi_think"] = think_name
+        if search_note:
+            resp["pi_search"] = search_note["status"]
+            resp["pi_sources"] = search_note["sources"]
         body = json.dumps(resp).encode()
         self.send_response(200)
         self._cors()
@@ -540,6 +623,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Pi-Chip", chip)
         if think_name:
             self.send_header("X-Pi-Think", think_name)
+        if search_note:
+            self.send_header("X-Pi-Search", search_note["status"])
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         safe_write(self, body)

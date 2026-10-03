@@ -9,7 +9,8 @@
   --danger:#ff5f57;
   --accent:#7cb8ff;
   --think:#7ec8b8;
-  --col:40rem;
+  --col:46rem;
+  --bubble:#2a2a2a;
   --safe-b:env(safe-area-inset-bottom,0px);
   --safe-t:env(safe-area-inset-top,0px);
 }
@@ -40,34 +41,40 @@ a{color:var(--accent)}
 .app{flex:1; display:flex; flex-direction:column; min-height:0; width:100%}
 
 header{
-  flex-shrink:0; height:56px; padding:0 16px; padding-top:var(--safe-t);
-  display:flex; align-items:center;
-  width:100%; max-width:var(--col); margin:0 auto;
-  background:var(--bg);
+  flex-shrink:0; height:56px; padding:0 20px; padding-top:var(--safe-t);
+  display:flex; align-items:center; justify-content:space-between;
+  width:100%; background:var(--bg);
 }
 .brand{
   font-family:"Avenir Next",Bahnschrift,"Segoe UI",sans-serif;
   font-size:1.05rem; font-weight:600; letter-spacing:-0.01em; color:#fff; line-height:1;
 }
+.head-btn{
+  width:36px; height:36px; display:grid; place-items:center;
+  border-radius:999px; color:var(--muted);
+}
+.head-btn:hover{color:var(--ink); background:var(--hover)}
 
 #log{
-  flex:1; overflow:auto; padding:12px 16px 32px;
-  display:flex; flex-direction:column; gap:26px;
+  flex:1; overflow:auto; padding:8px 20px 28px;
+  display:flex; flex-direction:column; gap:22px;
   width:100%; max-width:var(--col); margin:0 auto;
   scroll-behavior:smooth; -webkit-overflow-scrolling:touch;
 }
 .msg{
   max-width:100%; line-height:1.6; word-break:break-word;
-  display:flex; flex-direction:column;
+  display:flex; flex-direction:column; width:fit-content;
 }
-.msg .body{font-size:0.9375rem}
-.user{align-self:flex-end; align-items:flex-end; max-width:min(85%,32rem)}
+.msg .body{font-size:1rem}
+.user{align-self:flex-end; align-items:flex-end; max-width:min(78%,32rem)}
 .user .body{
-  background:var(--elev); border:1px solid rgba(255,255,255,.08);
-  border-radius:18px; padding:10px 14px; color:#fff;
+  background:var(--bubble); border-radius:22px; padding:12px 16px; color:#fff;
 }
-.bot{align-self:stretch; max-width:100%; padding:2px 2px 0}
-.bot .body{color:var(--ink); line-height:1.65}
+.bot{align-self:flex-start; align-items:flex-start; max-width:min(100%,38rem)}
+.bot .body{
+  background:#1c1c1c; border:1px solid rgba(255,255,255,.1);
+  border-radius:22px; padding:14px 16px; color:var(--ink); line-height:1.65;
+}
 .err .body{color:var(--danger)}
 .pending{display:inline-flex; align-items:center; gap:5px; height:1.4em; padding:2px 0}
 .pending i{
@@ -118,6 +125,17 @@ header{
   margin-right:6px; font-size:12px; line-height:1; color:var(--think); letter-spacing:.01em;
 }
 .label-row{display:flex; gap:2px; align-items:center; margin-top:8px; min-height:32px}
+.search-note{
+  margin-top:10px; font-size:12px; color:var(--muted);
+  display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+}
+.search-kicker{color:var(--dim)}
+.search-note a{
+  color:var(--accent); text-decoration:none;
+  background:rgba(124,184,255,.08); border:1px solid rgba(124,184,255,.2);
+  border-radius:999px; padding:4px 10px;
+}
+.search-note a:hover{text-decoration:none; background:rgba(124,184,255,.14)}
 .label-note{font-size:12px; color:var(--dim); padding:0 6px}
 .fix-box{display:none; gap:8px; align-items:flex-end; margin-top:8px}
 .fix-box.on{display:flex}
@@ -153,10 +171,15 @@ header{
 }
 
 footer{
-  flex-shrink:0; background:var(--bg);
-  padding:0 0 var(--safe-b);
+  position:relative; flex-shrink:0; background:var(--bg);
+  padding:0 0 var(--safe-b); z-index:5;
 }
-.composer-wrap{max-width:var(--col); margin:0 auto; padding:8px 16px 16px; width:100%}
+footer::before{
+  content:""; position:absolute; left:0; right:0; top:-36px; height:36px;
+  background:linear-gradient(to bottom, rgba(10,10,10,0), #0a0a0a);
+  pointer-events:none;
+}
+.composer-wrap{max-width:var(--col); margin:0 auto; padding:4px 20px 20px; width:100%}
 .file-tag{
   display:none; align-items:center; gap:6px; font-size:12px; color:var(--muted);
   margin:0 0 8px; padding:0 8px;
@@ -167,14 +190,14 @@ footer{
 .composer{
   background:var(--elev);
   border:1px solid rgba(255,255,255,.08);
-  border-radius:26px;
-  padding:12px 10px 8px 16px;
+  border-radius:28px;
+  padding:14px 10px 8px 16px;
 }
 .composer:focus-within{border-color:rgba(255,255,255,.16)}
 #q{
   display:block; width:100%; min-height:28px; max-height:180px; resize:none;
   background:transparent; border:none; outline:none;
-  padding:4px 4px 2px 0; line-height:1.5; color:#fff; font-size:0.9375rem;
+  padding:2px 6px 2px 2px; line-height:1.5; color:#fff; font-size:1rem;
 }
 #q::placeholder{color:var(--dim)}
 .composer-bar{
@@ -196,7 +219,8 @@ footer{
 .think-btn:focus-visible{outline:1px solid rgba(255,255,255,.28); outline-offset:1px}
 .composer-tools{display:flex; align-items:center; gap:2px; margin-left:auto}
 .tool{
-  color:var(--muted); font-size:13px; padding:6px 8px; border-radius:999px;
+  width:36px; height:36px; display:grid; place-items:center;
+  color:var(--muted); border-radius:999px;
 }
 .tool:hover{color:var(--ink); background:var(--hover)}
 .send-btn{
@@ -211,7 +235,7 @@ footer{
   text-align:center; padding:48px 20px;
 }
 .empty p{
-  margin:0; font-size:1.5rem; font-weight:500; letter-spacing:-0.03em; color:#fff;
+  margin:0; font-size:2.25rem; font-weight:500; letter-spacing:-0.035em; color:#fff;
 }
 
 .overlay{
@@ -250,9 +274,13 @@ footer{
 .drawer-actions button.danger:hover{color:var(--danger); border-color:#5c2420}
 
 @media (max-width:480px){
-  .user{max-width:88%}
-  .composer{border-radius:22px}
+  header{padding-left:14px; padding-right:10px}
+  #log{padding-left:14px; padding-right:14px}
+  .user{max-width:86%}
+  .bot{max-width:100%}
+  .empty p{font-size:1.75rem}
+  .composer{border-radius:24px}
+  .composer-wrap{padding-left:12px; padding-right:12px}
   .composer-bar{flex-wrap:nowrap}
   .think-btn{min-width:0; padding:7px 8px}
-  .tool{font-size:12px; padding:6px 6px}
 }

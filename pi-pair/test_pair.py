@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pair import health, runtime
+from pair import server as pair_server
 from pair.chat import llamacpp_model
 from pair.config import DEFAULT_PEERS, load_peers, normalize_peer
 from pair.peers import model_on_peer, pick
@@ -269,11 +270,20 @@ class PairHttp(unittest.TestCase):
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         OllamaFake.posts = 0
         OllamaFake.last_payload = None
+        self.search_calls = []
+        self._lookup_web = pair_server.lookup_web
+
+        def _stub_search(query, opener=None):
+            self.search_calls.append(query)
+            return {"status": "failed", "sources": [], "context": ""}
+
+        pair_server.lookup_web = _stub_search
 
     def tearDown(self):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
+        pair_server.lookup_web = self._lookup_web
         runtime.PEERS = self._peers
         runtime.reset_health()
         os.environ.pop("PI_PAIR_DATA", None)
@@ -353,6 +363,10 @@ class PairHttp(unittest.TestCase):
         self.assertIn("X-Pi-Think", script)
         self.assertIn("let thinking='medium';", script)
         self.assertIn("el('span','pending')", script)
+        self.assertIn("Searched", script)
+        self.assertIn("Search failed", script)
+        self.assertIn("X-Pi-Search", script)
+        self.assertIn("search-note", script)
         handler = _composer_keydown(script)
         shift_at = handler.index("if(e.shiftKey) return;")
         prevent_at = handler.index("e.preventDefault();")
@@ -383,6 +397,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertEqual(body["pi_peer"], "pi4")
         self.assertEqual(body["pi_chip"], "brain: pi4")
+        self.assertEqual(body["pi_search"], "failed")
+        self.assertEqual(self.search_calls, ["Say hi in five words."])
         self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 2048)
         self.assertEqual(OllamaFake.last_payload["keep_alive"], "5m")
         self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 256)
@@ -408,7 +424,9 @@ class PairHttp(unittest.TestCase):
             self.assertIn("text/event-stream", response.headers.get("content-type", ""))
             self.assertEqual(response.headers.get("X-Pi-Peer"), "pi4")
             self.assertEqual(response.headers.get("X-Pi-Chip"), "brain: pi4")
+            self.assertEqual(response.headers.get("X-Pi-Search"), "failed")
         self.assertIn("hel", raw)
+        self.assertIn('"pi_search": "failed"', raw)
         self.assertIn("lo", raw)
         self.assertIn("data: [DONE]", raw)
         conn = HTTPConnection("127.0.0.1", port, timeout=5)
@@ -477,6 +495,9 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_chip"], "cache")
         self.assertIn("Mesh assistant online", body["choices"][0]["message"]["content"])
         self.assertEqual(OllamaFake.posts, 0)
+        self.assertEqual(self.search_calls, [])
+        self.assertIsNone(headers.get("X-Pi-Search"))
+        self.assertNotIn("pi_search", body)
         queue = Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl"
         self.assertFalse(queue.exists())
 
@@ -591,6 +612,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(headers.get("X-Pi-Chip"), "brain: pi4")
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertEqual(OllamaFake.posts, 1)
+        self.assertEqual(self.search_calls, [])
+        self.assertIsNone(headers.get("X-Pi-Search"))
         queued = (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl").read_text()
         self.assertIn("Hi!", queued)
 
@@ -759,6 +782,108 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(LlamaFake.last_payload["temperature"], 0.8)
         self.assertEqual(LlamaFake.last_payload["max_tokens"], 768)
         self.assertNotIn("think", LlamaFake.last_payload)
+
+    def _pi4(self):
+        peer_port = self._listen(OllamaFake)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        return self._pair()
+
+    def test_miss_puts_search_snippets_in_the_prompt(self):
+        prompt = "How tall is the bench in the hall?"
+
+        def fake(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "sources": [{"title": "Bench note", "url": "https://example.com/bench"}],
+                "context": (
+                    "Web search notes.\n"
+                    "- Bench note (https://example.com/bench): a short snippet about the bench"
+                ),
+            }
+
+        pair_server.lookup_web = fake
+        port = self._pi4()
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.search_calls, [prompt])
+        blob = json.dumps(OllamaFake.last_payload["messages"])
+        self.assertIn("a short snippet about the bench", blob)
+        self.assertIn("https://example.com/bench", blob)
+        self.assertEqual(body["pi_search"], "ok")
+        self.assertEqual(body["pi_sources"][0]["url"], "https://example.com/bench")
+        self.assertEqual(headers.get("X-Pi-Search"), "ok")
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        queued = (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl").read_text()
+        row = json.loads(queued.strip().splitlines()[-1])
+        self.assertEqual(row["prompt"], prompt)
+        self.assertNotIn("snippet", row["prompt"])
+        self.assertEqual(row["answer"], "hello from peer")
+
+    def test_failed_search_still_answers_locally(self):
+        prompt = "What is the weather on the far pier?"
+
+        def boom(query, opener=None):
+            self.search_calls.append(query)
+            raise RuntimeError("lookup down")
+
+        pair_server.lookup_web = boom
+        port = self._pi4()
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertEqual(body["pi_search"], "failed")
+        self.assertEqual(headers.get("X-Pi-Search"), "failed")
+        self.assertEqual(body["pi_sources"], [])
+        messages = OllamaFake.last_payload["messages"]
+        self.assertTrue(any(item.get("content") == prompt for item in messages))
+        self.assertNotIn("Web search notes", json.dumps(messages))
+
+        def empty(query, opener=None):
+            return {"status": "failed", "sources": [], "context": ""}
+
+        pair_server.lookup_web = empty
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertEqual(body["pi_search"], "failed")
+        self.assertNotIn("Web search notes", json.dumps(OllamaFake.last_payload["messages"]))
 
 
 class ProductCopy(unittest.TestCase):

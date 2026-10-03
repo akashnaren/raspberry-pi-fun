@@ -66,6 +66,8 @@ The person is on the phone, on the page served at port 18080. The router is whic
 
 If the mode is Auto, the router normalizes the latest user turn (lowercase, collapsed whitespace, trailing punctuation removed) and looks it up in `data/canned/canned_map.json`. A hit returns that sentence with the chip `cache`. pi4 is not called. A miss is sent only to pi4. The chip on that answer is `brain: pi4`. The prompt and the answer are appended to the bounded queue on pi3 (at most 128 rows; older rows fall off the front). If this router is itself running as the dataset role, it writes the file locally. If it is running as the brain or as health, it forwards the row to pi3 and does not keep a copy.
 
+On a miss, before pi4 is called, the router may look the line up on DuckDuckGo. It keeps a few result titles, links, and short snippets. It may read one of those pages as plain text, with a size cap and a short timeout, and it does not follow links from that page. That text is added only to the prompt pi4 sees. The queue still stores the person's line and the model's answer. If the lookup fails, pi4 still answers from the local model and the page says search failed. This is not a hosted chat API and it is not a second generator.
+
 If the mode is a pin of pi4, the same map may still answer, and a miss still goes to pi4. If the mode is a pin of pi2 or pi3, the router refuses before any map read and before any HTTP call to a model. Mesh off is the direct path: the canned map is skipped and the named peer is called, but only if that peer is allowed to generate. Direct to pi2 or pi3 is the same refusal. Direct to pi4 is pi4's Ollama, through this router, with the chip `brain: pi4`.
 
 ```mermaid
@@ -195,6 +197,8 @@ DeepSpeed, FSDP, and multi-node launchers from those repos are not imported. The
 The daily tool is the page on port 18080, on the LAN addresses in the fleet map. Tailscale names work the same way when the tailnet is up. The page is one column: messages, a composer fixed at the bottom, and a Low / Medium / High control beside that composer. The control defaults to Medium. qwen2.5:0.5b has no separate reasoning channel, so the router sends the level as Ollama `num_predict` and temperature: Low is 64 tokens at 0.6, Medium is 256 at 0.7, High is 768 at 0.8. Those are different decode requests. The reply is marked with the level that was used. All three still go through Auto. The page does not say which board answered. That stays on the response headers.
 
 Enter sends the line. Shift+Enter, or Ctrl+Enter, inserts a newline.
+
+When the map misses, the reply shows a short searched note and the source links. If the lookup fails, the note says search failed and the answer is still from the local model.
 
 Under a finished answer there is a thumbs up, a thumbs down, and Correct. Correct is an optional replacement sentence. Those controls call `POST /v1/flywheel/feedback`.
 

@@ -104,6 +104,26 @@ function showEffort(parent, name){
   if(labels) labels.insertBefore(node, labels.firstChild);
   else parent.appendChild(node);
 }
+function showSearch(parent, status, sources){
+  if(!parent || (status!=='ok' && status!=='failed')) return;
+  const note=el('div','search-note');
+  if(status==='failed'){
+    note.textContent='Search failed';
+  }else{
+    note.appendChild(el('span','search-kicker','Searched'));
+    (sources||[]).slice(0,3).forEach(src=>{
+      const url=src&&src.url?String(src.url):'';
+      if(url.indexOf('http')!==0) return;
+      const a=document.createElement('a');
+      a.href=url;
+      a.target='_blank';
+      a.rel='noopener';
+      a.textContent=(src.title||url);
+      note.appendChild(a);
+    });
+  }
+  parent.appendChild(note);
+}
 
 function shownError(msg){
   const s=String(msg&&msg.message||msg||'');
@@ -280,9 +300,10 @@ function addLiveBot(){
       body.textContent=t;
       d.scrollIntoView({block:'end'});
     },
-    finish(text, failed, prompt, effort){
+    finish(text, failed, prompt, effort, search){
       d.classList.remove('streaming');
       setBodyContent(body, text, !failed);
+      if(!failed && search) showSearch(d, search.status, search.sources);
       if(prompt && !failed) attachLabel(d, prompt, text);
       if(!failed) showEffort(d, effort);
       d.scrollIntoView({block:'end', behavior:'smooth'});
@@ -339,6 +360,8 @@ async function sendText(t, isRetry){
     if(lastErr) throw lastErr;
 
     const effortUsed=r.headers.get('X-Pi-Think')||effort;
+    let searchStatus=r.headers.get('X-Pi-Search')||'';
+    let searchSources=[];
     const ct=(r.headers.get('content-type')||'').toLowerCase();
     const isSSE=ct.includes('event-stream');
 
@@ -360,7 +383,10 @@ async function sendText(t, isRetry){
       }
       const text=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||'';
       thread.push({role:'assistant', content:text});
-      live.finish(text, false, t, j.pi_think||effortUsed);
+      live.finish(text, false, t, j.pi_think||effortUsed, {
+        status:j.pi_search||searchStatus,
+        sources:j.pi_sources||searchSources
+      });
       return;
     }
 
@@ -387,6 +413,10 @@ async function sendText(t, isRetry){
         let j;
         try{ j=JSON.parse(payload); }catch(_){ continue; }
         lastChunk=j;
+        if(j.pi_search){
+          searchStatus=j.pi_search;
+          if(Array.isArray(j.pi_sources)) searchSources=j.pi_sources;
+        }
         if(j.error){ streamErr=String(j.error); streamDone=true; break; }
         const delta=j.choices&&j.choices[0]&&j.choices[0].delta&&j.choices[0].delta.content;
         if(delta){ textAccum+=delta; live.setText(textAccum); }
@@ -407,7 +437,7 @@ async function sendText(t, isRetry){
     let streamedEffort=effortUsed;
     if(lastChunk && lastChunk.pi_think) streamedEffort=lastChunk.pi_think;
     thread.push({role:'assistant', content:textAccum});
-    live.finish(textAccum, false, t, streamedEffort);
+    live.finish(textAccum, false, t, streamedEffort, {status:searchStatus, sources:searchSources});
   }catch(e){
     const msg=shownError(e);
     live.setText(msg);

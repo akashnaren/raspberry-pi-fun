@@ -309,6 +309,8 @@ class Flywheel(unittest.TestCase):
             "full fine-tune is not",
             "data/train/done",
             "map hit",
+            "DuckDuckGo",
+            "search failed",
         ):
             self.assertIn(phrase, text, phrase)
         self.assertNotIn("Pi 0.2 High", text)
