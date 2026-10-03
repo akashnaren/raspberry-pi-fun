@@ -1,3 +1,5 @@
+import katex from "katex";
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -5,12 +7,38 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function renderTex(source: string, display: boolean): string {
+  try {
+    return katex.renderToString(source.trim(), {
+      displayMode: display,
+      throwOnError: false,
+      strict: "ignore",
+      output: "html",
+    });
+  } catch {
+    return `<code>${escapeHtml(source)}</code>`;
+  }
+}
+
 function inline(text: string): string {
-  let html = escapeHtml(text);
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  const codes: string[] = [];
+  const maths: string[] = [];
+  let work = text.replace(/`([^`]+)`/g, (_all, code: string) => {
+    const token = `\u0000C${codes.length}\u0000`;
+    codes.push(`<code>${escapeHtml(code)}</code>`);
+    return token;
+  });
+  work = work.replace(/\\\(([\s\S]*?)\\\)/g, (_all, tex: string) => {
+    const token = `\u0000M${maths.length}\u0000`;
+    maths.push(renderTex(tex, false));
+    return token;
+  });
+  let html = escapeHtml(work);
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/(^|[^\*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  html = html.replace(/\u0000C(\d+)\u0000/g, (_all, index: string) => codes[Number(index)] ?? "");
+  html = html.replace(/\u0000M(\d+)\u0000/g, (_all, index: string) => maths[Number(index)] ?? "");
   return html;
 }
 
@@ -25,7 +53,10 @@ export function renderMarkdown(source: string): string {
   const fenced = text.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_all, _lang, code: string) =>
     stash(`<pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`),
   );
-  const lines = fenced.split("\n");
+  const withDisplay = fenced
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_all, tex: string) => stash(renderTex(tex, true)))
+    .replace(/\$\$([\s\S]*?)\$\$/g, (_all, tex: string) => stash(renderTex(tex, true)));
+  const lines = withDisplay.split("\n");
   const out: string[] = [];
   let list: "ul" | "ol" | "" = "";
   const closeList = () => {
