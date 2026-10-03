@@ -761,6 +761,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
 }
 
 async function send(): Promise<void> {
+  voiceNote("");
   const box = byId<HTMLTextAreaElement>("q");
   let text = box.value.trim();
   const attached = box.dataset.attachText || "";

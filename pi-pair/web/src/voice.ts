@@ -77,6 +77,7 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
   rec.interimResults = true;
   rec.continuous = false;
   let finished = false;
+  let settled = false;
   rec.onresult = (event: SpeechEvent) => {
     let text = "";
     let isFinal = false;
@@ -95,9 +96,14 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
     handlers.onInterim(spoken);
   };
   rec.onerror = () => {
-    if (!finished) handlers.onError();
+    if (finished || settled) return;
+    settled = true;
+    handlers.onError();
   };
-  rec.onend = () => handlers.onEnd();
+  rec.onend = () => {
+    settled = true;
+    handlers.onEnd();
+  };
   try {
     rec.start();
   } catch {
