@@ -10,6 +10,15 @@ _DEFAULTS = {
     "num_ctx": 2048,
     "keep_alive": "5m",
     "ollama_num_parallel": 1,
+    # Pi 4 is four Cortex-A72 cores. Ollama forwards num_thread as llama.cpp -t
+    # only when the request sets it; otherwise the runner auto-detects.
+    "num_thread": 4,
+    # Prompt-ingest batch. Ollama's default is 512, which is wider than this
+    # board's 1MB L2 wants while a search note is being prefilled.
+    "num_batch": 128,
+    # Characters of search notes pasted into the prompt. Sources on the page
+    # are not cut. A shorter note is a shorter prefill.
+    "search_note_chars": 640,
 }
 
 
@@ -28,6 +37,31 @@ def decode_effort(name: str | None) -> tuple[str, float, int] | None:
     if not row:
         return None
     return key, float(row["temperature"]), int(row["num_predict"])
+
+
+def ollama_options(temperature: float, max_tokens: int, knobs: dict | None = None) -> dict:
+    """Decode options Ollama already accepts. The model name is not one of them."""
+    row = knobs if knobs is not None else inference_knobs()
+    options = {
+        "temperature": temperature,
+        "num_predict": max_tokens,
+        "num_ctx": int(row.get("num_ctx") or 2048),
+    }
+    threads = row.get("num_thread")
+    batch = row.get("num_batch")
+    if threads:
+        options["num_thread"] = int(threads)
+    if batch:
+        options["num_batch"] = int(batch)
+    return options
+
+
+def search_note_limit(knobs: dict | None = None) -> int:
+    row = knobs if knobs is not None else inference_knobs()
+    try:
+        return max(0, int(row.get("search_note_chars") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def inference_knobs() -> dict:

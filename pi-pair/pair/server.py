@@ -1,6 +1,7 @@
 """HTTP UI and OpenAI-compatible /v1/chat/completions. Stdlib only."""
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import threading
@@ -14,7 +15,7 @@ from pair.canned import lookup
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
 from pair.config import STATIC_DIR
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
-from pair.knobs import decode_effort
+from pair.knobs import decode_effort, search_note_limit
 from pair.health import snapshot_peers
 from pair.peers import pick
 from pair.queue import append_row, apply_label, node_role, note_exchange
@@ -50,6 +51,17 @@ _TYPES = {
     ".png": "image/png",
     ".txt": "text/plain; charset=utf-8",
 }
+
+
+def encoded_body(handler, body: bytes) -> tuple[bytes, str | None]:
+    """Gzip only when the browser asks. Tests that omit the header stay plain."""
+    accept = handler.headers.get("Accept-Encoding") or ""
+    if "gzip" not in accept.lower() or len(body) < 800:
+        return body, None
+    packed = gzip.compress(body, compresslevel=6)
+    if len(packed) >= len(body):
+        return body, None
+    return packed, "gzip"
 
 
 def safe_write(handler, body: bytes, flush: bool = False) -> bool:
@@ -181,9 +193,29 @@ def _with_search(messages, prompt: str):
         title = str(item.get("title") or url).strip() or url
         sources.append({"title": title[:120], "url": url})
     context = str(found.get("context") or "").strip()
+    limit = search_note_limit()
+    if limit and len(context) > limit:
+        context = context[:limit].rstrip()
     if status == "ok" and context:
         messages = [{"role": "system", "content": context}, *messages]
     return messages, {"status": status, "sources": sources}
+
+
+def status_event(stage: str, extra: dict | None = None) -> dict:
+    """One SSE object for a stage the server has actually entered."""
+    payload = {
+        "id": "pi-pair",
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+        "pi_status": stage,
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def write_event(handler, payload: dict) -> bool:
+    return safe_write(handler, f"data: {json.dumps(payload)}\n\n".encode(), flush=True)
 
 
 def index_body() -> bytes:
@@ -209,20 +241,28 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
-            body = index_body()
+            body, encoding = encoded_body(self, index_body())
             self.send_response(200)
             self._cors()
             self.send_header("content-type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            if encoding:
+                self.send_header("Content-Encoding", encoding)
+                self.send_header("Vary", "Accept-Encoding")
             self.send_header("content-length", str(len(body)))
             self.end_headers()
             safe_write(self, body)
             return
         asset = static_file(path)
         if asset is not None:
-            body = asset.read_bytes()
+            body, encoding = encoded_body(self, asset.read_bytes())
             self.send_response(200)
             self._cors()
             self.send_header("content-type", _TYPES.get(asset.suffix, "application/octet-stream"))
+            self.send_header("Cache-Control", "no-cache")
+            if encoding:
+                self.send_header("Content-Encoding", encoding)
+                self.send_header("Vary", "Accept-Encoding")
             self.send_header("content-length", str(len(body)))
             self.end_headers()
             safe_write(self, body)
@@ -327,9 +367,7 @@ class Handler(BaseHTTPRequestHandler):
             ]
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
-            search_note = None
-            if mesh and node_role() == "brain":
-                outbound, search_note = _with_search(outbound, prompt)
+            do_search = bool(mesh and node_role() == "brain")
             if want_stream:
                 self._stream(
                     peer,
@@ -342,9 +380,15 @@ class Handler(BaseHTTPRequestHandler):
                     started,
                     prompt,
                     think_name,
-                    search_note,
+                    do_search,
                 )
             else:
+                stages = ["thinking"]
+                search_note = None
+                if do_search:
+                    stages.append("searching")
+                    outbound, search_note = _with_search(outbound, prompt)
+                stages.append("answering")
                 self._complete(
                     peer,
                     kind,
@@ -356,6 +400,7 @@ class Handler(BaseHTTPRequestHandler):
                     prompt,
                     think_name,
                     search_note,
+                    stages,
                 )
         except Exception as error:
             self._error(str(error))
@@ -363,6 +408,13 @@ class Handler(BaseHTTPRequestHandler):
             runtime._infer_sem.release()
 
     def _relay_to_brain(self, payload: bytes) -> None:
+        try:
+            requested = json.loads(payload.decode() or "{}")
+        except json.JSONDecodeError:
+            requested = {}
+        if isinstance(requested, dict) and requested.get("stream"):
+            self._relay_stream(payload)
+            return
         target = (self.headers.get("X-Pi-Target") or "auto").strip()
         mesh = (self.headers.get("X-Pi-Mesh") or "on").strip()
         try:
@@ -377,6 +429,59 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         safe_write(self, body)
+
+    def _relay_stream(self, payload: bytes) -> None:
+        """Pass pi4's event stream through. This board still does not search or generate."""
+        target = (self.headers.get("X-Pi-Target") or "auto").strip()
+        mesh = (self.headers.get("X-Pi-Mesh") or "on").strip()
+        request = urllib.request.Request(
+            brain_chat_url(),
+            data=payload,
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Target": target or "auto",
+                "X-Pi-Mesh": mesh or "on",
+            },
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=180)
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            kind = error.headers.get("content-type", "application/json")
+            self.send_response(error.code)
+            self._cors()
+            self.send_header("content-type", kind)
+            self.send_header("content-length", str(len(raw)))
+            self.end_headers()
+            safe_write(self, raw)
+            return
+        except Exception:
+            self._error(PI4_MISS_DOWN)
+            return
+        try:
+            self.send_response(response.status)
+            self._cors()
+            self.send_header(
+                "content-type",
+                response.headers.get("content-type", "text/event-stream"),
+            )
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search"):
+                value = response.headers.get(name)
+                if value:
+                    self.send_header(name, value)
+            self.end_headers()
+            while True:
+                chunk = response.read(1024)
+                if not chunk:
+                    break
+                if not safe_write(self, chunk, flush=True):
+                    break
+        finally:
+            close = getattr(response, "close", None)
+            if close:
+                close()
 
     def _enqueue(self) -> None:
         if node_role() != "dataset":
@@ -502,6 +607,7 @@ class Handler(BaseHTTPRequestHandler):
             }
             if think_name:
                 resp["pi_think"] = think_name
+            resp["pi_stages"] = ["answering"]
             body = json.dumps(resp).encode()
             self.send_response(200)
             self._cors()
@@ -524,6 +630,10 @@ class Handler(BaseHTTPRequestHandler):
         if think_name:
             self.send_header("X-Pi-Think", think_name)
         self.end_headers()
+        answering = {"pi_stages": ["answering"]}
+        if think_name:
+            answering["pi_think"] = think_name
+        write_event(self, status_event("answering", answering))
         first = {
             "id": "pi-pair",
             "object": "chat.completion.chunk",
@@ -532,6 +642,7 @@ class Handler(BaseHTTPRequestHandler):
             "pi_chip": "cache",
             "pi_model": "canned",
             "pi_kind": "dataset",
+            "pi_stages": ["answering"],
         }
         if think_name:
             first["pi_think"] = think_name
@@ -548,6 +659,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         if think_name:
             final["pi_think"] = think_name
+        final["pi_stages"] = ["answering"]
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
@@ -563,7 +675,7 @@ class Handler(BaseHTTPRequestHandler):
         started,
         prompt: str,
         think_name: str = "",
-        search_note: dict | None = None,
+        do_search: bool = False,
     ) -> None:
         self.send_response(200)
         self._cors()
@@ -574,9 +686,34 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Pi-Chip", "brain: pi4" if peer["name"] == "pi4" else peer["name"])
         if think_name:
             self.send_header("X-Pi-Think", think_name)
-        if search_note:
-            self.send_header("X-Pi-Search", search_note["status"])
         self.end_headers()
+        stages: list[str] = []
+        search_note = None
+
+        def emit_status(stage: str, extra: dict | None = None) -> bool:
+            if stage not in stages:
+                stages.append(stage)
+            return write_event(self, status_event(stage, extra))
+
+        think_extra = {"pi_think": think_name} if think_name else None
+        if not emit_status("thinking", think_extra):
+            return
+        if do_search:
+            if not emit_status("searching", {"pi_tool": "search"}):
+                return
+            messages, search_note = _with_search(messages, prompt)
+            found = {"pi_tool": "search"}
+            if search_note:
+                found["pi_search"] = search_note["status"]
+                found["pi_sources"] = search_note["sources"]
+            if not emit_status("searching", found):
+                return
+        answer_extra = dict(think_extra or {})
+        if search_note:
+            answer_extra["pi_search"] = search_note["status"]
+            answer_extra["pi_sources"] = search_note["sources"]
+        if not emit_status("answering", answer_extra or None):
+            return
         safe_write(
             self,
             f": pi-pair peer={peer['name']} kind={kind} model={used}\n\n".encode(),
@@ -655,6 +792,7 @@ class Handler(BaseHTTPRequestHandler):
             if search_note:
                 final["pi_search"] = search_note["status"]
                 final["pi_sources"] = search_note["sources"]
+            final["pi_stages"] = list(stages)
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
             answer = "".join(parts)
             note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
@@ -678,6 +816,7 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         think_name: str = "",
         search_note: dict | None = None,
+        stages: list[str] | None = None,
     ) -> None:
         if kind == "llamacpp":
             content, used = chat_llamacpp(peer, model, messages, temperature, max_tokens)
@@ -708,6 +847,8 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             resp["pi_search"] = search_note["status"]
             resp["pi_sources"] = search_note["sources"]
+        if stages:
+            resp["pi_stages"] = stages
         body = json.dumps(resp).encode()
         self.send_response(200)
         self._cors()
@@ -732,7 +873,7 @@ def make_server(host: str | None = None, port: int | None = None) -> ThreadingHT
 def main() -> None:
     runtime.configure()
     print(
-        f"Pi 0.2 High on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
+        f"Pi GPT 1.0 on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
         f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s brain=pi4",
         flush=True,
     )

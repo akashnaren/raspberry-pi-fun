@@ -112,7 +112,7 @@ mkdir -p "$UNIT_DIR"
 UNIT_FILE="$UNIT_DIR/${SERVICE_NAME}.service"
 cat > "$UNIT_FILE" << UNIT
 [Unit]
-Description=Pi 0.2 High
+Description=Pi GPT 1.0
 After=network-online.target
 Wants=network-online.target
 

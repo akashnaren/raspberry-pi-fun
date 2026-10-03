@@ -48,6 +48,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the chat page
+        working-directory: pi-pair/web
+        run: npm ci && npm run build
       - name: Router, cache, and data-stack tests
         run: python3 -m unittest discover -s pi-pair -p 'test_*.py' -v
 

@@ -83,7 +83,7 @@ class Flywheel(unittest.TestCase):
     def test_lookup_normalizes(self):
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         try:
-            self.assertIn("Mesh assistant online", lookup("Hi!") or "")
+            self.assertEqual(lookup("Hi!"), "Hi. What can I help you with?")
             self.assertIsNone(lookup("this string is not in the canned map"))
         finally:
             os.environ.pop("PI_PAIR_CANNED", None)

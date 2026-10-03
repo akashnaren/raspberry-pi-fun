@@ -1,4 +1,4 @@
-{"id": "syn-e914d79437f0", "input": "hi", "answer": "Hi. Mesh assistant online. Ask status, roles, or help.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-e914d79437f0", "input": "hi", "answer": "Hi. What can I help you with?", "tags": ["greeting"], "source": "seed"}
 {"id": "syn-bdabf7349722", "input": "hello", "answer": "Hello. Ready on the private Pi mesh.", "tags": ["greeting"], "source": "seed"}
 {"id": "syn-72f7c36f8e1d", "input": "hey", "answer": "Hey. What do you need from the mesh?", "tags": ["greeting"], "source": "seed"}
 {"id": "syn-f0af7f701206", "input": "good morning", "answer": "Good morning. Cache path warm; pi4 available for novel turns.", "tags": ["greeting"], "source": "seed"}

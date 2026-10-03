@@ -6,5 +6,8 @@
   "num_ctx": 2048,
   "ollama_num_parallel": 1,
   "keep_alive": "5m",
+  "num_thread": 4,
+  "num_batch": 128,
+  "search_note_chars": 640,
   "role": "pi4"
 }

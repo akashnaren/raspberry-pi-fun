@@ -46,7 +46,7 @@ Train-then-delete is our rule. The open-source trainers cited below compact data
 | pi3 | ~1GB, arm64; 0.5B can load and still gibberish | Canned map, seed files, bounded queue, prepared shards, adapter manifests, the train job | User-facing generation |
 | pi4 | ~8GB, the only proven generative board | Quantized chat weights in Ollama; the decode for a miss; an active adapter manifest after the gate | Raw train shards, the train corpus, a second full fine-tune beside live decode |
 
-The model on pi4 starts as `qwen2.5:0.5b`. The published config for Qwen2.5-0.5B-Instruct (`model_type` qwen2) is 24 layers, hidden size 896, intermediate size 4864, 14 query heads and 2 key/value heads, vocabulary 151936, rope theta 1,000,000, SiLU, tied embeddings, and a card maximum of 32768 positions. Source: the model config published at `https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct`. This fleet does not use that full context. `configs/runtime/inference_pi4.json` caps `num_ctx` at 2048 so the key/value cache stays inside the 8GB board with the weights and the operating system. `OLLAMA_NUM_PARALLEL` is 1: one sequence at a time, in the Ollama service and in spirit in the router slot cap. `keep_alive` in that same file is `5m`, an operator choice so a short run of misses does not reload the weights every turn. Temperature for ordinary chat sits between 0.6 and 0.8; the page defaults to 0.7, inside that band. A move up to `llama3.2:1b` waits on a health check that the process stays resident. This document does not invent a layer count for that larger model; the card is gated and was not read here.
+The model on pi4 starts as `qwen2.5:0.5b`. The published config for Qwen2.5-0.5B-Instruct (`model_type` qwen2) is 24 layers, hidden size 896, intermediate size 4864, 14 query heads and 2 key/value heads, vocabulary 151936, rope theta 1,000,000, SiLU, tied embeddings, and a card maximum of 32768 positions. Source: the model config published at `https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct`. This fleet does not use that full context. `configs/runtime/inference_pi4.json` caps `num_ctx` at 2048 so the key/value cache stays inside the 8GB board with the weights and the operating system. `OLLAMA_NUM_PARALLEL` is 1: one sequence at a time, in the Ollama service and in spirit in the router slot cap. `keep_alive` in that same file is `5m`, an operator choice so a short run of misses does not reload the weights every turn. The same file sets `num_thread` to 4 and `num_batch` to 128. Pi 4 has four Cortex-A72 cores and a 1MB shared L2. Ollama forwards `num_thread` as llama.cpp `-t` only when the request sets it, and otherwise lets the runner auto-detect (`llm/llama_server.go`). `num_batch` is the prompt-ingest batch; Ollama's default is 512, and generation still samples one token at a time, so the smaller batch is for prefill. Search notes pasted into that prompt are capped at `search_note_chars` (640). The links on the page are not cut. Flash attention stays off: Ollama turns it on for a supported GPU, and this board decodes on the CPU. Temperature for ordinary chat sits between 0.6 and 0.8; the page defaults to 0.7, inside that band. A move up to `llama3.2:1b` waits on a health check that the process stays resident. This document does not invent a layer count for that larger model; the card is gated and was not read here.
 
 pi2 and pi3 do not get a pull of those weights. `install.sh` skips `ollama pull` unless the hostname is the pi4 role. A pin of pi2 or pi3 returns:
 
@@ -196,7 +196,11 @@ DeepSpeed, FSDP, and multi-node launchers from those repos are not imported. The
 
 ## The page
 
-The daily tool is the page on port 18080, on the LAN addresses in the fleet map. Tailscale names work the same way when the tailnet is up. The page is one column: messages, a composer fixed at the bottom, and a Low / Medium / High control beside that composer. The control defaults to Medium. qwen2.5:0.5b has no separate reasoning channel, so the router sends the level as Ollama `num_predict` and temperature: Low is 64 tokens at 0.6, Medium is 256 at 0.7, High is 768 at 0.8. Those are different decode requests. The reply is marked with the level that was used. All three still go through Auto. The page does not say which board answered. That stays on the response headers.
+The daily tool is the page on port 18080, on the LAN addresses in the fleet map. Tailscale names work the same way when the tailnet is up. The visible title is Pi GPT 1.0. The page is one column: messages, a composer fixed at the bottom, and a Low / Medium / High control beside that composer. The control defaults to Medium. qwen2.5:0.5b has no separate reasoning channel, so the router sends the level as Ollama `num_predict` and temperature: Low is 64 tokens at 0.6, Medium is 256 at 0.7, High is 768 at 0.8. Those are different decode requests. The reply is marked with the level that was used. All three still go through Auto. The page does not say which board answered. That stays on the response headers.
+
+While a reply is still running, the page shows the stages the server actually entered, in order, as server-sent `pi_status` events: thinking, then searching when a lookup runs, then answering as tokens arrive. A stored sentence skips thinking and searching and comes back as answering. A direct call that does not look anything up skips searching. The labels are Thinking, Searching or Searched, Search failed, and the reply itself. Nothing on the page is a timer pretending those stages happened.
+
+Voice is the browser's own speech recognition and speech synthesis (Chrome's webkit speech APIs). Speak a line and the reply is read back. There is no paid speech service and no second model loaded beside the generator.
 
 The composer keeps the whole session. Each new line is sent with the earlier turns, and a follow-up is not answered from the canned map. Enter sends the line. Shift+Enter, or Ctrl+Enter, inserts a newline. Stop ends the reply that is still arriving. Regenerate asks the same line again. Edit changes an earlier line and sends from there, dropping the turns after it. Copy is on each message.
 
@@ -219,7 +223,8 @@ pi-pair/
   mini_chat.py              start here
   start.sh                  same command
   pair/                     router, canned lookup, queue, train cycle
-  static/                   chat page
+  static/                   built chat page (no Node at runtime)
+  web/                      TypeScript, Tailwind, and SCSS sources for that page
   peers.example.json        fleet map
   data/dataset_info.json    registry
   data/canned/              canned_map.json, canned_seed.jsonl
@@ -252,7 +257,13 @@ cd pi-pair
 python3 mini_chat.py
 ```
 
-`bash start.sh` is the same command. Default bind is `0.0.0.0:18080`.
+`bash start.sh` is the same command. Default bind is `0.0.0.0:18080`. The process serves the files already in `static/`. Rebuilding the page is a development step and is not part of the running server:
+
+```bash
+cd pi-pair/web
+npm ci
+npm run build
+```
 
 Smoke without a model process (peers show down; that is fine):
 
