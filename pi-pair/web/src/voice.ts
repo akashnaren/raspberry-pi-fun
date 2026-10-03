@@ -5,6 +5,11 @@ interface SpeechResult {
 
 interface SpeechEvent extends Event {
   results: ArrayLike<SpeechResult>;
+  resultIndex?: number;
+}
+
+interface SpeechError extends Event {
+  error?: string;
 }
 
 interface SpeechRec {
@@ -12,7 +17,7 @@ interface SpeechRec {
   interimResults: boolean;
   continuous: boolean;
   onresult: ((event: SpeechEvent) => void) | null;
-  onerror: ((event: Event) => void) | null;
+  onerror: ((event: SpeechError) => void) | null;
   onend: (() => void) | null;
   start: () => void;
   abort: () => void;
@@ -63,14 +68,24 @@ export function turnFromRecognition(transcript: string): { role: "user"; content
   return { role: "user", content };
 }
 
-export function speakText(text: string): void {
-  if (!("speechSynthesis" in window)) return;
+let afterSpeech: (() => void) | null = null;
+
+export function whenSpeechEnds(fn: () => void): void {
+  afterSpeech = fn;
+}
+
+export function speakText(text: string): boolean {
+  if (!("speechSynthesis" in window)) return false;
   const say = spokenAnswer(text);
-  if (!say) return;
+  if (!say) return false;
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(say);
   utter.rate = 1;
+  const done = afterSpeech;
+  utter.onend = () => done?.();
+  utter.onerror = () => done?.();
   window.speechSynthesis.speak(utter);
+  return true;
 }
 
 export function stopSpeaking(): void {
@@ -90,33 +105,39 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
   const rec = new Ctor();
   rec.lang = "en-US";
   rec.interimResults = true;
-  rec.continuous = false;
-  let finished = false;
-  let settled = false;
+  rec.continuous = true;
+  let pending = "";
+  let stopped = false;
+  const deliver = (text: string) => {
+    const said = text.trim();
+    pending = "";
+    if (!said) return;
+    handlers.onFinal(said);
+  };
   rec.onresult = (event: SpeechEvent) => {
-    let text = "";
-    let isFinal = false;
-    for (let i = 0; i < event.results.length; i += 1) {
-      text += event.results[i][0]?.transcript ?? "";
-      if (event.results[i].isFinal) isFinal = true;
+    const start = event.resultIndex ?? 0;
+    let interim = "";
+    for (let i = start; i < event.results.length; i += 1) {
+      const said = event.results[i][0]?.transcript ?? "";
+      if (event.results[i].isFinal) deliver(said);
+      else interim += said;
     }
-    const spoken = text.trim();
-    if (isFinal) {
-      if (!finished) {
-        finished = true;
-        handlers.onFinal(spoken);
-      }
+    pending = interim.trim();
+    if (pending) handlers.onInterim(pending);
+  };
+  rec.onerror = (event: SpeechError) => {
+    const code = event.error || "";
+    // Chrome reports no-speech when an utterance simply ends. That is not a failed turn.
+    if (code === "no-speech") {
+      if (pending) deliver(pending);
       return;
     }
-    handlers.onInterim(spoken);
-  };
-  rec.onerror = () => {
-    if (finished || settled) return;
-    settled = true;
-    handlers.onError();
+    if (code === "aborted" || stopped) return;
+    if (pending) deliver(pending);
+    else handlers.onError();
   };
   rec.onend = () => {
-    settled = true;
+    if (!stopped && pending) deliver(pending);
     handlers.onEnd();
   };
   try {
@@ -126,6 +147,8 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
   }
   return {
     stop: () => {
+      stopped = true;
+      pending = "";
       try {
         rec.abort();
       } catch {
