@@ -1,5 +1,5 @@
 import { renderMarkdown } from "./markdown";
-import { speakText, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds } from "./voice";
+import { isSoloStop, speakText, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechStarts } from "./voice";
 
 declare global {
   interface Window {
@@ -47,6 +47,8 @@ let stopAsked = false;
 let turnCtrl: AbortController | null = null;
 let thinking = "medium";
 let listening = false;
+let dictating = false;
+let dictated = "";
 let voiceOn = false;
 let voiceHold = false;
 let listenHandle: { stop: () => void } | null = null;
@@ -950,11 +952,26 @@ function voiceNote(text: string): void {
 }
 
 function paintVoice(): void {
-  const button = byId("btnVoice");
-  button.classList.toggle("on", voiceOn);
-  button.classList.toggle("live", voiceOn && listening);
-  button.setAttribute("aria-pressed", voiceOn ? "true" : "false");
-  button.setAttribute("aria-label", voiceOn ? "Stop listening" : "Voice");
+  const mic = byId("btnVoice");
+  mic.classList.toggle("on", dictating);
+  mic.setAttribute("aria-pressed", dictating ? "true" : "false");
+  mic.setAttribute("aria-label", "Voice");
+  const mode = byId("btnVoiceMode");
+  mode.classList.toggle("on", voiceOn);
+  mode.setAttribute("aria-pressed", voiceOn ? "true" : "false");
+  mode.setAttribute("aria-label", voiceOn ? "End voice mode" : "Voice mode");
+  document.body.classList.toggle("voice-session", voiceOn);
+  byId("voiceStage").setAttribute("aria-hidden", voiceOn ? "false" : "true");
+}
+
+function setHeard(on: boolean): void {
+  byId("voiceStage").classList.toggle("heard", on && voiceOn);
+}
+
+function voiceCaption(text: string): void {
+  const line = byId("voiceLive");
+  line.textContent = text;
+  line.classList.toggle("idle", !text || text === "Listening");
 }
 
 function endListening(): void {
@@ -963,30 +980,100 @@ function endListening(): void {
   paintVoice();
 }
 
-function releaseVoice(): void {
-  voiceHold = false;
-  if (!voiceOn || sending || listening) return;
-  beginVoice();
+function stopCapture(): void {
+  listenHandle?.stop();
+  listenHandle = null;
+  listening = false;
 }
 
 function toggleVoice(): void {
-  if (voiceOn) {
-    voiceOn = false;
-    voiceHold = false;
-    listenHandle?.stop();
-    endListening();
-    stopSpeaking();
+  if (voiceOn || sending) return;
+  if (dictating) {
+    dictating = false;
+    stopCapture();
     voiceNote("");
+    paintVoice();
+    return;
+  }
+  dictated = byId<HTMLTextAreaElement>("q").value.trim();
+  dictating = true;
+  voiceNote("");
+  beginDictation();
+}
+
+function beginDictation(): void {
+  if (!dictating || listening || voiceOn) return;
+  const handle = startListening({
+    onInterim(text) {
+      const box = byId<HTMLTextAreaElement>("q");
+      const lead = dictated.trim();
+      const more = text.trim();
+      box.value = lead && more ? lead + " " + more : (more || lead);
+      autoGrow(box);
+      syncSend();
+    },
+    onFinal(text) {
+      const turn = turnFromRecognition(text);
+      if (!turn) return;
+      dictated = dictated ? dictated + " " + turn.content : turn.content;
+      const box = byId<HTMLTextAreaElement>("q");
+      box.value = dictated;
+      autoGrow(box);
+      syncSend();
+    },
+    onError() {
+      dictating = false;
+      endListening();
+      voiceNote("Voice needs the microphone in this browser.");
+    },
+    onEnd() {
+      const again = dictating && !voiceOn;
+      endListening();
+      if (again) beginDictation();
+    },
+  });
+  if (!handle) {
+    dictating = false;
+    voiceNote("Voice needs Chrome's built-in speech recognition.");
+    paintVoice();
+    return;
+  }
+  listening = true;
+  listenHandle = handle;
+  paintVoice();
+}
+
+function endVoiceMode(): void {
+  voiceOn = false;
+  voiceHold = false;
+  stopCapture();
+  stopSpeaking();
+  setHeard(false);
+  voiceCaption("");
+  voiceNote("");
+  paintVoice();
+}
+
+function toggleVoiceMode(): void {
+  if (voiceOn) {
+    endVoiceMode();
     return;
   }
   if (sending) return;
+  if (dictating) {
+    dictating = false;
+    stopCapture();
+  }
   if (!speechReady()) {
     voiceNote("Voice needs Chrome's built-in speech recognition.");
+    paintVoice();
     return;
   }
   voiceOn = true;
   stopSpeaking();
   voiceNote("");
+  voiceCaption("Listening");
+  paintVoice();
   beginVoice();
 }
 
@@ -994,28 +1081,35 @@ function beginVoice(): void {
   if (!voiceOn || listening || voiceHold || sending) return;
   const handle = startListening({
     onInterim(text) {
-      voiceNote(text || "Listening");
+      setHeard(true);
+      voiceCaption(text || "Listening");
     },
     onFinal(text) {
+      if (isSoloStop(text)) {
+        endVoiceMode();
+        return;
+      }
       const turn = turnFromRecognition(text);
       voiceHold = Boolean(turn);
       const active = listenHandle;
       listenHandle = null;
       listening = false;
       active?.stop();
+      setHeard(false);
       paintVoice();
       if (!turn) {
         voiceHold = false;
         if (voiceOn) beginVoice();
         return;
       }
-      voiceNote("");
+      voiceCaption(turn.content);
       void sendText(turn.content, false, true);
     },
     onError() {
       voiceOn = false;
       voiceHold = false;
       endListening();
+      setHeard(false);
       voiceNote("Voice needs the microphone in this browser.");
     },
     onEnd() {
@@ -1032,8 +1126,16 @@ function beginVoice(): void {
   }
   listening = true;
   listenHandle = handle;
-  voiceNote("Listening");
+  voiceCaption("Listening");
   paintVoice();
+}
+
+function releaseVoice(): void {
+  voiceHold = false;
+  setHeard(false);
+  if (!voiceOn || sending || listening) return;
+  voiceCaption("Listening");
+  beginVoice();
 }
 
 byId("go").onclick = () => {
@@ -1076,8 +1178,14 @@ document.querySelectorAll(".think-btn").forEach((btn) => {
     });
   };
 });
+whenSpeechStarts((text) => {
+  if (!voiceOn) return;
+  setHeard(true);
+  voiceCaption(text);
+});
 whenSpeechEnds(releaseVoice);
 byId("btnVoice").onclick = () => toggleVoice();
+byId("btnVoiceMode").onclick = () => toggleVoiceMode();
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
 byId("overlay").onclick = () => setSettingsOpen(false);

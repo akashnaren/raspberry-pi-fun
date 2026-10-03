@@ -68,7 +68,17 @@ export function turnFromRecognition(transcript: string): { role: "user"; content
   return { role: "user", content };
 }
 
+/** The word stop, alone, ends a spoken session. */
+export function isSoloStop(transcript: string): boolean {
+  return transcript.trim().toLowerCase().replace(/[^a-z]/g, "") === "stop";
+}
+
+let beforeSpeech: ((text: string) => void) | null = null;
 let afterSpeech: (() => void) | null = null;
+
+export function whenSpeechStarts(fn: (text: string) => void): void {
+  beforeSpeech = fn;
+}
 
 export function whenSpeechEnds(fn: () => void): void {
   afterSpeech = fn;
@@ -81,10 +91,12 @@ export function speakText(text: string): boolean {
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(say);
   utter.rate = 1;
+  const started = beforeSpeech;
   const done = afterSpeech;
   utter.onend = () => done?.();
   utter.onerror = () => done?.();
   window.speechSynthesis.speak(utter);
+  started?.(say);
   return true;
 }
 

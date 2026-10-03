@@ -1,4 +1,4 @@
-"""A spoken turn reads the assistant message, and finished speech is sent."""
+"""Dictation fills the box. Voice mode sends the utterance, speaks the reply, then listens again."""
 
 import subprocess
 import unittest
