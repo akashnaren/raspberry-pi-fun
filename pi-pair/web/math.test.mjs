@@ -19,7 +19,7 @@ if (!html.includes('class="katex"')) {
 if (!html.includes("katex-display")) {
   throw new Error("display formula was not rendered");
 }
-if (html.includes("\\( r \\))") || html.includes("\\[") || html.includes("\\frac{d}{dt}(A)")) {
+if (html.includes("\\( r \\)") || html.includes("\\[") || html.includes("\\frac{d}{dt}(A)")) {
   throw new Error("backslash source is still in the markup: " + html.slice(0, 400));
 }
 
