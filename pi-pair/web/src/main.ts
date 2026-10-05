@@ -1,4 +1,5 @@
 import { renderMarkdown } from "./markdown";
+import { paintMicButton } from "./mic-button";
 import { isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
 declare global {
@@ -954,7 +955,7 @@ function voiceNote(text: string): void {
 
 function paintVoice(): void {
   const mic = byId("btnVoice");
-  mic.classList.toggle("on", dictating);
+  paintMicButton(mic, dictating);
   mic.setAttribute("aria-pressed", dictating ? "true" : "false");
   mic.setAttribute("aria-label", "Voice");
   const mode = byId("btnVoiceMode");
