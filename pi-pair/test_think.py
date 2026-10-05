@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 import urllib.request
+from unittest.mock import patch
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -104,6 +105,8 @@ class ThinkLevels(unittest.TestCase):
         self.assertEqual(flipped["flash"], rollback["model"])
         self.assertEqual(flipped["pro"], rollback["pro_model"])
         self.assertEqual(mode_table()["flash"], "qwen3:0.6b")
+        self.assertIs(knobs["safety_filter"], False)
+        self.assertIs(raw["safety_filter"], False)
 
 
 class ThinkOllama(BaseHTTPRequestHandler):
@@ -248,6 +251,10 @@ class ThinkHttp(unittest.TestCase):
             return json.loads(response.read().decode())
 
     def test_harmful_thinking_is_refused_and_not_saved(self):
+        with patch("pair.moderate.safety_filter", return_value=True):
+            self._harmful_thinking_is_refused()
+
+    def _harmful_thinking_is_refused(self):
         ThinkOllama.replies = [
             {
                 "content": "The capital is Paris.",
@@ -277,7 +284,35 @@ class ThinkHttp(unittest.TestCase):
         if queued.exists():
             self.assertNotIn("malware", queued.read_text(encoding="utf-8"))
 
+    def test_harmful_thinking_is_answered_when_the_filter_is_off(self):
+        ThinkOllama.replies = [
+            {
+                "content": "The capital is Paris.",
+                "thinking": "Use malware to steal passwords.",
+            }
+        ]
+        port = self._boot()
+        body = self._post(
+            port,
+            {
+                "messages": [
+                    {"role": "user", "content": "What is the capital of France?"}
+                ],
+                "stream": False,
+                "think": "high",
+            },
+        )
+        message = body["choices"][0]["message"]
+        self.assertEqual(message["content"], "The capital is Paris.")
+        self.assertIn("malware", message.get("reasoning_content") or "")
+        self.assertNotEqual(message["content"], HARM_REFUSAL)
+        self.assertEqual(self.forwarded[0]["answer"], "The capital is Paris.")
+
     def test_streamed_thinking_stops_before_the_harmful_span(self):
+        with patch("pair.moderate.safety_filter", return_value=True):
+            self._streamed_thinking_is_refused()
+
+    def _streamed_thinking_is_refused(self):
         ThinkOllama.replies = [
             {
                 "chunks": [
@@ -314,6 +349,47 @@ class ThinkHttp(unittest.TestCase):
         saved = last_completion()
         self.assertEqual(saved["answer"], HARM_REFUSAL)
         self.assertNotIn("malware", json.dumps(saved))
+
+    def test_streamed_thinking_is_answered_when_the_filter_is_off(self):
+        ThinkOllama.replies = [
+            {
+                "chunks": [
+                    {"thinking": "Use malware to steal passwords."},
+                    {"content": "Shorter wavelengths scatter more."},
+                ]
+            }
+        ]
+        port = self._boot()
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/chat/completions",
+            body=json.dumps(
+                {
+                    "messages": [{"role": "user", "content": "Why is the sky blue?"}],
+                    "stream": True,
+                    "think": "high",
+                }
+            ).encode(),
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Target": "pi4",
+                "X-Pi-Mesh": "off",
+            },
+        )
+        raw = conn.getresponse().read().decode()
+        conn.close()
+        self.assertIn("malware", raw.lower())
+        self.assertIn("Shorter wavelengths scatter more.", raw)
+        self.assertNotIn(HARM_REFUSAL, raw)
+        self.assertNotIn("pi_reasoning_clear", raw)
+        self.assertNotIn("pi_replace", raw)
+        self.assertEqual(
+            last_completion()["answer"], "Shorter wavelengths scatter more."
+        )
+        self.assertEqual(
+            self.forwarded[0]["answer"], "Shorter wavelengths scatter more."
+        )
 
     def test_cap_forces_one_answer_and_drops_the_follow_up_thinking(self):
         ThinkOllama.replies = [

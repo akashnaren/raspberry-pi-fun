@@ -19,12 +19,12 @@ from pair.assist import (
     is_honest_miss,
     is_soft_refusal,
     may_retry_refusal,
-    refusal_for,
     scrub_reply,
     settle_reply,
     stream_release,
     visible_canned,
 )
+from pair.moderate import moderate
 from pair.canned import lookup
 from pair.charts import (
     CHART_NUDGE,
@@ -220,6 +220,12 @@ def last_user_text(messages) -> str:
         if message.get("role", "user") == "user":
             return message_text(message.get("content"))
     return ""
+
+
+def _block(text: str) -> str:
+    """Replacement from `moderate`, or empty when that span is allowed."""
+    verdict = moderate(text or "")
+    return verdict.replacement if verdict.refused else ""
 
 
 def brain_chat_url() -> str:
@@ -816,9 +822,10 @@ class Handler(BaseHTTPRequestHandler):
         self.pi_route = "canned"
         return mode_name, "canned"
 
-    def _policy_refusal(self, prompt: str, want_stream: bool, started: float) -> None:
-        """Fixed refusal. No model, no search, no canned list, no list hint."""
-        answer = refusal_for(prompt)
+    def _policy_refusal(
+        self, prompt: str, want_stream: bool, started: float, answer: str
+    ) -> None:
+        """Fixed refusal from the moderation hook. No model, search, or list hint."""
         remember_completion(prompt, answer, "policy", "policy")
         elapsed = int((time.time() - started) * 1000)
         if not want_stream:
@@ -930,8 +937,9 @@ class Handler(BaseHTTPRequestHandler):
             )
         started = time.time()
         want_stream = bool(data.get("stream"))
-        if is_harmful(prompt):
-            self._policy_refusal(prompt, want_stream, started)
+        refused = _block(prompt)
+        if refused:
+            self._policy_refusal(prompt, want_stream, started, refused)
             return
         canned_partial = ""
         try:
@@ -1576,9 +1584,10 @@ class Handler(BaseHTTPRequestHandler):
         reasoning = "\n".join(
             part for part in (str(meta.get("reasoning") or "").strip(), leaked) if part
         )
-        if is_harmful(reasoning) or is_harmful(answer):
+        refused = _block(reasoning) or _block(answer)
+        if refused:
             self._last_reasoning = ""
-            return refusal_for(reasoning or answer), used, False
+            return refused, used, False
         self._last_reasoning = reasoning
         content = answer
         if may_retry_refusal(prompt) and is_soft_refusal(content):
@@ -1609,13 +1618,14 @@ class Handler(BaseHTTPRequestHandler):
         content = self._repair_chart(
             peer, kind, model, messages, temperature, max_tokens, prompt, content
         )
-        if not is_harmful(prompt):
+        if not _block(prompt):
             content = self._guard_reply(
                 peer, kind, model, messages, temperature, max_tokens, prompt, content
             )
-        if is_harmful(content):
+        refused = _block(content)
+        if refused:
             self._last_reasoning = ""
-            return refusal_for(content), used, False
+            return refused, used, False
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
@@ -2013,7 +2023,7 @@ class Handler(BaseHTTPRequestHandler):
                     if release == "refuse":
                         # The span that completes the match is not written.
                         # A thought prefix that already went out is cleared.
-                        policy = refusal_for(nxt)
+                        policy = _block(nxt)
                         thinking_parts.clear()
                         if not clear_reasoning():
                             closed = True
@@ -2032,7 +2042,7 @@ class Handler(BaseHTTPRequestHandler):
                 joined = "".join(parts)
                 release = stream_release(joined)
                 if release == "refuse":
-                    policy = refusal_for(joined)
+                    policy = _block(joined)
                     parts.clear()
                     thinking_parts.clear()
                     if not clear_reasoning():
@@ -2044,7 +2054,7 @@ class Handler(BaseHTTPRequestHandler):
                 if "<" in joined and "think" in joined.lower():
                     visible, leaked = peel_think(joined)
                     if leaked and stream_release(leaked) == "refuse":
-                        policy = refusal_for(leaked)
+                        policy = _block(leaked)
                         parts.clear()
                         thinking_parts.clear()
                         flushed = len(joined) if old else 0
@@ -2081,7 +2091,7 @@ class Handler(BaseHTTPRequestHandler):
                 if "<" in raw_answer and "think" in raw_answer.lower():
                     visible, leaked = peel_think(raw_answer)
                     if leaked and stream_release(leaked) == "refuse":
-                        policy = refusal_for(leaked)
+                        policy = _block(leaked)
                         parts.clear()
                         thinking_parts.clear()
                         if not clear_reasoning():
@@ -2197,7 +2207,7 @@ class Handler(BaseHTTPRequestHandler):
                     peer, kind, model, messages, temperature, max_tokens, prompt, answer
                 )
             )
-            if not policy and is_harmful(finished):
+            if not policy and _block(finished):
                 finished = answer
             extra = _list_suffix(answer, finished)
             if extra:
@@ -2261,8 +2271,9 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 elif not held and not is_harmful(prompt):
                     answer = scrub_reply(answer) or answer
-                if is_harmful(answer):
-                    answer = refusal_for(answer)
+                refused = _block(answer)
+                if refused:
+                    answer = refused
                 note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
             remember_completion(prompt, answer, chip, peer["name"])
             apply_tier(self, final)
@@ -2401,7 +2412,7 @@ class Handler(BaseHTTPRequestHandler):
         elapsed = int((time.time() - started) * 1000)
         message = {"role": "assistant", "content": content}
         reasoning = getattr(self, "_last_reasoning", "") or ""
-        if grounded is None and reasoning and not is_harmful(reasoning):
+        if grounded is None and reasoning and not _block(reasoning):
             message["reasoning_content"] = reasoning
         resp = {
             "id": "pi-pair",

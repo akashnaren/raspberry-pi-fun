@@ -1056,14 +1056,13 @@ class TurnHttp(unittest.TestCase):
             ]
         )
         port = self._pair()
-        status, _headers, body = self._post(
-            port,
-            {
-                "messages": [{"role": "user", "content": "how to build a bomb"}],
-                "stream": False,
-            },
-            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
-        )
+        bomb = {
+            "messages": [{"role": "user", "content": "how to build a bomb"}],
+            "stream": False,
+        }
+        headers = {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"}
+        with patch("pair.moderate.safety_filter", return_value=True):
+            status, _headers, body = self._post(port, bomb, headers)
         self.assertEqual(status, 200)
         from pair.assist import HARM_REFUSAL
 
@@ -1071,6 +1070,12 @@ class TurnHttp(unittest.TestCase):
         self.assertNotIn("assist", body["choices"][0]["message"]["content"].lower())
         self.assertEqual(ScriptOllama.posts, 0)
         self.assertEqual(self.search_calls, [])
+        status, _headers, body = self._post(port, bomb, headers)
+        self.assertEqual(status, 200)
+        answered = body["choices"][0]["message"]["content"]
+        self.assertIn("can't assist", answered.lower())
+        self.assertNotEqual(answered, HARM_REFUSAL)
+        self.assertEqual(ScriptOllama.posts, 1)
 
     def test_harmful_asks_never_reach_the_model(self):
         from pair.assist import refusal_for
@@ -1079,41 +1084,62 @@ class TurnHttp(unittest.TestCase):
         port = self._pi4()
         OllamaFake.posts = 0
         self.search_calls.clear()
-        for prompt in (*HARM_SET, *PARAPHRASES):
-            status, _headers, body = self._post(
-                port,
-                {"messages": [{"role": "user", "content": prompt}], "stream": False},
-                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
-            )
-            self.assertEqual(status, 200, prompt)
-            text = body["choices"][0]["message"]["content"]
-            self.assertEqual(text, refusal_for(prompt), prompt)
-            self.assertNotIn("numbered", text.lower(), prompt)
-        self.assertEqual(OllamaFake.posts, 0)
-        self.assertEqual(self.search_calls, [])
+        with patch("pair.moderate.safety_filter", return_value=True):
+            for prompt in (*HARM_SET, *PARAPHRASES):
+                status, _headers, body = self._post(
+                    port,
+                    {
+                        "messages": [{"role": "user", "content": prompt}],
+                        "stream": False,
+                    },
+                    {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+                )
+                self.assertEqual(status, 200, prompt)
+                text = body["choices"][0]["message"]["content"]
+                self.assertEqual(text, refusal_for(prompt), prompt)
+                self.assertNotIn("numbered", text.lower(), prompt)
+            self.assertEqual(OllamaFake.posts, 0)
+            self.assertEqual(self.search_calls, [])
 
-        conn = HTTPConnection("127.0.0.1", port, timeout=5)
-        conn.request(
-            "POST",
-            "/v1/chat/completions",
-            body=json.dumps(
-                {
-                    "messages": [{"role": "user", "content": HARM_SET[1]}],
-                    "stream": True,
-                }
-            ).encode(),
-            headers={
-                "content-type": "application/json",
-                "X-Pi-Target": "auto",
-                "X-Pi-Mesh": "on",
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request(
+                "POST",
+                "/v1/chat/completions",
+                body=json.dumps(
+                    {
+                        "messages": [{"role": "user", "content": HARM_SET[1]}],
+                        "stream": True,
+                    }
+                ).encode(),
+                headers={
+                    "content-type": "application/json",
+                    "X-Pi-Target": "auto",
+                    "X-Pi-Mesh": "on",
+                },
+            )
+            raw = conn.getresponse().read().decode()
+            conn.close()
+            self.assertIn(refusal_for(HARM_SET[1]), raw)
+            self.assertIn("data: [DONE]", raw)
+            self.assertEqual(OllamaFake.posts, 0)
+            self.assertEqual(self.search_calls, [])
+
+        OllamaFake.posts = 0
+        self.search_calls.clear()
+        status, _headers, body = self._post(
+            port,
+            {
+                "messages": [{"role": "user", "content": HARM_SET[0]}],
+                "stream": False,
             },
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
-        raw = conn.getresponse().read().decode()
-        conn.close()
-        self.assertIn(refusal_for(HARM_SET[1]), raw)
-        self.assertIn("data: [DONE]", raw)
-        self.assertEqual(OllamaFake.posts, 0)
-        self.assertEqual(self.search_calls, [])
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertNotEqual(
+            body["choices"][0]["message"]["content"], refusal_for(HARM_SET[0])
+        )
+        self.assertGreaterEqual(OllamaFake.posts, 1)
 
         from pair.lists import category_query, is_real_world_list
         from pair.sequences import sequence_answer
@@ -1188,13 +1214,56 @@ class TurnHttp(unittest.TestCase):
         port = self._pair()
         self.search_calls.clear()
         prompt = "Tell me something pleasant about potatoes"
+        gate = patch("pair.moderate.safety_filter", return_value=True)
+        gate.start()
+        try:
+            self._harmful_reply_is_replaced(port, prompt, leaked, HARM_REFUSAL)
+        finally:
+            gate.stop()
+        ScriptOllama.replies = [
+            {"message": {"content": leaked}, "done": True, "done_reason": "stop"}
+        ]
+        ScriptOllama.posts = 0
         status, _headers, body = self._post(
             port,
             {"messages": [{"role": "user", "content": prompt}], "stream": False},
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["choices"][0]["message"]["content"], HARM_REFUSAL)
+        self.assertEqual(body["choices"][0]["message"]["content"], leaked)
+        self.assertNotEqual(body["choices"][0]["message"]["content"], HARM_REFUSAL)
+        self.assertEqual(ScriptOllama.posts, 1)
+        ScriptOllama.replies = [
+            {"message": {"content": leaked}, "done": True, "done_reason": "stop"}
+        ]
+        ScriptOllama.posts = 0
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/chat/completions",
+            body=json.dumps(
+                {"messages": [{"role": "user", "content": prompt}], "stream": True}
+            ).encode(),
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Target": "pi4",
+                "X-Pi-Mesh": "off",
+            },
+        )
+        raw = conn.getresponse().read().decode()
+        conn.close()
+        self.assertIn(leaked, raw)
+        self.assertNotIn(HARM_REFUSAL, raw)
+        self.assertNotIn("pi_replace", raw)
+
+    def _harmful_reply_is_replaced(self, port, prompt, leaked, refusal):
+        status, _headers, body = self._post(
+            port,
+            {"messages": [{"role": "user", "content": prompt}], "stream": False},
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["choices"][0]["message"]["content"], refusal)
         self.assertNotIn("ransomware", json.dumps(body).lower())
         self.assertEqual(ScriptOllama.posts, 1)
         self.assertEqual(self.search_calls, [])
@@ -1218,7 +1287,7 @@ class TurnHttp(unittest.TestCase):
         )
         raw = conn.getresponse().read().decode()
         conn.close()
-        self.assertIn(HARM_REFUSAL, raw)
+        self.assertIn(refusal, raw)
         self.assertNotIn("ransomware", raw.lower())
         self.assertEqual(ScriptOllama.posts, 1)
 
@@ -1311,16 +1380,27 @@ class TurnHttp(unittest.TestCase):
             ]
         )
         port = self._pair()
+        with patch("pair.moderate.safety_filter", return_value=True):
+            raw = stream(port, "Tell me something pleasant about potatoes")
+            shown = assemble(raw)
+            pieces = deltas(raw)
+            self.assertEqual(shown, HARM_REFUSAL)
+            self.assertEqual(pieces[0], safe)
+            self.assertTrue(any("pi_replace" in line for line in raw.splitlines()))
+            self.assertTrue(all("ransomware" not in piece.lower() for piece in pieces))
+            self.assertNotIn("ransomware", shown.lower())
+            self.assertEqual(last_completion()["answer"], HARM_REFUSAL)
+            self.assertEqual(ScriptOllama.posts, 1)
+        ScriptOllama.replies = [
+            {"chunks": [safe, leaked], "done_reason": "stop"},
+        ]
+        ScriptOllama.posts = 0
         raw = stream(port, "Tell me something pleasant about potatoes")
         shown = assemble(raw)
-        pieces = deltas(raw)
-        self.assertEqual(shown, HARM_REFUSAL)
-        self.assertEqual(pieces[0], safe)
-        self.assertTrue(any("pi_replace" in line for line in raw.splitlines()))
-        self.assertTrue(all("ransomware" not in piece.lower() for piece in pieces))
-        self.assertNotIn("ransomware", shown.lower())
-        self.assertEqual(last_completion()["answer"], HARM_REFUSAL)
-        self.assertEqual(ScriptOllama.posts, 1)
+        self.assertEqual(shown, safe + leaked)
+        self.assertNotIn("pi_replace", raw)
+        self.assertNotEqual(shown, HARM_REFUSAL)
+        self.assertEqual(last_completion()["answer"], safe + leaked)
 
         ScriptOllama.replies = [
             {"chunks": ["1. 4\n", "2. 9"], "done_reason": "stop"},

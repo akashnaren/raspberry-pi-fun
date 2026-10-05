@@ -40,6 +40,9 @@ _DEFAULTS = {
     # Characters of one attachment kept in the prompt. The upload route may
     # return more for the composer. The model sees this cut, inside a fence.
     "attachment_chars": 1200,
+    # Local harmful-content filter. Off leaves refusal to a separate stack
+    # that replaces pair.moderate.moderate. On restores the in-process gate.
+    "safety_filter": False,
 }
 
 

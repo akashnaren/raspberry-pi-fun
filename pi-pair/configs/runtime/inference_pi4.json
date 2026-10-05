@@ -16,6 +16,7 @@
   "flash_num_batch": 128,
   "pro_num_batch": 64,
   "search_note_chars": 640,
+  "safety_filter": false,
   "role": "pi4",
   "rollback": {
     "model": "qwen2.5:0.5b",
