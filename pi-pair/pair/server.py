@@ -29,7 +29,7 @@ from pair.charts import (
     CHART_NUDGE,
     is_chart_request,
     is_structured_request,
-    parabola_chart,
+    ready_chart,
     repair_chart_reply,
     structure_hint,
 )
@@ -46,12 +46,15 @@ from pair.lists import (
     category_query,
     continuation_messages,
     finish_numbered,
+    ground_category_list,
     is_real_world_list,
     list_budget,
     list_count,
     needs_exact_n,
     placeholder_only,
+    source_titles,
 )
+from pair.sequences import sequence_answer
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
 from pair.preload import start_pro_warm
@@ -278,6 +281,18 @@ def _with_search(messages, prompt: str):
     if status == "ok" and shown:
         messages = [{"role": "system", "content": shown}, *messages]
     return messages, {"status": status, "sources": sources, "context": full}
+
+
+def _search_context(note, rows) -> str:
+    """Full notes when the lookup returned them, else the fenced row."""
+    if isinstance(note, dict):
+        text = str(note.get("context") or "").strip()
+        if text:
+            return text
+    for row in rows or []:
+        if isinstance(row, dict) and str(row.get("content") or "").startswith("Web search notes"):
+            return str(row.get("content") or "")
+    return ""
 
 
 def _image_cards(prompt: str, answer: str = "") -> list[dict]:
@@ -886,11 +901,16 @@ class Handler(BaseHTTPRequestHandler):
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             structured = is_structured_request(prompt)
-            do_search = bool(mesh and node_role() == "brain") and not structured and needs_web(prompt)
+            ready = sequence_answer(prompt) or ready_chart(prompt)
+            do_search = (
+                bool(mesh and node_role() == "brain")
+                and ready is None
+                and not structured
+                and needs_web(prompt)
+            )
             max_tokens = list_budget(prompt, max_tokens)
             ctx = int(inference_knobs().get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
-            ready = parabola_chart(prompt)
             hint = None if ready else structure_hint(prompt)
             if hint:
                 outbound = [{"role": "system", "content": hint}, *outbound]
@@ -904,7 +924,9 @@ class Handler(BaseHTTPRequestHandler):
             grounded = ready
             if grounded is None and search_note is not None:
                 grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
-            if canned_partial:
+            # A finished sequence or chart stays. A short canned list still
+            # continues once when the ready text is missing or incomplete.
+            if canned_partial and (grounded is None or needs_exact_n(prompt, grounded)):
                 grounded = canned_partial
         except Exception as error:
             self._error(str(error))
@@ -1340,27 +1362,40 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         text: str,
     ) -> str:
-        """Ask once more for exactly N. A real-world category is searched first."""
+        """Ask once more for exactly N. A real-world category is searched first.
 
-        def more(partial: str, count: int) -> str:
-            rows = list(messages or [])
+        When the notes already list N titles, those titles are the reply and
+        the model is not asked to continue. One continuation still runs when
+        the notes are short. A title the notes contradict is dropped.
+        """
+        rows = list(messages or [])
+        context = ""
+        try:
             if is_real_world_list(prompt) and self._mesh_search_on():
                 noted = any(
                     isinstance(row, dict)
                     and str(row.get("content") or "").startswith("Web search notes")
                     for row in rows
                 )
+                note = None
                 if not noted:
-                    rows, _note = _with_search(rows, prompt)
-            follow = continuation_messages(rows, partial, count)
-            if kind == "llamacpp":
-                nxt, _used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
-            else:
-                nxt, _used = chat_ollama(peer, model, follow, temperature, max_tokens)
-            return nxt
+                    rows, note = _with_search(rows, prompt)
+                context = _search_context(note, rows)
 
-        try:
-            extended = finish_numbered(prompt, text, more)
+            def more(partial: str, count: int) -> str:
+                follow = continuation_messages(rows, partial, count)
+                if kind == "llamacpp":
+                    nxt, _used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+                else:
+                    nxt, _used = chat_ollama(peer, model, follow, temperature, max_tokens)
+                return nxt
+
+            current = text
+            if context and source_titles(context):
+                current = ground_category_list(prompt, text, context)
+            extended = finish_numbered(prompt, current, more)
+            if context and source_titles(context):
+                extended = ground_category_list(prompt, extended, context)
         except Exception:
             return text
         if extended != text or list_count(prompt):
@@ -1644,7 +1679,7 @@ class Handler(BaseHTTPRequestHandler):
                 resident_name,
             )
             return
-        if is_chart_request(prompt):
+        if is_chart_request(prompt) or is_real_world_list(prompt):
             content, used, train = self._decode_reply(
                 peer,
                 kind,

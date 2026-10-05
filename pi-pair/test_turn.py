@@ -335,6 +335,7 @@ class TurnHttp(unittest.TestCase):
         port = self._pi4()
         self.search_calls.clear()
         prompt = "plot a bar chart of picnic foods with apples at 2 and bread at 4"
+        posts = OllamaFake.posts
         status, _headers, body = self._post(
             port,
             {"pi_mode": "auto", "messages": [{"role": "user", "content": prompt}], "stream": False},
@@ -343,10 +344,12 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_route"], "flash")
         self.assertEqual(self.search_calls, [])
-        self.assertEqual(OllamaFake.last_payload["model"], FLASH_MODEL)
-        blob = "\n".join(item["content"] for item in OllamaFake.last_payload["messages"])
-        self.assertIn("```chart", blob)
-        self.assertNotIn("Web search notes", blob)
+        content = body["choices"][0]["message"]["content"]
+        self.assertIn("```chart", content)
+        self.assertIn("apples", content)
+        self.assertIn("bread", content)
+        self.assertNotIn("could not draw", content.lower())
+        self.assertEqual(OllamaFake.posts, posts)
 
     def test_plain_list_skips_search_and_news_does_not(self):
         port = self._pi4()
@@ -1017,11 +1020,15 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(OllamaFake.posts, 0)
         self.assertEqual(self.search_calls, [])
 
+        from pair.lists import category_query, is_real_world_list
+        from pair.sequences import sequence_answer
+
         for prompt in TOP_SET:
             if prompt == "hi":
                 continue
             count = 3 if "3" in prompt else 5
             full = "\n".join(f"{i}. Item {i}" for i in range(1, count + 1))
+            computed = sequence_answer(prompt)
             ScriptOllama.replies = [
                 {"message": {"content": full}, "done": True, "done_reason": "stop"}
             ]
@@ -1049,9 +1056,16 @@ class TurnHttp(unittest.TestCase):
                 {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, prompt)
-            self.assertEqual(body["choices"][0]["message"]["content"], full, prompt)
+            text = body["choices"][0]["message"]["content"]
+            if computed:
+                self.assertEqual(text, computed, prompt)
+                self.assertEqual(ScriptOllama.posts, 0, prompt)
+                self.assertEqual(self.search_calls, [], prompt)
+                continue
+            self.assertEqual(text, full, prompt)
             self.assertEqual(ScriptOllama.posts, 1, prompt)
-            self.assertEqual(self.search_calls, [], prompt)
+            expected = [category_query(prompt)] if is_real_world_list(prompt) else []
+            self.assertEqual(self.search_calls, expected, prompt)
 
     def test_a_harmful_reply_is_replaced_on_both_streams(self):
         from pair.assist import HARM_REFUSAL
@@ -1164,11 +1178,7 @@ class TurnHttp(unittest.TestCase):
         notes = ScriptOllama.seen[1]["messages"][0]["content"]
         self.assertTrue(notes.startswith("Web search notes"))
 
-        primes = "1. 2\n2. 3\n3. 5"
-        ScriptOllama.replies = [
-            {"message": {"content": primes}, "done": True, "done_reason": "stop"},
-            {"message": {"content": "4. 7\n5. 11"}, "done": True, "done_reason": "stop"},
-        ]
+        ScriptOllama.replies = []
         ScriptOllama.seen = []
         ScriptOllama.posts = 0
         self.search_calls.clear()
@@ -1179,10 +1189,32 @@ class TurnHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         text = body["choices"][0]["message"]["content"]
-        self.assertIn("1. 2", text)
-        self.assertIn("5. 11", text)
+        self.assertEqual(
+            [int(line.split(". ", 1)[1]) for line in text.splitlines() if ". " in line],
+            [2, 3, 5, 7, 11],
+        )
         self.assertNotIn("13", text)
-        self.assertEqual(ScriptOllama.posts, 2)
+        self.assertEqual(ScriptOllama.posts, 0)
+        self.assertEqual(self.search_calls, [])
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/chat/completions",
+            body=json.dumps(
+                {"messages": [{"role": "user", "content": "Top 5 primes"}], "stream": True}
+            ).encode(),
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Target": "pi4",
+                "X-Pi-Mesh": "on",
+            },
+        )
+        raw = conn.getresponse().read().decode()
+        conn.close()
+        self.assertIn("1. 2", raw)
+        self.assertIn("5. 11", raw)
+        self.assertNotIn("1. 1", raw)
+        self.assertEqual(ScriptOllama.posts, 0)
         self.assertEqual(self.search_calls, [])
 
         ranked = "1. 4\n2. 9"
@@ -1205,13 +1237,151 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(ScriptOllama.posts, 2)
         self.assertEqual(self.search_calls, [])
 
-    def test_top_5_primes_reaches_exact_n_on_flash_stream_and_canned(self):
-        from pair.lists import list_complete, numbered_lines
+    def test_top_5_primes_is_computed_on_flash_stream_and_canned(self):
+        from pair.lists import numbered_lines
         from pair.server import last_completion
 
         short = "1. 2\n2. 3\n3. 5\n4. 7"
         rest = "5. 11"
         prompt = "Top 5 primes"
+        expected = [2, 3, 5, 7, 11]
+        product = (ROOT / "pair" / "lists.py").read_text(encoding="utf-8")
+        product += (ROOT / "pair" / "server.py").read_text(encoding="utf-8")
+        product += (ROOT / "pair" / "assist.py").read_text(encoding="utf-8")
+        product += (ROOT / "pair" / "sequences.py").read_text(encoding="utf-8")
+        self.assertNotIn("2, 3, 5, 7, 11", product)
+
+        def values(text):
+            return [int(line.split(". ", 1)[1]) for line in text.splitlines() if ". " in line]
+
+        def sse_text(raw):
+            parts = []
+            for line in raw.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    payload = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                delta = ((payload.get("choices") or [{}])[0].get("delta") or {}).get("content") or ""
+                parts.append(delta)
+            return "".join(parts)
+
+        ScriptOllama.replies = []
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        headers = {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"}
+        body_json = {"mode": "flash", "messages": [{"role": "user", "content": prompt}]}
+
+        for run in range(5):
+            ScriptOllama.replies = []
+            ScriptOllama.seen = []
+            ScriptOllama.posts = 0
+            self.search_calls.clear()
+            status, resp_headers, body = self._post(port, {**body_json, "stream": False}, headers)
+            self.assertEqual(status, 200, run)
+            text = body["choices"][0]["message"]["content"]
+            self.assertEqual(values(text), expected, (run, text))
+            self.assertEqual(len(numbered_lines(text)), 5, (run, text))
+            self.assertEqual(ScriptOllama.posts, 0, run)
+            self.assertEqual(resp_headers.get("X-Pi-Mode"), "flash", run)
+            self.assertNotEqual(body.get("pi_model"), "canned", run)
+            self.assertEqual(self.search_calls, [], run)
+
+        for run in range(5):
+            ScriptOllama.replies = []
+            ScriptOllama.seen = []
+            ScriptOllama.posts = 0
+            self.search_calls.clear()
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request(
+                "POST",
+                "/v1/chat/completions",
+                body=json.dumps({**body_json, "stream": True}).encode(),
+                headers={"content-type": "application/json", **headers},
+            )
+            raw = conn.getresponse().read().decode()
+            conn.close()
+            self.assertEqual(values(sse_text(raw)), expected, run)
+            self.assertEqual(ScriptOllama.posts, 0, run)
+            self.assertEqual(values(last_completion()["answer"]), expected, run)
+            self.assertEqual(self.search_calls, [], run)
+
+        canned = Path(self._tmp.name) / "short_primes.json"
+        canned.write_text(json.dumps({"top 5 primes": short}), encoding="utf-8")
+        os.environ["PI_PAIR_CANNED"] = str(canned)
+        for run in range(5):
+            ScriptOllama.replies = [
+                {"message": {"content": rest}, "done": True, "done_reason": "stop"},
+            ]
+            ScriptOllama.seen = []
+            ScriptOllama.posts = 0
+            self.search_calls.clear()
+            status, _resp_headers, body = self._post(port, {**body_json, "stream": False}, headers)
+            self.assertEqual(status, 200, run)
+            text = body["choices"][0]["message"]["content"]
+            self.assertEqual(values(text), expected, (run, text))
+            self.assertEqual(ScriptOllama.posts, 0, run)
+            self.assertNotEqual(body.get("pi_model"), "canned", run)
+            self.assertEqual(self.search_calls, [], run)
+
+        for run in range(5):
+            ScriptOllama.replies = [
+                {"message": {"content": rest}, "done": True, "done_reason": "stop"},
+            ]
+            ScriptOllama.seen = []
+            ScriptOllama.posts = 0
+            self.search_calls.clear()
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request(
+                "POST",
+                "/v1/chat/completions",
+                body=json.dumps({**body_json, "stream": True}).encode(),
+                headers={"content-type": "application/json", **headers},
+            )
+            raw = conn.getresponse().read().decode()
+            conn.close()
+            self.assertEqual(values(sse_text(raw)), expected, run)
+            self.assertEqual(ScriptOllama.posts, 0, run)
+            self.assertEqual(values(last_completion()["answer"]), expected, run)
+            self.assertEqual(self.search_calls, [], run)
+
+        full = short + "\n" + rest
+        canned.write_text(json.dumps({"top 5 primes": full}), encoding="utf-8")
+        ScriptOllama.replies = []
+        ScriptOllama.posts = 0
+        status, resp_headers, body = self._post(port, {**body_json, "stream": False}, headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["choices"][0]["message"]["content"], full)
+        self.assertEqual(body.get("pi_model"), "canned")
+        self.assertEqual(resp_headers.get("X-Pi-Chip"), "cache")
+        self.assertEqual(ScriptOllama.posts, 0)
+
+    def test_short_top_n_reaches_exact_n_on_flash_stream_and_canned(self):
+        from pair.lists import list_complete, numbered_lines
+        from pair.server import last_completion
+
+        short = "1. Superior\n2. Victoria\n3. Huron\n4. Michigan"
+        rest = "5. Tanganyika"
+        prompt = "Top 5 lakes"
         product = (ROOT / "pair" / "lists.py").read_text(encoding="utf-8")
         product += (ROOT / "pair" / "server.py").read_text(encoding="utf-8")
         product += (ROOT / "pair" / "assist.py").read_text(encoding="utf-8")
@@ -1220,7 +1390,7 @@ class TurnHttp(unittest.TestCase):
         def assert_five(text, label):
             self.assertEqual(len(numbered_lines(text)), 5, (label, text))
             self.assertTrue(list_complete(text, 5), (label, text))
-            self.assertIn("1. 2", text, label)
+            self.assertIn("1. Superior", text, label)
             self.assertIn(rest, text, label)
 
         def sse_text(raw):
@@ -1281,7 +1451,7 @@ class TurnHttp(unittest.TestCase):
             self.assertTrue(all(item.get("model") == FLASH_MODEL for item in ScriptOllama.seen), run)
             note = ScriptOllama.seen[1]["messages"][-1]["content"]
             self.assertIn("exactly 5", note, run)
-            self.assertNotIn("11", note, run)
+            self.assertNotIn("Tanganyika", note, run)
             self.assertEqual(self.search_calls, [], run)
 
         for run in range(5):
@@ -1308,11 +1478,11 @@ class TurnHttp(unittest.TestCase):
             assert_five(last_completion()["answer"], f"stored-{run}")
             note = ScriptOllama.seen[1]["messages"][-1]["content"]
             self.assertIn("exactly 5", note, run)
-            self.assertNotIn("11", note, run)
+            self.assertNotIn("Tanganyika", note, run)
             self.assertEqual(self.search_calls, [], run)
 
-        canned = Path(self._tmp.name) / "short_primes.json"
-        canned.write_text(json.dumps({"top 5 primes": short}), encoding="utf-8")
+        canned = Path(self._tmp.name) / "short_lakes.json"
+        canned.write_text(json.dumps({"top 5 lakes": short}), encoding="utf-8")
         os.environ["PI_PAIR_CANNED"] = str(canned)
         for run in range(5):
             ScriptOllama.replies = [
@@ -1336,7 +1506,7 @@ class TurnHttp(unittest.TestCase):
             note = ScriptOllama.seen[0]["messages"][-1]["content"]
             self.assertIn(short, partial, run)
             self.assertIn("exactly 5", note, run)
-            self.assertNotIn("11", note, run)
+            self.assertNotIn("Tanganyika", note, run)
             self.assertEqual(ScriptOllama.seen[0].get("model"), FLASH_MODEL, run)
             self.assertEqual(self.search_calls, [], run)
 
@@ -1363,11 +1533,11 @@ class TurnHttp(unittest.TestCase):
             assert_five(last_completion()["answer"], f"canned-stored-{run}")
             note = ScriptOllama.seen[0]["messages"][-1]["content"]
             self.assertIn("exactly 5", note, run)
-            self.assertNotIn("11", note, run)
+            self.assertNotIn("Tanganyika", note, run)
             self.assertEqual(self.search_calls, [], run)
 
         full = short + "\n" + rest
-        canned.write_text(json.dumps({"top 5 primes": full}), encoding="utf-8")
+        canned.write_text(json.dumps({"top 5 lakes": full}), encoding="utf-8")
         ScriptOllama.replies = []
         ScriptOllama.posts = 0
         status, resp_headers, body = self._post(
@@ -1380,6 +1550,91 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(body.get("pi_model"), "canned")
         self.assertEqual(resp_headers.get("X-Pi-Chip"), "cache")
         self.assertEqual(ScriptOllama.posts, 0)
+
+    def test_horror_list_keeps_source_titles_and_drops_an_invented_one(self):
+        invented = "1. The Shapen\n2. The Exorcist\n3. Hereditary\n4. Get Out\n5. Halloween"
+        notes = (
+            "Web search notes.\nText from the first page:\n"
+            "1. The Exorcist\n2. Hereditary\n3. Get Out\n4. The Shining\n5. Halloween\n6. Psycho\n"
+        )
+        ScriptOllama.replies = [
+            {"message": {"content": invented}, "done": True, "done_reason": "stop"},
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+
+        def _notes(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "sources": [{"title": "Horror films", "url": "https://example.com/horror"}],
+                "context": notes,
+            }
+
+        pair_server.lookup_web = _notes
+        self.search_calls.clear()
+        with patch("pair.server.cards_for_answer", return_value=[]):
+            status, _headers, body = self._post(
+                port,
+                {"messages": [{"role": "user", "content": "Top 5 horror movies"}], "stream": False},
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+            )
+        self.assertEqual(status, 200)
+        text = body["choices"][0]["message"]["content"]
+        self.assertEqual(
+            [line.split(". ", 1)[1] for line in text.splitlines() if ". " in line],
+            ["The Exorcist", "Hereditary", "Get Out", "The Shining", "Halloween"],
+        )
+        self.assertNotIn("Shapen", text)
+        self.assertEqual(ScriptOllama.posts, 1)
+        self.assertEqual(self.search_calls, ["horror films"])
+
+        ScriptOllama.replies = [
+            {"message": {"content": invented}, "done": True, "done_reason": "stop"},
+        ]
+        ScriptOllama.posts = 0
+        self.search_calls.clear()
+        with patch("pair.server.cards_for_answer", return_value=[]):
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request(
+                "POST",
+                "/v1/chat/completions",
+                body=json.dumps(
+                    {
+                        "messages": [{"role": "user", "content": "Top 5 horror movies"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                headers={
+                    "content-type": "application/json",
+                    "X-Pi-Target": "pi4",
+                    "X-Pi-Mesh": "on",
+                },
+            )
+            raw = conn.getresponse().read().decode()
+            conn.close()
+        self.assertIn("The Exorcist", raw)
+        self.assertIn("The Shining", raw)
+        self.assertNotIn("Shapen", raw)
+        self.assertEqual(ScriptOllama.posts, 1)
+        self.assertEqual(self.search_calls, ["horror films"])
+
+
 
 
 if __name__ == "__main__":
