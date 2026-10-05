@@ -179,6 +179,8 @@ class SemanticMap(unittest.TestCase):
         for path, payload in EmbedFake.hits:
             self.assertEqual(path, "/api/embed")
             self.assertEqual(payload["model"], "snowflake-arctic-embed:m")
+            self.assertEqual(payload["keep_alive"], -1)
+            self.assertIsInstance(payload["keep_alive"], int)
             self.assertIsInstance(payload["input"], list)
         sent = [text for _path, payload in EmbedFake.hits for text in payload["input"]]
         self.assertIn(PARAPHRASE, sent)

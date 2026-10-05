@@ -8,7 +8,9 @@ from pair.config import ROOT
 _DEFAULTS = {
     "model": "qwen2.5:0.5b",
     "num_ctx": 2048,
-    "keep_alive": "5m",
+    # -1 keeps the weights loaded. A short duration would reset the server TTL
+    # on every chat or embed call and unload the other model.
+    "keep_alive": -1,
     "ollama_num_parallel": 1,
     # Pi 4 is four Cortex-A72 cores. Ollama forwards num_thread as llama.cpp -t
     # only when the request sets it; otherwise the runner auto-detects.
@@ -54,6 +56,23 @@ def ollama_options(temperature: float, max_tokens: int, knobs: dict | None = Non
     if batch:
         options["num_batch"] = int(batch)
     return options
+
+
+def keep_alive(knobs: dict | None = None):
+    """The one keep_alive knob for the pi4 brain.
+
+    Chat, stream, and embed all send this value. -1 matches the Ollama JSON
+    number that leaves a model loaded until the process stops, so arctic-embed
+    and qwen can stay resident together. A missing or blank knob is that same
+    default. 0 is left alone: Ollama unloads when the call returns.
+    """
+    row = knobs if knobs is not None else inference_knobs()
+    if "keep_alive" not in row:
+        return -1
+    value = row.get("keep_alive")
+    if value is None or value == "":
+        return -1
+    return value
 
 
 def search_note_limit(knobs: dict | None = None) -> int:

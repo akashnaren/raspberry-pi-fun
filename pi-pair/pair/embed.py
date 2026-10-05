@@ -16,6 +16,8 @@ import os
 import threading
 import urllib.request
 
+from pair.knobs import keep_alive
+
 EMBED_MODEL = "snowflake-arctic-embed:m"
 COSINE_MIN = 0.85
 EMBED_TIMEOUT_S = 30.0
@@ -111,7 +113,7 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
         "model": EMBED_MODEL,
         "input": list(texts),
         "truncate": True,
-        "keep_alive": "5m",
+        "keep_alive": keep_alive(),
     }
     request = urllib.request.Request(
         embed_url(),
