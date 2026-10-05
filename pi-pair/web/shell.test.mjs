@@ -204,6 +204,15 @@ if (!document.querySelector('.think-btn[data-think="low"]')) {
 
 document.getElementById("btnIo").click();
 if (!document.getElementById("ioPanel").classList.contains("open")) throw new Error("settings stayed closed");
+const docs = document.querySelector("#ioPanel a.docs-link");
+const drawerBody = document.querySelector("#ioPanel .drawer-body");
+if (!docs || docs.textContent !== "API docs") throw new Error("settings is missing API docs");
+if (docs.getAttribute("href") !== "/docs") throw new Error("API docs does not open /docs");
+if (docs.getAttribute("target") !== "_blank") throw new Error("API docs should open in a new tab");
+if (!String(docs.getAttribute("rel") || "").includes("noopener")) throw new Error("API docs rel");
+if (!drawerBody || drawerBody.lastElementChild !== docs) {
+  throw new Error("API docs is not at the bottom of settings");
+}
 document.querySelector('[data-theme-choice="light"]').click();
 if (document.documentElement.getAttribute("data-theme") !== "light") throw new Error("light theme did not apply");
 if (!window.localStorage.getItem("openpi.settings").includes('"theme":"light"')) {

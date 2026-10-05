@@ -605,6 +605,9 @@ class PairHttp(unittest.TestCase):
         self.assertIn('aria-label="Model mode"', html)
         self.assertIn('id="modeLabel">Auto</span>', html)
         self.assertIn("Ask anything.", html)
+        self.assertIn('class="docs-link" href="/docs" target="_blank"', html)
+        self.assertIn("API docs", html)
+        self.assertIn("noopener", html)
         lowered = html.lower()
         for word in ("cache", "brain", "chip", "peer", "pi2", "pi3", "pi4"):
             self.assertNotIn(word, lowered)
@@ -661,6 +664,8 @@ class PairHttp(unittest.TestCase):
         self.assertIn(".think-btn", css)
         self.assertIn(".mode-btn", css)
         self.assertIn(".mode-menu", css)
+        self.assertIn(".docs-link{margin-top:auto", css)
+        self.assertIn(".docs-link:hover{color:var(--ink)", css)
         with urllib.request.urlopen(
             f"http://127.0.0.1:{port}/health", timeout=5
         ) as response:
