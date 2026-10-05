@@ -18,7 +18,9 @@ _MATH_PROBLEM = re.compile(
     r"rate at which|find the exact|solve for",
     re.I,
 )
-_STEPS_PROBLEM = re.compile(r"step by step|show your work|multi-step|break it down", re.I)
+_STEPS_PROBLEM = re.compile(
+    r"step by step|show your work|multi-step|break it down", re.I
+)
 _MATH_TOKEN = re.compile(
     r"\\(?:frac|pi|sqrt|cdot|int|sum|theta)|"
     r"\\\[|\\\(|\$\$|"

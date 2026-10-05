@@ -1,9 +1,17 @@
 """Process-wide peer list, health cache, and the generation cap."""
+
 from __future__ import annotations
 
 import threading
 
-from pair.config import default_model, health_ttl, infer_slots, listen_host, listen_port, load_peers
+from pair.config import (
+    default_model,
+    health_ttl,
+    infer_slots,
+    listen_host,
+    listen_port,
+    load_peers,
+)
 from pair.gate import InferenceGate
 from pair.knobs import clamp_parallel
 

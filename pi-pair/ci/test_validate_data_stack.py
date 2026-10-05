@@ -1,4 +1,5 @@
 """Validator accepts pi-pair/data and rejects the broken overlap fixture."""
+
 from __future__ import annotations
 
 import json
@@ -36,7 +37,13 @@ class ValidateDataStack(unittest.TestCase):
         self.assertEqual(body["errors"], [])
         self.assertEqual(
             body["counts"],
-            {"canned": 111, "sft_chat": 20, "sft_alpaca": 6, "preference": 8, "eval_heldout": 15},
+            {
+                "canned": 111,
+                "sft_chat": 20,
+                "sft_alpaca": 6,
+                "preference": 8,
+                "eval_heldout": 15,
+            },
         )
         self.assertEqual(body["locks"]["generate"], ["pi4"])
         self.assertEqual(body["locks"]["dataset_and_train"], ["pi3"])
@@ -96,7 +103,9 @@ class ValidateDataStack(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["locks"]["weak_gen"] = True
             manifest["locks"]["generate"] = ["pi3"]
-            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+            )
             report = Path(tmp) / "report.json"
             code, body, _err = _run(dest, report)
         self.assertNotEqual(code, 0)
@@ -139,7 +148,9 @@ class ValidateDataStack(unittest.TestCase):
             manifest_path = dest / "BUILD_MANIFEST.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["counts"]["eval_heldout"] = 16
-            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+            )
             report = Path(tmp) / "report.json"
             code, body, _err = _run(dest, report)
         self.assertNotEqual(code, 0)

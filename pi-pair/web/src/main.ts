@@ -419,7 +419,9 @@ function paintServices(body: HealthBody): void {
     if (serviceLines.length > 8) serviceLines.length = 8;
   }
   log.replaceChildren();
-  serviceLines.forEach((entry) => log.appendChild(el("p", "service-line", entry)));
+  serviceLines.forEach((entry) => {
+    log.appendChild(el("p", "service-line", entry));
+  });
 }
 
 async function quietNetwork(): Promise<boolean> {
@@ -1134,6 +1136,7 @@ async function sendText(
           pi_sources?: SourceLink[];
           pi_images?: unknown;
           pi_stages?: StageName[];
+          pi_replace?: boolean;
           choices?: { delta?: { content?: string } }[];
         };
         try {
@@ -1162,7 +1165,7 @@ async function sendText(
         }
         const delta = payload.choices?.[0]?.delta?.content;
         if (delta) {
-          textAccum += delta;
+          textAccum = payload.pi_replace ? delta : textAccum + delta;
           live.setText(textAccum);
           if (spoken && !voiced && noteSpokenDelta(textAccum)) voiced = true;
         }

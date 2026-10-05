@@ -11,6 +11,7 @@ import threading
 import urllib.request
 
 from pair.embed import ollama_base, on_pi4
+from pair.http_pool import open_json_request
 from pair.knobs import keep_alive
 from pair.modes import mode_table
 
@@ -43,7 +44,7 @@ def warm_pro_model() -> None:
         headers={"content-type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=PRELOAD_TIMEOUT_S) as response:
+        with open_json_request(request, PRELOAD_TIMEOUT_S) as response:
             response.read()
         print(f"pro preload: {payload['model']}", flush=True)
     except Exception as exc:

@@ -10,6 +10,7 @@ and then the line. A cosine at or above COSINE_MIN returns the stored answer.
 A down embedder, a bad payload, or a weaker score is a miss, and the chat
 path still runs.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,6 +19,7 @@ import os
 import threading
 import urllib.request
 
+from pair.http_pool import open_json_request
 from pair.knobs import keep_alive
 
 EMBED_MODEL = "snowflake-arctic-embed:m"
@@ -26,6 +28,8 @@ EMBED_TIMEOUT_S = 30.0
 
 _LOCK = threading.Lock()
 _CACHE: dict = {"sig": None, "vectors": None}
+_QUERY: dict[str, list[float]] = {}
+_QUERY_MAX = 64
 _WARM_LOCK = threading.Lock()
 _WARM = {"status": "ready"}
 
@@ -66,6 +70,7 @@ def reset_embed_cache() -> None:
     with _LOCK:
         _CACHE["sig"] = None
         _CACHE["vectors"] = None
+        _QUERY.clear()
 
 
 def warm_status() -> str:
@@ -145,7 +150,7 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
         headers={"content-type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=EMBED_TIMEOUT_S) as response:
+        with open_json_request(request, EMBED_TIMEOUT_S) as response:
             body = json.loads(response.read().decode())
     except Exception:
         return None
@@ -201,7 +206,24 @@ def warm_canned_embeddings(table: dict[str, str]) -> None:
         print(f"canned embed warm skipped: {exc}", flush=True)
 
 
-def _best_answer(query_vec: list[float], vectors: dict[str, list[float]], table: dict[str, str]) -> str | None:
+def _recall_query(text: str) -> list[float] | None:
+    with _LOCK:
+        found = _QUERY.get(text)
+        return list(found) if found is not None else None
+
+
+def _remember_query(text: str, vector: list[float]) -> None:
+    with _LOCK:
+        if text in _QUERY:
+            return
+        if len(_QUERY) >= _QUERY_MAX:
+            _QUERY.pop(next(iter(_QUERY)))
+        _QUERY[text] = list(vector)
+
+
+def _best_answer(
+    query_vec: list[float], vectors: dict[str, list[float]], table: dict[str, str]
+) -> str | None:
     best_key = None
     best_score = 0.0
     for key in sorted(vectors):
@@ -234,9 +256,16 @@ def semantic_lookup(query: str, table: dict[str, str]) -> str | None:
         vectors = _key_vectors(keys)
         if not vectors:
             return None
-        got = embed_texts([query])
-        if not got:
-            return None
-        return _best_answer(got[0], vectors, table)
+        # A warming brain must not score a line from a vector remembered
+        # before this batch. The embedder may be down, and a hit would skip
+        # the one query the caller still expects.
+        query_vec = None if warm_status() == "warming" else _recall_query(query)
+        if query_vec is None:
+            got = embed_texts([query])
+            if not got:
+                return None
+            query_vec = got[0]
+            _remember_query(query, query_vec)
+        return _best_answer(query_vec, vectors, table)
     except Exception:
         return None

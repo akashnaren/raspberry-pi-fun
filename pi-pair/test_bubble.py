@@ -10,7 +10,11 @@ ROOT = Path(__file__).resolve().parent
 class AssistantBubble(unittest.TestCase):
     def test_bubble_appears_only_after_content(self):
         completed = subprocess.run(
-            ["node", "--experimental-strip-types", str(ROOT / "web" / "bubble.test.mjs")],
+            [
+                "node",
+                "--experimental-strip-types",
+                str(ROOT / "web" / "bubble.test.mjs"),
+            ],
             cwd=ROOT,
             capture_output=True,
             text=True,

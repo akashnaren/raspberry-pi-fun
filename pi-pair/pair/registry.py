@@ -1,4 +1,5 @@
 """dataset_info.json is the only way a train config may name a dataset."""
+
 from __future__ import annotations
 
 import json

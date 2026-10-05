@@ -2,6 +2,7 @@
 
 Auto is a page choice. It still resolves to one of the two tags in mode_table.
 """
+
 from __future__ import annotations
 
 import re
@@ -38,7 +39,9 @@ def mode_table(knobs: dict | None = None) -> dict[str, str]:
     return {FLASH: flash, PRO: pro}
 
 
-def resolve_mode(mode: str | None, model: object | None = None, knobs: dict | None = None) -> tuple[str, str]:
+def resolve_mode(
+    mode: str | None, model: object | None = None, knobs: dict | None = None
+) -> tuple[str, str]:
     """Return (mode, ollama tag). Only an explicit Pro choice leaves Flash."""
     table = mode_table(knobs)
     picked = str(mode or "").strip().lower()
@@ -74,7 +77,9 @@ def task_tier(prompt: str) -> str:
     return FLASH
 
 
-def resolve_auto(prompt: str, available: list | None = None, knobs: dict | None = None) -> tuple[str, str, str]:
+def resolve_auto(
+    prompt: str, available: list | None = None, knobs: dict | None = None
+) -> tuple[str, str, str]:
     """Return (route, tag, reason) for Auto. The tag is always from mode_table.
 
     A known model list that lacks the Pro tag stays on Flash. An unknown list

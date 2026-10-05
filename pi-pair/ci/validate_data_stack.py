@@ -16,6 +16,7 @@ Locks (manifest `locks`, fail closed):
 Eval `input` values must not match canned `input` values (case, whitespace,
 and edge punctuation folded, the same way the serve path folds a map key).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -154,26 +155,41 @@ def validate_schema(instance: object, schema: dict, path: str = "$") -> list[dic
         errors.append({"path": path, "message": "value not in enum"})
     if isinstance(instance, str):
         if "minLength" in schema and len(instance) < schema["minLength"]:
-            errors.append({"path": path, "message": f"shorter than {schema['minLength']}"})
+            errors.append(
+                {"path": path, "message": f"shorter than {schema['minLength']}"}
+            )
         if "maxLength" in schema and len(instance) > schema["maxLength"]:
-            errors.append({"path": path, "message": f"longer than {schema['maxLength']}"})
+            errors.append(
+                {"path": path, "message": f"longer than {schema['maxLength']}"}
+            )
     if isinstance(instance, list):
         if "minItems" in schema and len(instance) < schema["minItems"]:
-            errors.append({"path": path, "message": f"fewer than {schema['minItems']} items"})
+            errors.append(
+                {"path": path, "message": f"fewer than {schema['minItems']} items"}
+            )
         if "maxItems" in schema and len(instance) > schema["maxItems"]:
-            errors.append({"path": path, "message": f"more than {schema['maxItems']} items"})
+            errors.append(
+                {"path": path, "message": f"more than {schema['maxItems']} items"}
+            )
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
             for index, item in enumerate(instance):
                 errors.extend(validate_schema(item, item_schema, f"{path}[{index}]"))
     if isinstance(instance, dict):
         if "minProperties" in schema and len(instance) < schema["minProperties"]:
-            errors.append({"path": path, "message": f"fewer than {schema['minProperties']} properties"})
+            errors.append(
+                {
+                    "path": path,
+                    "message": f"fewer than {schema['minProperties']} properties",
+                }
+            )
         required = schema.get("required") or []
         props = schema.get("properties") or {}
         for key in required:
             if key not in instance:
-                errors.append({"path": f"{path}.{key}", "message": "required property missing"})
+                errors.append(
+                    {"path": f"{path}.{key}", "message": "required property missing"}
+                )
         additional = schema.get("additionalProperties", True)
         for key, value in instance.items():
             child_path = f"{path}.{key}"
@@ -276,7 +292,11 @@ def _check_registry(data_root: Path, errors: list[dict]) -> None:
             target = (data_root / spec["file"]).resolve()
             want_file = _posix_rel(parent, target)
             if entry.get("file_name") != want_file:
-                _add(errors, "registry", f"{path} {name} file_name {entry.get('file_name')!r} != {want_file!r}")
+                _add(
+                    errors,
+                    "registry",
+                    f"{path} {name} file_name {entry.get('file_name')!r} != {want_file!r}",
+                )
             elif not target.is_file():
                 _add(errors, "missing_path", str(target))
             if name == "pi_flywheel_canned":
@@ -290,7 +310,11 @@ def _check_registry(data_root: Path, errors: list[dict]) -> None:
                     )
             for key in ("formatting", "stage", "columns", "tags"):
                 if entry.get(key) != spec[key]:
-                    _add(errors, "registry", f"{path} {name} {key} {entry.get(key)!r} != {spec[key]!r}")
+                    _add(
+                        errors,
+                        "registry",
+                        f"{path} {name} {key} {entry.get(key)!r} != {spec[key]!r}",
+                    )
             if spec.get("ranking") is True:
                 if entry.get("ranking") is not True:
                     _add(errors, "registry", f"{path} {name} ranking must be true")
@@ -303,7 +327,9 @@ def _check_registry(data_root: Path, errors: list[dict]) -> None:
                 allowed.add("map_file")
             extra = set(entry) - allowed
             if extra:
-                _add(errors, "registry", f"{path} {name} unexpected keys {sorted(extra)}")
+                _add(
+                    errors, "registry", f"{path} {name} unexpected keys {sorted(extra)}"
+                )
 
 
 def _check_locks(manifest: dict, errors: list[dict]) -> None:
@@ -316,7 +342,11 @@ def _check_locks(manifest: dict, errors: list[dict]) -> None:
         _add(errors, "lock_missing", "BUILD_MANIFEST.locks object is required")
         return
     if locks.get("generate") != ["pi4"]:
-        _add(errors, "lock_generate", f"generate must be ['pi4'], got {locks.get('generate')!r}")
+        _add(
+            errors,
+            "lock_generate",
+            f"generate must be ['pi4'], got {locks.get('generate')!r}",
+        )
     if locks.get("dataset_and_train") != ["pi3"]:
         _add(
             errors,
@@ -324,9 +354,17 @@ def _check_locks(manifest: dict, errors: list[dict]) -> None:
             f"dataset_and_train must be ['pi3'], got {locks.get('dataset_and_train')!r}",
         )
     if locks.get("health") != ["pi2"]:
-        _add(errors, "lock_health", f"health must be ['pi2'], got {locks.get('health')!r}")
+        _add(
+            errors,
+            "lock_health",
+            f"health must be ['pi2'], got {locks.get('health')!r}",
+        )
     if locks.get("search") != ["pi2"]:
-        _add(errors, "lock_search", f"search must be ['pi2'], got {locks.get('search')!r}")
+        _add(
+            errors,
+            "lock_search",
+            f"search must be ['pi2'], got {locks.get('search')!r}",
+        )
     if locks.get("train_then_delete") is not True:
         _add(errors, "lock_train_then_delete", "train_then_delete must be true")
     if locks.get("weak_gen") is not False:
@@ -355,7 +393,11 @@ def _check_rows(
             rows.append(row)
             if isinstance(schema, dict):
                 for problem in validate_schema(row, schema):
-                    _add(errors, "schema", f"{path}:{line_no} {problem['path']}: {problem['message']}")
+                    _add(
+                        errors,
+                        "schema",
+                        f"{path}:{line_no} {problem['path']}: {problem['message']}",
+                    )
             for field in TEXT_FIELDS.get(name, ()):
                 value = row.get(field)
                 if isinstance(value, str) and not value.strip():
@@ -363,19 +405,37 @@ def _check_rows(
             if name == "pi_flywheel_sft_chat":
                 messages = row.get("messages")
                 if isinstance(messages, list):
-                    roles = [item.get("role") for item in messages if isinstance(item, dict)]
+                    roles = [
+                        item.get("role") for item in messages if isinstance(item, dict)
+                    ]
                     if "user" not in roles or "assistant" not in roles:
-                        _add(errors, "sft_roles", f"{path}:{line_no} needs user and assistant")
+                        _add(
+                            errors,
+                            "sft_roles",
+                            f"{path}:{line_no} needs user and assistant",
+                        )
                     for item in messages:
                         if isinstance(item, dict):
                             content = item.get("content")
                             if isinstance(content, str) and not content.strip():
-                                _add(errors, "blank_text", f"{path}:{line_no} message content is blank")
+                                _add(
+                                    errors,
+                                    "blank_text",
+                                    f"{path}:{line_no} message content is blank",
+                                )
             if name == "pi_flywheel_preference":
                 chosen = row.get("chosen")
                 rejected = row.get("rejected")
-                if isinstance(chosen, str) and isinstance(rejected, str) and chosen.strip() == rejected.strip():
-                    _add(errors, "preference_tie", f"{path}:{line_no} chosen equals rejected")
+                if (
+                    isinstance(chosen, str)
+                    and isinstance(rejected, str)
+                    and chosen.strip() == rejected.strip()
+                ):
+                    _add(
+                        errors,
+                        "preference_tie",
+                        f"{path}:{line_no} chosen equals rejected",
+                    )
             if name == "pi_flywheel_canned":
                 raw_input = row.get("input")
                 if isinstance(raw_input, str):
@@ -393,7 +453,9 @@ def _check_rows(
     return rows_by_name, canned_inputs
 
 
-def _check_canned_map(data_root: Path, canned_rows: list[dict], errors: list[dict]) -> None:
+def _check_canned_map(
+    data_root: Path, canned_rows: list[dict], errors: list[dict]
+) -> None:
     path = data_root / "canned" / "canned_map.json"
     schema_path = data_root / "seed" / "schemas" / "canned_map.schema.json"
     schema = None
@@ -452,7 +514,12 @@ def _check_canned_map(data_root: Path, canned_rows: list[dict], errors: list[dic
             seen_fold.setdefault(folded, key)
 
 
-def _check_decontam(data_root: Path, eval_rows: list[dict], canned_inputs: dict[str, str], errors: list[dict]) -> None:
+def _check_decontam(
+    data_root: Path,
+    eval_rows: list[dict],
+    canned_inputs: dict[str, str],
+    errors: list[dict],
+) -> None:
     path = data_root / EXPECTED["pi_flywheel_eval_heldout"]["file"]
     seen: dict[str, int] = {}
     for index, row in enumerate(eval_rows, 1):
@@ -461,7 +528,11 @@ def _check_decontam(data_root: Path, eval_rows: list[dict], canned_inputs: dict[
             continue
         folded = _norm(raw_input)
         if folded in seen:
-            _add(errors, "duplicate_input", f"{path}:{index} repeats eval input from line {seen[folded]}")
+            _add(
+                errors,
+                "duplicate_input",
+                f"{path}:{index} repeats eval input from line {seen[folded]}",
+            )
         else:
             seen[folded] = index
         if folded in canned_inputs:
@@ -472,7 +543,9 @@ def _check_decontam(data_root: Path, eval_rows: list[dict], canned_inputs: dict[
             )
 
 
-def _check_counts(manifest: dict, rows_by_name: dict[str, list[dict]], errors: list[dict]) -> dict[str, int]:
+def _check_counts(
+    manifest: dict, rows_by_name: dict[str, list[dict]], errors: list[dict]
+) -> dict[str, int]:
     counts = manifest.get("counts")
     found = {key: len(rows_by_name.get(name, [])) for key, name in COUNT_KEYS.items()}
     if not isinstance(counts, dict):
@@ -480,7 +553,11 @@ def _check_counts(manifest: dict, rows_by_name: dict[str, list[dict]], errors: l
         return found
     for key, actual in found.items():
         if counts.get(key) != actual:
-            _add(errors, "count_mismatch", f"counts.{key} is {counts.get(key)!r}, file has {actual}")
+            _add(
+                errors,
+                "count_mismatch",
+                f"counts.{key} is {counts.get(key)!r}, file has {actual}",
+            )
     return found
 
 
@@ -489,7 +566,13 @@ def validate(data_root: Path) -> dict:
     data_root = data_root.resolve()
     if not data_root.is_dir():
         _add(errors, "missing_path", str(data_root))
-        return {"ok": False, "data_root": str(data_root), "counts": {}, "locks": None, "errors": errors}
+        return {
+            "ok": False,
+            "data_root": str(data_root),
+            "counts": {},
+            "locks": None,
+            "errors": errors,
+        }
 
     manifest_path = data_root / "BUILD_MANIFEST.json"
     manifest = _load_json(manifest_path, errors)
@@ -503,8 +586,17 @@ def validate(data_root: Path) -> dict:
     _check_registry(data_root, errors)
     rows_by_name, canned_inputs = _check_rows(data_root, errors)
     _check_canned_map(data_root, rows_by_name.get("pi_flywheel_canned", []), errors)
-    _check_decontam(data_root, rows_by_name.get("pi_flywheel_eval_heldout", []), canned_inputs, errors)
-    counts = _check_counts(manifest, rows_by_name, errors) if isinstance(manifest, dict) else {}
+    _check_decontam(
+        data_root,
+        rows_by_name.get("pi_flywheel_eval_heldout", []),
+        canned_inputs,
+        errors,
+    )
+    counts = (
+        _check_counts(manifest, rows_by_name, errors)
+        if isinstance(manifest, dict)
+        else {}
+    )
 
     errors.sort(key=lambda item: (item["code"], item["detail"]))
     locks = manifest.get("locks") if isinstance(manifest, dict) else None
@@ -518,14 +610,18 @@ def validate(data_root: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Validate flywheel canned/SFT/eval fixtures.")
+    parser = argparse.ArgumentParser(
+        description="Validate flywheel canned/SFT/eval fixtures."
+    )
     parser.add_argument(
         "--data",
         type=Path,
         default=Path(__file__).resolve().parent.parent / "data",
         help="Data root (default: pi-pair/data). The broken_overlap fixture is a negative check.",
     )
-    parser.add_argument("--report", type=Path, default=None, help="Write the JSON report here.")
+    parser.add_argument(
+        "--report", type=Path, default=None, help="Write the JSON report here."
+    )
     args = parser.parse_args(argv)
     try:
         report = validate(args.data)
@@ -535,7 +631,12 @@ def main(argv: list[str] | None = None) -> int:
             "data_root": str(args.data),
             "counts": {},
             "locks": None,
-            "errors": [{"code": "validator_crash", "detail": f"{exc.__class__.__name__}: {exc}"}],
+            "errors": [
+                {
+                    "code": "validator_crash",
+                    "detail": f"{exc.__class__.__name__}: {exc}",
+                }
+            ],
         }
     text = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

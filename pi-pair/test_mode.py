@@ -1,4 +1,5 @@
 """Auto picks Flash or Pro through modes.py. Off-list models stay on those tags."""
+
 from __future__ import annotations
 
 import importlib
@@ -10,7 +11,12 @@ from pair.resident import eviction_targets
 
 class TaskTier(unittest.TestCase):
     def test_short_chitchat_is_flash(self):
-        for line in ("nice weather today", "thanks for the note", "ok", "how is the coffee"):
+        for line in (
+            "nice weather today",
+            "thanks for the note",
+            "ok",
+            "how is the coffee",
+        ):
             self.assertEqual(task_tier(line), "flash", line)
 
     def test_hard_lines_are_pro(self):
@@ -31,7 +37,9 @@ class TaskTier(unittest.TestCase):
         self.assertEqual(task_tier("make a list of picnic foods"), "flash")
         attached = "plot the bars\n\n---\n" + ("ocr text " * 80)
         self.assertEqual(task_tier(attached), "flash")
-        self.assertEqual(task_tier("Write a python function that reverses a list."), "pro")
+        self.assertEqual(
+            task_tier("Write a python function that reverses a list."), "pro"
+        )
         self.assertEqual(task_tier("Search for the latest raspberry pi news."), "pro")
 
 
@@ -48,7 +56,9 @@ class Resolve(unittest.TestCase):
         self.assertEqual(route, "pro")
         self.assertEqual(tag, PRO_MODEL)
         self.assertEqual(reason, "heuristic")
-        easy_route, easy_tag, _reason = resolve_auto("nice weather today", [FLASH_MODEL, PRO_MODEL])
+        easy_route, easy_tag, _reason = resolve_auto(
+            "nice weather today", [FLASH_MODEL, PRO_MODEL]
+        )
         self.assertEqual(easy_route, "flash")
         self.assertEqual(easy_tag, FLASH_MODEL)
 
@@ -75,12 +85,17 @@ class Resolve(unittest.TestCase):
         self.assertEqual(resolve_mode("", "nope", knobs), ("flash", "custom:flash"))
         self.assertEqual(resolve_mode("pro", "nope", knobs), ("pro", "custom:pro"))
         self.assertEqual(resolve_mode(None, "custom:pro", knobs), ("pro", "custom:pro"))
-        route, tag, _reason = resolve_auto("Write a python function", [FLASH_MODEL], knobs)
+        route, tag, _reason = resolve_auto(
+            "Write a python function", [FLASH_MODEL], knobs
+        )
         self.assertEqual(route, "flash")
         self.assertEqual(tag, "custom:flash")
 
     def test_auto_does_not_plan_an_eviction(self):
-        self.assertEqual(eviction_targets(["qwen2.5:0.5b", "snowflake-arctic-embed:m"], PRO_MODEL), [])
+        self.assertEqual(
+            eviction_targets(["qwen2.5:0.5b", "snowflake-arctic-embed:m"], PRO_MODEL),
+            [],
+        )
         with self.assertRaises(ModuleNotFoundError):
             importlib.import_module("pair.mode")
 

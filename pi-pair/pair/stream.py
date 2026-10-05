@@ -1,4 +1,5 @@
 """Streaming chat. Ollama is NDJSON; llama.cpp is OpenAI SSE."""
+
 from __future__ import annotations
 
 import json
@@ -41,38 +42,41 @@ def llamacpp_delta(line: str):
 
 
 def ollama_event(line: str):
-    """Return (text, done, skip, done_reason)."""
-    text, done, skip = ollama_delta(line)
-    reason = ""
-    if not skip and done:
-        try:
-            reason = str(json.loads(line).get("done_reason") or "")
-        except json.JSONDecodeError:
-            reason = ""
-    return text, done, skip, reason
+    """Return (text, done, skip, done_reason). One JSON parse."""
+    raw = line.strip()
+    if not raw:
+        return "", False, True, ""
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return "", False, True, ""
+    chunk = (obj.get("message") or {}).get("content") or ""
+    done = bool(obj.get("done"))
+    reason = str(obj.get("done_reason") or "") if done else ""
+    return chunk, done, False, reason
 
 
 def llamacpp_event(line: str):
-    """Return (text, done, skip, finish_reason)."""
-    text, done, skip = llamacpp_delta(line)
-    if skip:
-        return text, done, skip, ""
+    """Return (text, done, skip, finish_reason). One JSON parse."""
     raw = line.strip()
-    if not raw.startswith("data:"):
-        return text, done, skip, ""
+    if not raw or not raw.startswith("data:"):
+        return "", False, True, ""
     data = raw[5:].strip()
-    if not data or data == "[DONE]":
-        return text, done, skip, ""
+    if data == "[DONE]":
+        return "", True, False, ""
+    if not data:
+        return "", False, True, ""
     try:
         obj = json.loads(data)
     except json.JSONDecodeError:
-        return text, done, skip, ""
+        return "", False, True, ""
     choices = obj.get("choices") or []
-    reason = ""
-    if choices and choices[0].get("finish_reason"):
-        reason = str(choices[0].get("finish_reason") or "")
-        done = True
-    return text, done, skip, reason
+    if not choices:
+        return "", False, False, ""
+    choice = choices[0]
+    delta = (choice.get("delta") or {}).get("content") or ""
+    reason = str(choice.get("finish_reason") or "")
+    return delta, bool(reason), False, reason
 
 
 class TextStream:
@@ -99,7 +103,9 @@ def stream_ollama(peer, model, messages, temperature=0.7, max_tokens=256):
                 raw = response.readline()
                 if not raw:
                     break
-                text, done, skip, reason = ollama_event(raw.decode("utf-8", errors="replace"))
+                text, done, skip, reason = ollama_event(
+                    raw.decode("utf-8", errors="replace")
+                )
                 if skip:
                     continue
                 if reason:
@@ -131,7 +137,9 @@ def stream_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256):
                 raw = response.readline()
                 if not raw:
                     break
-                text, done, skip, reason = llamacpp_event(raw.decode("utf-8", errors="replace"))
+                text, done, skip, reason = llamacpp_event(
+                    raw.decode("utf-8", errors="replace")
+                )
                 if skip:
                     continue
                 if reason:

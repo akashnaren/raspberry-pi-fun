@@ -132,7 +132,9 @@ def _may_continue(prompt: str) -> bool:
     """Only a clearly harmless list is continued. Harmful subjects stay put."""
     from pair.assist import is_harmful, may_retry_refusal
 
-    return bool(may_retry_refusal(prompt) and not is_harmful(prompt) and list_count(prompt))
+    return bool(
+        may_retry_refusal(prompt) and not is_harmful(prompt) and list_count(prompt)
+    )
 
 
 def needs_exact_n(prompt: str, text: str) -> bool:

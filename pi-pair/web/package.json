@@ -4,9 +4,11 @@
   "type": "module",
   "scripts": {
     "lint": "tsc --noEmit",
+    "lint:js": "biome lint --diagnostic-level=error .",
     "build": "tsc --noEmit && node build.mjs"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
     "esbuild": "0.25.10",
     "katex": "^0.16.22",
     "linkedom": "^0.18.12",

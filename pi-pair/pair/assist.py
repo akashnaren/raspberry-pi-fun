@@ -12,6 +12,7 @@ notes or Pro). The last resort is one honest sentence, never a canned item list.
 
 from __future__ import annotations
 
+import functools
 import re
 
 from pair.charts import is_structured_request
@@ -27,15 +28,13 @@ CRISIS_REFUSAL = "I can't help with that. If you are in crisis, call or text 988
 
 ANSWER_HINT = (
     "Answer the user's question directly. "
-    "Lists, greetings, and ordinary factual questions are welcome when they are safe. "
     "Answer helpfully if the request is safe. "
-    "Do not mention the thinking control, model choice, routing, or private mesh."
+    "Do not mention model choice, routing, or the mesh."
 )
 
 LIST_HINT = (
-    "The user wants a numbered list. Reply with one item per line, numbered from 1. "
-    "Answer helpfully if the request is safe. "
-    "Do not mention the thinking control, model choice, or routing."
+    "Reply with a numbered list, one item per line, numbered from 1. "
+    "Answer helpfully if the request is safe."
 )
 
 _GREETING = re.compile(
@@ -306,6 +305,7 @@ def _line(prompt: str) -> str:
     return " ".join((prompt or "").split())
 
 
+@functools.lru_cache(maxsize=256)
 def is_harmful(prompt: str) -> bool:
     """True for actionable harm, not a bare bomb, stalker, child, or address.
 
@@ -324,6 +324,7 @@ def refusal_for(text: str) -> str:
     return HARM_REFUSAL
 
 
+@functools.lru_cache(maxsize=256)
 def is_casual_greeting(prompt: str) -> bool:
     return bool(_GREETING.match(_line(prompt)))
 
@@ -351,7 +352,7 @@ def is_harmless_shape(prompt: str) -> bool:
 
 def may_retry_refusal(prompt: str) -> bool:
     """Retry a soft refusal only for a harmless shape that also passes the check."""
-    return is_harmless_shape(prompt) and not is_harmful(prompt)
+    return is_harmless_shape(prompt)
 
 
 def wants_grounded_retry(prompt: str) -> bool:
@@ -359,6 +360,7 @@ def wants_grounded_retry(prompt: str) -> bool:
     return may_retry_refusal(prompt) and not is_casual_greeting(prompt)
 
 
+@functools.lru_cache(maxsize=256)
 def is_soft_refusal(text: str) -> bool:
     return bool(_SOFT.search(_fold(text)))
 
@@ -378,7 +380,11 @@ def friendly_greeting(prompt: str) -> str:
 
 def answer_hint_for(prompt: str) -> str | None:
     """A short system hint for a harmless question. Plots already have one."""
-    if is_harmful(prompt) or is_structured_request(prompt) or not is_harmless_shape(prompt):
+    if (
+        is_harmful(prompt)
+        or is_structured_request(prompt)
+        or not is_harmless_shape(prompt)
+    ):
         return None
     if is_list_shape(prompt):
         return LIST_HINT
@@ -414,8 +420,25 @@ def scrub_reply(text: str) -> str:
     if not _META.search(raw):
         return raw
     parts = _FENCE.split(raw)
-    cleaned = [_drop_meta(part) if index % 2 == 0 else part for index, part in enumerate(parts)]
-    return "\n".join(line for line in "".join(cleaned).splitlines() if line.strip()).strip()
+    cleaned = [
+        _drop_meta(part) if index % 2 == 0 else part for index, part in enumerate(parts)
+    ]
+    return "\n".join(
+        line for line in "".join(cleaned).splitlines() if line.strip()
+    ).strip()
+
+
+def stream_release(text: str) -> str:
+    """`emit`, `hold`, or `refuse` for one growing reply.
+
+    A harmful buffer is refused before any of it is written. A soft-refusal
+    or infra-leak prefix is held until it resolves. Anything else can stream.
+    """
+    if is_harmful(text or ""):
+        return "refuse"
+    if withhold_partial(text or ""):
+        return "hold"
+    return "emit"
 
 
 def withhold_partial(text: str) -> bool:
@@ -430,7 +453,9 @@ def withhold_partial(text: str) -> bool:
     folded = sample.lower()
     if len(folded) > 180:
         return False
-    return any(folded.startswith(opener) or opener.startswith(folded) for opener in _OPENERS)
+    return any(
+        folded.startswith(opener) or opener.startswith(folded) for opener in _OPENERS
+    )
 
 
 def visible_canned(prompt: str, answer: str) -> str:

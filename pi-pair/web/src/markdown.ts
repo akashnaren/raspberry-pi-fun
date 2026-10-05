@@ -55,7 +55,10 @@ function inline(text: string): string {
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/(^|[^\*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  // NUL sentinels keep fenced code and math out of the HTML pass.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: placeholder bytes are intentional
   html = html.replace(/\u0000C(\d+)\u0000/g, (_all, index: string) => codes[Number(index)] ?? "");
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: placeholder bytes are intentional
   html = html.replace(/\u0000M(\d+)\u0000/g, (_all, index: string) => maths[Number(index)] ?? "");
   return html;
 }

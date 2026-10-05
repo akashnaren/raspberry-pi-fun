@@ -1,4 +1,5 @@
 """Image cards for a visual reply. No live network."""
+
 from __future__ import annotations
 
 import json
@@ -53,28 +54,49 @@ def _summary(title, description, image, page, width=220, height=326):
 class ImageCards(unittest.TestCase):
     def test_card_markup_keeps_public_images_only(self):
         completed = subprocess.run(
-            ["node", "--experimental-strip-types", str(ROOT / "web" / "images.test.mjs")],
+            [
+                "node",
+                "--experimental-strip-types",
+                str(ROOT / "web" / "images.test.mjs"),
+            ],
             cwd=ROOT / "web",
             capture_output=True,
             text=True,
             check=False,
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout + "\n" + completed.stderr)
+        self.assertEqual(
+            completed.returncode, 0, completed.stdout + "\n" + completed.stderr
+        )
         self.assertIn("ok", completed.stdout)
 
     def test_schema_doc_names_the_reply_field(self):
         text = (ROOT / "docs" / "IMAGES.md").read_text(encoding="utf-8")
-        for name in ("pi_images", "url", "alt", "title", "caption", "source", "width", "height"):
+        for name in (
+            "pi_images",
+            "url",
+            "alt",
+            "title",
+            "caption",
+            "source",
+            "width",
+            "height",
+        ):
             self.assertIn(f"`{name}`", text)
         self.assertIn("upload.wikimedia.org", text)
         self.assertIn("failed lookup", text)
 
     def test_phrase_for_a_movie_a_picture_and_a_plain_question(self):
-        self.assertEqual(search_phrase("Tell me about the movie Inception"), "Inception film")
+        self.assertEqual(
+            search_phrase("Tell me about the movie Inception"), "Inception film"
+        )
         self.assertEqual(search_phrase("poster for Parasite"), "Parasite film")
         self.assertEqual(search_phrase("picture of a red panda"), "red panda")
-        self.assertEqual(search_phrase("what does the Eiffel Tower look like?"), "Eiffel Tower")
-        self.assertEqual(search_phrase("good science fiction movies"), "good science fiction films")
+        self.assertEqual(
+            search_phrase("what does the Eiffel Tower look like?"), "Eiffel Tower"
+        )
+        self.assertEqual(
+            search_phrase("good science fiction movies"), "good science fiction films"
+        )
         self.assertEqual(search_phrase("how tall is the bench"), "")
         self.assertEqual(search_phrase("movie"), "")
         self.assertEqual(search_phrase(""), "")
@@ -147,7 +169,11 @@ class ImageCards(unittest.TestCase):
         def opener(request, timeout=None):
             url = request.full_url
             if "list=search" in url:
-                return _Resp(json.dumps({"query": {"search": [{"title": title} for title in titles]}}))
+                return _Resp(
+                    json.dumps(
+                        {"query": {"search": [{"title": title} for title in titles]}}
+                    )
+                )
             for title in titles:
                 slug = quote(title.replace(" ", "_"), safe="")
                 if url.endswith("/" + slug):
@@ -172,7 +198,9 @@ class ImageCards(unittest.TestCase):
 
         def empty(request, timeout=None):
             if "list=search" in request.full_url:
-                return _Resp(json.dumps({"query": {"search": [{"title": "Inception"}]}}))
+                return _Resp(
+                    json.dumps({"query": {"search": [{"title": "Inception"}]}})
+                )
             return _Resp("not-json")
 
         self.assertEqual(lookup_images("the movie Inception", opener=empty), [])
@@ -190,8 +218,12 @@ class ImageCards(unittest.TestCase):
         def opener(request, timeout=None):
             fetched.append(request.full_url)
             if "list=search" in request.full_url:
-                return _Resp(json.dumps({"query": {"search": [{"title": "Inception"}]}}))
-            return _Resp("", status=302, headers={"Location": "https://evil.example/steal"})
+                return _Resp(
+                    json.dumps({"query": {"search": [{"title": "Inception"}]}})
+                )
+            return _Resp(
+                "", status=302, headers={"Location": "https://evil.example/steal"}
+            )
 
         self.assertEqual(lookup_images("movie Inception", opener=opener), [])
         self.assertEqual(len(fetched), 2)
@@ -214,8 +246,16 @@ class ImageCards(unittest.TestCase):
             "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a.png",
         )
         self.assertNotIn("html", good)
-        self.assertIsNone(sanitize_card({"url": "https://evil.example/a.jpg", "title": "x", "alt": "x"}))
-        self.assertIsNone(sanitize_card({"url": "https://upload.wikimedia.org/a.svg", "title": "x", "alt": "x"}))
+        self.assertIsNone(
+            sanitize_card(
+                {"url": "https://evil.example/a.jpg", "title": "x", "alt": "x"}
+            )
+        )
+        self.assertIsNone(
+            sanitize_card(
+                {"url": "https://upload.wikimedia.org/a.svg", "title": "x", "alt": "x"}
+            )
+        )
         kept = sanitize_card(
             {
                 "url": "https://upload.wikimedia.org/a.jpg",

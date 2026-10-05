@@ -1,4 +1,5 @@
 """deploy_pi3.sh fails closed without production secrets and can print an offline plan."""
+
 from __future__ import annotations
 
 import os
@@ -12,7 +13,13 @@ FAKE_KEY = (
     "not-a-real-key-material\n"
     "-----END OPENSSH PRIVATE KEY-----\n"
 )
-SECRET_NAMES = ("PI3_SSH_HOST", "PI3_SSH_USER", "PI3_SSH_KEY", "PI3_SSH_PORT", "PI3_PAIR_DIR")
+SECRET_NAMES = (
+    "PI3_SSH_HOST",
+    "PI3_SSH_USER",
+    "PI3_SSH_KEY",
+    "PI3_SSH_PORT",
+    "PI3_PAIR_DIR",
+)
 
 
 def _env(**overrides: str) -> dict[str, str]:

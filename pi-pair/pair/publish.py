@@ -1,4 +1,5 @@
 """Public label sync for pi3. Hashes and votes only. Tokens stay in the environment."""
+
 from __future__ import annotations
 
 import base64
@@ -205,7 +206,10 @@ def votes_in_queue(root: Path | None = None) -> list[dict]:
             item = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(item, dict) and str(item.get("vote") or "").lower() in ("up", "down"):
+        if isinstance(item, dict) and str(item.get("vote") or "").lower() in (
+            "up",
+            "down",
+        ):
             rows.append(item)
     return rows
 
@@ -217,7 +221,9 @@ def _scrub(text: str, token: str) -> str:
     return " ".join(cleaned.split())[:160]
 
 
-def _hf_post(url: str, body: bytes, token: str, content_type: str, opener, timeout: float) -> tuple[int, bytes]:
+def _hf_post(
+    url: str, body: bytes, token: str, content_type: str, opener, timeout: float
+) -> tuple[int, bytes]:
     request = urllib.request.Request(
         url,
         data=body,
@@ -238,7 +244,9 @@ def _hf_post(url: str, body: bytes, token: str, content_type: str, opener, timeo
         return int(error.code), raw
 
 
-def _hf_put(url: str, body: bytes, token: str, opener, timeout: float) -> tuple[int, bytes]:
+def _hf_put(
+    url: str, body: bytes, token: str, opener, timeout: float
+) -> tuple[int, bytes]:
     request = urllib.request.Request(
         url,
         data=body,
@@ -274,7 +282,9 @@ def _public_rows(rows: list[dict] | None) -> list[dict]:
     return clean
 
 
-def sync_huggingface(rows: list[dict] | None, opener=None, timeout: float = HF_TIMEOUT) -> dict:
+def sync_huggingface(
+    rows: list[dict] | None, opener=None, timeout: float = HF_TIMEOUT
+) -> dict:
     token = os.environ.get("HF_TOKEN", "").strip()
     if not token:
         return {"status": "skipped", "reason": "HF_TOKEN unset"}
@@ -305,7 +315,10 @@ def sync_huggingface(rows: list[dict] | None, opener=None, timeout: float = HF_T
             timeout,
         )
         if status not in (200, 201, 204):
-            return {"status": "error", "reason": f"huggingface visibility http {status}"}
+            return {
+                "status": "error",
+                "reason": f"huggingface visibility http {status}",
+            }
         jsonl = "".join(json.dumps(row, ensure_ascii=True) + "\n" for row in public)
         commit = "".join(
             json.dumps(item, ensure_ascii=True) + "\n"
@@ -344,7 +357,10 @@ def sync_huggingface(rows: list[dict] | None, opener=None, timeout: float = HF_T
             timeout,
         )
     except Exception as error:
-        return {"status": "error", "reason": _scrub(f"{error.__class__.__name__}", token)}
+        return {
+            "status": "error",
+            "reason": _scrub(f"{error.__class__.__name__}", token),
+        }
     if status not in (200, 201):
         return {"status": "error", "reason": f"huggingface commit http {status}"}
     return {"status": "ok", "repo": repo, "rows": len(public), "private": False}
@@ -364,11 +380,16 @@ def sync_kaggle(rows: list[dict] | None) -> dict:
     }
 
 
-def sync_public_labels(rows: list[dict] | None = None, *, opener=None, root: Path | None = None) -> dict:
+def sync_public_labels(
+    rows: list[dict] | None = None, *, opener=None, root: Path | None = None
+) -> dict:
     """Hugging Face first. Kaggle runs only after that upload succeeds."""
     public = list(rows) if rows is not None else _read_public(public_path(root))
     hf = sync_huggingface(public, opener=opener)
-    result = {"huggingface": hf, "kaggle": {"status": "skipped", "reason": "behind huggingface"}}
+    result = {
+        "huggingface": hf,
+        "kaggle": {"status": "skipped", "reason": "behind huggingface"},
+    }
     if hf.get("status") == "ok":
         result["kaggle"] = sync_kaggle(public)
     return result

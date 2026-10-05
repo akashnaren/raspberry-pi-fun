@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Held-out inputs must stay out of the live canned map."""
+
 from __future__ import annotations
 
 import sys

@@ -16,7 +16,7 @@ It runs on:
 
 | Job | What it does |
 | --- | --- |
-| lint | `ruff==0.13.2` on `pi-pair`, then shellcheck on `install.sh`, `start.sh`, `mesh-hello.sh`, and `ci/deploy_pi3.sh` |
+| lint | `ruff==0.13.2` check and `ruff format --check` on `pi-pair`, Biome on `pi-pair/web` (`npm run lint:js`), then shellcheck on `install.sh`, `start.sh`, `mesh-hello.sh`, and `ci/deploy_pi3.sh` |
 | unit | `python3 -m unittest discover -s pi-pair -p 'test_*.py'` — router, health-cache TTL, data-stack negatives, deploy fail-closed |
 | data-stack | `pi-pair/ci/validate_data_stack.py` on `pi-pair/data`, then uploads the artifact `data-stack-validation-report` |
 

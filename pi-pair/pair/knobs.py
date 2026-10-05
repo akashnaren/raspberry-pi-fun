@@ -1,4 +1,5 @@
 """pi4 inference knobs. Operator file, not a board measurement."""
+
 from __future__ import annotations
 
 import json
@@ -25,6 +26,14 @@ _DEFAULTS = {
     # Prompt-ingest batch. Ollama's default is 512, which is wider than this
     # board's 1MB L2 wants while a search note is being prefilled.
     "num_batch": 128,
+    # Flash is the common path. A shorter context is a smaller key/value cache
+    # on the four Pi 4 cores. Pro keeps the full window for code and math.
+    "flash_num_ctx": 1536,
+    "pro_num_ctx": 2048,
+    "flash_num_thread": 4,
+    "pro_num_thread": 4,
+    "flash_num_batch": 128,
+    "pro_num_batch": 64,
     # Characters of search notes pasted into the prompt. Sources on the page
     # are not cut. A shorter note is a shorter prefill.
     "search_note_chars": 640,
@@ -52,16 +61,58 @@ def decode_effort(name: str | None) -> tuple[str, float, int] | None:
     return key, float(row["temperature"]), int(row["num_predict"])
 
 
-def ollama_options(temperature: float, max_tokens: int, knobs: dict | None = None) -> dict:
-    """Decode options Ollama already accepts. The model name is not one of them."""
+def _as_int(value, fallback: int) -> int:
+    try:
+        if value is None or value == "":
+            return int(fallback)
+        return int(value)
+    except (TypeError, ValueError):
+        return int(fallback)
+
+
+def mode_limits(model: str, knobs: dict | None = None) -> dict:
+    """num_ctx, num_thread, and num_batch for Flash or Pro.
+
+    An unknown tag uses the Flash numbers. num_predict stays with the caller.
+    """
     row = knobs if knobs is not None else inference_knobs()
+    flash = str(row.get("model") or "")
+    pro = str(row.get("pro_model") or "")
+    name = str(model or "")
+    if pro and name == pro and name != flash:
+        prefix = "pro"
+        batch_fallback = 64
+        ctx_fallback = _as_int(row.get("num_ctx"), 2048)
+    else:
+        prefix = "flash"
+        batch_fallback = _as_int(row.get("num_batch"), 128)
+        ctx_fallback = _as_int(
+            row.get("flash_num_ctx"), _as_int(row.get("num_ctx"), 2048)
+        )
+    thread_fallback = _as_int(row.get("num_thread"), 4)
+    return {
+        "num_ctx": _as_int(row.get(f"{prefix}_num_ctx"), ctx_fallback),
+        "num_thread": _as_int(row.get(f"{prefix}_num_thread"), thread_fallback),
+        "num_batch": _as_int(row.get(f"{prefix}_num_batch"), batch_fallback),
+    }
+
+
+def ollama_options(
+    temperature: float,
+    max_tokens: int,
+    knobs: dict | None = None,
+    model: str | None = None,
+) -> dict:
+    """Decode options Ollama already accepts. Context and threads follow the mode."""
+    row = knobs if knobs is not None else inference_knobs()
+    limits = mode_limits(model or "", row)
     options = {
         "temperature": temperature,
         "num_predict": max_tokens,
-        "num_ctx": int(row.get("num_ctx") or 2048),
+        "num_ctx": limits["num_ctx"],
     }
-    threads = row.get("num_thread")
-    batch = row.get("num_batch")
+    threads = limits.get("num_thread")
+    batch = limits.get("num_batch")
     if threads:
         options["num_thread"] = int(threads)
     if batch:
@@ -98,7 +149,14 @@ def search_note_limit(knobs: dict | None = None) -> int:
 def attachment_limit(knobs: dict | None = None) -> int:
     row = knobs if knobs is not None else inference_knobs()
     try:
-        return max(0, int(row.get("attachment_chars") if row.get("attachment_chars") is not None else 1200))
+        return max(
+            0,
+            int(
+                row.get("attachment_chars")
+                if row.get("attachment_chars") is not None
+                else 1200
+            ),
+        )
     except (TypeError, ValueError):
         return 1200
 
@@ -125,13 +183,27 @@ def parallel_limit(knobs: dict | None = None) -> int:
     return clamp_parallel(value)
 
 
+_KNOBS: dict = {"key": None, "data": None}
+
+
 def inference_knobs() -> dict:
+    """Operator file merged over the defaults. Repeat reads skip the disk."""
     path = ROOT / "configs" / "runtime" / "inference_pi4.json"
+    try:
+        stat = path.stat()
+        key = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        key = None
+    cached = _KNOBS.get("data")
+    if _KNOBS.get("key") == key and isinstance(cached, dict):
+        return dict(cached)
     merged = dict(_DEFAULTS)
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return merged
+        loaded = None
     if isinstance(loaded, dict):
         merged.update(loaded)
-    return merged
+    _KNOBS["key"] = key
+    _KNOBS["data"] = merged
+    return dict(merged)

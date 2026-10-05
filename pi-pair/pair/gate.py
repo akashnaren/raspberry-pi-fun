@@ -4,6 +4,7 @@ The cap is a permit, not a queue. A caller either gets a slot immediately or
 is told the board is full. Waiting here is what stacked every chat behind one
 slow decode.
 """
+
 from __future__ import annotations
 
 import threading
@@ -11,10 +12,7 @@ from contextlib import contextmanager
 
 
 def capacity_message(limit: int) -> str:
-    return (
-        f"pi4 is at capacity ({limit} generations in flight). "
-        "Try again in a moment."
-    )
+    return f"pi4 is at capacity ({limit} generations in flight). Try again in a moment."
 
 
 class AtCapacity(Exception):

@@ -3,11 +3,24 @@
 The fetch path in search.py decides which URL is public and which address
 to pin. This module only turns bytes of HTML into titles, links, and text.
 """
+
 from __future__ import annotations
 
 from html.parser import HTMLParser
 
-_VOID = {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
+_VOID = {
+    "area",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "source",
+    "wbr",
+}
 _SKIP = {"script", "style", "noscript"}
 
 

@@ -154,7 +154,9 @@ export function renderSourcesPill(doc: Document, sources: SourceLink[]): HTMLBut
   const stack = doc.createElement("span");
   stack.className = "sources-favs";
   stack.setAttribute("aria-hidden", "true");
-  faviconStack(links).forEach((src) => stack.appendChild(faviconNode(doc, src)));
+  faviconStack(links).forEach((src) => {
+    stack.appendChild(faviconNode(doc, src));
+  });
   const count = doc.createElement("span");
   count.className = "sources-count";
   count.textContent = sourceCountLabel(links.length);

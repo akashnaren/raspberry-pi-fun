@@ -1,4 +1,5 @@
 """Choose a peer. A pin never falls through. Weak boards never generate."""
+
 from __future__ import annotations
 
 from pair import health, runtime

@@ -36,7 +36,9 @@ class GroundedMath(unittest.TestCase):
             text=True,
             check=False,
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout + "\n" + completed.stderr)
+        self.assertEqual(
+            completed.returncode, 0, completed.stdout + "\n" + completed.stderr
+        )
         self.assertIn("ok", completed.stdout)
 
     def test_math_miss_uses_the_page_text(self):
@@ -51,14 +53,19 @@ class GroundedMath(unittest.TestCase):
 
     def test_greeting_is_not_solved_as_math(self):
         self.assertIsNone(answer_from_search("Hi!", NOTES))
-        self.assertIsNone(answer_from_search("How tall is the bench in the hall?", NOTES))
+        self.assertIsNone(
+            answer_from_search("How tall is the bench in the hall?", NOTES)
+        )
 
     def test_a_later_snippet_still_grounds_math(self):
         noise = "\n".join(
-            f"- Note {i} (https://example.com/{i}): ladders and cones only." for i in range(1, 8)
+            f"- Note {i} (https://example.com/{i}): ladders and cones only."
+            for i in range(1, 8)
         )
         last = "- Rate (https://example.com/rate): " + PAGE
-        answer = answer_from_search(BALLOON, "Web search notes.\n" + noise + "\n" + last)
+        answer = answer_from_search(
+            BALLOON, "Web search notes.\n" + noise + "\n" + last
+        )
         self.assertIn("dr/dt = 1/(3 pi)", answer)
         self.assertNotEqual(answer, MISS)
 

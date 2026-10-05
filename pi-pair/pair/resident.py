@@ -5,6 +5,7 @@ fit together. This module does not call Ollama. A keep_alive of 0 for a tag
 that is not loaded can make Ollama fetch it, and a Flash request must not
 name Pro.
 """
+
 from __future__ import annotations
 
 import re
@@ -22,7 +23,9 @@ def protected_tags(knobs: dict | None = None) -> tuple[str, str]:
     return table[FLASH], EMBED_MODEL
 
 
-def eviction_targets(running: list[str] | None, requested: str, knobs: dict | None = None) -> list[str]:
+def eviction_targets(
+    running: list[str] | None, requested: str, knobs: dict | None = None
+) -> list[str]:
     """Names this process would unload before `requested` runs.
 
     Always empty. Flash and Arctic are never eligible, and switching back to

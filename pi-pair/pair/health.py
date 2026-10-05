@@ -6,6 +6,7 @@ path and one slow poll cannot hold the handler past the peer timeout.
 A peer that was up stays up through PEER_GRACE_S after a single miss, so
 peers_up does not flap when one probe exceeds PEER_PROBE_S.
 """
+
 from __future__ import annotations
 
 import json
@@ -64,7 +65,9 @@ def peer_health(peer: dict, *, alt_ports=None, get_json=None):
                         models.append(mid)
                 return True, models, None, port
             data = fetch(f"http://{peer['host']}:{port}/api/tags", timeout=PEER_PROBE_S)
-            models = [item.get("name") or item.get("model") for item in data.get("models", [])]
+            models = [
+                item.get("name") or item.get("model") for item in data.get("models", [])
+            ]
             models = [name for name in models if name]
             return True, models, None, port
         except Exception as error:
@@ -101,7 +104,11 @@ def _with_grace(rows: list) -> list:
                 continue
             prior = seen.get(name)
             ok_at = float(prior.get("ok_at") or 0) if isinstance(prior, dict) else 0.0
-            if isinstance(prior, dict) and prior.get("row") and (now - ok_at) < PEER_GRACE_S:
+            if (
+                isinstance(prior, dict)
+                and prior.get("row")
+                and (now - ok_at) < PEER_GRACE_S
+            ):
                 out.append(dict(prior["row"]))
                 continue
             out.append(row)
@@ -146,7 +153,9 @@ def _kick_refresh() -> None:
         return
     gen = int(runtime._health_cache.get("gen") or 0)
     runtime._health_cache["refreshing"] = True
-    thread = threading.Thread(target=_refresh, args=(gen,), name="peer-health", daemon=True)
+    thread = threading.Thread(
+        target=_refresh, args=(gen,), name="peer-health", daemon=True
+    )
     runtime._health_cache["thread"] = thread
     thread.start()
 
@@ -166,7 +175,8 @@ def snapshot_peers(force: bool = False):
         cached = runtime._health_cache["peers"]
         fresh = (
             cached is not None
-            and (now - float(runtime._health_cache["t"] or 0)) < runtime.HEALTH_CACHE_TTL
+            and (now - float(runtime._health_cache["t"] or 0))
+            < runtime.HEALTH_CACHE_TTL
         )
         if not force and fresh:
             return cached

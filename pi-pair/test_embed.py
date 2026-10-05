@@ -1,4 +1,5 @@
 """Arctic embed paraphrases hit the canned map. Ollama /api/embed is mocked."""
+
 from __future__ import annotations
 
 import json
@@ -418,7 +419,9 @@ class SemanticMap(unittest.TestCase):
         calls.clear()
         set_warm_status("warming")
         try:
-            with mock.patch("pair.embed.embed_texts", side_effect=RuntimeError("embed down")):
+            with mock.patch(
+                "pair.embed.embed_texts", side_effect=RuntimeError("embed down")
+            ):
                 self.assertIsNone(lookup(PARAPHRASE))
                 self.assertEqual(lookup("Hi!"), ANSWERS["hi"])
         finally:
@@ -427,7 +430,9 @@ class SemanticMap(unittest.TestCase):
         calls.clear()
         set_warm_status("warming")
         try:
-            with mock.patch("pair.embed.embed_texts", side_effect=self._fake_embed(calls)):
+            with mock.patch(
+                "pair.embed.embed_texts", side_effect=self._fake_embed(calls)
+            ):
                 self.assertEqual(lookup(JUST), ANSWERS["who generates"])
                 self.assertEqual(calls, [[JUST]])
         finally:
@@ -474,8 +479,9 @@ class SemanticMap(unittest.TestCase):
 
         httpd = None
         try:
-            with mock.patch("pair.embed.embed_texts", side_effect=fake), mock.patch(
-                "pair.server.make_server", side_effect=spy
+            with (
+                mock.patch("pair.embed.embed_texts", side_effect=fake),
+                mock.patch("pair.server.make_server", side_effect=spy),
             ):
                 worker = threading.Thread(target=server_mod.main, daemon=True)
                 worker.start()
@@ -498,7 +504,9 @@ class SemanticMap(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(chat["pi_chip"], "cache")
-                self.assertEqual(chat["choices"][0]["message"]["content"], ANSWERS["hi"])
+                self.assertEqual(
+                    chat["choices"][0]["message"]["content"], ANSWERS["hi"]
+                )
                 self.assertTrue(entered.is_set())
                 self.assertFalse(release.is_set())
                 release.set()
@@ -515,7 +523,9 @@ class SemanticMap(unittest.TestCase):
                 httpd.server_close()
             reset_warm_state()
 
-    def _request(self, port: int, path: str, payload: dict | None = None) -> tuple[int, dict]:
+    def _request(
+        self, port: int, path: str, payload: dict | None = None
+    ) -> tuple[int, dict]:
         data = None if payload is None else json.dumps(payload).encode()
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}{path}",
@@ -540,9 +550,10 @@ class SemanticMap(unittest.TestCase):
         def serve():
             calls.append("serve")
 
-        with mock.patch("pair.embed.embed_texts", side_effect=fake), mock.patch(
-            "pair.server.make_server"
-        ) as make_server:
+        with (
+            mock.patch("pair.embed.embed_texts", side_effect=fake),
+            mock.patch("pair.server.make_server") as make_server,
+        ):
             make_server.return_value.serve_forever.side_effect = serve
             for role, name in (("dataset", "pi3"), ("health", "pi2")):
                 os.environ["PI_PAIR_ROLE"] = role

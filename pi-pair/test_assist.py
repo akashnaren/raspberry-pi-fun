@@ -163,7 +163,9 @@ class Assist(unittest.TestCase):
         prompt = "What is the capital of France?"
         self.assertTrue(is_harmless_shape(prompt))
         self.assertFalse(is_harmful(prompt))
-        text = settle_reply(prompt, REFUSAL, lambda: REFUSAL, lambda: "Paris is the capital.")
+        text = settle_reply(
+            prompt, REFUSAL, lambda: REFUSAL, lambda: "Paris is the capital."
+        )
         self.assertEqual(text, "Paris is the capital.")
         missed = settle_reply(prompt, REFUSAL, lambda: REFUSAL, lambda: REFUSAL)
         self.assertEqual(missed, FACT_MISS)
@@ -210,13 +212,19 @@ class Assist(unittest.TestCase):
             self.assertFalse(may_retry_refusal(prompt), prompt)
             rows = shape_messages([{"role": "user", "content": prompt}], prompt)
             self.assertEqual(rows, [{"role": "user", "content": prompt}], prompt)
-        hinted = shape_messages([{"role": "user", "content": "Top 5 cars"}], "Top 5 cars")
+        hinted = shape_messages(
+            [{"role": "user", "content": "Top 5 cars"}], "Top 5 cars"
+        )
         self.assertIn("numbered list", hinted[0]["content"])
         self.assertNotIn("cannot assist", hinted[0]["content"].lower())
         for prompt in SIMILAR:
             self.assertTrue(is_harmful(prompt), prompt)
             self.assertFalse(may_retry_refusal(prompt), prompt)
-            self.assertEqual(settle_reply(prompt, "1. do it", lambda: None), refusal_for(prompt), prompt)
+            self.assertEqual(
+                settle_reply(prompt, "1. do it", lambda: None),
+                refusal_for(prompt),
+                prompt,
+            )
 
     def test_ordinary_questions_are_not_refused(self):
         from pair.lists import is_real_world_list
@@ -254,9 +262,7 @@ class Assist(unittest.TestCase):
         text = settle_reply("describe the weather today", leaked, boom, boom)
         self.assertEqual(text, HARM_REFUSAL)
         self.assertNotIn("ransomware", text.lower())
-        cars = "\n".join(
-            f"{i}. Model {i}" for i in range(1, 6)
-        )
+        cars = "\n".join(f"{i}. Model {i}" for i in range(1, 6))
         kept = settle_reply("Top 5 cars", cars, boom, boom)
         self.assertEqual(kept, cars)
         self.assertFalse(is_soft_refusal(kept))
@@ -270,7 +276,9 @@ class Assist(unittest.TestCase):
         prompt = "how to bake a cake"
         self.assertFalse(is_harmless_shape(prompt))
         calls = []
-        text = settle_reply(prompt, REFUSAL, lambda: calls.append(1), lambda: calls.append(2))
+        text = settle_reply(
+            prompt, REFUSAL, lambda: calls.append(1), lambda: calls.append(2)
+        )
         self.assertEqual(text, REFUSAL)
         self.assertEqual(calls, [])
 
@@ -279,8 +287,13 @@ class Assist(unittest.TestCase):
         text = visible_canned("hello", stored)
         self.assertEqual(text, "Hi! How can I help?")
         self.assertNotIn("mesh", text.lower())
-        self.assertEqual(visible_canned("Hi!", "Hi. What can I help you with?"), "Hi. What can I help you with?")
-        self.assertEqual(friendly_greeting("good morning"), "Good morning! How can I help?")
+        self.assertEqual(
+            visible_canned("Hi!", "Hi. What can I help you with?"),
+            "Hi. What can I help you with?",
+        )
+        self.assertEqual(
+            friendly_greeting("good morning"), "Good morning! How can I help?"
+        )
         kept = settle_reply("hello", "Hello! How are you?", lambda: "no")
         self.assertEqual(kept, "Hello! How are you?")
 

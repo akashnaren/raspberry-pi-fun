@@ -1,4 +1,5 @@
 """MIME routing for attachment ingest. OCR is mocked; no tesseract in CI."""
+
 from __future__ import annotations
 
 import json
@@ -76,10 +77,14 @@ class MimeRouting(unittest.TestCase):
         self.assertEqual(str(csv_error.exception), "unsupported file type")
 
     def test_txt_extension_stays_text_and_jpeg_named_pdf_is_an_image(self):
-        self.assertEqual(upload.route_for("notes.txt", "application/octet-stream", JPEG), "text")
+        self.assertEqual(
+            upload.route_for("notes.txt", "application/octet-stream", JPEG), "text"
+        )
         self.assertEqual(upload.route_for("scan.pdf", "application/pdf", JPEG), "ocr")
         self.assertEqual(upload.ocr_kind("scan.pdf", "application/pdf", JPEG), "image")
-        self.assertEqual(upload.ocr_kind("scan.pdf", "application/pdf", JPEG_PDF), "pdf")
+        self.assertEqual(
+            upload.ocr_kind("scan.pdf", "application/pdf", JPEG_PDF), "pdf"
+        )
 
     def test_text_ingest_does_not_call_ocr(self):
         def boom(_data):
@@ -302,13 +307,17 @@ class AttachmentHttp(unittest.TestCase):
             return error.code, json.loads(raw or "{}")
 
     def test_multipart_txt_md_image_and_scanned_pdf(self):
-        status, body = self._post(*_as_post(_multipart("notes.txt", "text/plain", b"alpha")))
+        status, body = self._post(
+            *_as_post(_multipart("notes.txt", "text/plain", b"alpha"))
+        )
         self.assertEqual(status, 200)
         self.assertEqual(body["route"], "text")
         self.assertEqual(body["text"], "alpha")
         self.assertEqual(self.calls, {"image": 0, "pdf": 0})
 
-        status, body = self._post(*_as_post(_multipart("../notes.md", "text/markdown", b"# beta")))
+        status, body = self._post(
+            *_as_post(_multipart("../notes.md", "text/markdown", b"# beta"))
+        )
         self.assertEqual(status, 200)
         self.assertEqual(body["name"], "notes.md")
         self.assertEqual(body["text"], "# beta")
@@ -320,7 +329,9 @@ class AttachmentHttp(unittest.TestCase):
         self.assertEqual(body["text"], "from image")
         self.assertEqual(self.calls, {"image": 1, "pdf": 0})
 
-        status, body = self._post(*_as_post(_multipart("scan.pdf", "application/pdf", JPEG_PDF)))
+        status, body = self._post(
+            *_as_post(_multipart("scan.pdf", "application/pdf", JPEG_PDF))
+        )
         self.assertEqual(status, 200)
         self.assertEqual(body["route"], "ocr")
         self.assertEqual(body["text"], "from pdf")
@@ -337,7 +348,9 @@ class AttachmentHttp(unittest.TestCase):
         self.assertEqual(self.calls, {"image": 0, "pdf": 0})
 
     def test_text_pdf_csv_and_oversize(self):
-        status, body = self._post(*_as_post(_multipart("essay.pdf", "application/pdf", TEXT_PDF)))
+        status, body = self._post(
+            *_as_post(_multipart("essay.pdf", "application/pdf", TEXT_PDF))
+        )
         self.assertEqual(status, 415)
         self.assertIn("JPEG-scanned", body["error"])
         self.assertEqual(self.calls, {"image": 0, "pdf": 0})
@@ -349,7 +362,9 @@ class AttachmentHttp(unittest.TestCase):
         previous = upload.MAX_UPLOAD_BYTES
         upload.MAX_UPLOAD_BYTES = 32
         try:
-            status, body = self._post(b"y" * 40, {"content-type": "text/plain", "x-filename": "notes.txt"})
+            status, body = self._post(
+                b"y" * 40, {"content-type": "text/plain", "x-filename": "notes.txt"}
+            )
         finally:
             upload.MAX_UPLOAD_BYTES = previous
         self.assertEqual(status, 413)
@@ -370,14 +385,18 @@ class AttachmentHttp(unittest.TestCase):
         try:
             for _ in range(ocr.OCR_SLOTS):
                 thread = threading.Thread(
-                    target=lambda: self._post(*_as_post(_multipart("pic.jpg", "image/jpeg", JPEG)))
+                    target=lambda: self._post(
+                        *_as_post(_multipart("pic.jpg", "image/jpeg", JPEG))
+                    )
                 )
                 thread.start()
                 threads.append(thread)
             for _ in range(ocr.OCR_SLOTS):
                 self.assertTrue(arrived.acquire(timeout=2))
             started = time.monotonic()
-            status, body = self._post(*_as_post(_multipart("again.jpg", "image/jpeg", JPEG)))
+            status, body = self._post(
+                *_as_post(_multipart("again.jpg", "image/jpeg", JPEG))
+            )
             self.assertLess(time.monotonic() - started, 1)
             self.assertIn(status, (429, 503))
             self.assertEqual(body["error"], "OCR is busy")

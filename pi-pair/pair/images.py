@@ -3,6 +3,7 @@
 Wikipedia's summary API, no key. Any miss returns an empty list.
 The reply field is ``pi_images``. See docs/IMAGES.md.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,9 +16,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 SEARCH_API = "https://en.wikipedia.org/w/api.php"
 SUMMARY_API = "https://en.wikipedia.org/api/rest_v1/page/summary/"
-USER_AGENT = (
-    "PiGPT/1.0 (local chat image cards; +https://github.com/akashnaren/raspberry-pi-fun)"
-)
+USER_AGENT = "PiGPT/1.0 (local chat image cards; +https://github.com/akashnaren/raspberry-pi-fun)"
 FETCH_TIMEOUT = 3
 MAX_CARDS = 3
 MAX_LIST_CARDS = 8
@@ -174,7 +173,12 @@ def _public_http(url: str) -> bool:
     if parsed.port not in (None, 80, 443):
         return False
     host = (parsed.hostname or "").lower().rstrip(".")
-    if not host or host == "localhost" or host.endswith(".local") or host.endswith(".localhost"):
+    if (
+        not host
+        or host == "localhost"
+        or host.endswith(".local")
+        or host.endswith(".localhost")
+    ):
         return False
     try:
         ip = ip_address(host)
@@ -316,16 +320,20 @@ def _fetch_json(url: str, opener) -> dict:
 
 
 def _titles(phrase: str, opener) -> list[str]:
-    url = SEARCH_API + "?" + urlencode(
-        {
-            "action": "query",
-            "list": "search",
-            "srsearch": phrase,
-            "srlimit": "5",
-            "srnamespace": "0",
-            "format": "json",
-            "formatversion": "2",
-        }
+    url = (
+        SEARCH_API
+        + "?"
+        + urlencode(
+            {
+                "action": "query",
+                "list": "search",
+                "srsearch": phrase,
+                "srlimit": "5",
+                "srnamespace": "0",
+                "format": "json",
+                "formatversion": "2",
+            }
+        )
     )
     data = _fetch_json(url, opener)
     query = data.get("query") if isinstance(data.get("query"), dict) else {}
@@ -356,11 +364,15 @@ def _summary_card(title: str, opener, movie: bool) -> dict | None:
     if movie and not _mentions_film(page_title, description):
         return None
     thumb = data.get("thumbnail") if isinstance(data.get("thumbnail"), dict) else {}
-    content = data.get("content_urls") if isinstance(data.get("content_urls"), dict) else {}
+    content = (
+        data.get("content_urls") if isinstance(data.get("content_urls"), dict) else {}
+    )
     desktop = content.get("desktop") if isinstance(content.get("desktop"), dict) else {}
     page = _absolute(str(desktop.get("page") or ""))
     if not page and page_title:
-        page = "https://en.wikipedia.org/wiki/" + quote(page_title.replace(" ", "_"), safe="")
+        page = "https://en.wikipedia.org/wiki/" + quote(
+            page_title.replace(" ", "_"), safe=""
+        )
     alt = _clip(f"{page_title}. {description}".strip(" ."), 180) or page_title
     card = {
         "url": _absolute(str(thumb.get("source") or "")),
@@ -432,7 +444,10 @@ def cards_for_answer(prompt: str, answer: str, opener=None) -> list[dict]:
     counted = list_count(prompt) or MAX_LIST_CARDS
     limit = min(counted, MAX_LIST_CARDS)
     names = item_names(answer, limit)
-    movie = bool(_MOVIE.search(prompt or "") or re.search(r"\b(?:movies?|films?)\b", prompt or "", re.I))
+    movie = bool(
+        _MOVIE.search(prompt or "")
+        or re.search(r"\b(?:movies?|films?)\b", prompt or "", re.I)
+    )
     if not names:
         return []
     workers = min(4, len(names))

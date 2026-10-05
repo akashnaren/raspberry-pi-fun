@@ -1,4 +1,5 @@
 """Mesh offload. pi4 generates. pi2 searches. A down pi2 falls back on pi4."""
+
 from __future__ import annotations
 
 import json
@@ -107,7 +108,9 @@ def _valid_search(raw: bytes) -> dict | None:
     return {"status": status, "sources": sources, "context": context}
 
 
-def _http_post(url: str, payload: dict, connect_s: float, read_s: float) -> tuple[int, bytes]:
+def _http_post(
+    url: str, payload: dict, connect_s: float, read_s: float
+) -> tuple[int, bytes]:
     parsed = urlparse(url)
     host = parsed.hostname or ""
     port = parsed.port or 80
@@ -122,7 +125,10 @@ def _http_post(url: str, payload: dict, connect_s: float, read_s: float) -> tupl
             "POST",
             path,
             body=body,
-            headers={"content-type": "application/json", "content-length": str(len(body))},
+            headers={
+                "content-type": "application/json",
+                "content-length": str(len(body)),
+            },
         )
         response = conn.getresponse()
         return response.status, response.read(65536)

@@ -1,4 +1,5 @@
 """Stdlib tests for the Pi GPT 1.0 helpers and the chat HTTP contract."""
+
 from __future__ import annotations
 
 import json
@@ -51,7 +52,9 @@ def _sse_payloads(raw: str) -> list[dict]:
 
 
 def _statuses(raw: str) -> list[str]:
-    return [str(item["pi_status"]) for item in _sse_payloads(raw) if item.get("pi_status")]
+    return [
+        str(item["pi_status"]) for item in _sse_payloads(raw) if item.get("pi_status")
+    ]
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:
@@ -85,8 +88,14 @@ class OllamaFake(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("content-type", "application/x-ndjson")
             self.end_headers()
-            self.wfile.write(json.dumps({"message": {"content": "hel"}, "done": False}).encode() + b"\n")
-            self.wfile.write(json.dumps({"message": {"content": "lo"}, "done": True}).encode() + b"\n")
+            self.wfile.write(
+                json.dumps({"message": {"content": "hel"}, "done": False}).encode()
+                + b"\n"
+            )
+            self.wfile.write(
+                json.dumps({"message": {"content": "lo"}, "done": True}).encode()
+                + b"\n"
+            )
             return
         self._json(json.dumps({"message": {"content": "hello from peer"}}).encode())
 
@@ -208,8 +217,13 @@ class PairHelpers(unittest.TestCase):
             pick("auto", True, "qwen2.5:0.5b")
 
     def test_stream_line_parsers(self):
-        self.assertEqual(ollama_delta('{"message":{"content":"hi"},"done":false}'), ("hi", False, False))
-        self.assertEqual(ollama_delta('{"message":{"content":""},"done":true}'), ("", True, False))
+        self.assertEqual(
+            ollama_delta('{"message":{"content":"hi"},"done":false}'),
+            ("hi", False, False),
+        )
+        self.assertEqual(
+            ollama_delta('{"message":{"content":""},"done":true}'), ("", True, False)
+        )
         self.assertEqual(ollama_delta("not-json"), ("", False, True))
         self.assertEqual(llamacpp_delta("data: [DONE]"), ("", True, False))
         self.assertEqual(
@@ -307,7 +321,9 @@ class PairHelpers(unittest.TestCase):
             os.environ["PI_PAIR_ROLE"] = "brain"
             ok, _models, err, port = health.peer_health(peer, get_json=fake)
             self.assertTrue(ok)
-            self.assertEqual(seen, [("http://10.0.0.228:18080/health", health.PEER_PROBE_S)])
+            self.assertEqual(
+                seen, [("http://10.0.0.228:18080/health", health.PEER_PROBE_S)]
+            )
             self.assertEqual(health.PEER_PROBE_S, 2.5)
         finally:
             if previous is None:
@@ -538,7 +554,11 @@ class PairHttp(unittest.TestCase):
         )
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
-                return response.status, response.headers, json.loads(response.read().decode())
+                return (
+                    response.status,
+                    response.headers,
+                    json.loads(response.read().decode()),
+                )
         except urllib.error.HTTPError as error:
             raw = error.read().decode()
             return error.code, error.headers, json.loads(raw or "{}")
@@ -584,7 +604,9 @@ class PairHttp(unittest.TestCase):
         lowered = html.lower()
         for word in ("cache", "brain", "chip", "peer", "pi2", "pi3", "pi4"):
             self.assertNotIn(word, lowered)
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/static/mesh.js", timeout=5) as response:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/static/mesh.js", timeout=5
+        ) as response:
             script = response.read().decode()
         for needle in (
             "MESH_DEFAULT_MODEL",
@@ -613,7 +635,9 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn("metaKey||e.ctrlKey", source)
         self.assertIn("think: effort", source)
         self.assertIn("X-Pi-Route", source)
-        settings_src = (ROOT / "web" / "src" / "settings.ts").read_text(encoding="utf-8")
+        settings_src = (ROOT / "web" / "src" / "settings.ts").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('thinking: "medium"', settings_src)
         self.assertIn('mode: "auto"', settings_src)
         self.assertIn('el("span", "pending")', source)
@@ -632,7 +656,9 @@ class PairHttp(unittest.TestCase):
         self.assertIn(".think-btn", css)
         self.assertIn(".mode-btn", css)
         self.assertIn(".mode-menu", css)
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/health", timeout=5
+        ) as response:
             health_body = json.loads(response.read().decode())
         self.assertEqual(health_body["mode"], "flash")
         self.assertEqual(health_body["modes"]["flash"], "qwen2.5:0.5b")
@@ -658,7 +684,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_chip"], "brain: pi4")
         self.assertEqual(body["pi_search"], "failed")
         self.assertEqual(self.search_calls, ["Say hi in five words."])
-        self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 2048)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 1536)
         self.assertEqual(OllamaFake.last_payload["keep_alive"], -1)
         self.assertIsInstance(OllamaFake.last_payload["keep_alive"], int)
         self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 256)
@@ -689,7 +715,9 @@ class PairHttp(unittest.TestCase):
             self.assertIsNone(response.headers.get("X-Pi-Search"))
         self.assertEqual(OllamaFake.last_payload["keep_alive"], -1)
         self.assertIs(OllamaFake.last_payload["stream"], True)
-        self.assertEqual(_statuses(raw), ["thinking", "searching", "searching", "answering"])
+        self.assertEqual(
+            _statuses(raw), ["thinking", "searching", "searching", "answering"]
+        )
         self.assertLess(raw.index('"pi_status": "answering"'), raw.index("hel"))
         self.assertIn("hel", raw)
         self.assertIn('"pi_search": "failed"', raw)
@@ -760,7 +788,9 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(headers.get("X-Pi-Chip"), "cache")
         self.assertEqual(headers.get("X-Pi-Peer"), "cache")
         self.assertEqual(body["pi_chip"], "cache")
-        self.assertEqual(body["choices"][0]["message"]["content"], "Hi. What can I help you with?")
+        self.assertEqual(
+            body["choices"][0]["message"]["content"], "Hi. What can I help you with?"
+        )
         lowered_hit = body["choices"][0]["message"]["content"].lower()
         for word in ("mesh", "board", "cache", "brain", "chip", "peer"):
             self.assertNotIn(word, lowered_hit)
@@ -842,7 +872,9 @@ class PairHttp(unittest.TestCase):
             port,
             {
                 "model": "qwen2.5:0.5b",
-                "messages": [{"role": "user", "content": "a question the map has never seen"}],
+                "messages": [
+                    {"role": "user", "content": "a question the map has never seen"}
+                ],
                 "stream": False,
             },
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
@@ -885,7 +917,9 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(OllamaFake.posts, 1)
         self.assertEqual(self.search_calls, [])
         self.assertIsNone(headers.get("X-Pi-Search"))
-        queued = (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl").read_text()
+        queued = (
+            Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl"
+        ).read_text()
         self.assertIn("Hi!", queued)
 
     def test_think_level_changes_num_predict(self):
@@ -959,7 +993,9 @@ class PairHttp(unittest.TestCase):
         answer = body["choices"][0]["message"]["content"]
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}/v1/flywheel/feedback",
-            data=json.dumps({"vote": "down", "correction": "the corrected sentence"}).encode(),
+            data=json.dumps(
+                {"vote": "down", "correction": "the corrected sentence"}
+            ).encode(),
             headers={"content-type": "application/json"},
         )
         with urllib.request.urlopen(request, timeout=5) as response:
@@ -971,7 +1007,9 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(labeled["correction"], "the corrected sentence")
         rows = [
             json.loads(line)
-            for line in (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl")
+            for line in (
+                Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl"
+            )
             .read_text(encoding="utf-8")
             .splitlines()
         ]
@@ -994,14 +1032,18 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(updated["correction"], "")
         rows = [
             json.loads(line)
-            for line in (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl")
+            for line in (
+                Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl"
+            )
             .read_text(encoding="utf-8")
             .splitlines()
         ]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["vote"], "up")
         self.assertNotIn("correction", rows[0])
-        canned = json.loads((ROOT / "data" / "canned" / "canned_map.json").read_text(encoding="utf-8"))
+        canned = json.loads(
+            (ROOT / "data" / "canned" / "canned_map.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(canned["hi"], "Hi. What can I help you with?")
 
     def test_llamacpp_rewrites_model(self):
@@ -1080,7 +1122,9 @@ class PairHttp(unittest.TestCase):
             self.search_calls.append(query)
             return {
                 "status": "ok",
-                "sources": [{"title": "Bench note", "url": "https://example.com/bench"}],
+                "sources": [
+                    {"title": "Bench note", "url": "https://example.com/bench"}
+                ],
                 "context": (
                     "Web search notes.\n"
                     "- Bench note (https://example.com/bench): a short snippet about the bench"
@@ -1107,7 +1151,9 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_sources"][0]["url"], "https://example.com/bench")
         self.assertEqual(headers.get("X-Pi-Search"), "ok")
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
-        queued = (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl").read_text()
+        queued = (
+            Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl"
+        ).read_text()
         row = json.loads(queued.strip().splitlines()[-1])
         self.assertEqual(row["prompt"], prompt)
         self.assertNotIn("snippet", row["prompt"])
@@ -1156,7 +1202,9 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertEqual(body["pi_search"], "failed")
-        self.assertNotIn("Web search notes", json.dumps(OllamaFake.last_payload["messages"]))
+        self.assertNotIn(
+            "Web search notes", json.dumps(OllamaFake.last_payload["messages"])
+        )
 
     def test_visual_miss_adds_public_image_cards_and_a_lookup_failure_does_not(self):
         poster = {
@@ -1174,9 +1222,17 @@ class PairHttp(unittest.TestCase):
         def fake(query, opener=None):
             calls.append(query)
             return [
-                {"url": "http://127.0.0.1/secret.jpg", "alt": "secret", "title": "secret"},
+                {
+                    "url": "http://127.0.0.1/secret.jpg",
+                    "alt": "secret",
+                    "title": "secret",
+                },
                 dict(poster),
-                {"url": "https://evil.example/poster.jpg", "alt": "nope", "title": "nope"},
+                {
+                    "url": "https://evil.example/poster.jpg",
+                    "alt": "nope",
+                    "title": "nope",
+                },
             ]
 
         pair_server.lookup_images = fake
@@ -1220,7 +1276,9 @@ class PairHttp(unittest.TestCase):
             prompt,
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
-        self.assertEqual(_statuses(raw), ["thinking", "searching", "searching", "answering"])
+        self.assertEqual(
+            _statuses(raw), ["thinking", "searching", "searching", "answering"]
+        )
         pictured = [item for item in _sse_payloads(raw) if item.get("pi_images")]
         self.assertGreaterEqual(len(pictured), 2)
         self.assertEqual(pictured[0]["pi_images"], [poster])
@@ -1284,11 +1342,15 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(planned["chat"]["headers"]["X-Pi-Mesh"], "on")
         self.assertEqual(planned["chat"]["headers"]["X-Pi-Mode"], "flash")
         self.assertEqual(planned["chat"]["body"]["mode"], "flash")
-        self.assertEqual(planned["chat"]["body"]["messages"][0]["content"], "label from a bot")
+        self.assertEqual(
+            planned["chat"]["body"]["messages"][0]["content"], "label from a bot"
+        )
         self.assertEqual(planned["chat"]["body"]["pi_target"], "auto")
         self.assertFalse(planned["chat"]["body"]["stream"])
         self.assertEqual(planned["feedback"]["body"]["vote"], "down")
-        self.assertEqual(planned["feedback"]["body"]["correction"], "the sentence you wanted")
+        self.assertEqual(
+            planned["feedback"]["body"]["correction"], "the sentence you wanted"
+        )
         self.assertIn("/v1/chat/completions", planned["chat"]["url"])
         self.assertIn("/v1/flywheel/feedback", planned["feedback"]["url"])
         live = subprocess.run(
@@ -1315,7 +1377,9 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(labeled["answer"], "hello from peer")
         rows = [
             json.loads(line)
-            for line in (Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl")
+            for line in (
+                Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl"
+            )
             .read_text(encoding="utf-8")
             .splitlines()
         ]
@@ -1399,7 +1463,9 @@ class PairHttp(unittest.TestCase):
                 port,
                 {
                     "model": "qwen2.5:0.5b",
-                    "messages": [{"role": "user", "content": "a question the map has never seen"}],
+                    "messages": [
+                        {"role": "user", "content": "a question the map has never seen"}
+                    ],
                     "stream": False,
                 },
                 {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
@@ -1450,13 +1516,25 @@ class PairHttp(unittest.TestCase):
         )
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
         self.assertIsNone(headers.get("X-Pi-Search"))
-        self.assertEqual(_statuses(raw), ["thinking", "searching", "searching", "answering"])
-        self.assertLess(raw.index('"pi_status": "thinking"'), raw.index('"pi_status": "searching"'))
-        self.assertLess(raw.index('"pi_status": "searching"'), raw.index('"pi_status": "answering"'))
+        self.assertEqual(
+            _statuses(raw), ["thinking", "searching", "searching", "answering"]
+        )
+        self.assertLess(
+            raw.index('"pi_status": "thinking"'), raw.index('"pi_status": "searching"')
+        )
+        self.assertLess(
+            raw.index('"pi_status": "searching"'), raw.index('"pi_status": "answering"')
+        )
         self.assertLess(raw.index('"pi_status": "answering"'), raw.index("hel"))
-        tools = [item.get("pi_tool") for item in _sse_payloads(raw) if item.get("pi_status") == "searching"]
+        tools = [
+            item.get("pi_tool")
+            for item in _sse_payloads(raw)
+            if item.get("pi_status") == "searching"
+        ]
         self.assertEqual(tools, ["search", "search"])
-        searched = [item for item in _sse_payloads(raw) if item.get("pi_search") == "failed"]
+        searched = [
+            item for item in _sse_payloads(raw) if item.get("pi_search") == "failed"
+        ]
         self.assertTrue(searched)
         self.assertEqual(searched[0]["pi_sources"], [])
         final = _sse_payloads(raw)[-1]
@@ -1529,7 +1607,9 @@ class PairHttp(unittest.TestCase):
             self.search_calls.append(query)
             return {
                 "status": "ok",
-                "sources": [{"title": "Window note", "url": "https://example.com/window"}],
+                "sources": [
+                    {"title": "Window note", "url": "https://example.com/window"}
+                ],
                 "context": "Web search notes.\n" + page,
             }
 
@@ -1573,7 +1653,9 @@ class PairHttp(unittest.TestCase):
             self.search_calls.append(query)
             return {
                 "status": "ok",
-                "sources": [{"title": "Balloon note", "url": "https://example.com/balloon"}],
+                "sources": [
+                    {"title": "Balloon note", "url": "https://example.com/balloon"}
+                ],
                 "context": "Text from the first page:\n" + page,
             }
 
@@ -1653,7 +1735,9 @@ class PairHttp(unittest.TestCase):
             self.search_calls.append(query)
             return {
                 "status": "ok",
-                "sources": [{"title": "Balloon note", "url": "https://example.com/balloon"}],
+                "sources": [
+                    {"title": "Balloon note", "url": "https://example.com/balloon"}
+                ],
                 "context": "Text from the first page:\n" + page,
             }
 
@@ -1666,7 +1750,9 @@ class PairHttp(unittest.TestCase):
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
-        self.assertEqual(_statuses(raw), ["thinking", "searching", "searching", "answering"])
+        self.assertEqual(
+            _statuses(raw), ["thinking", "searching", "searching", "answering"]
+        )
         self.assertIn("dr/dt = 1/(3 pi)", raw)
         self.assertNotIn('"content": "hel"', raw)
         self.assertEqual(OllamaFake.posts, 0)
@@ -1798,7 +1884,9 @@ class PairHttp(unittest.TestCase):
             return {
                 "status": "ok",
                 "context": "notes about the bench",
-                "sources": [{"title": f"T{i}", "url": f"https://ex{i}.test/a"} for i in range(5)],
+                "sources": [
+                    {"title": f"T{i}", "url": f"https://ex{i}.test/a"} for i in range(5)
+                ],
             }
 
         pair_server.lookup_web = fake
@@ -1807,7 +1895,9 @@ class PairHttp(unittest.TestCase):
             port,
             {
                 "model": "qwen2.5:0.5b",
-                "messages": [{"role": "user", "content": "where is the long bench today"}],
+                "messages": [
+                    {"role": "user", "content": "where is the long bench today"}
+                ],
                 "stream": False,
             },
         )
@@ -1821,7 +1911,10 @@ class PairHttp(unittest.TestCase):
             return {
                 "status": "ok",
                 "context": "notes about the bench",
-                "sources": [{"title": f"T{i}", "url": f"https://ex{i}.test/a"} for i in range(12)],
+                "sources": [
+                    {"title": f"T{i}", "url": f"https://ex{i}.test/a"}
+                    for i in range(12)
+                ],
             }
 
         pair_server.lookup_web = fake
@@ -1830,7 +1923,9 @@ class PairHttp(unittest.TestCase):
             port,
             {
                 "model": "custom:tiny",
-                "messages": [{"role": "user", "content": "where is the long bench today"}],
+                "messages": [
+                    {"role": "user", "content": "where is the long bench today"}
+                ],
                 "stream": False,
             },
         )
@@ -1897,7 +1992,9 @@ class ProductCopy(unittest.TestCase):
         if "3D-printed server rack" not in text:
             problems.append(f"{label} does not mention the 3D-printed rack")
         hero = f"{prefix}rack-hero.jpg"
-        if text.find(hero) == -1 or text.find(hero) > text.find(f"{prefix}rack-front.jpg"):
+        if text.find(hero) == -1 or text.find(hero) > text.find(
+            f"{prefix}rack-front.jpg"
+        ):
             problems.append(f"{label} hero is not rack-hero.jpg")
         if "-render.jpg" in text:
             problems.append(f"{label} still links a CGI render")

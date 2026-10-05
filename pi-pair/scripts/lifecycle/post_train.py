@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Prepare the miss queue, fold the canned map, gate, promote, delete shards."""
+
 from __future__ import annotations
 
 import json

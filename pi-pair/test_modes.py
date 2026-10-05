@@ -1,4 +1,5 @@
 """Flash is the default. Pro is opt-in. A mock Ollama records the switch."""
+
 from __future__ import annotations
 
 import json
@@ -37,7 +38,9 @@ class ModeOllama(BaseHTTPRequestHandler):
             self._json(json.dumps(body).encode())
             return
         if path == "/api/ps":
-            body = {"models": [{"name": name, "model": name} for name in type(self).loaded]}
+            body = {
+                "models": [{"name": name, "model": name} for name in type(self).loaded]
+            }
             self._json(json.dumps(body).encode())
             return
         self.send_response(404)
@@ -68,8 +71,14 @@ class ModeOllama(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("content-type", "application/x-ndjson")
             self.end_headers()
-            self.wfile.write(json.dumps({"message": {"content": "hel"}, "done": False}).encode() + b"\n")
-            self.wfile.write(json.dumps({"message": {"content": "lo"}, "done": True}).encode() + b"\n")
+            self.wfile.write(
+                json.dumps({"message": {"content": "hel"}, "done": False}).encode()
+                + b"\n"
+            )
+            self.wfile.write(
+                json.dumps({"message": {"content": "lo"}, "done": True}).encode()
+                + b"\n"
+            )
             return
         self._json(json.dumps({"message": {"content": "hello from peer"}}).encode())
 
@@ -101,7 +110,11 @@ def _reset_fake() -> None:
 
 
 def _posts(path: str) -> list[dict]:
-    return [payload for method, seen, payload in ModeOllama.calls if method == "POST" and seen == path and payload]
+    return [
+        payload
+        for method, seen, payload in ModeOllama.calls
+        if method == "POST" and seen == path and payload
+    ]
 
 
 class ModeRules(unittest.TestCase):
@@ -109,10 +122,14 @@ class ModeRules(unittest.TestCase):
         self.assertEqual(resolve_mode(None, None), ("flash", "qwen2.5:0.5b"))
         self.assertEqual(resolve_mode("", ""), ("flash", "qwen2.5:0.5b"))
         self.assertEqual(resolve_mode("   ", None), ("flash", "qwen2.5:0.5b"))
-        self.assertEqual(resolve_mode("turbo", "llama3.2:1b"), ("flash", "qwen2.5:0.5b"))
+        self.assertEqual(
+            resolve_mode("turbo", "llama3.2:1b"), ("flash", "qwen2.5:0.5b")
+        )
         self.assertEqual(resolve_mode("pro", "qwen2.5:0.5b"), ("pro", "qwen2.5:1.5b"))
         self.assertEqual(resolve_mode("PRO", None), ("pro", "qwen2.5:1.5b"))
-        self.assertEqual(resolve_mode("flash", "qwen2.5:1.5b"), ("flash", "qwen2.5:0.5b"))
+        self.assertEqual(
+            resolve_mode("flash", "qwen2.5:1.5b"), ("flash", "qwen2.5:0.5b")
+        )
         self.assertEqual(resolve_mode(None, "qwen2.5:1.5b"), ("pro", "qwen2.5:1.5b"))
         self.assertEqual(resolve_mode(None, "Pro"), ("pro", "qwen2.5:1.5b"))
         self.assertFalse(tag_ready(["qwen2.5:0.5b"], "pro", "qwen2.5:1.5b"))
@@ -149,7 +166,9 @@ class ModeRules(unittest.TestCase):
         self.assertIn("OLLAMA_EMBED_MODEL", executed[1])
         self.assertTrue(all("1.5b" not in line for line in executed))
         self.assertTrue(cap_fits_three(script))
-        unit = (ROOT / "configs" / "runtime" / "ollama-lan.service").read_text(encoding="utf-8")
+        unit = (ROOT / "configs" / "runtime" / "ollama-lan.service").read_text(
+            encoding="utf-8"
+        )
         self.assertTrue(cap_fits_three(unit))
 
 
@@ -207,7 +226,11 @@ class ModeHttp(unittest.TestCase):
         )
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
-                return response.status, response.headers, json.loads(response.read().decode())
+                return (
+                    response.status,
+                    response.headers,
+                    json.loads(response.read().decode()),
+                )
         except urllib.error.HTTPError as error:
             raw = error.read().decode()
             return error.code, error.headers, json.loads(raw or "{}")
@@ -288,7 +311,10 @@ class ModeHttp(unittest.TestCase):
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
-            {"mode": "pro", "messages": [{"role": "user", "content": "pro beside arctic"}]},
+            {
+                "mode": "pro",
+                "messages": [{"role": "user", "content": "pro beside arctic"}],
+            },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 200)
@@ -327,7 +353,11 @@ class ModeHttp(unittest.TestCase):
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
-            {"mode": "flash", "model": "qwen2.5:1.5b", "messages": [{"role": "user", "content": "back"}]},
+            {
+                "mode": "flash",
+                "model": "qwen2.5:1.5b",
+                "messages": [{"role": "user", "content": "back"}],
+            },
             headers,
         )
         self.assertEqual(status, 200)
@@ -352,7 +382,10 @@ class ModeHttp(unittest.TestCase):
         port = self._boot()
         status, headers, body = self._post(
             port,
-            {"model": "qwen2.5:0.5b", "messages": [{"role": "user", "content": "header pro"}]},
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": "header pro"}],
+            },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off", "X-Pi-Mode": "pro"},
         )
         self.assertEqual(status, 200)
@@ -361,7 +394,10 @@ class ModeHttp(unittest.TestCase):
         _reset_fake()
         status, _headers, body = self._post(
             port,
-            {"model": "qwen2.5:1.5b", "messages": [{"role": "user", "content": "alias pro"}]},
+            {
+                "model": "qwen2.5:1.5b",
+                "messages": [{"role": "user", "content": "alias pro"}],
+            },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 200)
@@ -391,7 +427,10 @@ class ModeHttp(unittest.TestCase):
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
-            {"mode": "pro", "messages": [{"role": "user", "content": "need the larger tag"}]},
+            {
+                "mode": "pro",
+                "messages": [{"role": "user", "content": "need the larger tag"}],
+            },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 502)
@@ -410,7 +449,10 @@ class ModeHttp(unittest.TestCase):
         headers = {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"}
         status, _headers, body = self._post(
             port,
-            {"mode": "pro", "messages": [{"role": "user", "content": "pro waits for a slot"}]},
+            {
+                "mode": "pro",
+                "messages": [{"role": "user", "content": "pro waits for a slot"}],
+            },
             headers,
         )
         self.assertEqual(status, 503)
@@ -421,7 +463,10 @@ class ModeHttp(unittest.TestCase):
         self.assertTrue(runtime.gate.try_acquire())
         status, _headers, body = self._post(
             port,
-            {"mode": "flash", "messages": [{"role": "user", "content": "flash waits for a slot"}]},
+            {
+                "mode": "flash",
+                "messages": [{"role": "user", "content": "flash waits for a slot"}],
+            },
             headers,
         )
         self.assertEqual(status, 503)
@@ -441,7 +486,9 @@ class ModeHttp(unittest.TestCase):
                     port,
                     {
                         "mode": "pro",
-                        "messages": [{"role": "user", "content": "pro holds the only slot"}],
+                        "messages": [
+                            {"role": "user", "content": "pro holds the only slot"}
+                        ],
                         "stream": False,
                     },
                     headers,
@@ -483,7 +530,9 @@ class ModeHttp(unittest.TestCase):
             try:
                 payload = json.dumps(
                     {
-                        "messages": [{"role": "user", "content": "stream early please"}],
+                        "messages": [
+                            {"role": "user", "content": "stream early please"}
+                        ],
                         "stream": True,
                     }
                 ).encode()
@@ -534,7 +583,10 @@ class ModeHttp(unittest.TestCase):
         self.assertNotIn("error", holder, holder)
         self.assertTrue(entered.is_set())
         self.assertIn(b"hel", holder["all"])
-        self.assertLess(holder["all"].index(b'"pi_status": "answering"'), holder["all"].index(b"hel"))
+        self.assertLess(
+            holder["all"].index(b'"pi_status": "answering"'),
+            holder["all"].index(b"hel"),
+        )
         chats = _posts("/api/chat")
         self.assertEqual(chats[0]["model"], "qwen2.5:0.5b")
         self.assertEqual(chats[0]["keep_alive"], -1)
@@ -608,7 +660,9 @@ class ModeHttp(unittest.TestCase):
         self.assertTrue(done.wait(4), holder)
         self.assertNotIn("error", holder, holder)
         self.assertIn(b"hel", holder["all"])
-        self.assertLess(holder["all"].index(b'"pi_status": "loading"'), holder["all"].index(b"hel"))
+        self.assertLess(
+            holder["all"].index(b'"pi_status": "loading"'), holder["all"].index(b"hel")
+        )
         chats = _posts("/api/chat")
         self.assertEqual(chats[0]["model"], "qwen2.5:1.5b")
         self.assertEqual(_posts("/api/generate"), [])
@@ -632,9 +686,15 @@ class ModeHttp(unittest.TestCase):
         self.assertIn("[25,16,9,4,1,0,1,4,9,16,25]", content)
         self.assertNotIn("Desmos", content)
         self.assertEqual(self.search_calls, [])
-        chats = [item for item in ModeOllama.calls if item[0] == "POST" and item[1] == "/api/chat"]
+        chats = [
+            item
+            for item in ModeOllama.calls
+            if item[0] == "POST" and item[1] == "/api/chat"
+        ]
         self.assertEqual(chats, [])
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/health", timeout=5
+        ) as response:
             health = json.loads(response.read().decode())
         self.assertGreaterEqual(health["uptime_s"], 0)
         self.assertIn("brain", health["services"])
@@ -652,13 +712,19 @@ class ModeHttp(unittest.TestCase):
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off", "X-Pi-Mode": "flash"},
         )
         self.assertEqual(status, 200, body)
-        chats = [item[2] for item in ModeOllama.calls if item[0] == "POST" and item[1] == "/api/chat"]
+        chats = [
+            item[2]
+            for item in ModeOllama.calls
+            if item[0] == "POST" and item[1] == "/api/chat"
+        ]
         self.assertEqual(len(chats), 2)
         self.assertGreaterEqual(chats[0]["options"]["num_predict"], 448)
         note = chats[1]["messages"][-1]["content"]
         self.assertIn("from 1 to 10", note)
         self.assertIn("Stop at item 10", note)
-        self.assertTrue(all(row.get("role") != "assistant" for row in chats[1]["messages"]))
+        self.assertTrue(
+            all(row.get("role") != "assistant" for row in chats[1]["messages"])
+        )
         self.assertEqual(self.search_calls, [])
 
 

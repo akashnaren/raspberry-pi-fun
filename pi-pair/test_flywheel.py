@@ -1,4 +1,5 @@
 """Registry, queue bounds, and the pi3 train-then-delete cycle."""
+
 from __future__ import annotations
 
 import json
@@ -78,9 +79,15 @@ class Flywheel(unittest.TestCase):
         self.assertTrue(set(names).issubset(resolved))
 
     def test_heldout_is_not_in_the_canned_map(self):
-        table = json.loads((ROOT / "data" / "canned" / "canned_map.json").read_text(encoding="utf-8"))
+        table = json.loads(
+            (ROOT / "data" / "canned" / "canned_map.json").read_text(encoding="utf-8")
+        )
         keys = {normalize_key(key) for key in table}
-        for line in (ROOT / "data" / "seed" / "eval_heldout" / "eval_heldout.jsonl").read_text().splitlines():
+        for line in (
+            (ROOT / "data" / "seed" / "eval_heldout" / "eval_heldout.jsonl")
+            .read_text()
+            .splitlines()
+        ):
             row = json.loads(line)
             self.assertNotIn(normalize_key(row["input"]), keys)
 
@@ -100,12 +107,24 @@ class Flywheel(unittest.TestCase):
             os.environ.pop("PI_PAIR_CANNED", None)
 
     def test_weak_names_cannot_generate_even_if_flagged(self):
-        self.assertFalse(may_generate({"name": "pi2", "generative": True, "role": "brain"}))
-        self.assertFalse(may_generate({"name": "pi3", "generative": True, "role": "brain"}))
-        self.assertTrue(may_generate({"name": "pi4", "generative": True, "role": "brain"}))
+        self.assertFalse(
+            may_generate({"name": "pi2", "generative": True, "role": "brain"})
+        )
+        self.assertFalse(
+            may_generate({"name": "pi3", "generative": True, "role": "brain"})
+        )
+        self.assertTrue(
+            may_generate({"name": "pi4", "generative": True, "role": "brain"})
+        )
         with self.assertRaisesRegex(RuntimeError, "pi3 cannot be the brain"):
             chat_ollama(
-                {"name": "pi3", "host": "127.0.0.1", "port": 1, "generative": True, "role": "brain"},
+                {
+                    "name": "pi3",
+                    "host": "127.0.0.1",
+                    "port": 1,
+                    "generative": True,
+                    "role": "brain",
+                },
                 "qwen2.5:0.5b",
                 [{"role": "user", "content": "hi"}],
             )
@@ -113,7 +132,9 @@ class Flywheel(unittest.TestCase):
     def test_queue_is_bounded_and_brain_does_not_write(self):
         data = self._copy_data()
         for index in range(QUEUE_BOUND + 5):
-            append_row({"prompt": f"p{index}", "answer": "a"}, root=data, bound=QUEUE_BOUND)
+            append_row(
+                {"prompt": f"p{index}", "answer": "a"}, root=data, bound=QUEUE_BOUND
+            )
         lines = (data / "train" / "pending" / "queue.jsonl").read_text().splitlines()
         self.assertEqual(len(lines), QUEUE_BOUND)
         self.assertIn("p5", lines[0])
@@ -122,30 +143,46 @@ class Flywheel(unittest.TestCase):
         import pair.queue as queue
 
         original = queue.forward_row
-        queue.forward_row = lambda row, opener=None, timeout=1.5: seen.append(row) or True
+        queue.forward_row = (
+            lambda row, opener=None, timeout=1.5: seen.append(row) or True
+        )
         try:
-            note_exchange("secret prompt", "secret answer", chip="brain: pi4", peer="pi4", train=True)
+            note_exchange(
+                "secret prompt",
+                "secret answer",
+                chip="brain: pi4",
+                peer="pi4",
+                train=True,
+            )
         finally:
             queue.forward_row = original
         self.assertEqual(seen[0]["prompt"], "secret prompt")
-        self.assertNotIn("secret prompt", (data / "train" / "pending" / "queue.jsonl").read_text())
+        self.assertNotIn(
+            "secret prompt", (data / "train" / "pending" / "queue.jsonl").read_text()
+        )
 
     def test_post_train_grows_map_and_deletes_shards(self):
         data = self._copy_data()
         adapters = self.base / "adapters"
-        before = json.loads((data / "canned" / "canned_map.json").read_text(encoding="utf-8"))
+        before = json.loads(
+            (data / "canned" / "canned_map.json").read_text(encoding="utf-8")
+        )
         queue = data / "train" / "pending" / "queue.jsonl"
         queue.parent.mkdir(parents=True, exist_ok=True)
         rows = [
             {"prompt": "zzz flywheel novel", "answer": "Folded from the miss queue."},
             {"prompt": "heya mesh", "answer": "should not enter the map"},
         ]
-        queue.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        queue.write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
         result = post_train(root=data, adapters=adapters)
         self.assertEqual(result["added"], 1)
         self.assertGreaterEqual(result["rejected"], 1)
         self.assertEqual(result["rows_after"], result["rows_before"] + 1)
-        after = json.loads((data / "canned" / "canned_map.json").read_text(encoding="utf-8"))
+        after = json.loads(
+            (data / "canned" / "canned_map.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(after["zzz flywheel novel"], "Folded from the miss queue.")
         self.assertNotIn("heya mesh", after)
         self.assertEqual(len(before) + 1, len(after))
@@ -158,7 +195,9 @@ class Flywheel(unittest.TestCase):
         self.assertNotIn("zzz flywheel novel", tomb)
         self.assertNotIn("Folded from the miss queue.", tomb)
         self.assertNotIn("heya mesh", tomb)
-        manifest = json.loads((adapters / "active" / "manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads(
+            (adapters / "active" / "manifest.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(manifest["weights"], "pi4-ollama")
         self.assertEqual(manifest["added"], 1)
         self.assertFalse((adapters / "staging").exists())
@@ -212,7 +251,10 @@ class Flywheel(unittest.TestCase):
         apply_label("zzz labeled reject", "do not keep", "down", root=data)
         apply_label("zzz labeled up", "keep this", "up", root=data)
         pending = data / "train" / "pending" / "queue.jsonl"
-        rows = [json.loads(line) for line in pending.read_text(encoding="utf-8").splitlines()]
+        rows = [
+            json.loads(line)
+            for line in pending.read_text(encoding="utf-8").splitlines()
+        ]
         labeled = rows[0]
         self.assertEqual(labeled["prompt"], "zzz labeled novel")
         self.assertEqual(labeled["answer"], "the bad reply")
@@ -231,7 +273,9 @@ class Flywheel(unittest.TestCase):
         self.assertEqual(prepared_rows[0]["correction"], "the corrected sentence")
         result = post_train(root=data, adapters=adapters)
         self.assertGreaterEqual(result["added"], 2)
-        after = json.loads((data / "canned" / "canned_map.json").read_text(encoding="utf-8"))
+        after = json.loads(
+            (data / "canned" / "canned_map.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(after["zzz labeled novel"], "the corrected sentence")
         self.assertEqual(after["zzz labeled up"], "keep this")
         self.assertNotIn("zzz labeled reject", after)
@@ -244,7 +288,9 @@ class Flywheel(unittest.TestCase):
             root=data,
         )
         post_train(root=data, adapters=adapters)
-        replaced = json.loads((data / "canned" / "canned_map.json").read_text(encoding="utf-8"))
+        replaced = json.loads(
+            (data / "canned" / "canned_map.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(replaced["hi"], "Hello from the bench.")
         done = list((data / "train" / "done").glob("*.json"))
         blob = "\n".join(path.read_text(encoding="utf-8") for path in done)
@@ -257,17 +303,24 @@ class Flywheel(unittest.TestCase):
         data = self._copy_data()
         map_before = (data / "canned" / "canned_map.json").read_text(encoding="utf-8")
         apply_label("oldest prompt aaa", "a" * 40, "down", root=data)
-        apply_label("newest prompt bbb", "b" * 20, "up", "the corrected sentence", root=data)
+        apply_label(
+            "newest prompt bbb", "b" * 20, "up", "the corrected sentence", root=data
+        )
         pending = data / "train" / "pending" / "queue.jsonl"
         total = pending.stat().st_size
         os.environ["PI_PAIR_LABEL_HIGH_WATER_BYTES"] = str(total - 1)
-        apply_label("newest prompt bbb", "b" * 20, "up", "the corrected sentence", root=data)
+        apply_label(
+            "newest prompt bbb", "b" * 20, "up", "the corrected sentence", root=data
+        )
         text = pending.read_text(encoding="utf-8")
         self.assertNotIn("oldest prompt aaa", text)
         self.assertIn("newest prompt bbb", text)
         self.assertIn('"vote": "up"', text)
         self.assertIn("the corrected sentence", text)
-        self.assertEqual((data / "canned" / "canned_map.json").read_text(encoding="utf-8"), map_before)
+        self.assertEqual(
+            (data / "canned" / "canned_map.json").read_text(encoding="utf-8"),
+            map_before,
+        )
         self.assertLess(pending.stat().st_size, total)
 
     def test_brain_forwards_a_label_and_does_not_write_it(self):
@@ -277,7 +330,9 @@ class Flywheel(unittest.TestCase):
         import pair.queue as queue
 
         original = queue.forward_feedback
-        queue.forward_feedback = lambda payload, opener=None, timeout=1.5: seen.append(payload) or True
+        queue.forward_feedback = (
+            lambda payload, opener=None, timeout=1.5: seen.append(payload) or True
+        )
         try:
             result = apply_label("secret prompt", "secret answer", "up", root=data)
         finally:

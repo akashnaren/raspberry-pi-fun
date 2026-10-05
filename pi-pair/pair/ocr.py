@@ -8,6 +8,7 @@ Each of those binaries is limited to OCR_TIMEOUT seconds. On expiry the
 whole process group is killed so a child cannot keep running. At most
 OCR_SLOTS jobs run at once; the upload path turns the next one away.
 """
+
 from __future__ import annotations
 
 import os

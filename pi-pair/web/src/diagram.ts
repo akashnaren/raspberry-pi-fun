@@ -64,9 +64,13 @@ export function flowchartSvg(source: string): string | null {
     if (seen.has(id)) return;
     seen.add(id);
     order.push(id);
-    flow.edges.filter((edge) => edge.from === id).forEach((edge) => visit(edge.to));
+    flow.edges.filter((edge) => edge.from === id).forEach((edge) => {
+      visit(edge.to);
+    });
   };
-  flow.nodes.forEach((node) => visit(node.id));
+  flow.nodes.forEach((node) => {
+    visit(node.id);
+  });
   const width = 280;
   const row = 72;
   const height = 28 + order.length * row;

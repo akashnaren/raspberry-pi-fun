@@ -5,10 +5,16 @@
   "temperature_min": 0.6,
   "temperature_max": 0.8,
   "num_ctx": 2048,
+  "flash_num_ctx": 1536,
+  "pro_num_ctx": 2048,
   "ollama_num_parallel": 2,
   "keep_alive": -1,
   "num_thread": 4,
+  "flash_num_thread": 4,
+  "pro_num_thread": 4,
   "num_batch": 128,
+  "flash_num_batch": 128,
+  "pro_num_batch": 64,
   "search_note_chars": 640,
   "role": "pi4"
 }
