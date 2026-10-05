@@ -52,46 +52,178 @@ _SELF_HARM = re.compile(
     re.I,
 )
 
-# Actionable harm. A false positive refuses; a how-to must not reach the model.
-_HARMFUL = re.compile(
-    "|".join(
-        (
-            _SELF_HARM.pattern,
-            r"\b(?:pipe[\s-]?bombs?|pipebombs?|ieds?|detonators?|explosives?|"
-            r"grenades?|molotovs?|bombs?)\b",
-            r"\b(?:how to|make|build|manufacture)\b.{0,40}\b(?:gun|firearm|rifle|weapon)\b",
-            r"\b(?:malware|ransomware|keylogger|rootkit|credential theft)\b",
-            r"\b(?:hack(?:ing)? into|how to hack|steal (?:a |the |their |his |her )?"
-            r"(?:password|credentials)|phishing)\b",
-            r"\b(?:stalk(?:ing|ed|er)?|how to stalk)\b",
-            r"\b(?:track(?:ing)?|follow(?:ing)?|tail(?:ing)?|locat(?:e|ing))\b.{0,48}"
-            r"\b(?:someone|somebody|a person|people|him|her|them)\b",
-            r"\b(?:find|locate|track|get|obtain)\b.{0,40}"
-            r"\b(?:someone(?:'s|s)?|somebody(?:'s|s)?|their|his|her)\s+"
-            r"(?:home|house|address|location|whereabouts)\b",
-            r"\b(?:home|house|address|location|whereabouts)\s+of\s+"
-            r"(?:someone|somebody|a person|him|her|them)\b",
-            r"\b(?:kill|murder|assassinate|shoot|stab)\b.{0,32}"
-            r"\b(?:someone|a person|him|her|them|people)\b",
-            r"\b(?:meth(?:amphetamine)?|fentanyl|heroin|mdma)\b.{0,40}"
-            r"\b(?:synth\w*|cook|recipe|steps?|make)\b",
-            r"\b(?:synth\w*|cook)\b.{0,40}\b(?:meth(?:amphetamine)?|fentanyl|heroin|mdma)\b",
-            r"\b(?:csam|child[\s-]?porn(?:ography)?|child[\s-]?sexual)\b",
-            r"\b(?:child|children|kid|kids|minor|minors|underage)\b.{0,48}"
-            r"\b(?:porn(?:ography)?|sexual(?:ly)?|nude|nudes|exploitation)\b",
-            r"\b(?:porn(?:ography)?|nude|nudes|sexual)\b.{0,40}"
-            r"\b(?:child|children|kid|kids|minor|minors|underage)\b",
-            r"\b(?:obtain|download|get|find|buy)\b.{0,70}"
-            r"\b(?:csam|child[\s-]?porn(?:ography)?)\b",
-            r"\b(?:obtain|download|get|find|buy)\b.{0,50}"
-            r"\b(?:images?|videos?|photos?|pictures?|nudes?|content|material)\b.{0,40}"
-            r"\b(?:of\s+)?(?:a\s+|an\s+)?(?:minors?|children|kids|child|underage)\b",
-            r"\b(?:images?|videos?|photos?|pictures?|nudes?)\b.{0,30}"
-            r"\b(?:of\s+)?(?:minors?|children|a child|kids|underage)\b",
-            r"\b(?:poison(?:ing|s)?|ricin|cyanide|novichok|sarin|anthrax)\b",
-        )
+# Actionable harm. "how to", "make", and "where to get" have to sit next to the
+# harm. bomb, stalker, kids, track, poison, and address by themselves do not
+# match, so a film, a bath bomb, or a package still reaches the model.
+# Malware names and self-harm phrases still match on their own: a reply that
+# uses them is replaced before it is shown.
+_WEAPON = (
+    r"\b(?:pipe[\s-]?bombs?|pipebombs?|ieds?|detonators?|explosives?|"
+    r"molotov(?:\s+cocktails?)?|molotovs?)\b|"
+    r"\bgrenades?\b(?!\s+launchers?\b)|"
+    r"\b(?<!bath[\s-])bombs?\b"
+)
+_SKIP = r"(?:\s+(?!about\b|movies?\b|films?\b|halo\b)\w+){0,3}"
+_VERB = (
+    r"mak(?:e[sd]?|ing)|made|build(?:ing)?|manufactur\w*|construct(?:ing)?|"
+    r"assembl\w*|creat(?:e[sd]?|ing)|produc(?:e[sd]?|ing)|obtain(?:ing)?|"
+    r"download(?:ing)?|buy(?:ing)?|get(?:ting)?|diy"
+)
+_WHERE = (
+    r"where\s+(?:to|can\s+i|do\s+i|should\s+i|could\s+i)\s+"
+    r"(?:get|buy|find|obtain|download|order|make|build|acquire)"
+)
+_TARGET = (
+    r"someone|somebody|people|him|her|them|"
+    r"a\s+(?:person|girl|woman|man|stranger|child)|my\s+ex"
+)
+_PLACE = r"home|house|address|location|whereabouts|phone"
+_OWN = r"someone(?:'s|s)?|somebody(?:'s|s)?|a\s+person(?:'s|s)?|their"
+_DRUG = r"meth(?:amphetamine)?|fentanyl|heroin|mdma"
+_MAKE = (
+    r"synth\w*|cook(?:ing)?|recipes?|steps?|mak(?:e[sd]?|ing)|made|"
+    r"manufactur\w*|produc(?:e[sd]?|ing)"
+)
+_TOX = r"ricin|cyanide|novichok|sarin|anthrax"
+_ENVELOPE = (
+    r"(?!\s+(?:on|off|from|in)\s+(?:(?:an?|the|this|that)\s+)?"
+    r"(?:envelopes?|letters?|packages?|parcels?|mail)\b)"
+)
+_MINOR = r"child|children|kids?|minors?|underage"
+_SEXUAL = r"porn(?:ography)?|sexual(?:ly)?|nudes?|naked|exploitation"
+
+_HARM = (
+    _SELF_HARM,
+    re.compile(
+        r"\b(?:how[\s-]?to|" + _WHERE + r")\b" + _SKIP + r"\s+(?:" + _WEAPON + r")",
+        re.I,
     ),
-    re.I,
+    re.compile(r"\b(?:" + _VERB + r")\b" + _SKIP + r"\s+(?:" + _WEAPON + r")", re.I),
+    re.compile(
+        r"(?:" + _WEAPON + r")(?:\s+(?!about\b|movies?\b|films?\b)\w+){0,3}\s+"
+        r"(?:instructions?|tutorials?|recipes?|steps?|howto|how[\s-]?to|making|building)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:instructions?|tutorials?|recipes?)\s+(?:on|for)\b"
+        + _SKIP
+        + r"\s+(?:"
+        + _WEAPON
+        + r")",
+        re.I,
+    ),
+    re.compile(r"\bhow[\s-]?to\s+bomb\b", re.I),
+    re.compile(r"\b(?:homemade|home-made)\s+(?:pipe\s+)?bombs?\b", re.I),
+    re.compile(r"\bimprovised\s+explosive(?:\s+devices?)?\b", re.I),
+    re.compile(r"\bhow[\s-]?to\s+stalk\b", re.I),
+    re.compile(r"\bhow\s+(?:do|can|would|could|should)\s+i\s+stalk\b", re.I),
+    re.compile(
+        r"\bstalk(?:ing|ed)?\b(?:\s+\w+){0,3}\s+(?:" + _TARGET + r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:follow(?:ing)?|tail(?:ing)?)\b(?:\s+\w+){0,3}\s+(?:"
+        + _TARGET
+        + r")\b(?:\s+\w+){0,3}\s+(?:home|house)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\bhow[\s-]?to\s+(?:track|tail|monitor|spy\s+on|surveil\w*)\b"
+        r"(?:\s+\w+){0,4}\s+(?:" + _TARGET + r")\b",
+        re.I,
+    ),
+    re.compile(r"\bspy(?:ing)?\s+on\s+(?:" + _TARGET + r")\b", re.I),
+    re.compile(
+        r"\b(?:track(?:ing)?|locat(?:e|ing)|monitor(?:ing)?|find(?:ing)?|"
+        r"get(?:ting)?|obtain(?:ing)?)\b(?:\s+\w+){0,4}\s+(?:"
+        + _OWN
+        + r")\s+(?:"
+        + _PLACE
+        + r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:find|locate|track|get|obtain)(?:ing)?\b(?:\s+\w+){0,4}\s+"
+        r"(?:her|his)\s+(?:" + _PLACE + r")\b" + _ENVELOPE,
+        re.I,
+    ),
+    re.compile(
+        r"\bhow[\s-]?to\s+find(?:\s+out)?\s+where\s+"
+        r"(?:she|he|they|someone|somebody|a\s+person)\s+lives\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:" + _PLACE + r")\s+of\s+(?:someone|somebody|a\s+person|him|her|them)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:csam|child[\s-]?porn(?:ography)?|child[\s-]?sexual)\b", re.I),
+    re.compile(
+        r"\b(?:" + _MINOR + r")\b.{0,48}\b(?:" + _SEXUAL + r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:" + _SEXUAL + r")\b.{0,48}\b(?:" + _MINOR + r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:obtain|download|buy)\b.{0,60}\b(?:images?|videos?|photos?|pictures?|"
+        r"nudes?)\b.{0,40}\b(?:minors?|children|kids?|child|underage)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:" + _DRUG + r")\b(?:\s+\w+){0,5}\s+(?:" + _MAKE + r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:" + _MAKE + r")\b(?:\s+\w+){0,5}\s+(?:" + _DRUG + r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\bwhere\s+(?:to|can\s+i|do\s+i|should\s+i)\s+"
+        r"(?:get|buy|obtain|find|download|order)\b(?:\s+\w+){0,3}\s+(?:"
+        + _DRUG
+        + r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\bhow[\s-]?to\s+(?:make|cook|synth\w*|manufactur\w*|produc(?:e|ing)|"
+        r"obtain|get|buy)\b(?:\s+\w+){0,3}\s+(?:" + _DRUG + r")\b",
+        re.I,
+    ),
+    re.compile(r"\bhow[\s-]?to\s+poison\b", re.I),
+    re.compile(
+        r"\bpoison(?:ing)?\b(?!\s+ivy\b)(?:\s+\w+){0,4}\s+"
+        r"(?:someone|somebody|a\s+person|him|her|them|people)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:mak(?:e[sd]?|ing)|made|produc(?:e[sd]?|ing)|synth\w*|"
+        r"cook(?:ing)?|manufactur\w*)\b(?:\s+\w+){0,4}\s+poisons?\b(?!\s+ivy\b)",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:" + _TOX + r")\b(?:\s+\w+){0,5}\s+(?:" + _MAKE + r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:synth\w*|cook(?:ing)?|mak(?:e[sd]?|ing)|made|manufactur\w*|"
+        r"produc(?:e[sd]?|ing))\b(?:\s+\w+){0,5}\s+(?:" + _TOX + r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:malware|ransomware|keylogger|rootkit|credential theft)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:hack(?:ing)? into|how to hack|steal (?:a |the |their |his |her )?"
+        r"(?:password|credentials)|phishing)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:kill|murder|assassinate|shoot|stab)\b.{0,32}"
+        r"\b(?:someone|a person|him|her|them|people)\b",
+        re.I,
+    ),
 )
 
 _LIST_SHAPE = re.compile(
@@ -175,8 +307,14 @@ def _line(prompt: str) -> str:
 
 
 def is_harmful(prompt: str) -> bool:
-    """True for self-harm, weapons, malware, stalking, drug synthesis, or CSAM."""
-    return bool(_HARMFUL.search(prompt or ""))
+    """True for actionable harm, not a bare bomb, stalker, child, or address.
+
+    Self-harm and malware names still match when they stand alone, so a reply
+    that uses them is replaced. The router calls this before canned text,
+    search, and generation.
+    """
+    text = _fold(prompt or "")
+    return any(pattern.search(text) for pattern in _HARM)
 
 
 def refusal_for(text: str) -> str:
