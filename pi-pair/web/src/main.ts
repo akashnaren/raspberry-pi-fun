@@ -147,6 +147,10 @@ function shownError(err: unknown): string {
   return "The reply did not come back. Try again.";
 }
 
+function visibleReply(text: string): boolean {
+  return text.trim().length > 0;
+}
+
 function fillModels(rows: { models?: string[] }[]): void {
   const select = document.getElementById("modelSel") as HTMLSelectElement | null;
   if (!select) return;
@@ -392,9 +396,11 @@ function addFinishedBot(item: Turn, index: number): HTMLElement {
   row.dataset.index = String(index);
   const done = trail(item.stages, item.search || null);
   if (done) row.appendChild(done);
-  const body = el("div", "body");
-  setBodyContent(body, item.content, true);
-  row.appendChild(body);
+  if (visibleReply(item.content)) {
+    const body = el("div", "body");
+    setBodyContent(body, item.content, true);
+    row.appendChild(body);
+  }
   if (item.search) showSearch(row, item.search.status, item.search.sources);
   const asked = promptBefore(index);
   if (asked) attachLabel(row, asked, item.content);
@@ -443,9 +449,17 @@ function addLiveBot(): LiveTurn {
   stagesEl.appendChild(viewport);
   const body = el("div", "body");
   row.appendChild(stagesEl);
-  row.appendChild(body);
   byId("log").appendChild(row);
   row.scrollIntoView({ block: "end" });
+
+  // Keep the text bubble off the page until the first reply token.
+  function revealReply(text: string): void {
+    if (!visibleReply(text)) return;
+    const first = !body.dataset.filled;
+    body.dataset.filled = "1";
+    if (first) body.classList.add("arrived");
+    if (!body.isConnected) row.appendChild(body);
+  }
 
   let shown: StageName | null = null;
   const queued: StageName[] = [];
@@ -573,19 +587,19 @@ function addLiveBot(): LiveTurn {
       row.scrollIntoView({ block: "end" });
     },
     setText(text) {
-      const first = !body.dataset.filled;
+      if (!visibleReply(text)) return;
       body.classList.remove("md");
       body.textContent = text;
-      if (text) {
-        body.dataset.filled = "1";
-        if (first) body.classList.add("arrived");
-      }
+      revealReply(text);
       yieldIfAnswer();
       row.scrollIntoView({ block: "end" });
     },
     finish(text, failed, prompt, effort, search, stages) {
       row.classList.remove("streaming");
-      setBodyContent(body, text, !failed);
+      if (visibleReply(text)) {
+        setBodyContent(body, text, !failed);
+        revealReply(text);
+      }
       if (!failed && search) showSearch(row, search.status, search.sources);
       if (prompt && !failed) attachLabel(row, prompt, text);
       if (!failed) showEffort(row, effort);
@@ -603,7 +617,7 @@ function addLiveBot(): LiveTurn {
 }
 
 function keepPartial(live: LiveTurn | null, text: string, prompt: string, effort: string, search: SearchInfo | null, stages: StageName[]): void {
-  if (text) {
+  if (visibleReply(text)) {
     turns.push({ role: "assistant", content: text, effort, search, stages });
     paint();
     return;
@@ -732,6 +746,10 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       const answer = payload.choices?.[0]?.message?.content || "";
       const search = searchFrom(payload, searchNow());
       const doneStages = Array.isArray(payload.pi_stages) ? payload.pi_stages : stages;
+      if (!visibleReply(answer)) {
+        live.root.remove();
+        return;
+      }
       turns.push({
         role: "assistant",
         content: answer,
@@ -814,7 +832,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       keepPartial(live, textAccum, text, streamedEffort || effort, searchNow(), stages);
       return;
     }
-    if (streamErr || (!response.ok && !textAccum)) {
+    if (streamErr || (!response.ok && !visibleReply(textAccum))) {
       const msg = shownError(streamErr || "HTTP " + response.status);
       live.setText(msg);
       live.markErr();
@@ -825,6 +843,10 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
         void sendText(text, true);
       };
       live.root.appendChild(retry);
+      return;
+    }
+    if (!visibleReply(textAccum)) {
+      live.root.remove();
       return;
     }
     const search = searchNow();
