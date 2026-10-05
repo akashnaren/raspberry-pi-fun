@@ -1,7 +1,8 @@
-"""Load Pro into Ollama at brain startup. This does not pull the tag.
+"""Keep Flash and Pro resident. This does not pull either tag.
 
-keep_alive stays the pi4 knob (-1 by default). A missing tag is logged and
-the process still serves Flash.
+Startup warms both. keep_alive stays the pi4 knob (-1 by default) on those
+warms. If Ollama drops a tag, the same warm runs again. A chat does not
+load a tag that /api/ps does not already list.
 """
 
 from __future__ import annotations
@@ -23,14 +24,26 @@ RESIDENT_TIMEOUT_S = 0.6
 REWARM_PAUSE_S = 30.0
 
 
+def resident_tags() -> tuple[str, str]:
+    """Flash and Pro tags that must stay loaded."""
+    table = mode_table()
+    flash = str(table.get("flash") or "").strip()
+    pro = str(table.get("pro") or "").strip()
+    return flash, pro
+
+
 def pro_preload_payload(model: str | None = None) -> dict:
-    """A one-token generate that leaves Pro resident. keep_alive is never forced to 0."""
-    tag = (model or mode_table().get("pro") or "").strip()
+    """A one-token generate that leaves this tag resident. keep_alive is never 0."""
+    tag = (model or "").strip()
+    if not tag:
+        _flash, tag = resident_tags()
     if not tag:
         from pair.modes import PRO_MODEL
 
         tag = PRO_MODEL
     alive = keep_alive()
+    if alive == 0:
+        alive = -1
     return {
         "model": tag,
         "prompt": " ",
@@ -69,7 +82,7 @@ def resident_models(host: str, port: int) -> list[str] | None:
 
 
 def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
-    """Background /api/generate so this turn can answer on Flash."""
+    """Background /api/generate. The chat itself does not load the tag."""
     payload = pro_preload_payload(model)
 
     def run() -> None:
@@ -95,25 +108,24 @@ def _local_endpoint() -> tuple[str, int]:
 
 
 def rewarm_pro_if_evicted() -> None:
-    """Health-ping /api/ps and reload Pro when Ollama dropped it."""
+    """Reload Flash or Pro when /api/ps no longer lists that tag."""
     if not on_pi4():
         return
     host, port = _local_endpoint()
     resident = resident_models(host, port)
     if resident is None:
         return
-    tag = str(pro_preload_payload().get("model") or "")
-    if not tag or tag in resident:
-        return
-    warm_pro_model()
+    for tag in resident_tags():
+        if tag and tag not in resident:
+            warm_model(tag)
 
 
-def warm_pro_model() -> None:
-    """POST /api/generate for Pro. No-op off the brain. Failures are logged."""
+def warm_model(model: str | None = None) -> None:
+    """POST /api/generate for one resident tag. No-op off the brain."""
     if not on_pi4():
         return
-    payload = pro_preload_payload()
-    if payload.get("keep_alive") == 0:
+    payload = pro_preload_payload(model)
+    if not payload.get("model") or payload.get("keep_alive") == 0:
         return
     request = urllib.request.Request(
         ollama_base().rstrip("/") + "/api/generate",
@@ -123,13 +135,19 @@ def warm_pro_model() -> None:
     try:
         with open_json_request(request, PRELOAD_TIMEOUT_S) as response:
             response.read()
-        print(f"pro preload: {payload['model']}", flush=True)
+        print(f"model preload: {payload['model']}", flush=True)
     except Exception as exc:
-        print(f"pro preload skipped: {exc}", flush=True)
+        print(f"model preload skipped: {exc}", flush=True)
+
+
+def warm_pro_model() -> None:
+    """POST /api/generate for Pro. No-op off the brain. Failures are logged."""
+    _flash, pro = resident_tags()
+    warm_model(pro)
 
 
 def start_pro_warm() -> threading.Thread:
-    """Daemon preload so listen is not blocked on the Pro weights."""
+    """Daemon preload so listen is not blocked on either tag."""
 
     def run() -> None:
         while True:

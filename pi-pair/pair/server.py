@@ -43,7 +43,7 @@ from pair.chat import (
 )
 from pair.config import STATIC_DIR
 from pair.docfit import fit_outbound
-from pair.errors import BUSY, WAITING, friendly_body, friendly_error
+from pair.errors import BUSY, MODEL_MISSING, WAITING, friendly_body, friendly_error
 from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
@@ -489,11 +489,14 @@ def _claim_wait(slot: dict) -> bool:
 def health_document() -> dict:
     peers = snapshot_peers()
     up = sum(1 for peer in peers if isinstance(peer, dict) and peer.get("ok"))
+    table = mode_table()
+    pro_model = str(table.get("pro") or "").strip()
     return {
         "ok": True,
         "model": runtime.MODEL,
+        "pro_model": pro_model,
         "mode": "flash",
-        "modes": mode_table(),
+        "modes": table,
         "peers_up": up,
         "peers": peers,
         "slots": runtime.INFER_SLOTS,
@@ -1033,8 +1036,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(str(error))
             return
-        if route_name == "pro" and kind != "llamacpp":
-            if not tag_ready(peer.get("models") or [], "pro", model):
+        if kind != "llamacpp":
+            if route_name == "pro" and not tag_ready(
+                peer.get("models") or [], "pro", model
+            ):
                 self._error(pull_needed(model))
                 return
             host = str(peer.get("host") or "127.0.0.1")
@@ -1043,12 +1048,19 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 peer_port = 0
             resident = resident_models(host, peer_port) if peer_port else None
+            # A chat against a tag /api/ps does not list would cold-load it.
+            # Warm that tag in the background. Use Flash only when it is already resident.
             if resident is not None and model not in resident:
                 schedule_pro_warm(host, peer_port, model)
-                model = mode_table().get("flash") or model
-                used = model
-                route_name = "flash"
-                self.pi_route = "flash"
+                flash_tag = str(mode_table().get("flash") or "")
+                if flash_tag and flash_tag in resident and model != flash_tag:
+                    model = flash_tag
+                    used = model
+                    route_name = "flash"
+                    self.pi_route = "flash"
+                else:
+                    self._error(MODEL_MISSING)
+                    return
         # A finished map hit already returned. A short list still needs one
         # Flash continuation, and that continuation takes a generation slot.
         finish_list = bool(grounded) and needs_exact_n(prompt, grounded)

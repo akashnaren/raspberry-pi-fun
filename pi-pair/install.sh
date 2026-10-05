@@ -148,6 +148,30 @@ else
     echo "Pro is ${OLLAMA_PRO_MODEL}. This script does not pull it. Pro stays on disk for measurement."
     echo "A Flash request does not run ollama pull. If the tag is missing, pull it on pi4 only:"
     echo "  ollama pull ${OLLAMA_PRO_MODEL}"
+    echo "Preloading ${OLLAMA_MODEL_PRIMARY} with keep_alive -1."
+    if command -v curl >/dev/null 2>&1; then
+      flash_body="$(python3 - "$OLLAMA_MODEL_PRIMARY" <<'PY'
+import json
+import sys
+
+print(json.dumps(
+    {
+        "model": sys.argv[1],
+        "prompt": " ",
+        "stream": False,
+        "keep_alive":-1,
+        "think": False,
+        "options": {"num_predict": 1},
+    },
+    separators=(",", ":"),
+))
+PY
+)"
+      curl -fsS http://127.0.0.1:11434/api/generate \
+        -H "content-type: application/json" \
+        -d "$flash_body" \
+        >/dev/null || echo "WARN: Flash preload failed. The server retries it on startup."
+    fi
     if ollama show "$OLLAMA_PRO_MODEL" >/dev/null 2>&1; then
       echo "Preloading ${OLLAMA_PRO_MODEL} with keep_alive -1."
       if command -v curl >/dev/null 2>&1; then

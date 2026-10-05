@@ -366,6 +366,11 @@ def openapi_document() -> dict:
                             "type": "string",
                             "description": "Fleet checkpoint tag.",
                         },
+                        "pro_model": {
+                            "type": "string",
+                            "description": "Pro tag. Both tags stay resident.",
+                            "example": "qwen3:1.7b",
+                        },
                         "public_model": {
                             "type": "string",
                             "example": "flash",

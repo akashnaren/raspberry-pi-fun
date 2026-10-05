@@ -58,9 +58,12 @@ class ModeOllama(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         type(self).calls.append(("POST", path, payload))
         if path == "/api/generate":
-            if not type(self).sticky:
-                name = payload.get("model")
+            name = payload.get("model")
+            alive = payload.get("keep_alive")
+            if alive == 0 and not type(self).sticky:
                 type(self).loaded = [item for item in type(self).loaded if item != name]
+            elif name and name not in type(self).loaded:
+                type(self).loaded = [*type(self).loaded, name]
             self._json(b"{}")
             return
         if path != "/api/chat":
@@ -138,8 +141,8 @@ class ModeRules(unittest.TestCase):
         self.assertFalse(tag_ready([], "pro", "qwen3:1.7b"))
         self.assertIn("ollama pull qwen3:1.7b", pull_needed("qwen3:1.7b"))
         self.assertIn("does not pull", pull_needed("qwen3:1.7b"))
-        (flash,) = protected_tags()
-        self.assertEqual(flash, "qwen3:0.6b")
+        self.assertEqual(protected_tags(), ("qwen3:0.6b", "qwen3:1.7b"))
+        flash = "qwen3:0.6b"
         running = [flash]
         self.assertEqual(eviction_targets(running, "qwen3:1.7b"), [])
         self.assertEqual(eviction_targets([flash, "qwen3:1.7b"], flash), [])
@@ -716,6 +719,41 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(len(warm), 1)
         self.assertEqual(warm[0]["model"], "qwen3:1.7b")
         self.assertEqual(warm[0]["keep_alive"], -1)
+        self.assertIn("qwen3:0.6b", ModeOllama.loaded)
+        self.assertIn("qwen3:1.7b", ModeOllama.loaded)
+
+    def test_health_reports_pro_model(self):
+        port = self._boot()
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/health", timeout=5
+        ) as response:
+            body = json.loads(response.read().decode())
+        self.assertEqual(body["pro_model"], "qwen3:1.7b")
+        self.assertIsNotNone(body["pro_model"])
+        self.assertNotIn("Loading Pro", json.dumps(body))
+
+    def test_a_request_does_not_cold_load(self):
+        port = self._boot()
+        ModeOllama.loaded = []
+        ModeOllama.calls = []
+        status, _headers, body = self._post(
+            port,
+            {"messages": [{"role": "user", "content": "resident flash please"}]},
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(status, 502, body)
+        self.assertEqual(body["error"], "The larger model is not ready yet.")
+        self.assertNotIn("Loading Pro", json.dumps(body))
+        self.assertNotIn("loading", json.dumps(body))
+        self.assertEqual(_posts("/api/chat"), [])
+        deadline = time.time() + 2
+        while time.time() < deadline and not _posts("/api/generate"):
+            time.sleep(0.02)
+        warm = _posts("/api/generate")
+        self.assertEqual(len(warm), 1)
+        self.assertEqual(warm[0]["model"], "qwen3:0.6b")
+        self.assertEqual(warm[0]["keep_alive"], -1)
+        self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])
 
     def test_unknown_residency_does_not_drop_pro(self):
         port = self._boot()

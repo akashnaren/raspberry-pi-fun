@@ -668,6 +668,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(health_body["mode"], "flash")
         self.assertEqual(health_body["modes"]["flash"], "qwen3:0.6b")
         self.assertEqual(health_body["modes"]["pro"], "qwen3:1.7b")
+        self.assertEqual(health_body["pro_model"], "qwen3:1.7b")
+        self.assertIsNotNone(health_body["pro_model"])
         flash_tip = f"{health_body['modes']['flash']}, the fast resident model."
         pro_tip = f"{health_body['modes']['pro']}, loaded when the question needs it."
         self.assertIn(flash_tip, html)

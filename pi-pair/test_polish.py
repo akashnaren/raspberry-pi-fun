@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -31,7 +33,7 @@ from pair.lists import (  # noqa: E402
     list_count,
     merge_list,
 )
-from pair.preload import pro_preload_payload  # noqa: E402
+from pair.preload import pro_preload_payload, rewarm_pro_if_evicted  # noqa: E402
 
 
 class Charts(unittest.TestCase):
@@ -351,6 +353,40 @@ class Preload(unittest.TestCase):
             if "ollama pull" in line and not line.strip().startswith("echo")
         ]
         self.assertTrue(all("1.5b" not in line for line in executed))
+
+    def test_an_evicted_tag_is_warmed_again(self):
+        seen: list[dict] = []
+
+        class _Resp:
+            def read(self) -> bytes:
+                return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def opener(request, timeout):
+            del timeout
+            seen.append(json.loads(request.data.decode()))
+            return _Resp()
+
+        env = {"PI_PAIR_ROLE": "brain"}
+        with patch.dict(os.environ, env, clear=False):
+            with patch("pair.preload.resident_models", return_value=[]):
+                with patch("pair.preload.open_json_request", opener):
+                    rewarm_pro_if_evicted()
+        models = [item["model"] for item in seen]
+        self.assertEqual(models, ["qwen3:0.6b", "qwen3:1.7b"])
+        self.assertTrue(all(item["keep_alive"] == -1 for item in seen))
+        seen.clear()
+        with patch.dict(os.environ, env, clear=False):
+            with patch("pair.preload.resident_models", return_value=["qwen3:0.6b"]):
+                with patch("pair.preload.open_json_request", opener):
+                    rewarm_pro_if_evicted()
+        self.assertEqual([item["model"] for item in seen], ["qwen3:1.7b"])
+        self.assertEqual(seen[0]["keep_alive"], -1)
 
 
 class VisualLists(unittest.TestCase):

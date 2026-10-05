@@ -1,25 +1,24 @@
-"""Flash stays resident. Pro is an extra load, not a swap.
+"""Flash and Pro both stay resident. Neither tag is unloaded for the other.
 
-OLLAMA_MAX_LOADED_MODELS is at least 2, so Flash and an opted-in Pro fit
-together. This module does not call Ollama. A keep_alive of 0 for a tag
-that is not loaded can make Ollama fetch it, and a Flash request must not
-name Pro.
+OLLAMA_MAX_LOADED_MODELS is at least 2, so both tags fit together. This
+module does not call Ollama. A keep_alive of 0 can make Ollama drop a tag,
+and a chat does not send that.
 """
 
 from __future__ import annotations
 
 import re
 
-from pair.modes import FLASH, mode_table
+from pair.modes import FLASH, PRO, mode_table
 
 MIN_LOADED_MODELS = 2
 _CAP = re.compile(r"OLLAMA_MAX_LOADED_MODELS=(\d+)")
 
 
 def protected_tags(knobs: dict | None = None) -> tuple[str, ...]:
-    """Tags a mode switch must not unload. Flash only."""
+    """Tags a mode switch must not unload. Flash and Pro."""
     table = mode_table(knobs)
-    return (table[FLASH],)
+    return (table[FLASH], table[PRO])
 
 
 def eviction_targets(
@@ -27,9 +26,8 @@ def eviction_targets(
 ) -> list[str]:
     """Names this process would unload before `requested` runs.
 
-    Always empty. Flash is never eligible, and switching back to Flash does
-    not evict Pro. Ollama keeps both while the loaded-model cap is at least
-    MIN_LOADED_MODELS.
+    Always empty. Flash and Pro are both protected. Ollama keeps both while
+    the loaded-model cap is at least MIN_LOADED_MODELS.
     """
     del running, requested, knobs
     return []
