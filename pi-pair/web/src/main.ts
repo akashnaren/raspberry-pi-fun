@@ -1749,9 +1749,112 @@ function setThinking(next: string): void {
   persistSettings();
 }
 
+const MODEL_DIFF =
+  "Flash is qwen2.5:0.5b and stays loaded. Pro is qwen2.5:1.5b and loads for harder questions. Auto picks Flash or Pro from the question.";
+
+let tipAnchor: HTMLElement | null = null;
+
+function hideModelTip(): void {
+  const tip = document.getElementById("modelTip");
+  if (tip) tip.hidden = true;
+  tipAnchor = null;
+}
+
+function placeModelTip(anchor: HTMLElement, tip: HTMLElement): void {
+  const rect = anchor.getBoundingClientRect
+    ? anchor.getBoundingClientRect()
+    : { left: 16, top: 40, bottom: 56, right: 32, width: 16, height: 16 };
+  const viewW = window.innerWidth || 800;
+  const viewH = window.innerHeight || 800;
+  const margin = 8;
+  const width = Math.min(240, Math.max(160, viewW - margin * 2));
+  tip.style.width = width + "px";
+  const height = tip.offsetHeight || 72;
+  const menu = document.getElementById("modePop");
+  const panel = document.getElementById("ioPanel");
+  const menuOpen = !!menu && !menu.hidden;
+  const panelOpen = !!panel && panel.classList.contains("open");
+  let left = rect.left;
+  let top = rect.bottom + margin;
+  if (menuOpen && menu) {
+    const menuRect = menu.getBoundingClientRect();
+    const right = menuRect.right + margin;
+    const leftSide = menuRect.left - width - margin;
+    if (right + width <= viewW - margin) {
+      left = right;
+      top = menuRect.bottom - height - 6;
+    } else if (leftSide >= margin) {
+      left = leftSide;
+      top = menuRect.bottom - height - 6;
+    } else {
+      left = margin;
+      top = menuRect.top - height - margin;
+      if (top < margin) top = menuRect.bottom + margin;
+    }
+    if (top < margin) top = margin;
+  } else if (panelOpen && panel) {
+    const panelRect = panel.getBoundingClientRect();
+    const block = anchor.closest(".set-block");
+    const blockRect = block && block.getBoundingClientRect ? block.getBoundingClientRect() : rect;
+    const spots = [
+      {
+        left: panelRect.left - width - margin,
+        top: Math.min(Math.max(margin, rect.top - 8), viewH - height - margin),
+      },
+      { left: Math.max(margin, blockRect.left), top: blockRect.top - height - 12 },
+      { left: Math.max(margin, panelRect.left + margin), top: viewH - height - margin },
+    ];
+    const coversControl = (spot: { left: number; top: number }) => {
+      const box = {
+        left: spot.left,
+        top: spot.top,
+        right: spot.left + width,
+        bottom: spot.top + height,
+      };
+      const nodes = document.querySelectorAll(
+        "#ioPanel [data-mode], #ioPanel [data-think], #ioPanel [data-theme-choice]",
+      );
+      for (const node of nodes) {
+        const row = node.getBoundingClientRect();
+        if (row.width < 1) continue;
+        const hit = !(box.right <= row.left || box.left >= row.right || box.bottom <= row.top || box.top >= row.bottom);
+        if (hit) return true;
+      }
+      return false;
+    };
+    const spot = spots.find((item) => item.left >= margin && item.top >= margin && !coversControl(item)) || spots[0];
+    left = spot.left;
+    top = spot.top;
+  } else {
+    const row = anchor.closest(".seg");
+    const rowRect = row && row.getBoundingClientRect ? row.getBoundingClientRect() : rect;
+    left = rowRect.left;
+    top = rowRect.top - height - 12;
+    if (top < margin) top = rowRect.bottom + 12;
+  }
+  left = Math.max(margin, Math.min(left, viewW - width - margin));
+  top = Math.max(margin, Math.min(top, viewH - height - margin));
+  tip.style.left = left + "px";
+  tip.style.top = top + "px";
+}
+
+function toggleModelTip(anchor: HTMLElement): void {
+  const tip = document.getElementById("modelTip");
+  if (!tip) return;
+  if (!tip.hidden && tipAnchor === anchor) {
+    hideModelTip();
+    return;
+  }
+  tipAnchor = anchor;
+  tip.textContent = MODEL_DIFF;
+  tip.hidden = false;
+  placeModelTip(anchor, tip);
+}
+
 function setModelMode(next: string): void {
   modelMode = next === "flash" || next === "pro" ? next : "auto";
   paintModelMode();
+  hideModelTip();
   const menu = document.getElementById("modePop");
   if (menu) menu.hidden = true;
   byId("modeBtn").setAttribute("aria-expanded", "false");
@@ -1768,8 +1871,25 @@ function setTheme(next: string): void {
 document.querySelectorAll("[data-think]").forEach((btn) => {
   (btn as HTMLButtonElement).onclick = () => setThinking(btn.getAttribute("data-think") || "medium");
 });
+function openModelInfo(event: Event, info: HTMLElement): void {
+  const marked = event as Event & { piModelInfo?: boolean };
+  event.preventDefault();
+  event.stopPropagation();
+  if (marked.piModelInfo) return;
+  marked.piModelInfo = true;
+  toggleModelTip(info);
+}
+
+document.querySelectorAll("[data-model-info]").forEach((node) => {
+  node.addEventListener("click", (event) => openModelInfo(event, node as HTMLElement));
+});
 document.querySelectorAll("[data-mode]").forEach((btn) => {
   (btn as HTMLButtonElement).onclick = (event) => {
+    const info = (event.target as HTMLElement | null)?.closest?.("[data-model-info]");
+    if (info) {
+      openModelInfo(event, info as HTMLElement);
+      return;
+    }
     event.stopPropagation();
     setModelMode(btn.getAttribute("data-mode") || "auto");
   };
@@ -1785,6 +1905,7 @@ byId("modeBtn").onclick = (event) => {
   byId("modeBtn").setAttribute("aria-expanded", open ? "true" : "false");
 };
 document.addEventListener("click", () => {
+  hideModelTip();
   const menu = document.getElementById("modePop");
   if (!menu || menu.hidden) return;
   menu.hidden = true;

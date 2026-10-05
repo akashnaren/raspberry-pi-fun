@@ -49,25 +49,25 @@ try {
               <div class="mode-pop" id="modePop" role="menu" hidden>
                 <button type="button" class="mode-opt on" data-mode="auto" role="menuitemradio" aria-checked="true" title="Routes Flash or Pro from the question." aria-label="Auto. Routes Flash or Pro from the question.">
                   <span>Auto</span>
-                  <span class="info-dot" aria-hidden="true">ⓘ</span>
+                  <span class="info-dot" data-model-info aria-label="Flash and Pro differences">ⓘ</span>
                   <span class="mode-mark" aria-hidden="true">✓</span>
                 </button>
                 <button type="button" class="mode-opt" data-mode="flash" role="menuitemradio" aria-checked="false" title="qwen2.5:0.5b, the fast resident model." aria-label="Flash. qwen2.5:0.5b, the fast resident model.">
                   <span>Flash</span>
-                  <span class="info-dot" aria-hidden="true">ⓘ</span>
+                  <span class="info-dot" data-model-info aria-label="Flash and Pro differences">ⓘ</span>
                   <span class="mode-mark" aria-hidden="true">✓</span>
                 </button>
                 <button type="button" class="mode-opt" data-mode="pro" role="menuitemradio" aria-checked="false" title="qwen2.5:1.5b, loaded when the question needs it." aria-label="Pro. qwen2.5:1.5b, loaded when the question needs it.">
                   <span>Pro</span>
-                  <span class="info-dot" aria-hidden="true">ⓘ</span>
+                  <span class="info-dot" data-model-info aria-label="Flash and Pro differences">ⓘ</span>
                   <span class="mode-mark" aria-hidden="true">✓</span>
                 </button>
               </div>
             </div>
             <div class="think-set" role="group" aria-label="Thinking">
-              <button type="button" class="think-btn" data-think="low" title="Shorter answers, lower temperature.">Low <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-              <button type="button" class="think-btn on" data-think="medium" title="Balanced length and temperature.">Medium <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-              <button type="button" class="think-btn" data-think="high" title="Longer answers, higher temperature.">High <span class="info-dot" aria-hidden="true">ⓘ</span></button>
+              <button type="button" class="think-btn" data-think="low" title="Shorter answers, lower temperature.">Low</button>
+              <button type="button" class="think-btn on" data-think="medium" title="Balanced length and temperature.">Medium</button>
+              <button type="button" class="think-btn" data-think="high" title="Longer answers, higher temperature.">High</button>
             </div>
           </div>
           <div class="composer-tools flex items-center">
@@ -113,17 +113,17 @@ try {
     <section class="set-block">
       <h3>Model</h3>
       <div class="seg" role="group" aria-label="Model default">
-        <button type="button" class="seg-btn on" data-mode="auto" title="Routes Flash or Pro from the question.">Auto <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn" data-mode="flash" title="qwen2.5:0.5b, the fast resident model.">Flash <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn" data-mode="pro" title="qwen2.5:1.5b, loaded when the question needs it.">Pro <span class="info-dot" aria-hidden="true">ⓘ</span></button>
+        <button type="button" class="seg-btn on" data-mode="auto" title="Routes Flash or Pro from the question.">Auto <span class="info-dot" data-model-info aria-label="Flash and Pro differences">ⓘ</span></button>
+        <button type="button" class="seg-btn" data-mode="flash" title="qwen2.5:0.5b, the fast resident model.">Flash <span class="info-dot" data-model-info aria-label="Flash and Pro differences">ⓘ</span></button>
+        <button type="button" class="seg-btn" data-mode="pro" title="qwen2.5:1.5b, loaded when the question needs it.">Pro <span class="info-dot" data-model-info aria-label="Flash and Pro differences">ⓘ</span></button>
       </div>
     </section>
     <section class="set-block">
       <h3>Thinking</h3>
       <div class="seg" role="group" aria-label="Thinking effort">
-        <button type="button" class="seg-btn" data-think="low" title="Shorter answers, lower temperature.">Low <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn on" data-think="medium" title="Balanced length and temperature.">Medium <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn" data-think="high" title="Longer answers, higher temperature.">High <span class="info-dot" aria-hidden="true">ⓘ</span></button>
+        <button type="button" class="seg-btn" data-think="low" title="Shorter answers, lower temperature.">Low</button>
+        <button type="button" class="seg-btn on" data-think="medium" title="Balanced length and temperature.">Medium</button>
+        <button type="button" class="seg-btn" data-think="high" title="Longer answers, higher temperature.">High</button>
       </div>
     </section>
     <section class="set-block" id="serviceBlock">
@@ -155,5 +155,6 @@ try {
     </div>
   </div>
 </aside>
+<div id="modelTip" class="model-tip" role="tooltip" hidden></div>
 <script>window.MESH_DEFAULT_MODEL="__MODEL__";</script>
 <script src="/static/mesh.js"></script></body></html>

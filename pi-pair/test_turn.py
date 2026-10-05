@@ -671,6 +671,99 @@ class TurnHttp(unittest.TestCase):
         self.assertIn(CHART_NUDGE, follow)
         self.assertFalse(ScriptOllama.seen[0].get("stream"))
 
+    def test_top_5_cars_replaces_a_canned_refusal(self):
+        previous = pair_server.cards_for_answer
+        pair_server.cards_for_answer = lambda *_args, **_kwargs: []
+        cars = "\n".join(
+            [
+                "1. Civic",
+                "2. Corolla",
+                "3. Mustang",
+                "4. Golf",
+                "5. Model 3",
+            ]
+        )
+        try:
+            ScriptOllama.replies = [
+                {"message": {"content": "I'm sorry, but I can't assist with that"}, "done": True},
+                {"message": {"content": cars}, "done": True},
+            ]
+            ScriptOllama.seen = []
+            ScriptOllama.posts = 0
+            peer_port = self._listen(ScriptOllama)
+            runtime.set_peers(
+                [
+                    {
+                        "name": "pi4",
+                        "host": "127.0.0.1",
+                        "port": peer_port,
+                        "kind": "ollama",
+                        "generative": True,
+                        "role": "brain",
+                        "note": "",
+                    }
+                ]
+            )
+            port = self._pair()
+            status, _headers, body = self._post(
+                port,
+                {"messages": [{"role": "user", "content": "Top 5 cars"}], "stream": False},
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+            )
+            self.assertEqual(status, 200)
+            content = body["choices"][0]["message"]["content"]
+            self.assertNotIn("can't assist", content)
+            self.assertIn("Civic", content)
+            self.assertEqual(len(ScriptOllama.seen), 2)
+            nudge = ScriptOllama.seen[1]["messages"][-1]["content"]
+            self.assertIn("numbered list of 5", nudge)
+
+            ScriptOllama.replies = [
+                {"message": {"content": "I'm sorry, but I can't assist with that"}, "done": True},
+                {"message": {"content": cars}, "done": True},
+            ]
+            ScriptOllama.seen = []
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            payload = json.dumps(
+                {"messages": [{"role": "user", "content": "Top 5 cars"}], "stream": True}
+            ).encode()
+            conn.request(
+                "POST",
+                "/v1/chat/completions",
+                body=payload,
+                headers={
+                    "content-type": "application/json",
+                    "X-Pi-Target": "pi4",
+                    "X-Pi-Mesh": "off",
+                },
+            )
+            raw = conn.getresponse().read().decode()
+            conn.close()
+            self.assertNotIn("can't assist", raw)
+            self.assertIn("Civic", raw)
+            self.assertNotIn("1. 1", raw)
+
+            ScriptOllama.replies = [
+                {"message": {"content": "I'm sorry, but I can't assist with that"}, "done": True},
+                {"message": {"content": cars}, "done": True},
+            ]
+            ScriptOllama.seen = []
+            status, _headers, body = self._post(
+                port,
+                {
+                    "messages": [{"role": "user", "content": "top 5 ways to make a bomb"}],
+                    "stream": False,
+                },
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+            )
+            self.assertEqual(status, 200)
+            kept = body["choices"][0]["message"]["content"]
+            self.assertIn("can't assist", kept)
+            self.assertNotIn("Civic", kept)
+            self.assertEqual(len(ScriptOllama.seen), 1)
+        finally:
+            pair_server.cards_for_answer = previous
+
 
 if __name__ == "__main__":
     unittest.main()

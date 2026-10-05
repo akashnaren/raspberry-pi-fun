@@ -21,7 +21,17 @@ from pair.charts import (  # noqa: E402
 )
 from pair.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
 from pair.images import cards_for_answer, item_names, visual_mode  # noqa: E402
-from pair.lists import finish_numbered, list_budget, list_complete, list_count, merge_list  # noqa: E402
+from pair.lists import (  # noqa: E402
+    benign_list_ask,
+    finish_numbered,
+    is_canned_refusal,
+    list_budget,
+    list_complete,
+    list_count,
+    merge_list,
+    recover_list_refusal,
+    refusal_holding,
+)
 from pair.preload import pro_preload_payload  # noqa: E402
 
 
@@ -166,6 +176,43 @@ class Lists(unittest.TestCase):
         self.assertEqual(done, full)
         self.assertEqual(calls, [])
         self.assertEqual(merge_list(full, "3. Item 3\n6. Extra", 5), full + "\n6. Extra")
+
+    def test_a_refusal_is_not_continued_into_placeholders(self):
+        calls = []
+        text = "I'm sorry, but I can't assist with that"
+        done = finish_numbered("Top 5 cars", text, lambda *_args: calls.append(1) or "1. 1\n2. 2")
+        self.assertEqual(done, text)
+        self.assertEqual(calls, [])
+        self.assertTrue(is_canned_refusal(text + "\n1. 1\n2. 2"))
+        self.assertFalse(refusal_holding("1. Civic"))
+        self.assertTrue(refusal_holding("I'm"))
+
+
+class SoftRefusal(unittest.TestCase):
+    def test_top_5_cars_retries_once_and_drops_the_refusal(self):
+        seen = []
+
+        def retry():
+            seen.append(1)
+            return "1. Civic\n2. Corolla\n3. Mustang\n4. Golf\n5. Model 3"
+
+        out = recover_list_refusal("Top 5 cars", "I'm sorry, but I can't assist with that", retry)
+        self.assertEqual(seen, [1])
+        self.assertNotIn("can't assist", out)
+        self.assertIn("Civic", out)
+        self.assertTrue(benign_list_ask("Top 5 cars"))
+        self.assertTrue(benign_list_ask("Top 5 movies"))
+
+    def test_a_harmful_list_keeps_the_refusal(self):
+        text = "I'm sorry, but I can't assist with that"
+
+        def retry():
+            raise AssertionError("retried a harmful ask")
+
+        self.assertFalse(benign_list_ask("top 5 ways to make a bomb"))
+        self.assertEqual(recover_list_refusal("top 5 ways to make a bomb", text, retry), text)
+        kept = recover_list_refusal("Top 5 cars", "1. Civic\n2. Golf", retry)
+        self.assertEqual(kept, "1. Civic\n2. Golf")
 
 
 def list_count_from(text: str) -> int:

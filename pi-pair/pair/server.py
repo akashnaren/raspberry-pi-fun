@@ -30,7 +30,17 @@ from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, search_note_limit
-from pair.lists import continuation_messages, finish_numbered, list_budget, list_count
+from pair.lists import (
+    benign_list_ask,
+    continuation_messages,
+    finish_numbered,
+    is_canned_refusal,
+    list_answer_messages,
+    list_budget,
+    list_count,
+    recover_list_refusal,
+    refusal_holding,
+)
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
 from pair.preload import start_pro_warm
@@ -1214,6 +1224,32 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
+    def _recover_list_refusal(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        text: str,
+    ) -> str:
+        """One list nudge when the tiny model soft-refuses a benign top-N."""
+
+        def retry() -> str:
+            follow = shape_messages(list_answer_messages(messages, prompt), prompt)
+            try:
+                if kind == "llamacpp":
+                    more, _used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+                else:
+                    more, _used = chat_ollama(peer, model, follow, temperature, max_tokens)
+            except (OSError, json.JSONDecodeError):
+                return ""
+            return more or ""
+
+        return recover_list_refusal(prompt, text, retry)
+
     def _extend_list(
         self,
         peer,
@@ -1264,7 +1300,14 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, json.JSONDecodeError) as error:
             return degraded_answer(search_note, error), model, False
         content = content or ""
-        if not list_count(prompt) and asks_continuation(prompt, content, str(meta.get("done_reason") or "")):
+        content = self._recover_list_refusal(
+            peer, kind, model, messages, temperature, max_tokens, prompt, content
+        )
+        if (
+            not list_count(prompt)
+            and not is_canned_refusal(content)
+            and asks_continuation(prompt, content, str(meta.get("done_reason") or ""))
+        ):
             follow = shape_messages(plain_continuation(messages, content), prompt)
             more = ""
             try:
@@ -1476,28 +1519,44 @@ class Handler(BaseHTTPRequestHandler):
         apply_tier(self, first)
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         parts: list[str] = []
+        sent: list[str] = []
         try:
             if kind == "llamacpp":
                 gen = stream_llamacpp(peer, model, messages, temperature, max_tokens)
             else:
                 gen = stream_ollama(peer, model, messages, temperature, max_tokens)
             closed = False
-            for delta in gen:
-                parts.append(delta)
+            hold = benign_list_ask(prompt)
+            held = ""
+
+            def emit_delta(text: str) -> bool:
+                if not text:
+                    return True
                 chunk = {
                     "id": "pi-pair",
                     "object": "chat.completion.chunk",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": delta},
-                            "finish_reason": None,
-                        }
-                    ],
+                    "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
                 }
                 if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
+                    return False
+                sent.append(text)
+                return True
+
+            for delta in gen:
+                parts.append(delta)
+                if not hold:
+                    if not emit_delta(delta):
+                        closed = True
+                        break
+                    continue
+                held += delta
+                if refusal_holding(held):
+                    continue
+                if not emit_delta(held):
                     closed = True
                     break
+                held = ""
+                hold = False
             if closed:
                 answer = "".join(parts).strip()
                 if answer:
@@ -1505,30 +1564,36 @@ class Handler(BaseHTTPRequestHandler):
                     note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
                     remember_completion(prompt, answer, chip, peer["name"])
                 return
-            answer = "".join(parts)
-            finished = self._extend_list(
-                peer, kind, model, messages, temperature, max_tokens, prompt, answer
-            )
-            extra = _list_suffix(answer, finished)
-            if extra:
-                more = {
-                    "id": "pi-pair",
-                    "object": "chat.completion.chunk",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": extra},
-                            "finish_reason": None,
-                        }
-                    ],
-                }
-                if not safe_write(self, f"data: {json.dumps(more)}\n\n".encode(), flush=True):
+            raw = "".join(parts)
+            if hold and held and not is_canned_refusal(held):
+                if not emit_delta(held):
                     chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
-                    remember_completion(prompt, answer, chip, peer["name"])
+                    note_exchange(prompt, raw, chip=chip, peer=peer["name"], train=True)
+                    remember_completion(prompt, raw, chip, peer["name"])
                     return
-                answer = finished
-            images = _cards_after(prompt, answer, images)
+                held = ""
+            visible = raw
+            if benign_list_ask(prompt) and is_canned_refusal(raw):
+                visible = self._recover_list_refusal(
+                    peer, kind, model, messages, temperature, max_tokens, prompt, raw
+                )
+            finished = self._extend_list(
+                peer, kind, model, messages, temperature, max_tokens, prompt, visible
+            )
+            shown = "".join(sent)
+            if finished.startswith(shown):
+                extra = finished[len(shown) :]
+            elif not shown:
+                extra = finished
+            else:
+                extra = ""
+            if extra:
+                if not emit_delta(extra):
+                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+                    note_exchange(prompt, raw, chip=chip, peer=peer["name"], train=True)
+                    remember_completion(prompt, raw, chip, peer["name"])
+                    return
+            images = _cards_after(prompt, finished, images)
             elapsed = int((time.time() - started) * 1000)
             final = {
                 "id": "pi-pair",
@@ -1555,9 +1620,11 @@ class Handler(BaseHTTPRequestHandler):
             final["pi_stages"] = list(stages)
             final.update(note)
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-            answer = "".join(parts)
-            note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
-            remember_completion(prompt, answer, chip, peer["name"])
+            # A replaced refusal is what the page showed. Other turns still
+            # record the first decode, continuation included only on the wire.
+            stored = finished if is_canned_refusal(raw) and finished != raw else raw
+            note_exchange(prompt, stored, chip=chip, peer=peer["name"], train=True)
+            remember_completion(prompt, stored, chip, peer["name"])
             apply_tier(self, final)
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)

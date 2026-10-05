@@ -192,13 +192,31 @@ if (streams.length !== before) throw new Error("Enter sent while the setting was
 enter.checked = true;
 enter.dispatchEvent(new window.Event("change"));
 
+if (document.querySelector("[data-think] .info-dot")) {
+  throw new Error("think controls still have info icons");
+}
+if (document.querySelectorAll("[data-mode] .info-dot").length < 6) {
+  throw new Error("model info icons missing");
+}
 document.getElementById("modeBtn").click();
 const menu = document.getElementById("modePop");
 if (menu.hidden) throw new Error("Auto menu did not open");
+const beforeMode = document.getElementById("modeLabel").textContent;
+const flashInfo = menu.querySelector('[data-mode="flash"] .info-dot');
+flashInfo.dispatchEvent(new window.Event("click", { bubbles: true }));
+const tip = document.getElementById("modelTip");
+if (!tip || tip.hidden || !tip.textContent.includes("0.5b") || !tip.textContent.includes("1.5b")) {
+  throw new Error("model tip did not explain Flash and Pro");
+}
+if (document.getElementById("modeLabel").textContent !== beforeMode) {
+  throw new Error("model info changed the mode");
+}
+if (menu.hidden) throw new Error("model info closed the menu");
 menu.querySelector('[data-mode="auto"]').click();
 if (document.getElementById("modeLabel").textContent !== "Auto" || !menu.hidden) {
   throw new Error("menu did not return to Auto");
 }
+if (!tip.hidden) throw new Error("selecting a mode left the tip open");
 
 box.value = "Where is the bench?";
 document.getElementById("go").click();

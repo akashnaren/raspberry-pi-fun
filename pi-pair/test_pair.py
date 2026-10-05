@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -575,6 +576,10 @@ class PairHttp(unittest.TestCase):
         self.assertIn('data-think="high"', html)
         self.assertIn('aria-label="Thinking"', html)
         self.assertIn('class="think-btn on" data-think="medium"', html)
+        for block in re.findall(r"<button[^>]*data-think=\"[^\"]+\"[^>]*>.*?</button>", html):
+            self.assertNotIn("info-dot", block)
+        self.assertIn("data-model-info", html)
+        self.assertIn('id="modelTip"', html)
         self.assertIn('data-mode="auto"', html)
         self.assertIn('data-mode="flash"', html)
         self.assertIn('data-mode="pro"', html)
@@ -604,6 +609,7 @@ class PairHttp(unittest.TestCase):
             "speechSynthesis",
             "webkitSpeechRecognition",
             "Stop",
+            "stays loaded",
         ):
             self.assertIn(needle, script, needle)
         source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
@@ -630,6 +636,7 @@ class PairHttp(unittest.TestCase):
         self.assertIn(".flex", css)
         self.assertIn(".stage", css)
         self.assertIn(".think-btn", css)
+        self.assertIn(".model-tip", css)
         self.assertIn(".mode-btn", css)
         self.assertIn(".mode-menu", css)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
