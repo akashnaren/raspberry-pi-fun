@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="${PI_PAIR_DIR:-$HOME/pi-pair}"
 SERVICE_NAME="pi-pair"
 OLLAMA_MODEL_PRIMARY="qwen2.5:0.5b"
+OLLAMA_EMBED_MODEL="snowflake-arctic-embed:m"
 PAIR_PORT="${PI_PAIR_PORT:-18080}"
 NODE_NAME="${PI_PAIR_NAME:-$(hostname -s)}"
 
@@ -27,8 +28,9 @@ echo "Role:    $ROLE"
 echo "Proxy:   0.0.0.0:${PAIR_PORT}"
 if [[ "$ROLE" == "brain" ]]; then
   echo "Ollama:  0.0.0.0:11434 on this board only"
+  echo "Embed:   ${OLLAMA_EMBED_MODEL} for map paraphrases on this board only"
 else
-  echo "Ollama:  not installed here. Generative models run only on pi4."
+  echo "Ollama:  not installed here. Chat and embed models run only on pi4."
 fi
 echo
 
@@ -79,7 +81,7 @@ if [[ ! -f "$INSTALL_DIR/data/canned/canned_seed.jsonl" ]]; then
 fi
 
 if [[ "$ROLE" != "brain" ]]; then
-  echo "Skipping model pull on ${NODE_NAME}: generative models run only on pi4."
+  echo "Skipping model pull on ${NODE_NAME}: chat and embed models run only on pi4."
 else
   if ! command -v ollama >/dev/null 2>&1; then
     echo
@@ -91,6 +93,8 @@ else
     echo "Ollama present: $(command -v ollama)"
     echo "Pulling ${OLLAMA_MODEL_PRIMARY}…"
     ollama pull "$OLLAMA_MODEL_PRIMARY" || echo "WARN: model pull failed — pull manually later on pi4."
+    echo "Pulling ${OLLAMA_EMBED_MODEL}…"
+    ollama pull "$OLLAMA_EMBED_MODEL" || echo "WARN: embed model pull failed — pull manually later on pi4."
   fi
   echo
   echo "--- Make Ollama listen on LAN (run these yourself if needed) ---"
