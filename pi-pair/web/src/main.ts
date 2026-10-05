@@ -1,7 +1,7 @@
 import { failChart, drawChart } from "./chart";
 import { renderMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
-import { isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
+import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
 declare global {
   interface Window {
@@ -62,6 +62,7 @@ let dictated = "";
 let voiceOn = false;
 let voiceHold = false;
 let listenHandle: { stop: () => void } | null = null;
+let cancelUtterance: (() => void) | null = null;
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
   const node = document.createElement(tag);
@@ -1128,6 +1129,8 @@ function beginDictation(): void {
 function endVoiceMode(): void {
   voiceOn = false;
   voiceHold = false;
+  cancelUtterance?.();
+  cancelUtterance = null;
   stopCapture();
   stopSpeaking();
   setHeard(false);
@@ -1160,35 +1163,48 @@ function toggleVoiceMode(): void {
   beginVoice();
 }
 
-function beginVoice(): void {
+function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
   if (!voiceOn || listening || voiceHold || sending) return;
+  const hold = existing ?? createUtteranceHold((text) => {
+    if (isSoloStop(text)) {
+      endVoiceMode();
+      return;
+    }
+    const turn = turnFromRecognition(text);
+    voiceHold = Boolean(turn);
+    const active = listenHandle;
+    listenHandle = null;
+    listening = false;
+    active?.stop();
+    setHeard(false);
+    paintVoice();
+    if (!turn) {
+      voiceHold = false;
+      if (voiceOn) beginVoice();
+      return;
+    }
+    voiceCaption(turn.content);
+    void sendText(turn.content, false, true);
+  }, endOfUtteranceSilence());
+  cancelUtterance = () => hold.cancel();
   const handle = startListening({
     onInterim(text) {
-      setHeard(true);
-      voiceCaption(text || "Listening");
+      const line = hold.interim(text);
+      setHeard(Boolean(line));
+      voiceCaption(line || "Listening");
     },
     onFinal(text) {
-      if (isSoloStop(text)) {
+      const line = hold.final(text);
+      if (isSoloStop(line)) {
+        hold.cancel();
         endVoiceMode();
         return;
       }
-      const turn = turnFromRecognition(text);
-      voiceHold = Boolean(turn);
-      const active = listenHandle;
-      listenHandle = null;
-      listening = false;
-      active?.stop();
-      setHeard(false);
-      paintVoice();
-      if (!turn) {
-        voiceHold = false;
-        if (voiceOn) beginVoice();
-        return;
-      }
-      voiceCaption(turn.content);
-      void sendText(turn.content, false, true);
+      setHeard(Boolean(line));
+      voiceCaption(line || "Listening");
     },
     onError() {
+      hold.cancel();
       voiceOn = false;
       voiceHold = false;
       endListening();
@@ -1196,12 +1212,17 @@ function beginVoice(): void {
       voiceNote("Voice needs the microphone in this browser.");
     },
     onEnd() {
+      const pendingLine = hold.text();
       const again = voiceOn && !voiceHold && !sending;
       endListening();
-      if (again) beginVoice();
+      if (!again) return;
+      if (pendingLine) beginVoice(hold);
+      else beginVoice();
     },
   });
   if (!handle) {
+    hold.cancel();
+    cancelUtterance = null;
     voiceOn = false;
     voiceNote("Voice needs Chrome's built-in speech recognition.");
     paintVoice();
@@ -1209,7 +1230,9 @@ function beginVoice(): void {
   }
   listening = true;
   listenHandle = handle;
-  voiceCaption("Listening");
+  const continued = hold.text();
+  setHeard(Boolean(continued));
+  voiceCaption(continued || "Listening");
   paintVoice();
 }
 

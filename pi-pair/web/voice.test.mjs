@@ -1,5 +1,5 @@
 import fs from "fs";
-import { ENDPOINT_MS, firstSpokenSentence, isSoloStop, noteSpokenDelta, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
+import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, createUtteranceHold, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
 
 const assistant = "The hall bench is by the east window.";
 const labels = ["Thinking", "Searching", "Searched", "Search failed", "Answering"];
@@ -260,6 +260,9 @@ if (!main.includes('classList.toggle("speaking"') || !main.includes('classList.a
 if (!scss.includes(".voice-stage.speaking") || !scss.includes(".voice-dots")) {
   throw new Error("speaking state does not keep the five-dot look");
 }
+if (!scss.includes("voice-speak") || !scss.includes("speak-halo") || !scss.includes(".voice-stage.speaking .voice-live")) {
+  throw new Error("speaking affordance was not improved");
+}
 const dotMarkup = html.slice(html.indexOf('class="voice-dots"'), html.indexOf('class="voice-dots"') + 120);
 if ((dotMarkup.match(/<i>/g) || []).length !== 5) {
   throw new Error("speaking state replaced the five dots");
@@ -302,6 +305,133 @@ const afterMs = ENDPOINT_MS + firstAudioMs;
 console.log("end-of-speech to first audio before " + beforeMs + "ms after " + afterMs + "ms");
 if (!(afterMs < beforeMs)) {
   throw new Error("first audio did not move earlier: before " + beforeMs + " after " + afterMs);
+}
+
+const silenceAt = voiceSrc.indexOf("export const END_OF_UTTERANCE_SILENCE_MS");
+const silenceDoc = voiceSrc.slice(Math.max(0, silenceAt - 800), silenceAt);
+if (silenceAt < 0 || !silenceDoc.includes("450") || !silenceDoc.includes("1.0")) {
+  throw new Error("silence constant is not documented");
+}
+if (END_OF_UTTERANCE_SILENCE_MS < 1000 || END_OF_UTTERANCE_SILENCE_MS > 1500) {
+  throw new Error("end-of-utterance silence defaults to " + END_OF_UTTERANCE_SILENCE_MS + "ms, want 1.0–1.5s");
+}
+if (ENDPOINT_MS !== 450 || END_OF_UTTERANCE_SILENCE_MS === ENDPOINT_MS) {
+  throw new Error("auto-send silence collapsed into the 450ms endpoint");
+}
+if (!begin.includes("createUtteranceHold") || !begin.includes("endOfUtteranceSilence()")) {
+  throw new Error("voice mode auto-sends on the 450ms endpoint");
+}
+if (dictation.includes("createUtteranceHold") || dictation.includes("endOfUtteranceSilence")) {
+  throw new Error("dictation waits to auto-send");
+}
+
+function fakeClock() {
+  const timers = [];
+  let next = 1;
+  return {
+    timers,
+    clock: {
+      set(fn, ms) {
+        const id = next;
+        next += 1;
+        timers.push({ id, fn, ms, cleared: false });
+        return id;
+      },
+      clear(id) {
+        const row = timers.find((item) => item.id === id);
+        if (row) row.cleared = true;
+      },
+    },
+  };
+}
+
+const sent = [];
+const paced = fakeClock();
+const hold = createUtteranceHold((text) => sent.push(text), END_OF_UTTERANCE_SILENCE_MS, paced.clock);
+if (hold.interim("where is") !== "where is") {
+  throw new Error("interim phrase was dropped");
+}
+if (sent.length !== 0 || paced.timers.length !== 1 || paced.timers[0].ms !== END_OF_UTTERANCE_SILENCE_MS) {
+  throw new Error("auto-send did not wait for the long silence: " + JSON.stringify(paced.timers));
+}
+const firstQuiet = paced.timers[0];
+if (hold.final("where is") !== "where is" || firstQuiet.cleared || sent.length !== 0) {
+  throw new Error("the same finalized phrase restarted the silence");
+}
+if (hold.interim("the bench") !== "where is the bench" || !firstQuiet.cleared) {
+  throw new Error("new words did not restart the end-of-utterance silence");
+}
+const liveQuiet = paced.timers.filter((item) => !item.cleared);
+if (liveQuiet.length !== 1 || liveQuiet[0].ms !== END_OF_UTTERANCE_SILENCE_MS) {
+  throw new Error("restarted silence was not the documented wait");
+}
+firstQuiet.fn();
+if (sent.length !== 0) {
+  throw new Error("the 450ms-scale timer still sent the short phrase");
+}
+liveQuiet[0].fn();
+if (sent.length !== 1 || sent[0] !== "where is the bench") {
+  throw new Error("silence did not send one joined utterance: " + JSON.stringify(sent));
+}
+liveQuiet[0].fn();
+if (sent.length !== 1) {
+  throw new Error("the utterance was sent twice");
+}
+
+const punctuated = [];
+const marked = fakeClock();
+const markedHold = createUtteranceHold((text) => punctuated.push(text), 1200, marked.clock);
+markedHold.interim("where is");
+const markedQuiet = marked.timers[0];
+if (markedHold.final("Where is?") !== "Where is?" || markedQuiet.cleared) {
+  throw new Error("punctuation on the same phrase restarted the silence: " + markedHold.text());
+}
+markedHold.interim("the bench");
+if (!markedQuiet.cleared || markedHold.text() !== "Where is? the bench") {
+  throw new Error("new words were not joined after the finalized phrase: " + markedHold.text());
+}
+
+const dropped = [];
+const cancelled = fakeClock();
+const abandoned = createUtteranceHold((text) => dropped.push(text), 1200, cancelled.clock);
+abandoned.final("hello");
+abandoned.cancel();
+const stale = cancelled.timers.find((item) => !item.cleared);
+if (stale) stale.fn();
+cancelled.timers.forEach((item) => item.fn());
+if (dropped.length || abandoned.text()) {
+  throw new Error("cancelled speech still auto-sent: " + JSON.stringify(dropped));
+}
+
+const immediate = [];
+const eager = createUtteranceHold((text) => immediate.push(text), 0, fakeClock().clock);
+if (eager.interim("where is") !== "where is" || immediate.length !== 0) {
+  throw new Error("a zero wait sent on the interim");
+}
+if (eager.final("where is") !== "where is" || immediate[0] !== "where is") {
+  throw new Error("a zero wait did not send on the commit: " + JSON.stringify(immediate));
+}
+
+setEndOfUtteranceSilence(1500);
+if (endOfUtteranceSilence() !== 1500) {
+  throw new Error("end-of-utterance silence is not configurable");
+}
+const configured = [];
+const custom = fakeClock();
+const customHold = createUtteranceHold((text) => configured.push(text), endOfUtteranceSilence(), custom.clock);
+customHold.final("hello");
+if (configured.length !== 0 || custom.timers[0]?.ms !== 1500) {
+  throw new Error("voice mode ignored the configured silence");
+}
+setEndOfUtteranceSilence(-5);
+setEndOfUtteranceSilence(Number.NaN);
+setEndOfUtteranceSilence(20000);
+if (endOfUtteranceSilence() !== 1500) {
+  throw new Error("an out-of-range silence replaced the configured wait");
+}
+setEndOfUtteranceSilence(END_OF_UTTERANCE_SILENCE_MS);
+if (endOfUtteranceSilence() !== END_OF_UTTERANCE_SILENCE_MS) {
+  throw new Error("silence did not return to the default");
 }
 
 console.log("ok");
