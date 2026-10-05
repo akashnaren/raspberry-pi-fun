@@ -152,7 +152,7 @@ A miss on pi4 runs one decoder-only transformer, the Qwen2 stack behind `qwen2.5
 
 **Logits and the next id.** After the 24th block, a final RMSNorm and the tied output projection produce one logit per vocabulary row. Temperature scales those logits. A sample (or a greedy pick, if temperature is zero) chooses the next id. That id is appended, the key/value cache already holds the previous positions, and the next step does not recompute them. The new id is detokenized into text and streamed back through this router as server-sent events. The chip on that stream is `brain: pi4`.
 
-**What this is not.** It is not a convolutional network. A convolution ties one small kernel across a grid and is the right bias when the signal is a neighborhood: pixels, a spectrogram, a local patch of a sensor. Next-token chat is a long chain of discrete ids whose relevant context can be anywhere in the 2048-token window, not in a fixed local patch. The attention block is there specifically because a convolution would have to be stacked very deep, or dilated until it stopped looking like a local kernel, to see that far. This fleet does not run a vision encoder, and the page does not decode images. CNNs remain the usual tool if a later sensor or camera path is added beside the chat. They are not on the path that turns a missed sentence into tokens, and they are not a substitute for pi4 when pi4 is down.
+**What this is not.** It is not a convolutional network. A convolution ties one small kernel across a grid and is the right bias when the signal is a neighborhood: pixels, a spectrogram, a local patch of a sensor. Next-token chat is a long chain of discrete ids whose relevant context can be anywhere in the 2048-token window, not in a fixed local patch. The attention block is there specifically because a convolution would have to be stacked very deep, or dilated until it stopped looking like a local kernel, to see that far. This fleet does not run a vision encoder. An attached image or JPEG-scanned PDF is OCR'd to text on the Pi, and that text is what the prompt embeds. CNNs remain the usual tool if a later sensor or camera path is added beside the chat. They are not on the path that turns a missed sentence into tokens, and they are not a substitute for pi4 when pi4 is down.
 
 Recurrent nets and state-space models are also not the runtime here. The deployed checkpoint is the transformer above. Swapping the block type would be a different model, a different pull, and another health check. It is not a fallback for a weak board.
 
@@ -210,6 +210,8 @@ While a reply is still running, the page shows the stages the server actually en
 
 Voice is the browser's own speech recognition and speech synthesis (Chrome's webkit speech APIs). Speak a line and the reply is read back. There is no paid speech service and no second model loaded beside the generator.
 
+The paperclip attaches one file. The page posts it to `POST /v1/attachments` on this Pi. A `.txt` or `.md` file is decoded as text. A JPEG, PNG, GIF, WebP, TIFF, or BMP, and a PDF whose pages are JPEG scans, is read with local OCR and then uses that same text. The extracted text stays on the composer and is sent with the next line on `/v1/chat/completions`, so pi4 embeds those tokens with the prompt. OCR is the `tesseract` binary on the Pi. A scanned PDF is rasterized with `pdftoppm` first. Each of those runs is limited to 20 seconds, and the process group is killed if it expires. At most 2 OCR jobs run at once; the next upload gets `OCR is busy`. There is no cloud OCR API.
+
 The composer keeps the whole session. Each new line is sent with the earlier turns, and a follow-up is not answered from the canned map. Enter sends the line. Shift+Enter, or Ctrl+Enter, inserts a newline. Stop ends the reply that is still arriving. Regenerate asks the same line again. Edit changes an earlier line and sends from there, dropping the turns after it. Copy is on each message.
 
 When the map misses, the reply shows a short searched note and the source links. If the lookup fails, the note says search failed and the answer is still from the local model.
@@ -230,7 +232,7 @@ There is no separate control plane. A pin of pi2 or pi3 is still refused by the 
 pi-pair/
   mini_chat.py              start here
   start.sh                  same command
-  pair/                     router, canned lookup, pi4 embed match, queue, train cycle
+  pair/                     router, canned lookup, pi4 embed match, upload, local OCR, train cycle
   static/                   built chat page (no Node at runtime)
   web/                      TypeScript, Tailwind, and SCSS sources for that page
   peers.example.json        fleet map
@@ -321,6 +323,14 @@ ollama pull snowflake-arctic-embed:m
 
 The other two print `Skipping model pull` and do not install a chat model or the embedder. On pi4, `ollama-lan.service` should set `OLLAMA_MAX_LOADED_MODELS` to at least 2 and `OLLAMA_KEEP_ALIVE=-1`; `install.sh` writes that user unit with `OLLAMA_MAX_LOADED_MODELS=3` and `OLLAMA_KEEP_ALIVE=-1`. An existing `canned_map.json` on the Pi is left in place so a folded map is not replaced by the seed.
 
+Attachment OCR uses apt packages, not pip. On each Pi that serves the page:
+
+```bash
+sudo apt-get install -y tesseract-ocr poppler-utils
+```
+
+`tesseract` reads an image. `pdftoppm` from `poppler-utils` turns a JPEG-scanned PDF into JPEG pages before tesseract. `install.sh` prints that command when either binary is missing. The unit tests mock OCR, so CI does not install them.
+
 | Name | Host | Port | Role |
 | --- | --- | --- | --- |
 | pi2 | 10.0.0.180 | 18080 | Health and read-only canned mirror. No chat model. |
@@ -336,6 +346,7 @@ A pinned peer that is down returns `<name> offline`. A pinned weak peer returns 
 | GET | `/` | Chat page |
 | GET | `/health`, `/peers` | Router plus peer health. `generative` is false on pi2 and pi3. |
 | POST | `/v1/chat/completions` | OpenAI chat. `stream:true` is SSE. Same call for a person and for another agent. |
+| POST | `/v1/attachments` | One file, multipart or a raw body with `X-Filename`. `.txt` and `.md` are decoded. Images and JPEG-scanned PDFs are OCR'd locally, then the same text is returned for the chat. Body cap 4 MB. Text cap 4096 characters. First 5 PDF pages. |
 | POST | `/v1/flywheel/enqueue` | Miss row. Accepted only on the dataset role. |
 | POST | `/v1/flywheel/feedback` | Label a completion. `vote` is `up` or `down`. `correction` is optional. Omit `prompt` and `answer` to rate the last completion this router returned. |
 
@@ -415,6 +426,11 @@ curl -sS http://127.0.0.1:18080/v1/flywheel/feedback \
 | Correction on a known line | That sentence replaces the stored map entry. |
 | Held-out text already in the map | Gate fails, queue restored, nothing promoted. |
 | Train job on pi4 or pi2 | Refused. The dataset role is pi3. |
+| Attachment over 4 MB | `attachment is over 4 MB` |
+| Attachment is not txt, md, an image, or a JPEG-scanned PDF | `unsupported file type`, or `only a JPEG-scanned PDF can be read` |
+| OCR binaries missing on the Pi | `OCR is not installed on this Pi` |
+| OCR still running after 20 seconds | The process group is killed. The upload is `could not read that file`. |
+| A third OCR while two are running | `OCR is busy` |
 
 ## CI/CD
 

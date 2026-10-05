@@ -23,6 +23,7 @@ from pair.queue import append_row, apply_label, node_role, note_exchange
 from pair.search import lookup_web
 from pair import runtime
 from pair.stream import stream_llamacpp, stream_ollama
+from pair.upload import UploadRejected, ingest, read_limited
 
 _LAST_LOCK = threading.Lock()
 _LAST = {"prompt": "", "answer": "", "chip": "", "peer": ""}
@@ -304,6 +305,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.split("?")[0]
+        if path == "/v1/attachments":
+            self._attachment()
+            return
         if path == "/v1/flywheel/enqueue":
             self._enqueue()
             return
@@ -496,6 +500,26 @@ class Handler(BaseHTTPRequestHandler):
             if close:
                 close()
 
+    def _attachment(self) -> None:
+        """Text files are decoded. Images and JPEG-scanned PDFs are OCR'd first."""
+        try:
+            raw = read_limited(self.headers.get("content-length"), self.rfile.read)
+            result = ingest(
+                self.headers.get("content-type") or "",
+                raw,
+                filename=self.headers.get("x-filename") or "",
+            )
+        except UploadRejected as error:
+            self._error(str(error), status=error.status)
+            return
+        body = json.dumps(result).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
     def _enqueue(self) -> None:
         if node_role() != "dataset":
             self._error("train queue is accepted only on the dataset host", status=403)
@@ -593,6 +617,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(status)
             self._cors()
             self.send_header("content-type", "application/json")
+            if status == 413:
+                self.close_connection = True
+                self.send_header("connection", "close")
             self.send_header("content-length", str(len(body)))
             self.end_headers()
             safe_write(self, body)

@@ -63,6 +63,16 @@ let voiceOn = false;
 let voiceHold = false;
 let listenHandle: { stop: () => void } | null = null;
 let cancelUtterance: (() => void) | null = null;
+let attachSerial = 0;
+
+const ATTACH_BYTES = 4 * 1024 * 1024;
+
+interface AttachmentResult {
+  text?: string;
+  route?: string;
+  truncated?: boolean;
+  error?: string;
+}
 
 function el(tag: string, cls?: string, text?: string): HTMLElement {
   const node = document.createElement(tag);
@@ -996,17 +1006,68 @@ function clearAttach(): void {
   syncSend();
 }
 
-function loadFile(file: File | null): void {
+function releaseAttachButton(): void {
+  const button = byId<HTMLButtonElement>("btnAttach");
+  button.classList.remove("live");
+  button.disabled = false;
+  button.removeAttribute("aria-busy");
+}
+
+async function loadFile(file: File | null): Promise<void> {
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const text = String(reader.result || "");
+  const serial = ++attachSerial;
+  const button = byId<HTMLButtonElement>("btnAttach");
+  const current = () => serial === attachSerial;
+  clearAttach();
+  if (!current()) return;
+  if (file.size <= 0) {
+    voiceNote("That file is empty.");
+    releaseAttachButton();
+    return;
+  }
+  if (file.size > ATTACH_BYTES) {
+    voiceNote("That file is over 4 MB.");
+    releaseAttachButton();
+    return;
+  }
+  button.classList.add("live");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  voiceNote("Reading " + (file.name || "file") + "…");
+  const body = new FormData();
+  body.append("file", file, file.name || "attachment");
+  try {
+    const response = await fetch("/v1/attachments", { method: "POST", body });
+    let payload: AttachmentResult = {};
+    try {
+      payload = (await response.json()) as AttachmentResult;
+    } catch {
+      if (current()) voiceNote("Could not read that file.");
+      return;
+    }
+    if (!current()) return;
+    if (!response.ok) {
+      voiceNote(payload.error || "Could not read that file.");
+      return;
+    }
+    const text = String(payload.text || "").trim();
+    if (!text) {
+      voiceNote("No text in that file.");
+      return;
+    }
+    voiceNote("");
     byId<HTMLTextAreaElement>("q").dataset.attachText = text;
-    byId("fileName").textContent = file.name + " (" + Math.round(text.length / 1024 * 10) / 10 + " KB)";
+    const kb = Math.round((text.length / 1024) * 10) / 10;
+    const via = payload.route === "ocr" ? "ocr" : "text";
+    const cut = payload.truncated ? " · cut" : "";
+    byId("fileName").textContent = (file.name || "attachment") + " · " + via + cut + " (" + kb + " KB)";
     byId("fileTag").classList.add("on");
     syncSend();
-  };
-  reader.readAsText(file);
+  } catch {
+    if (current()) voiceNote("Could not read that file.");
+  } finally {
+    if (current()) releaseAttachButton();
+  }
 }
 
 function voiceNote(text: string): void {
