@@ -367,8 +367,9 @@ def _chart_fence(spec: dict) -> str:
 def normalize_chart_reply(text: str) -> str:
     """Rewrite a chart-shaped fence as one compact ```chart block.
 
-    Other fences stay as written. A reply that is only a chart object is wrapped.
-    A fence this cannot read is left for repair_chart_reply.
+    Other fences stay as written. A strict ```chart fence stays as written so
+    repair_chart_reply can keep it. A reply that is only a chart object is wrapped.
+    A fence this cannot read is left for that retry.
     """
     raw = text or ""
     if "```" not in raw:
@@ -380,7 +381,10 @@ def normalize_chart_reply(text: str) -> str:
         name = lang[0] if lang else ""
         if name not in _CHART_LANG:
             return match.group(0)
-        spec = _chart_spec(match.group(2) or "")
+        body = match.group(2) or ""
+        if name == "chart" and chart_json_ok(body):
+            return match.group(0)
+        spec = _chart_spec(body)
         if spec is None:
             return match.group(0)
         return _chart_fence(spec)

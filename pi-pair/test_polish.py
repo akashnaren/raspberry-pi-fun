@@ -86,11 +86,13 @@ class Charts(unittest.TestCase):
         self.assertEqual(spec["title"], "Picnic foods")
         self.assertTrue(chart_json_ok(clean.split("```chart\n", 1)[1].split("\n```", 1)[0]))
         self.assertEqual(normalize_chart_reply(clean), clean)
+        kept = '```chart\n{"title":"Fruit","data":[{"type":"bar","y":[1,2]}]}\n```'
+        self.assertEqual(normalize_chart_reply(kept), kept)
         pie = '```plotly\n{"data":[{"type":"pie","values":[1.0, 2.5]}]}\n```'
         drawn = normalize_chart_reply(pie)
         pie_spec = json.loads(drawn.split("```chart\n", 1)[1].split("\n```", 1)[0])
         self.assertEqual(pie_spec["data"][0], {"type": "pie", "y": [1, 2.5]})
-        rounded = normalize_chart_reply('```chart\n{"data":[{"type":"line","y":[1.23456]}]}\n```')
+        rounded = normalize_chart_reply('```JSON\n{"data":[{"type":"line","y":[1.23456,],}]}\n```')
         self.assertIn('"y":[1.2346]', rounded)
         bare = '{"data":[{"type":"scatter","mode":"lines","name":"Load","y":[1,2]}]}'
         wrapped = normalize_chart_reply(bare)
