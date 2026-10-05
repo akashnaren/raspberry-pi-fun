@@ -198,7 +198,7 @@ await waitFor("rest of the token", () => {
 first.end();
 await waitFor("finished answer", () => {
   return !document.querySelector(".msg.streaming")
-    && document.getElementById("go").getAttribute("aria-label") === "Send"
+    && document.getElementById("go").getAttribute("aria-label") === "Voice mode"
     && assistantBubbles().some((node) => node.textContent.includes("east window"));
 });
 assertNoBlankBubble("after the answer");
@@ -221,7 +221,7 @@ assertNoBlankBubble("during searching on the next turn");
 second.end();
 await waitFor("empty turn finished", () => {
   return !document.querySelector(".msg.streaming")
-    && document.getElementById("go").getAttribute("aria-label") === "Send";
+    && document.getElementById("go").getAttribute("aria-label") === "Voice mode";
 });
 assertNoBlankBubble("after stages with no tokens");
 if (assistantBubbles().length !== 1 || !assistantBubbles()[0].textContent.includes("east window")) {

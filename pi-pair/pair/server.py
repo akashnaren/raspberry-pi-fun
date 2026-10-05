@@ -17,9 +17,9 @@ from pair.config import STATIC_DIR
 from pair.gate import capacity_message
 from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
-from pair.knobs import decode_effort, search_note_limit
 from pair.health import snapshot_peers
-from pair.modes import mode_table, pull_needed, resolve_mode, tag_ready
+from pair.knobs import decode_effort, search_note_limit
+from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
 from pair.public_api import (
     FLASH_MODE,
@@ -36,6 +36,8 @@ from pair.search import lookup_web
 from pair import runtime
 from pair.stream import stream_llamacpp, stream_ollama
 from pair.upload import UploadRejected, ingest, read_limited
+
+SOURCE_CAP = 8
 
 _LAST_LOCK = threading.Lock()
 _LAST = {"prompt": "", "answer": "", "chip": "", "peer": ""}
@@ -185,7 +187,7 @@ def relay_chat(payload: bytes, target: str, mesh: str, mode: str = "") -> tuple[
             headers = {
                 "content-type": response.headers.get("content-type", "application/json"),
             }
-            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search", "X-Pi-Mode"):
+            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search", "X-Pi-Mode", "X-Pi-Route"):
                 value = response.headers.get(name)
                 if value:
                     headers[name] = value
@@ -212,7 +214,9 @@ def _with_search(messages, prompt: str):
     if status not in ("ok", "failed"):
         status = "failed"
     sources = []
-    for item in (found.get("sources") or [])[:3]:
+    for item in found.get("sources") or []:
+        if len(sources) >= SOURCE_CAP:
+            break
         if not isinstance(item, dict):
             continue
         url = str(item.get("url") or "").strip()
@@ -252,6 +256,27 @@ def _image_cards(prompt: str) -> list[dict]:
 def _put_images(payload: dict, images: list[dict]) -> None:
     if images:
         payload["pi_images"] = images
+
+
+def listed_chat_models() -> list[str] | None:
+    """Tags Ollama reported for pi4. None when the board is down or the list is empty."""
+    for snap in snapshot_peers():
+        if snap.get("name") != "pi4" or not snap.get("ok"):
+            continue
+        names = [str(item) for item in (snap.get("models") or []) if item]
+        return names or None
+    return None
+
+
+def mode_fields(mode: str, route: str, resident: str = "") -> dict:
+    """Route fields for the page. Residency is never a swap plan."""
+    del resident
+    extra: dict[str, str] = {}
+    if mode:
+        extra["pi_mode"] = mode
+    if route:
+        extra["pi_route"] = route
+    return extra
 
 
 def status_event(stage: str, extra: dict | None = None) -> dict:
@@ -474,24 +499,61 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         safe_write(self, body)
 
-    def _bind_tier(self, data: dict) -> str:
-        """LAN flash/pro. The keyed API already pinned the Flash checkpoint."""
+    def _chosen_mode(self, data: dict) -> str:
+        """LAN mode word. Thinking levels are not model choices."""
         if getattr(self, "public_mode", ""):
-            self.pi_mode = ""
-            return str(data.get("model") or runtime.MODEL)
+            return ""
         chosen = (self.headers.get("X-Pi-Mode") or "").strip()
         if not chosen:
             body_mode = data.get("mode", None)
             if body_mode is None:
                 body_mode = data.get("pi_mode", None)
             chosen = "" if body_mode is None else str(body_mode)
-        if chosen.strip().lower() in {"low", "medium", "high"}:
-            chosen = ""
-        mode_name, model = resolve_mode(chosen, data.get("model") or runtime.MODEL)
-        self.pi_mode = mode_name
+        picked = chosen.strip().lower()
+        if picked in {"low", "medium", "high"}:
+            return ""
+        return picked
+
+    def _bind_tier(self, data: dict, prompt: str) -> str:
+        """LAN flash/pro/auto. The keyed API already pinned the Flash checkpoint.
+
+        Empty and unknown modes clamp to the Flash or Pro tag from mode_table.
+        Auto uses that same table. Nothing here unloads a resident tag.
+        """
+        picked = self._chosen_mode(data)
         data.pop("mode", None)
         data.pop("pi_mode", None)
+        if getattr(self, "public_mode", ""):
+            self.pi_mode = ""
+            self.pi_route = ""
+            return str(data.get("model") or runtime.MODEL)
+        if picked == "auto":
+            route, model, _reason = resolve_auto(prompt, listed_chat_models())
+            self.pi_mode = "auto"
+            self.pi_route = route
+            return model
+        mode_name, model = resolve_mode(picked, data.get("model") or runtime.MODEL)
+        self.pi_mode = mode_name
+        self.pi_route = mode_name
         return model
+
+    def _remember_canned_mode(self, data: dict) -> tuple[str, str]:
+        """Name the page mode on a map hit without asking Ollama which tags exist."""
+        picked = self._chosen_mode(data)
+        data.pop("mode", None)
+        data.pop("pi_mode", None)
+        if getattr(self, "public_mode", ""):
+            self.pi_mode = ""
+            self.pi_route = ""
+            return "", ""
+        if picked == "auto":
+            self.pi_mode = "auto"
+            self.pi_route = "canned"
+            return "auto", "canned"
+        mode_name, _model = resolve_mode(picked, data.get("model") or runtime.MODEL)
+        self.pi_mode = mode_name
+        self.pi_route = "canned"
+        return mode_name, "canned"
 
     def _serve_chat(self, data: dict, raw: bytes) -> None:
         if not isinstance(data, dict):
@@ -504,7 +566,6 @@ class Handler(BaseHTTPRequestHandler):
             "false",
             "no",
         )
-        model = self._bind_tier(data)
         messages = data.get("messages") or []
         effort = decode_effort(str(data.pop("think", "") or ""))
         if effort:
@@ -533,7 +594,15 @@ class Handler(BaseHTTPRequestHandler):
                 if hit is not None:
                     note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
                     remember_completion(prompt, hit, "cache", "cache")
-                    self._cached(hit, want_stream, started, think_name)
+                    cached_mode, cached_route = self._remember_canned_mode(data)
+                    self._cached(
+                        hit,
+                        want_stream,
+                        started,
+                        think_name,
+                        cached_mode,
+                        cached_route,
+                    )
                     return
         except Exception as error:
             self._error(str(error))
@@ -542,8 +611,13 @@ class Handler(BaseHTTPRequestHandler):
             self._relay_to_brain(raw)
             return
         # Pro must already be on disk. A missing tag is not a pull, and it does
-        # not take a generation slot.
+        # not take a generation slot. Auto names a mode_table tag and does not
+        # plan a swap.
         try:
+            model = self._bind_tier(data, prompt)
+            mode_name = getattr(self, "pi_mode", "") or ""
+            route_name = getattr(self, "pi_route", "") or ""
+            resident_name = ""
             peer = pick(target, mesh, model)
             outbound = [
                 {"role": message.get("role", "user"), "content": message_text(message.get("content", ""))}
@@ -564,7 +638,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(str(error))
             return
-        if getattr(self, "pi_mode", "") == "pro" and kind != "llamacpp":
+        if route_name == "pro" and kind != "llamacpp":
             if not tag_ready(peer.get("models") or [], "pro", model):
                 self._error(pull_needed(model))
                 return
@@ -590,9 +664,12 @@ class Handler(BaseHTTPRequestHandler):
                     searched=do_search,
                     search_note=search_note,
                     images=images,
+                    mode_name=mode_name,
+                    route_name=route_name,
+                    resident_name=resident_name,
                 )
             else:
-                stages = ["loading"] if getattr(self, "pi_mode", "") == "pro" else []
+                stages = ["loading"] if route_name == "pro" else []
                 stages.append("thinking")
                 if do_search:
                     stages.append("searching")
@@ -610,6 +687,9 @@ class Handler(BaseHTTPRequestHandler):
                     search_note,
                     stages,
                     images,
+                    mode_name,
+                    route_name,
+                    resident_name,
                 )
         except Exception as error:
             self._error(str(error))
@@ -693,7 +773,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             self.send_header("Cache-Control", "no-cache")
             self.send_header("X-Accel-Buffering", "no")
-            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search", "X-Pi-Mode"):
+            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search", "X-Pi-Mode", "X-Pi-Route"):
                 value = response.headers.get(name)
                 if value:
                     self.send_header(name, value)
@@ -835,8 +915,26 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-    def _cached(self, answer: str, want_stream: bool, started: float, think_name: str = "") -> None:
+    def _write_mode_headers(self, mode: str, route: str, resident: str = "") -> None:
+        fields = mode_fields(mode, route, resident)
+        if fields.get("pi_mode"):
+            self.send_header("X-Pi-Mode", fields["pi_mode"])
+        if fields.get("pi_route"):
+            self.send_header("X-Pi-Route", fields["pi_route"])
+        if fields.get("pi_resident"):
+            self.send_header("X-Pi-Resident", fields["pi_resident"])
+
+    def _cached(
+        self,
+        answer: str,
+        want_stream: bool,
+        started: float,
+        think_name: str = "",
+        mode_name: str = "",
+        route_name: str = "",
+    ) -> None:
         elapsed = int((time.time() - started) * 1000)
+        note = mode_fields(mode_name, route_name, "")
         if not want_stream:
             resp = {
                 "id": "pi-pair",
@@ -857,6 +955,7 @@ class Handler(BaseHTTPRequestHandler):
             if think_name:
                 resp["pi_think"] = think_name
             resp["pi_stages"] = ["answering"]
+            resp.update(note)
             apply_tier(self, resp)
             body = json.dumps(resp).encode()
             self.send_response(200)
@@ -866,6 +965,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Pi-Chip", "cache")
             if think_name:
                 self.send_header("X-Pi-Think", think_name)
+            self._write_mode_headers(mode_name, route_name, "")
             self.send_header("content-length", str(len(body)))
             self.end_headers()
             safe_write(self, body)
@@ -879,10 +979,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Pi-Chip", "cache")
         if think_name:
             self.send_header("X-Pi-Think", think_name)
+        self._write_mode_headers(mode_name, route_name, "")
         self.end_headers()
         answering = {"pi_stages": ["answering"]}
         if think_name:
             answering["pi_think"] = think_name
+        answering.update(note)
         write_event(self, status_event("answering", answering))
         first = {
             "id": "pi-pair",
@@ -896,6 +998,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         if think_name:
             first["pi_think"] = think_name
+        first.update(note)
         apply_tier(self, first)
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         final = {
@@ -911,6 +1014,7 @@ class Handler(BaseHTTPRequestHandler):
         if think_name:
             final["pi_think"] = think_name
         final["pi_stages"] = ["answering"]
+        final.update(note)
         apply_tier(self, final)
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
@@ -931,6 +1035,9 @@ class Handler(BaseHTTPRequestHandler):
         searched: bool = False,
         search_note: dict | None = None,
         images: list[dict] | None = None,
+        mode_name: str = "",
+        route_name: str = "",
+        resident_name: str = "",
     ) -> None:
         self.send_response(200)
         self._cors()
@@ -941,16 +1048,21 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Pi-Chip", "brain: pi4" if peer["name"] == "pi4" else peer["name"])
         if think_name:
             self.send_header("X-Pi-Think", think_name)
+        self._write_mode_headers(mode_name, route_name, resident_name)
         self.end_headers()
         stages: list[str] = []
+        note = mode_fields(mode_name, route_name, resident_name)
 
         def emit_status(stage: str, extra: dict | None = None) -> bool:
             if stage not in stages:
                 stages.append(stage)
-            return write_event(self, status_event(stage, extra))
+            merged = dict(note)
+            if extra:
+                merged.update(extra)
+            return write_event(self, status_event(stage, merged or None))
 
         think_extra = {"pi_think": think_name} if think_name else None
-        if getattr(self, "pi_mode", "") == "pro":
+        if route_name == "pro":
             if not emit_status("loading", {"pi_loading": "Loading Pro"}):
                 return
         if not emit_status("thinking", think_extra):
@@ -991,6 +1103,9 @@ class Handler(BaseHTTPRequestHandler):
                 search_note,
                 stages,
                 images,
+                mode_name,
+                route_name,
+                resident_name,
             )
             return
         safe_write(
@@ -1019,6 +1134,7 @@ class Handler(BaseHTTPRequestHandler):
             first["pi_search"] = search_note["status"]
             first["pi_sources"] = search_note["sources"]
         _put_images(first, images)
+        first.update(note)
         apply_tier(self, first)
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         parts: list[str] = []
@@ -1075,6 +1191,7 @@ class Handler(BaseHTTPRequestHandler):
                 final["pi_sources"] = search_note["sources"]
             _put_images(final, images)
             final["pi_stages"] = list(stages)
+            final.update(note)
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
             answer = "".join(parts)
             note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
@@ -1100,6 +1217,9 @@ class Handler(BaseHTTPRequestHandler):
         search_note: dict | None,
         stages: list[str],
         images: list[dict] | None = None,
+        mode_name: str = "",
+        route_name: str = "",
+        resident_name: str = "",
     ) -> None:
         """Send a finished answer that was taken from the pages, not the model."""
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
@@ -1113,6 +1233,7 @@ class Handler(BaseHTTPRequestHandler):
             "pi_kind": kind,
         }
         _put_images(chunk, images or [])
+        chunk.update(mode_fields(mode_name, route_name, resident_name))
         apply_tier(self, chunk)
         if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
             return
@@ -1136,6 +1257,7 @@ class Handler(BaseHTTPRequestHandler):
             final["pi_search"] = search_note["status"]
             final["pi_sources"] = search_note["sources"]
         _put_images(final, images or [])
+        final.update(mode_fields(mode_name, route_name, resident_name))
         apply_tier(self, final)
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
@@ -1154,6 +1276,9 @@ class Handler(BaseHTTPRequestHandler):
         search_note: dict | None = None,
         stages: list[str] | None = None,
         images: list[dict] | None = None,
+        mode_name: str = "",
+        route_name: str = "",
+        resident_name: str = "",
     ) -> None:
         grounded = None
         if search_note is not None:
@@ -1192,6 +1317,7 @@ class Handler(BaseHTTPRequestHandler):
         _put_images(resp, images or [])
         if stages:
             resp["pi_stages"] = stages
+        resp.update(mode_fields(mode_name, route_name, resident_name))
         apply_tier(self, resp)
         body = json.dumps(resp).encode()
         self.send_response(200)
@@ -1201,6 +1327,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Pi-Chip", chip)
         if think_name:
             self.send_header("X-Pi-Think", think_name)
+        self._write_mode_headers(mode_name, route_name, resident_name)
         if search_note:
             self.send_header("X-Pi-Search", search_note["status"])
         self.send_header("content-length", str(len(body)))
