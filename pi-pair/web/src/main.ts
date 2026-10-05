@@ -1,5 +1,5 @@
 import { renderMarkdown } from "./markdown";
-import { isSoloStop, speakText, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechStarts } from "./voice";
+import { isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
 declare global {
   interface Window {
@@ -804,6 +804,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
         if (delta) {
           textAccum += delta;
           live.setText(textAccum);
+          if (spoken && !voiced && noteSpokenDelta(textAccum)) voiced = true;
         }
         if (payload.pi_think) streamedEffort = payload.pi_think;
       }
@@ -856,7 +857,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
     turnCtrl = null;
     syncSend();
     byId<HTMLTextAreaElement>("q").focus();
-    if (voiceOn && !voiced) releaseVoice();
+    if (voiceOn && !speechPending()) releaseVoice();
   }
 }
 
@@ -968,6 +969,20 @@ function setHeard(on: boolean): void {
   byId("voiceStage").classList.toggle("heard", on && voiceOn);
 }
 
+function setSpeaking(on: boolean): void {
+  const stage = byId("voiceStage");
+  stage.classList.toggle("speaking", on && voiceOn);
+  if (!on) stage.classList.remove("beat");
+}
+
+function pulseSpeaking(): void {
+  const stage = byId("voiceStage");
+  if (!stage.classList.contains("speaking")) return;
+  stage.classList.remove("beat");
+  void stage.offsetWidth;
+  stage.classList.add("beat");
+}
+
 function voiceCaption(text: string): void {
   const line = byId("voiceLive");
   line.textContent = text;
@@ -1049,6 +1064,7 @@ function endVoiceMode(): void {
   stopCapture();
   stopSpeaking();
   setHeard(false);
+  setSpeaking(false);
   voiceCaption("");
   voiceNote("");
   paintVoice();
@@ -1131,9 +1147,11 @@ function beginVoice(): void {
 }
 
 function releaseVoice(): void {
+  if (speechPending() || sending) return;
   voiceHold = false;
   setHeard(false);
-  if (!voiceOn || sending || listening) return;
+  setSpeaking(false);
+  if (!voiceOn || listening) return;
   voiceCaption("Listening");
   beginVoice();
 }
@@ -1178,10 +1196,15 @@ document.querySelectorAll(".think-btn").forEach((btn) => {
     });
   };
 });
-whenSpeechStarts((text) => {
+whenSpeechStarts(() => {
   if (!voiceOn) return;
-  setHeard(true);
-  voiceCaption(text);
+  setHeard(false);
+  setSpeaking(true);
+  voiceCaption("Speaking");
+});
+whenSpeechPulses(() => {
+  if (!voiceOn) return;
+  pulseSpeaking();
 });
 whenSpeechEnds(releaseVoice);
 byId("btnVoice").onclick = () => toggleVoice();
