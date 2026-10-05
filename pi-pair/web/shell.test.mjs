@@ -1,7 +1,7 @@
 import fs from "fs";
 import { register } from "node:module";
 import { parseHTML } from "linkedom";
-import { modeChipText, scrubAssistant } from "./src/copy.ts";
+import { scrubAssistant } from "./src/copy.ts";
 import { primaryKind, primaryLabel } from "./src/primary-action.ts";
 import { shouldPlaySplash } from "./src/splash.ts";
 
@@ -15,10 +15,6 @@ if (primaryKind(true, true) !== "stop") throw new Error("in-flight composer is n
 if (!shouldPlaySplash(null, "navigate")) throw new Error("first load skipped the splash");
 if (shouldPlaySplash("1", "navigate")) throw new Error("session replayed the splash");
 if (!shouldPlaySplash("1", "reload")) throw new Error("reload could not replay the splash");
-if (modeChipText("flash", "canned") !== "Flash" || modeChipText("auto", "canned") !== "Auto") {
-  throw new Error("a map route leaked into the mode chip");
-}
-if (modeChipText("auto", "pro") !== "Auto · Pro") throw new Error("Pro route lost its label");
 const leaked = scrubAssistant("The Civic is common. I used medium effort in Flash mode.");
 if (/effort|flash mode|can't assist/i.test(leaked) || !leaked.includes("Civic")) {
   throw new Error("reply still named the thinking control: " + leaked);
@@ -313,8 +309,17 @@ if (anchors.length !== 5) throw new Error("panel links " + anchors.length);
 if (!panel.textContent.includes("Thinking") || !panel.textContent.includes("Searched web")) {
   throw new Error("panel skipped the steps");
 }
-if (!document.querySelector(".mode-chip") || !document.querySelector(".mode-chip").textContent.includes("Auto · Flash")) {
-  throw new Error("mode chip missing");
+const actions = document.querySelector(".msg.bot .label-row");
+if (!actions) throw new Error("reply action row missing");
+if (actions.querySelector(".mode-chip") || actions.querySelector(".effort")) {
+  throw new Error("model or effort label is still on the action row");
+}
+const actionNames = [...actions.querySelectorAll("button")].map((node) => node.getAttribute("aria-label") || "");
+for (const needed of ["Thumbs up", "Thumbs down", "Corrected answer", "Copy", "Retry"]) {
+  if (!actionNames.includes(needed)) throw new Error("action row lost " + needed);
+}
+if (/\b(Flash|Pro|Auto|Low|Medium|High)\b/.test(actions.textContent || "")) {
+  throw new Error("action row still names the model or effort: " + actions.textContent);
 }
 document.getElementById("sourcesClose").click();
 if (panel.classList.contains("open")) throw new Error("sources panel did not close");

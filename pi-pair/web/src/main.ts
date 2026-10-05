@@ -8,7 +8,7 @@ import { HEALTH_POLL_MS, serviceView, shouldPollHealth, shouldSoftRetry, softRet
 import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
 import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
-import { modeChipText, scrubAssistant } from "./copy";
+import { scrubAssistant } from "./copy";
 import { BIG_LINE, friendlyError, PICTURE_LINE, WAITING_LINE } from "./errors";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
@@ -73,7 +73,7 @@ interface LiveTurn {
   setThought: (text: string, live: boolean, seconds: number) => void;
   clearThought: () => void;
   showImages: (cards: ImageCard[]) => void;
-  finish: (text: string, failed: boolean, prompt: string, effort: string, search: SearchInfo | null, stages: StageName[]) => void;
+  finish: (text: string, failed: boolean, prompt: string, search: SearchInfo | null, stages: StageName[]) => void;
   markErr: () => void;
   armPro: () => void;
 }
@@ -228,32 +228,6 @@ function setBodyContent(node: HTMLElement, text: string, asMd: boolean, streamin
     node.classList.remove("md");
     node.textContent = shown;
   }
-}
-
-function effortLabel(name: string): string {
-  const key = String(name || "").toLowerCase();
-  if (key === "low") return "Low";
-  if (key === "medium") return "Medium";
-  if (key === "high") return "High";
-  return "";
-}
-
-function showEffort(parent: HTMLElement, name: string): void {
-  const label = effortLabel(name);
-  if (!label) return;
-  const node = el("span", "effort", label);
-  const labels = parent.querySelector(".label-row");
-  if (labels) labels.insertBefore(node, labels.firstChild);
-  else parent.appendChild(node);
-}
-
-function showMode(parent: HTMLElement, mode: string, route: string): void {
-  const label = modeChipText(mode, route);
-  if (!label) return;
-  const node = el("span", "mode-chip", label);
-  const labels = parent.querySelector(".label-row");
-  if (labels) labels.insertBefore(node, labels.firstChild);
-  else parent.appendChild(node);
 }
 
 function setSourcesOpen(on: boolean): void {
@@ -702,8 +676,6 @@ function addFinishedBot(item: Turn, index: number): HTMLElement {
   const asked = promptBefore(index);
   if (item.search) showSearch(row, item.search.status, item.search.sources, item.stages || [], asked);
   if (asked) attachLabel(row, asked, item.content);
-  showEffort(row, item.effort || "");
-  showMode(row, item.mode || "", item.route || "");
   let labels = row.querySelector(".label-row");
   if (!labels) {
     labels = el("div", "label-row");
@@ -957,7 +929,7 @@ function addLiveBot(expectPro = false): LiveTurn {
     showImages(cards) {
       mountImageCards(row, body, cards);
     },
-    finish(text, failed, prompt, effort, search, stages) {
+    finish(text, failed, prompt, search, stages) {
       row.classList.remove("streaming");
       if (visibleReply(text)) {
         setBodyContent(body, text, !failed);
@@ -965,7 +937,6 @@ function addLiveBot(expectPro = false): LiveTurn {
       }
       if (!failed && search) showSearch(row, search.status, search.sources, stages, prompt);
       if (prompt && !failed) attachLabel(row, prompt, text);
-      if (!failed) showEffort(row, effort);
       const done = trail(stages, search);
       if (done && !failed) row.insertBefore(done, stagesEl);
       stagesEl.remove();
@@ -1080,7 +1051,7 @@ async function sendText(
   const showTurnError = (msg: string): void => {
     live.setText(msg);
     live.markErr();
-    live.finish(msg, true, "", "", null, stages);
+    live.finish(msg, true, "", null, stages);
     live.root.appendChild(retryButton(() => {
       live.root.remove();
       void sendText(text, true);
