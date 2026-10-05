@@ -100,6 +100,12 @@ const many = cardsFrom([
   { url: "https://upload.wikimedia.org/wikipedia/en/b.jpg", title: "B", alt: "B" },
   { url: "https://upload.wikimedia.org/wikipedia/en/c.jpg", title: "C", alt: "C" },
 ]);
-if (many.length !== 3) throw new Error("cap is 3, got " + many.length);
+if (many.length !== 5) throw new Error("cap dropped a visual list, got " + many.length);
+const ninth = cardsFrom(Array.from({ length: 9 }, (_item, index) => ({
+  url: "https://upload.wikimedia.org/wikipedia/en/" + index + ".jpg",
+  title: "Item " + index,
+  alt: "Item " + index,
+})));
+if (ninth.length !== 8) throw new Error("cap is 8, got " + ninth.length);
 
 console.log("ok");

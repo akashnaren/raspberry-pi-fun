@@ -437,7 +437,7 @@ class PairHttp(unittest.TestCase):
             "Loading Pro",
             "X-Pi-Search",
             "search-note",
-            "Regenerate",
+            "Retry",
             "Edit",
             "pi_status",
             "speechSynthesis",

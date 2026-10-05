@@ -20,6 +20,7 @@ class TaskTier(unittest.TestCase):
             "steps": "Explain the orbit step by step.",
             "search": "Search for the latest raspberry pi news.",
             "length": "word " * 50,
+            "list": "top 10 movies from 2019",
         }
         for name, line in samples.items():
             self.assertEqual(task_tier(line), "pro", name)

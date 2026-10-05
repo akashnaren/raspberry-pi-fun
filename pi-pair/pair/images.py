@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from ipaddress import ip_address
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urljoin, urlparse
@@ -19,6 +20,7 @@ USER_AGENT = (
 )
 FETCH_TIMEOUT = 3
 MAX_CARDS = 3
+MAX_LIST_CARDS = 8
 MAX_TRIES = 4
 _IMAGE_HOSTS = {"upload.wikimedia.org", "thumb.wikimedia.org"}
 _IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif")
@@ -52,6 +54,15 @@ _VISUAL = re.compile(
 )
 _MOVIE = re.compile(r"\b(?:movies?|films?|cinema|posters?)\b", re.I)
 _SEVERAL = re.compile(r"\b(?:movies|films|posters|pictures|photos|images)\b", re.I)
+_VISUAL_NOUN = re.compile(
+    r"\b(?:cars?|automobiles?|vehicles?|movies?|films?|shows?|"
+    r"products?|phones?|laptops?|gadgets?|places?|cities|landmarks?|"
+    r"restaurants?|hotels?|paintings?|animals?|dogs?|birds?|games?|"
+    r"albums?|books?|watches?|cameras?)\b",
+    re.I,
+)
+_LISTISH = re.compile(r"\b(?:top|best|list|rank)\b", re.I)
+_ITEM_LINE = re.compile(r"(?m)^\s*(?:\d{1,2}[\.\)]\s+|[-*]\s+)(.+)$")
 _LEAD = re.compile(
     r"^(?:"
     r"please\s+|can you\s+|could you\s+|would you\s+|"
@@ -79,6 +90,43 @@ _OPENER = build_opener(_NoFollow)
 
 def suits_visuals(text: str) -> bool:
     return bool(_VISUAL.search(text or ""))
+
+
+def visual_mode(prompt: str) -> str:
+    """`none`, `one`, or `each`.
+
+    A single picture stays one card. A list of cars, movies, products, or
+    places gets one card per item. Abstract and math lists stay text.
+    """
+    text = prompt or ""
+    if not text.strip():
+        return "none"
+    noun = _VISUAL_NOUN.search(text)
+    visual = bool(noun or suits_visuals(text))
+    if not visual:
+        return "none"
+    from pair.lists import list_count
+
+    counted = list_count(text)
+    plural = bool(_SEVERAL.search(text) or (noun and _LISTISH.search(text)))
+    if counted or plural:
+        return "each"
+    return "one"
+
+
+def item_names(answer: str, limit: int) -> list[str]:
+    """Titles from a numbered or bulleted reply. The trailing blurb is dropped."""
+    names: list[str] = []
+    for match in _ITEM_LINE.finditer(answer or ""):
+        raw = match.group(1).strip()
+        raw = re.split(r"\s+[—–]\s+|\s+-\s+|\s+\(|:\s+", raw, maxsplit=1)[0]
+        raw = raw.strip(" .*\"'")
+        if len(raw) < 2 or len(raw) > 80:
+            continue
+        names.append(raw)
+        if len(names) >= limit:
+            break
+    return names
 
 
 def search_phrase(text: str) -> str:
@@ -353,4 +401,50 @@ def lookup_images(query: str, opener=None) -> list[dict]:
         if any(item["url"] == card["url"] for item in cards):
             continue
         cards.append(card)
+    return cards
+
+
+def _lookup_named(name: str, opener, movie: bool) -> dict | None:
+    phrase = f"{name} film" if movie else name
+    try:
+        titles = _titles(phrase, opener)
+    except Exception:
+        return None
+    for title in titles[:2]:
+        try:
+            card = _summary_card(title, opener, movie)
+        except Exception:
+            card = None
+        if card:
+            return card
+    return None
+
+
+def cards_for_answer(prompt: str, answer: str, opener=None) -> list[dict]:
+    """Cards for this turn. `each` looks up every listed item. `none` is empty."""
+    mode = visual_mode(prompt)
+    if mode == "none":
+        return []
+    if mode == "one":
+        return lookup_images(prompt, opener=opener)
+    from pair.lists import list_count
+
+    counted = list_count(prompt) or MAX_LIST_CARDS
+    limit = min(counted, MAX_LIST_CARDS)
+    names = item_names(answer, limit)
+    movie = bool(_MOVIE.search(prompt or "") or re.search(r"\b(?:movies?|films?)\b", prompt or "", re.I))
+    if not names:
+        return []
+    workers = min(4, len(names))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        found = list(pool.map(lambda name: _lookup_named(name, opener, movie), names))
+    cards: list[dict] = []
+    for card in found:
+        if not card:
+            continue
+        if any(item["url"] == card["url"] for item in cards):
+            continue
+        cards.append(card)
+        if len(cards) >= limit:
+            break
     return cards

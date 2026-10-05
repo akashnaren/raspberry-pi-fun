@@ -398,6 +398,8 @@ def openapi_document() -> dict:
                             "enum": ["warming", "ready"],
                             "description": "Canned-key embed preload. Does not block this request.",
                         },
+                        "uptime_s": {"type": "integer"},
+                        "services": {"type": "object"},
                     },
                 },
             },

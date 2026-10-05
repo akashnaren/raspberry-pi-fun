@@ -8,6 +8,7 @@ import re
 
 from pair.ground import is_grounded_problem
 from pair.knobs import inference_knobs
+from pair.lists import list_count
 from pair.turn import is_plain_list, is_plot, user_question
 
 FLASH = "flash"
@@ -65,6 +66,8 @@ def task_tier(prompt: str) -> str:
     if is_plot(text) or is_plain_list(text):
         return FLASH
     if _SEARCH.search(text) or _MULTI.search(text):
+        return PRO
+    if (list_count(text) or 0) >= 8:
         return PRO
     if len(text) >= 280 or len(text.split()) >= 48:
         return PRO

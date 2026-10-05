@@ -13,15 +13,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.canned import lookup, start_canned_warm, warm_status
+from pair.charts import is_structured_request, parabola_chart, structure_hint
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model, start_model_warm
 from pair.config import STATIC_DIR
+from pair.docfit import fit_outbound
 from pair.gate import capacity_message
 from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
-from pair.knobs import decode_effort, search_note_limit
+from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
+from pair.knobs import decode_effort, inference_knobs, search_note_limit
+from pair.lists import continuation_messages, finish_numbered, list_budget, list_count
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
+from pair.preload import start_pro_warm
 from pair.public_api import (
     FLASH_MODE,
     apply_mode,
@@ -32,16 +37,14 @@ from pair.public_api import (
     swagger_html,
 )
 from pair.queue import append_row, apply_label, node_role, note_exchange
-from pair.images import lookup_images, sanitize_card, suits_visuals
 from pair.mesh import lookup_for_brain
 from pair.search import lookup_web
 from pair import runtime
 from pair.stream import stream_llamacpp, stream_ollama
 from pair.turn import (
     asks_continuation,
-    continuation_messages,
+    continuation_messages as plain_continuation,
     degraded_answer,
-    is_plot,
     join_continuation,
     needs_web,
     prepare_search_note,
@@ -245,23 +248,50 @@ def _with_search(messages, prompt: str):
     return messages, {"status": status, "sources": sources, "context": full}
 
 
-def _image_cards(prompt: str) -> list[dict]:
-    """Public cards for this turn. Empty when the line is not visual or the lookup fails."""
+def _image_cards(prompt: str, answer: str = "") -> list[dict]:
+    """Public cards for this turn. A list of visual items waits for the answer."""
+    mode = visual_mode(prompt)
+    if mode == "none":
+        return []
     try:
-        found = lookup_images(prompt)
+        if mode == "each":
+            if not (answer or "").strip():
+                return []
+            found = cards_for_answer(prompt, answer)
+        else:
+            found = lookup_images(prompt)
     except Exception:
         return []
     if not isinstance(found, list):
         return []
+    cap = 8 if mode == "each" else 3
     cards = []
     for item in found:
         clean = sanitize_card(item)
         if not clean:
             continue
         cards.append(clean)
-        if len(cards) >= 3:
+        if len(cards) >= cap:
             break
     return cards
+
+
+def _cards_after(prompt: str, answer: str, images: list[dict]) -> list[dict]:
+    """One card per listed car, movie, product, or place. Other turns keep theirs."""
+    if visual_mode(prompt) != "each":
+        return images
+    fresh = _image_cards(prompt, answer)
+    return fresh or images
+
+
+def _list_suffix(shown: str, finished: str) -> str:
+    """Text the stream has not already sent. Empty when the list did not grow."""
+    if not finished or finished == shown:
+        return ""
+    trimmed = shown.rstrip()
+    if finished.startswith(trimmed):
+        return finished[len(trimmed) :]
+    return ""
 
 
 def _put_images(payload: dict, images: list[dict]) -> None:
@@ -318,19 +348,47 @@ def write_event(handler, payload: dict) -> bool:
     return safe_write(handler, f"data: {json.dumps(payload)}\n\n".encode(), flush=True)
 
 
+_BOOTED = time.monotonic()
+
+
+def _service_row(peers: list, role: str, name: str) -> dict:
+    match = None
+    for peer in peers:
+        if not isinstance(peer, dict):
+            continue
+        if peer.get("role") == role or peer.get("name") == name:
+            match = peer
+            break
+    if match is None:
+        return {"name": name, "ok": False, "latency_ms": None}
+    return {
+        "name": name,
+        "ok": bool(match.get("ok")),
+        "latency_ms": match.get("latency_ms"),
+    }
+
+
 def health_document() -> dict:
     peers = snapshot_peers()
+    up = sum(1 for peer in peers if isinstance(peer, dict) and peer.get("ok"))
     return {
         "ok": True,
         "model": runtime.MODEL,
         "mode": "flash",
         "modes": mode_table(),
-        "peers_up": sum(1 for peer in peers if peer["ok"]),
+        "peers_up": up,
         "peers": peers,
         "slots": runtime.INFER_SLOTS,
         "in_flight": runtime.gate.in_flight(),
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
         "warm": warm_status(),
+        "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
+        "services": {
+            "brain": _service_row(peers, "brain", "pi4"),
+            "search": _service_row(peers, "health", "pi2"),
+            "peers_up": up,
+            "peers": len(peers),
+        },
     }
 
 
@@ -709,8 +767,25 @@ class Handler(BaseHTTPRequestHandler):
             ]
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
-            do_search = bool(mesh and node_role() == "brain" and needs_web(prompt))
-            show_images = bool(mesh and node_role() == "brain" and not is_plot(prompt))
+            structured = is_structured_request(prompt)
+            do_search = bool(mesh and node_role() == "brain") and not structured and needs_web(prompt)
+            max_tokens = list_budget(prompt, max_tokens)
+            ctx = int(inference_knobs().get("num_ctx") or 2048)
+            outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
+            ready = parabola_chart(prompt)
+            hint = None if ready else structure_hint(prompt)
+            if hint:
+                outbound = [{"role": "system", "content": hint}, *outbound]
+            search_note = None
+            images: list[dict] = []
+            if do_search and not want_stream:
+                outbound, search_note = _with_search(outbound, prompt)
+                images = _image_cards(prompt)
+            if not want_stream:
+                outbound = shape_messages(outbound, prompt)
+            grounded = ready
+            if grounded is None and search_note is not None:
+                grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         except Exception as error:
             self._error(str(error))
             return
@@ -718,11 +793,13 @@ class Handler(BaseHTTPRequestHandler):
             if not tag_ready(peer.get("models") or [], "pro", model):
                 self._error(pull_needed(model))
                 return
-        # Streaming opens the event stream before search so the page is not
-        # blank for the whole lookup. The gate is taken inside _stream, and
-        # only when the model is actually called.
-        if want_stream:
-            try:
+        # Map hits already returned. A page answer never enters the model, so it
+        # does not take a generation slot either. Flash and Pro share this gate.
+        if grounded is None and not runtime.gate.try_acquire():
+            self._error(capacity_message(runtime.gate.limit), status=503)
+            return
+        try:
+            if want_stream:
                 self._stream(
                     peer,
                     kind,
@@ -741,52 +818,32 @@ class Handler(BaseHTTPRequestHandler):
                     mode_name=mode_name,
                     route_name=route_name,
                     resident_name=resident_name,
-                    show_images=show_images,
+                    ready_answer=grounded,
                 )
-            except Exception as error:
-                self._error(str(error))
-            return
-        search_note = None
-        images: list[dict] = []
-        grounded = None
-        try:
-            if do_search:
-                outbound, search_note = _with_search(outbound, prompt)
-            if show_images and (do_search or suits_visuals(prompt)):
-                images = _image_cards(prompt)
-            if search_note is not None:
-                grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
-        except Exception as error:
-            self._error(str(error))
-            return
-        # Map hits already returned. A page answer never enters the model, so it
-        # does not take a generation slot either. Flash and Pro share this gate.
-        if grounded is None and not runtime.gate.try_acquire():
-            self._error(capacity_message(runtime.gate.limit), status=503)
-            return
-        try:
-            stages = ["loading"] if route_name == "pro" else []
-            stages.append("thinking")
-            if do_search:
-                stages.append("searching")
-            stages.append("answering")
-            self._complete(
-                peer,
-                kind,
-                model,
-                outbound,
-                temperature,
-                max_tokens,
-                started,
-                prompt,
-                think_name,
-                search_note,
-                stages,
-                images,
-                mode_name,
-                route_name,
-                resident_name,
-            )
+            else:
+                stages = ["loading"] if route_name == "pro" else []
+                stages.append("thinking")
+                if do_search:
+                    stages.append("searching")
+                stages.append("answering")
+                self._complete(
+                    peer,
+                    kind,
+                    model,
+                    outbound,
+                    temperature,
+                    max_tokens,
+                    started,
+                    prompt,
+                    think_name,
+                    search_note,
+                    stages,
+                    images,
+                    mode_name,
+                    route_name,
+                    resident_name,
+                    ready_answer=grounded,
+                )
         except Exception as error:
             self._error(str(error))
         finally:
@@ -1150,17 +1207,7 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
-    def _write_delta(self, text: str) -> bool:
-        if not text:
-            return True
-        chunk = {
-            "id": "pi-pair",
-            "object": "chat.completion.chunk",
-            "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
-        }
-        return safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
-
-    def _reply(
+    def _extend_list(
         self,
         peer,
         kind,
@@ -1169,9 +1216,38 @@ class Handler(BaseHTTPRequestHandler):
         temperature,
         max_tokens,
         prompt: str,
-        search_note,
-    ):
-        """One completion, plus a single list continuation. Network failures are a sentence."""
+        text: str,
+    ) -> str:
+        """Ask once or twice more when a numbered list stops before N."""
+
+        def more(partial: str, count: int) -> str:
+            follow = continuation_messages(messages, partial, count)
+            if kind == "llamacpp":
+                nxt, _used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+            else:
+                nxt, _used = chat_ollama(peer, model, follow, temperature, max_tokens)
+            return nxt
+
+        try:
+            extended = finish_numbered(prompt, text, more)
+        except Exception:
+            return text
+        if extended != text or list_count(prompt):
+            return extended
+        return text
+
+    def _decode_reply(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        search_note: dict | None,
+    ) -> tuple[str, str, bool]:
+        """One completion. A plain list may continue once. A failed decode is one sentence."""
         meta: dict = {}
         try:
             if kind == "llamacpp":
@@ -1179,21 +1255,23 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 content, used = chat_ollama(peer, model, messages, temperature, max_tokens, meta=meta)
         except (OSError, json.JSONDecodeError) as error:
-            print(f"generation degraded: {type(error).__name__}", flush=True)
             return degraded_answer(search_note, error), model, False
         content = content or ""
-        if asks_continuation(prompt, content, str(meta.get("done_reason") or "")):
-            follow = shape_messages(continuation_messages(messages, content), prompt)
+        if not list_count(prompt) and asks_continuation(prompt, content, str(meta.get("done_reason") or "")):
+            follow = shape_messages(plain_continuation(messages, content), prompt)
             more = ""
             try:
                 if kind == "llamacpp":
                     more, used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
                 else:
                     more, used = chat_ollama(peer, model, follow, temperature, max_tokens)
-            except (OSError, json.JSONDecodeError) as error:
-                print(f"generation degraded: {type(error).__name__}", flush=True)
+            except (OSError, json.JSONDecodeError):
                 more = ""
             content = join_continuation(content, more or "")
+        else:
+            content = self._extend_list(
+                peer, kind, model, messages, temperature, max_tokens, prompt, content
+            )
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
@@ -1217,237 +1295,207 @@ class Handler(BaseHTTPRequestHandler):
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
-        show_images: bool = False,
+        ready_answer: str | None = None,
     ) -> None:
-        """Open the event stream. A full gate with no lookup stays a JSON 503."""
-        acquired = False
-        opened = False
-        try:
-            if not do_search:
-                acquired = runtime.gate.try_acquire()
-                if not acquired:
-                    self._error(capacity_message(runtime.gate.limit), status=503)
-                    return
-            self.send_response(200)
-            self._cors()
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("X-Accel-Buffering", "no")
-            self.send_header("X-Pi-Peer", peer["name"])
-            self.send_header("X-Pi-Chip", "brain: pi4" if peer["name"] == "pi4" else peer["name"])
-            if think_name:
-                self.send_header("X-Pi-Think", think_name)
-            self._write_mode_headers(mode_name, route_name, resident_name)
-            self.end_headers()
-            opened = True
-            stages: list[str] = []
-            note = mode_fields(mode_name, route_name, resident_name)
+        self.send_response(200)
+        self._cors()
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("X-Pi-Peer", peer["name"])
+        self.send_header("X-Pi-Chip", "brain: pi4" if peer["name"] == "pi4" else peer["name"])
+        if think_name:
+            self.send_header("X-Pi-Think", think_name)
+        self._write_mode_headers(mode_name, route_name, resident_name)
+        self.end_headers()
+        stages: list[str] = []
+        note = mode_fields(mode_name, route_name, resident_name)
 
-            def emit_status(stage: str, extra: dict | None = None) -> bool:
-                if stage not in stages:
-                    stages.append(stage)
-                merged = dict(note)
-                if extra:
-                    merged.update(extra)
-                return write_event(self, status_event(stage, merged or None))
+        def emit_status(stage: str, extra: dict | None = None) -> bool:
+            if stage not in stages:
+                stages.append(stage)
+            merged = dict(note)
+            if extra:
+                merged.update(extra)
+            return write_event(self, status_event(stage, merged or None))
 
-            think_extra = {"pi_think": think_name} if think_name else None
-            if route_name == "pro":
-                if not emit_status("loading", {"pi_loading": "Loading Pro"}):
-                    return
-            if not emit_status("thinking", think_extra):
+        think_extra = {"pi_think": think_name} if think_name else None
+        if route_name == "pro":
+            if not emit_status("loading", {"pi_loading": "Loading Pro"}):
                 return
-            images = list(images or [])
-            if do_search:
-                if not emit_status("searching", {"pi_tool": "search"}):
-                    return
-                if not searched:
-                    messages, search_note = _with_search(messages, prompt)
-                    if show_images:
-                        images = _image_cards(prompt)
-                elif show_images and not images:
-                    images = _image_cards(prompt)
-                found = {"pi_tool": "search"}
-                if search_note:
-                    found["pi_search"] = search_note["status"]
-                    found["pi_sources"] = search_note["sources"]
-                _put_images(found, images)
-                if not emit_status("searching", found):
-                    return
-            elif show_images and suits_visuals(prompt):
+        if not emit_status("thinking", think_extra):
+            return
+        images = list(images or [])
+        if do_search:
+            if not emit_status("searching", {"pi_tool": "search"}):
+                return
+            if not searched:
+                messages, search_note = _with_search(messages, prompt)
                 images = _image_cards(prompt)
-            grounded = None
-            if search_note is not None:
-                grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
-            answer_extra = dict(think_extra or {})
+            found = {"pi_tool": "search"}
             if search_note:
-                answer_extra["pi_search"] = search_note["status"]
-                answer_extra["pi_sources"] = search_note["sources"]
-            _put_images(answer_extra, images)
-            if not emit_status("answering", answer_extra or None):
+                found["pi_search"] = search_note["status"]
+                found["pi_sources"] = search_note["sources"]
+            _put_images(found, images)
+            if not emit_status("searching", found):
                 return
-            if grounded is not None:
-                self._emit_ready_answer(
-                    peer,
-                    kind,
-                    used,
-                    prompt,
-                    grounded,
-                    started,
-                    think_name,
-                    search_note,
-                    stages,
-                    images,
-                    mode_name,
-                    route_name,
-                    resident_name,
-                )
-                return
-            messages = shape_messages(messages, prompt)
-            parts: list[str] = []
-            train_answer = True
-
-            def pump(gen) -> bool:
-                for delta in gen:
-                    parts.append(delta)
-                    if not self._write_delta(delta):
-                        return True
-                return False
-
-            def seal(answer: str, train: bool) -> None:
-                chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                if train and answer.strip():
-                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
-                if answer.strip():
-                    remember_completion(prompt, answer, chip, peer["name"])
-                elapsed = int((time.time() - started) * 1000)
-                final = {
-                    "id": "pi-pair",
-                    "object": "chat.completion.chunk",
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                    "pi_peer": peer["name"],
-                    "pi_chip": chip,
-                    "pi_ms": elapsed,
-                    "pi_model": used,
-                    "pi_kind": kind,
-                    "pi_stages": list(stages),
+        grounded = ready_answer
+        if grounded is None and search_note is not None:
+            grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
+        answer_extra = dict(think_extra or {})
+        if search_note:
+            answer_extra["pi_search"] = search_note["status"]
+            answer_extra["pi_sources"] = search_note["sources"]
+        _put_images(answer_extra, images)
+        if not emit_status("answering", answer_extra or None):
+            return
+        messages = shape_messages(messages, prompt)
+        if grounded is not None:
+            self._emit_ready_answer(
+                peer,
+                kind,
+                used,
+                prompt,
+                grounded,
+                started,
+                think_name,
+                search_note,
+                stages,
+                images,
+                mode_name,
+                route_name,
+                resident_name,
+            )
+            return
+        safe_write(
+            self,
+            f": pi-pair peer={peer['name']} kind={kind} model={used}\n\n".encode(),
+            flush=True,
+        )
+        first = {
+            "id": "pi-pair",
+            "object": "chat.completion.chunk",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant"},
+                    "finish_reason": None,
                 }
-                if think_name:
-                    final["pi_think"] = think_name
-                if search_note:
-                    final["pi_search"] = search_note["status"]
-                    final["pi_sources"] = search_note["sources"]
-                _put_images(final, images)
-                final.update(note)
-                apply_tier(self, final)
-                safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
-                safe_write(self, b"data: [DONE]\n\n", flush=True)
-
-            try:
-                if not acquired:
-                    acquired = runtime.gate.try_acquire()
-                if not acquired:
-                    self._emit_ready_answer(
-                        peer,
-                        kind,
-                        used,
-                        prompt,
-                        capacity_message(runtime.gate.limit),
-                        started,
-                        think_name,
-                        search_note,
-                        stages,
-                        images,
-                        mode_name,
-                        route_name,
-                        resident_name,
-                        train=False,
-                    )
-                    return
-                safe_write(
-                    self,
-                    f": pi-pair peer={peer['name']} kind={kind} model={used}\n\n".encode(),
-                    flush=True,
-                )
-                first = {
+            ],
+            "pi_peer": peer["name"],
+            "pi_chip": "brain: pi4" if peer["name"] == "pi4" else peer["name"],
+            "pi_model": used,
+            "pi_kind": kind,
+        }
+        if think_name:
+            first["pi_think"] = think_name
+        if search_note:
+            first["pi_search"] = search_note["status"]
+            first["pi_sources"] = search_note["sources"]
+        _put_images(first, images)
+        first.update(note)
+        apply_tier(self, first)
+        safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
+        parts: list[str] = []
+        try:
+            if kind == "llamacpp":
+                gen = stream_llamacpp(peer, model, messages, temperature, max_tokens)
+            else:
+                gen = stream_ollama(peer, model, messages, temperature, max_tokens)
+            closed = False
+            for delta in gen:
+                parts.append(delta)
+                chunk = {
                     "id": "pi-pair",
                     "object": "chat.completion.chunk",
                     "choices": [
                         {
                             "index": 0,
-                            "delta": {"role": "assistant"},
+                            "delta": {"content": delta},
                             "finish_reason": None,
                         }
                     ],
-                    "pi_peer": peer["name"],
-                    "pi_chip": "brain: pi4" if peer["name"] == "pi4" else peer["name"],
-                    "pi_model": used,
-                    "pi_kind": kind,
                 }
-                if think_name:
-                    first["pi_think"] = think_name
-                if search_note:
-                    first["pi_search"] = search_note["status"]
-                    first["pi_sources"] = search_note["sources"]
-                _put_images(first, images)
-                first.update(note)
-                apply_tier(self, first)
-                safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
-                if kind == "llamacpp":
-                    gen = stream_llamacpp(peer, model, messages, temperature, max_tokens)
-                else:
-                    gen = stream_ollama(peer, model, messages, temperature, max_tokens)
-                if pump(gen):
-                    answer = "".join(parts).strip()
-                    if answer:
-                        chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                        note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
-                        remember_completion(prompt, answer, chip, peer["name"])
+                if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
+                    closed = True
+                    break
+            if closed:
+                answer = "".join(parts).strip()
+                if answer:
+                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                    remember_completion(prompt, answer, chip, peer["name"])
+                return
+            answer = "".join(parts)
+            finished = self._extend_list(
+                peer, kind, model, messages, temperature, max_tokens, prompt, answer
+            )
+            extra = _list_suffix(answer, finished)
+            if extra:
+                more = {
+                    "id": "pi-pair",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": extra},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                if not safe_write(self, f"data: {json.dumps(more)}\n\n".encode(), flush=True):
+                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                    remember_completion(prompt, answer, chip, peer["name"])
                     return
-                if asks_continuation(prompt, "".join(parts), getattr(gen, "done_reason", "")):
-                    follow = shape_messages(continuation_messages(messages, "".join(parts)), prompt)
-                    if kind == "llamacpp":
-                        more = stream_llamacpp(peer, model, follow, temperature, max_tokens)
-                    else:
-                        more = stream_ollama(peer, model, follow, temperature, max_tokens)
-                    if not "".join(parts).endswith("\n"):
-                        parts.append("\n")
-                        if not self._write_delta("\n"):
-                            answer = "".join(parts).strip()
-                            if answer:
-                                chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                                note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
-                                remember_completion(prompt, answer, chip, peer["name"])
-                            return
-                    if pump(more):
-                        answer = "".join(parts).strip()
-                        if answer:
-                            chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                            note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
-                            remember_completion(prompt, answer, chip, peer["name"])
-                        return
-                answer = "".join(parts)
-                if not answer.strip():
-                    sentence = degraded_answer(search_note, None)
-                    parts.append(sentence)
-                    self._write_delta(sentence)
-                    train_answer = False
-                    answer = sentence
-                seal(answer, train_answer)
-            except Exception as error:
-                if not opened:
-                    raise
-                print(f"generation degraded: {type(error).__name__}", flush=True)
-                if not "".join(parts).strip():
-                    sentence = public_failure(error, search_note)
-                    parts.append(sentence)
-                    self._write_delta(sentence)
-                    train_answer = False
-                seal("".join(parts), train_answer and bool("".join(parts).strip()))
-        finally:
-            if acquired:
-                runtime.gate.release()
-
+                answer = finished
+            images = _cards_after(prompt, answer, images)
+            elapsed = int((time.time() - started) * 1000)
+            final = {
+                "id": "pi-pair",
+                "object": "chat.completion.chunk",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "pi_peer": peer["name"],
+                "pi_chip": "brain: pi4" if peer["name"] == "pi4" else peer["name"],
+                "pi_ms": elapsed,
+                "pi_model": used,
+                "pi_kind": kind,
+            }
+            if think_name:
+                final["pi_think"] = think_name
+            if search_note:
+                final["pi_search"] = search_note["status"]
+                final["pi_sources"] = search_note["sources"]
+            _put_images(final, images)
+            final["pi_stages"] = list(stages)
+            final.update(note)
+            chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+            answer = "".join(parts)
+            note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+            remember_completion(prompt, answer, chip, peer["name"])
+            apply_tier(self, final)
+            safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
+            safe_write(self, b"data: [DONE]\n\n", flush=True)
+        except (OSError, json.JSONDecodeError) as error:
+            sentence = degraded_answer(search_note, error)
+            chunk = {
+                "id": "pi-pair",
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {"content": sentence}, "finish_reason": None}],
+            }
+            safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
+            safe_write(self, b"data: [DONE]\n\n", flush=True)
+        except Exception as error:
+            err = {"error": public_failure(error, search_note)}
+            apply_tier(self, err)
+            safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
+            safe_write(self, b"data: [DONE]\n\n", flush=True)
 
     def _emit_ready_answer(
         self,
@@ -1464,7 +1512,6 @@ class Handler(BaseHTTPRequestHandler):
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
-        train: bool = True,
     ) -> None:
         """Send a finished answer that was taken from the pages, not the model."""
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
@@ -1482,9 +1529,8 @@ class Handler(BaseHTTPRequestHandler):
         apply_tier(self, chunk)
         if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
             return
-        if train:
-            note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
-            remember_completion(prompt, answer, chip, peer["name"])
+        note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+        remember_completion(prompt, answer, chip, peer["name"])
         elapsed = int((time.time() - started) * 1000)
         final = {
             "id": "pi-pair",
@@ -1525,16 +1571,16 @@ class Handler(BaseHTTPRequestHandler):
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
+        ready_answer: str | None = None,
     ) -> None:
-        grounded = None
-        if search_note is not None:
+        grounded = ready_answer
+        if grounded is None and search_note is not None:
             grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         train = True
         if grounded is not None:
             content, used = grounded, model
         else:
-            messages = shape_messages(messages, prompt)
-            content, used, train = self._reply(
+            content, used, train = self._decode_reply(
                 peer,
                 kind,
                 model,
@@ -1544,6 +1590,7 @@ class Handler(BaseHTTPRequestHandler):
                 prompt,
                 search_note,
             )
+            images = _cards_after(prompt, content, list(images or []))
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
         if train:
             note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
@@ -1598,11 +1645,10 @@ def make_server(host: str | None = None, port: int | None = None) -> ThreadingHT
 
 
 warm_thread: threading.Thread | None = None
-model_warm_thread: threading.Thread | None = None
 
 
 def main() -> None:
-    global warm_thread, model_warm_thread
+    global warm_thread
     runtime.configure()
     print(
         f"Pi GPT 1.0 on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
@@ -1616,5 +1662,6 @@ def main() -> None:
     # for the duration of the preload.
     server = make_server()
     warm_thread = start_canned_warm()
-    model_warm_thread = start_model_warm(warm_thread)
+    start_pro_warm()
+    start_model_warm(warm_thread)
     server.serve_forever()

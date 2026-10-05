@@ -142,11 +142,27 @@ if (!go.classList.contains("voice") || go.classList.contains("send")) {
 }
 
 const brand = document.getElementById("brand");
-if (!brand.classList.contains("splashing")) throw new Error("splash did not start");
+if (!brand.classList.contains("brand-logo")) throw new Error("idle header is not the logo");
+if (brand.classList.contains("brand-title")) throw new Error("idle header showed the title");
 if (!document.querySelector("#brandMark svg")) throw new Error("mark was not drawn");
-await new Promise((resolve) => setTimeout(resolve, 1600));
-if (brand.classList.contains("splashing") || !document.getElementById("brandName").textContent.includes("OpenPi")) {
-  throw new Error("splash did not reveal the title");
+if (!document.getElementById("brandName").textContent.includes("OpenPi")) {
+  throw new Error("title text is missing");
+}
+box.value = "plot a curve";
+box.dispatchEvent(new window.Event("input"));
+if (!brand.classList.contains("brand-title") || brand.classList.contains("brand-logo")) {
+  throw new Error("typing did not morph the logo into the title");
+}
+box.value = "";
+box.dispatchEvent(new window.Event("input"));
+if (!brand.classList.contains("brand-logo") || brand.classList.contains("brand-title")) {
+  throw new Error("clearing the draft did not return to the logo");
+}
+if (!document.getElementById("btnIo").querySelector("svg path[d*='10.2 2.8']")) {
+  throw new Error("settings control is not a gear");
+}
+if (!document.getElementById("serviceNow") || !document.getElementById("serviceLog")) {
+  throw new Error("settings has no status log");
 }
 
 document.getElementById("btnIo").click();
