@@ -1,9 +1,10 @@
 """Keep ordinary replies helpful and free of product internals.
 
-The small local model sometimes refuses a harmless list, or answers a greeting
-with mesh jargon. A system hint asks it to answer. If the reply is still a
-canned soft refusal, one retry asks it to answer helpfully, then a short
-attempt stands in. A clearly harmful request keeps the model's refusal.
+A soft refusal is retried only when the user prompt is a harmless shape and
+the harmful check does not match. One nudge retry comes first. A second soft
+refusal on a list or real-world question can be grounded by the caller (search
+notes or Pro). The last resort is one honest sentence, never a canned item list.
+A harmful request keeps the model's refusal.
 """
 
 from __future__ import annotations
@@ -11,47 +12,24 @@ from __future__ import annotations
 import re
 
 from pair.charts import is_structured_request
-from pair.lists import list_count
+from pair.lists import list_count, placeholder_only
 
-HELPFUL_NUDGE = "Answer the user's question helpfully."
+HELPFUL_NUDGE = "Answer helpfully if the request is safe."
+
+LIST_MISS = "I couldn't get a good list for that, try Pro or rephrase."
+FACT_MISS = "I couldn't get a good answer for that, try Pro or rephrase."
 
 ANSWER_HINT = (
-    "Answer the user's question directly and helpfully. "
-    "Lists, cars, movies, greetings, and ordinary questions are welcome. "
-    "Do not refuse a harmless question. "
+    "Answer the user's question directly. "
+    "Lists, greetings, and ordinary factual questions are welcome when they are safe. "
+    "Answer helpfully if the request is safe. "
     "Do not mention the thinking control, model choice, routing, or private mesh."
 )
 
 LIST_HINT = (
     "The user wants a numbered list. Reply with one item per line, numbered from 1. "
-    "Answer helpfully. Do not say you cannot assist. "
+    "Answer helpfully if the request is safe. "
     "Do not mention the thinking control, model choice, or routing."
-)
-
-_CARS = (
-    "Toyota Corolla",
-    "Honda Civic",
-    "Tesla Model Y",
-    "Ford F-150",
-    "Volkswagen Golf",
-    "Hyundai Elantra",
-    "Chevrolet Silverado",
-    "BMW 3 Series",
-    "Mercedes-Benz C-Class",
-    "Subaru Outback",
-)
-
-_MOVIES = (
-    "The Godfather",
-    "Spirited Away",
-    "The Dark Knight",
-    "Parasite",
-    "The Shawshank Redemption",
-    "Inception",
-    "Get Out",
-    "Mad Max: Fury Road",
-    "Whiplash",
-    "Lady Bird",
 )
 
 _GREETING = re.compile(
@@ -63,9 +41,40 @@ _GREETING = re.compile(
 )
 
 _HARMFUL = re.compile(
-    r"\b(?:how\s+to|how\s+do\s+i|make|build|synthesize|cook)\b.{0,48}"
-    r"\b(?:bomb|explosive|methamphetamine|fentanyl|sarin|anthrax)\b|"
-    r"\b(?:child|minor|underage)\b.{0,32}\b(?:porn|sexual|nude|nudes)\b",
+    "|".join(
+        (
+            r"\b(?:suicid\w*|self[-\s]?harm|kill myself|killing myself|end my life|"
+            r"hang myself|hurt myself|cut myself)\b",
+            r"\b(?:pipe bomb|bomb|explosive|grenade|molotov|improvised explosive)\b",
+            r"\b(?:how to|make|build|manufacture)\b.{0,40}\b(?:gun|firearm|rifle|weapon)\b",
+            r"\b(?:malware|ransomware|keylogger|rootkit|credential theft)\b",
+            r"\b(?:hack(?:ing)? into|how to hack|steal (?:a |the |their |his |her )?"
+            r"(?:password|credentials)|phishing)\b",
+            r"\b(?:stalk(?:ing)? (?:someone|a person|him|her|them)|how to stalk)\b",
+            r"\b(?:kill|murder|assassinate|shoot|stab)\b.{0,32}"
+            r"\b(?:someone|a person|him|her|them|people)\b",
+            r"\b(?:meth(?:amphetamine)?|fentanyl|heroin|mdma)\b.{0,40}"
+            r"\b(?:synth\w*|cook|recipe|steps?|make)\b",
+            r"\b(?:synth\w*|cook)\b.{0,40}\b(?:meth(?:amphetamine)?|fentanyl|heroin|mdma)\b",
+            r"\b(?:csam|child sexual)\b",
+            r"\b(?:child|minor|underage)\b.{0,40}\b(?:porn|sexual|nude|nudes)\b",
+            r"\b(?:poison(?:ing|s)?|ricin|cyanide|novichok|sarin|anthrax)\b",
+        )
+    ),
+    re.I,
+)
+
+_LIST_SHAPE = re.compile(
+    r"\b(?:top\s+\d{1,2}|\d{1,2}\s+best|rank(?:ing)?|bullet list|checklist|enumerate|list)\b",
+    re.I,
+)
+
+_FACTUAL = re.compile(
+    r"(?:what(?:'s| is| are| was| were)|who(?:'s| is| are| was| were)|"
+    r"when(?:'s| did| was| were| is)|where(?:'s| is| are| was| were)|"
+    r"why(?:'s| is| are| did| do| does| was| were)|which|"
+    r"how (?:many|much|old|tall|long|far|big|often|high)|"
+    r"define|definition of|capital of)\b",
     re.I,
 )
 
@@ -131,13 +140,48 @@ def _fold(text: str) -> str:
     return (text or "").replace("’", "'").replace("‘", "'").replace("`", "'")
 
 
+def _line(prompt: str) -> str:
+    return " ".join((prompt or "").split())
+
+
 def is_harmful(prompt: str) -> bool:
-    """True only for a clearly harmful request. Ordinary questions stay false."""
+    """True for self-harm, weapons, malware, stalking, drug synthesis, or CSAM."""
     return bool(_HARMFUL.search(prompt or ""))
 
 
 def is_casual_greeting(prompt: str) -> bool:
-    return bool(_GREETING.match(" ".join((prompt or "").split())))
+    return bool(_GREETING.match(_line(prompt)))
+
+
+def is_list_shape(prompt: str) -> bool:
+    text = prompt or ""
+    return bool(list_count(text) or _LIST_SHAPE.search(text))
+
+
+def is_plain_factual(prompt: str) -> bool:
+    text = _line(prompt)
+    if not text or len(text) > 240 or is_harmful(text):
+        return False
+    return bool(_FACTUAL.match(text))
+
+
+def is_harmless_shape(prompt: str) -> bool:
+    """Top-N, list, rank, greeting, or a short factual question."""
+    if is_harmful(prompt):
+        return False
+    if is_casual_greeting(prompt) or is_list_shape(prompt):
+        return True
+    return is_plain_factual(prompt)
+
+
+def may_retry_refusal(prompt: str) -> bool:
+    """Retry a soft refusal only for a harmless shape that also passes the check."""
+    return is_harmless_shape(prompt) and not is_harmful(prompt)
+
+
+def wants_grounded_retry(prompt: str) -> bool:
+    """A list or real-world question can try search notes or Pro. A greeting does not."""
+    return may_retry_refusal(prompt) and not is_casual_greeting(prompt)
 
 
 def is_soft_refusal(text: str) -> bool:
@@ -159,9 +203,9 @@ def friendly_greeting(prompt: str) -> str:
 
 def answer_hint_for(prompt: str) -> str | None:
     """A short system hint for a harmless question. Plots already have one."""
-    if is_harmful(prompt) or is_structured_request(prompt):
+    if is_harmful(prompt) or is_structured_request(prompt) or not is_harmless_shape(prompt):
         return None
-    if list_count(prompt):
+    if is_list_shape(prompt):
         return LIST_HINT
     return ANSWER_HINT
 
@@ -206,6 +250,8 @@ def withhold_partial(text: str) -> bool:
         return False
     if is_soft_refusal(sample) or _META.search(sample):
         return True
+    if placeholder_only(text or ""):
+        return True
     folded = sample.lower()
     if len(folded) > 180:
         return False
@@ -220,51 +266,62 @@ def visible_canned(prompt: str, answer: str) -> str:
     return text
 
 
-def _numbered(items: tuple[str, ...], count: int) -> str:
-    n = max(2, min(int(count), len(items)))
-    return "\n".join(f"{index}. {name}" for index, name in enumerate(items[:n], start=1))
-
-
-def short_attempt(prompt: str) -> str:
-    """A real answer when the model will only refuse a harmless question."""
+def honest_fallback(prompt: str) -> str:
+    """One sentence. No invented cars, movies, or other items."""
     if is_casual_greeting(prompt):
         return friendly_greeting(prompt)
-    count = list_count(prompt) or 0
-    folded = prompt or ""
-    if count and re.search(r"\bcars?\b", folded, re.I):
-        return _numbered(_CARS, count)
-    if count and re.search(r"\b(?:movies|films)\b", folded, re.I):
-        return _numbered(_MOVIES, count)
-    if count:
-        return f"Here are {count} to start with. Tell me the kind you care about and I will narrow it."
-    return "I can help with that. Ask for the detail you want and I will answer it."
+    if is_list_shape(prompt):
+        return LIST_MISS
+    return FACT_MISS
 
 
-def settle_reply(prompt: str, text: str, retry) -> str:
-    """Scrub a harmless reply. One helpful retry, then a short attempt.
+def is_honest_miss(text: str) -> bool:
+    folded = " ".join((text or "").split())
+    return folded in {LIST_MISS, FACT_MISS}
 
-    `retry` is called at most once. A harmful prompt is returned unchanged.
+
+def _usable(prompt: str, text: str) -> str:
+    cleaned = scrub_reply(text or "")
+    if not cleaned or is_soft_refusal(cleaned):
+        return ""
+    if is_casual_greeting(prompt) and leaks_infra(cleaned):
+        return ""
+    return cleaned
+
+
+def settle_reply(prompt: str, text: str, retry, ground=None) -> str:
+    """Scrub a harmless reply. One nudge, then one grounded retry, then one line.
+
+    `retry` and `ground` are each called at most once. A harmful prompt, or any
+    prompt that is not a harmless shape, keeps a soft refusal as the model wrote it.
     """
-    if is_harmful(prompt):
-        return text or ""
+    raw = text or ""
+    if is_harmful(prompt) or not is_harmless_shape(prompt):
+        if is_harmful(prompt) or is_soft_refusal(raw):
+            return raw
+        cleaned = scrub_reply(raw)
+        return cleaned or raw
     if is_casual_greeting(prompt):
-        cleaned = scrub_reply(text or "")
-        if cleaned and not is_soft_refusal(cleaned) and not leaks_infra(cleaned):
-            return cleaned
-        return friendly_greeting(prompt)
-    if not is_soft_refusal(text or ""):
-        cleaned = scrub_reply(text or "")
-        if cleaned:
-            return cleaned
-        if _META.search(text or ""):
-            return short_attempt(prompt)
-        return text or ""
+        return _usable(prompt, raw) or friendly_greeting(prompt)
+    kept = _usable(prompt, raw)
+    if kept:
+        return kept
+    if not is_soft_refusal(raw) and not _META.search(raw):
+        return raw
     second = ""
     try:
         second = retry() or ""
     except Exception:
         second = ""
-    again = scrub_reply(second)
-    if again and not is_soft_refusal(again) and not (is_casual_greeting(prompt) and leaks_infra(again)):
-        return again
-    return short_attempt(prompt)
+    kept = _usable(prompt, second)
+    if kept:
+        return kept
+    if wants_grounded_retry(prompt) and ground is not None:
+        try:
+            third = ground() or ""
+        except Exception:
+            third = ""
+        kept = _usable(prompt, third)
+        if kept:
+            return kept
+    return honest_fallback(prompt)

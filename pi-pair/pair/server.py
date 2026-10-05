@@ -15,7 +15,9 @@ from pathlib import Path
 from pair.assist import (
     HELPFUL_NUDGE,
     is_harmful,
+    is_honest_miss,
     is_soft_refusal,
+    may_retry_refusal,
     scrub_reply,
     settle_reply,
     visible_canned,
@@ -39,7 +41,13 @@ from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, search_note_limit
-from pair.lists import continuation_messages, finish_numbered, list_budget, list_count
+from pair.lists import (
+    continuation_messages,
+    finish_numbered,
+    list_budget,
+    list_count,
+    placeholder_only,
+)
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
 from pair.preload import start_pro_warm
@@ -1274,7 +1282,7 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, json.JSONDecodeError) as error:
             return degraded_answer(search_note, error), model, False
         content = content or ""
-        if not is_harmful(prompt) and is_soft_refusal(content):
+        if may_retry_refusal(prompt) and is_soft_refusal(content):
             content = self._guard_reply(
                 peer, kind, model, messages, temperature, max_tokens, prompt, content
             )
@@ -1325,7 +1333,7 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         content: str,
     ) -> str:
-        """One helpful retry when a harmless question comes back as a soft refusal."""
+        """Nudge once. A second soft refusal may use search notes or Pro, not a canned list."""
 
         def again() -> str:
             follow = shape_messages(
@@ -1338,7 +1346,58 @@ class Handler(BaseHTTPRequestHandler):
             )
             return self._ask(peer, kind, model, follow, temperature, max_tokens)
 
-        return settle_reply(prompt, content, again)
+        def ground() -> str:
+            return self._recover_refusal(
+                peer, kind, model, messages, temperature, max_tokens, prompt
+            )
+
+        return settle_reply(prompt, content, again, ground)
+
+    def _mesh_search_on(self) -> bool:
+        mesh = (self.headers.get("X-Pi-Mesh") or "on").strip().lower()
+        return mesh != "off" and node_role() == "brain"
+
+    def _recover_refusal(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+    ) -> str:
+        """One recovery after the nudge: pi2/local search notes, or a Pro tag.
+
+        Search wins when it returns notes. Pro is the other path, used when
+        search is off, already ran, or came back empty. Neither invents items.
+        """
+        rows = list(messages or [])
+        already = any(
+            isinstance(row, dict) and str(row.get("content") or "").startswith("Web search notes")
+            for row in rows
+        )
+        if not already and self._mesh_search_on() and not is_structured_request(prompt):
+            outbound, note = _with_search(rows, prompt)
+            context = ""
+            if isinstance(note, dict) and note.get("status") == "ok":
+                context = str(note.get("context") or "").strip()
+            if context:
+                follow = shape_messages(
+                    [*outbound, {"role": "user", "content": HELPFUL_NUDGE}],
+                    prompt,
+                )
+                return self._ask(peer, kind, model, follow, temperature, max_tokens)
+        pro_tag = mode_table().get("pro") or ""
+        if not pro_tag or pro_tag == model:
+            return ""
+        if not tag_ready(peer.get("models") or [], "pro", pro_tag):
+            return ""
+        follow = shape_messages(
+            [*rows, {"role": "user", "content": HELPFUL_NUDGE}],
+            prompt,
+        )
+        return self._ask(peer, kind, pro_tag, follow, temperature, max_tokens)
 
     def _repair_chart(
         self,
@@ -1568,10 +1627,17 @@ class Handler(BaseHTTPRequestHandler):
                     remember_completion(prompt, answer, chip, peer["name"])
                 return
             answer = "".join(parts)
-            if held and not is_harmful(prompt):
-                answer = self._guard_reply(
-                    peer, kind, model, messages, temperature, max_tokens, prompt, answer
-                )
+            if held and may_retry_refusal(prompt) and (
+                is_soft_refusal(answer) or placeholder_only(answer)
+            ):
+                if placeholder_only(answer) and not is_soft_refusal(answer):
+                    answer = self._extend_list(
+                        peer, kind, model, messages, temperature, max_tokens, prompt, answer
+                    )
+                else:
+                    answer = self._guard_reply(
+                        peer, kind, model, messages, temperature, max_tokens, prompt, answer
+                    )
                 if answer and not safe_write(
                     self,
                     (
@@ -1595,7 +1661,10 @@ class Handler(BaseHTTPRequestHandler):
                     return
             elif not is_harmful(prompt):
                 answer = scrub_reply(answer) or answer
-            finished = answer if is_soft_refusal(answer) else self._extend_list(
+            skip_extend = (
+                is_soft_refusal(answer) or is_honest_miss(answer) or placeholder_only(answer)
+            )
+            finished = answer if skip_extend else self._extend_list(
                 peer, kind, model, messages, temperature, max_tokens, prompt, answer
             )
             extra = _list_suffix(answer, finished)
