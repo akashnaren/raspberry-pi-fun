@@ -1872,12 +1872,10 @@ class Handler(BaseHTTPRequestHandler):
                 joined = "".join(parts)
                 release = stream_release(joined)
                 if release == "refuse":
-                    # Nothing harmful has been written. Replace the whole reply.
+                    # Stop before the harmful span is written. A prefix that
+                    # already went out is replaced by the refusal below.
                     policy = refusal_for(joined)
-                    if flushed == 0:
-                        parts.clear()
-                    else:
-                        parts[:] = [joined[:flushed]]
+                    parts.clear()
                     break
                 if release == "hold":
                     continue
@@ -1926,6 +1924,10 @@ class Handler(BaseHTTPRequestHandler):
                         }
                     ],
                 }
+                # The page appends deltas. This flag drops a prefix that
+                # streamed before the reply turned harmful.
+                if flushed:
+                    refused["pi_replace"] = True
                 if not safe_write(
                     self, f"data: {json.dumps(refused)}\n\n".encode(), flush=True
                 ):

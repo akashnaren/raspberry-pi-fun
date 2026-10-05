@@ -283,6 +283,17 @@ class ScriptOllama(OllamaFake):
             self.send_response(200)
             self.send_header("content-type", "application/x-ndjson")
             self.end_headers()
+            chunks = reply.get("chunks") if isinstance(reply, dict) else None
+            if isinstance(chunks, list) and chunks:
+                last = len(chunks) - 1
+                reason = str(reply.get("done_reason") or "stop")
+                for index, piece in enumerate(chunks):
+                    line = {"message": {"content": piece}, "done": index == last}
+                    if index == last:
+                        line["done_reason"] = reason
+                    self.wfile.write(json.dumps(line).encode() + b"\n")
+                    self.wfile.flush()
+                return
             self.wfile.write(json.dumps(reply).encode() + b"\n")
             return
         self._json(json.dumps(reply).encode())
@@ -1217,6 +1228,176 @@ class TurnHttp(unittest.TestCase):
         self.assertIn(HARM_REFUSAL, raw)
         self.assertNotIn("ransomware", raw.lower())
         self.assertEqual(ScriptOllama.posts, 1)
+
+    def test_early_stream_keeps_the_harm_backstop_and_full_lists(self):
+        """Token streaming still applies the #57/#58 output backstop.
+
+        A reply that turns harmful after a safe prefix is cut off and the
+        page-visible text becomes the refusal. Exact-N and a computed sequence
+        still arrive as the full corrected list.
+        """
+        from pair.assist import HARM_REFUSAL
+        from pair.server import last_completion
+
+        def assemble(raw: str) -> str:
+            text = ""
+            for line in raw.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    payload = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                delta = ((payload.get("choices") or [{}])[0].get("delta") or {}).get(
+                    "content"
+                ) or ""
+                if not delta:
+                    continue
+                text = delta if payload.get("pi_replace") else text + delta
+            return text
+
+        def deltas(raw: str) -> list[str]:
+            found = []
+            for line in raw.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    payload = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                piece = ((payload.get("choices") or [{}])[0].get("delta") or {}).get(
+                    "content"
+                ) or ""
+                if piece:
+                    found.append(piece)
+            return found
+
+        def stream(port: int, prompt: str, mesh: str = "off") -> str:
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request(
+                "POST",
+                "/v1/chat/completions",
+                body=json.dumps(
+                    {"messages": [{"role": "user", "content": prompt}], "stream": True}
+                ).encode(),
+                headers={
+                    "content-type": "application/json",
+                    "X-Pi-Target": "pi4",
+                    "X-Pi-Mesh": mesh,
+                },
+            )
+            raw = conn.getresponse().read().decode()
+            conn.close()
+            return raw
+
+        safe = "Potatoes roast well. "
+        leaked = "Install ransomware on the laptop."
+        ScriptOllama.replies = [
+            {"chunks": [safe, leaked], "done_reason": "stop"},
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        raw = stream(port, "Tell me something pleasant about potatoes")
+        shown = assemble(raw)
+        pieces = deltas(raw)
+        self.assertEqual(shown, HARM_REFUSAL)
+        self.assertEqual(pieces[0], safe)
+        self.assertTrue(any("pi_replace" in line for line in raw.splitlines()))
+        self.assertTrue(all("ransomware" not in piece.lower() for piece in pieces))
+        self.assertNotIn("ransomware", shown.lower())
+        self.assertEqual(last_completion()["answer"], HARM_REFUSAL)
+        self.assertEqual(ScriptOllama.posts, 1)
+
+        ScriptOllama.replies = [
+            {"chunks": ["1. 4\n", "2. 9"], "done_reason": "stop"},
+            {"message": {"content": "3. 1"}, "done": True, "done_reason": "stop"},
+        ]
+        ScriptOllama.posts = 0
+        raw = stream(port, "rank these 3 numbers", "on")
+        shown = assemble(raw)
+        self.assertIn("1. 4", shown)
+        self.assertIn("2. 9", shown)
+        self.assertIn("3. 1", shown)
+        self.assertEqual(
+            [line.split(". ", 1)[1] for line in shown.splitlines() if ". " in line],
+            ["4", "9", "1"],
+        )
+        self.assertNotIn("pi_replace", raw)
+        self.assertEqual(ScriptOllama.posts, 2)
+
+        ScriptOllama.replies = [
+            {"chunks": ["1. 1\n", leaked], "done_reason": "stop"},
+        ]
+        ScriptOllama.posts = 0
+        raw = stream(port, "Top 5 primes", "on")
+        shown = assemble(raw)
+        self.assertEqual(
+            [
+                int(line.split(". ", 1)[1])
+                for line in shown.splitlines()
+                if ". " in line
+            ],
+            [2, 3, 5, 7, 11],
+        )
+        self.assertNotIn("ransomware", raw.lower())
+        self.assertNotIn("pi_replace", raw)
+        self.assertEqual(ScriptOllama.posts, 0)
+
+        invented = (
+            "1. The Shapen\n2. The Exorcist\n3. Hereditary\n4. Get Out\n5. Halloween"
+        )
+        notes = (
+            "Web search notes.\nText from the first page:\n"
+            "1. The Exorcist\n2. Hereditary\n3. Get Out\n4. The Shining\n5. Halloween\n6. Psycho\n"
+        )
+        ScriptOllama.replies = [
+            {"message": {"content": invented}, "done": True, "done_reason": "stop"},
+        ]
+        ScriptOllama.posts = 0
+
+        def _notes(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "sources": [
+                    {"title": "Horror films", "url": "https://example.com/horror"}
+                ],
+                "context": notes,
+            }
+
+        pair_server.lookup_web = _notes
+        self.search_calls.clear()
+        raw = stream(port, "Top 5 horror movies", "on")
+        shown = assemble(raw)
+        self.assertEqual(
+            [line.split(". ", 1)[1] for line in shown.splitlines() if ". " in line],
+            ["The Exorcist", "Hereditary", "Get Out", "The Shining", "Halloween"],
+        )
+        self.assertNotIn("Shapen", raw)
+        self.assertNotIn("pi_replace", raw)
+        self.assertEqual(ScriptOllama.posts, 1)
+        self.assertEqual(self.search_calls, ["horror films"])
 
     def test_a_short_category_list_searches_once_and_primes_do_not(self):
         partial = "1. Halloween\n2. Hereditary\n3. The Thing"
