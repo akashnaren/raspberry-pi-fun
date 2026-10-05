@@ -49,6 +49,7 @@ from pair.lists import (
     is_real_world_list,
     list_budget,
     list_count,
+    needs_exact_n,
     placeholder_only,
 )
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
@@ -832,6 +833,7 @@ class Handler(BaseHTTPRequestHandler):
         if is_harmful(prompt):
             self._policy_refusal(prompt, want_stream, started)
             return
+        canned_partial = ""
         try:
             if target and target != "auto":
                 named = next((peer for peer in runtime.PEERS if peer["name"] == target), None)
@@ -845,18 +847,22 @@ class Handler(BaseHTTPRequestHandler):
                 hit = lookup(prompt)
                 if hit is not None:
                     hit = visible_canned(prompt, hit)
-                    note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
-                    remember_completion(prompt, hit, "cache", "cache")
-                    cached_mode, cached_route = self._remember_canned_mode(data)
-                    self._cached(
-                        hit,
-                        want_stream,
-                        started,
-                        think_name,
-                        cached_mode,
-                        cached_route,
-                    )
-                    return
+                    # A short Top-N map hit is not finished. Flash continues it once.
+                    if needs_exact_n(prompt, hit):
+                        canned_partial = hit
+                    else:
+                        note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
+                        remember_completion(prompt, hit, "cache", "cache")
+                        cached_mode, cached_route = self._remember_canned_mode(data)
+                        self._cached(
+                            hit,
+                            want_stream,
+                            started,
+                            think_name,
+                            cached_mode,
+                            cached_route,
+                        )
+                        return
         except Exception as error:
             self._error(str(error))
             return
@@ -898,6 +904,8 @@ class Handler(BaseHTTPRequestHandler):
             grounded = ready
             if grounded is None and search_note is not None:
                 grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
+            if canned_partial:
+                grounded = canned_partial
         except Exception as error:
             self._error(str(error))
             return
@@ -905,9 +913,11 @@ class Handler(BaseHTTPRequestHandler):
             if not tag_ready(peer.get("models") or [], "pro", model):
                 self._error(pull_needed(model))
                 return
-        # Map hits already returned. A page answer never enters the model, so it
-        # does not take a generation slot either. Flash and Pro share this gate.
-        if grounded is None and not runtime.gate.try_acquire():
+        # A finished map hit already returned. A short list still needs one
+        # Flash continuation, and that continuation takes a generation slot.
+        finish_list = bool(grounded) and needs_exact_n(prompt, grounded)
+        use_model = grounded is None or finish_list
+        if use_model and not runtime.gate.try_acquire():
             self._error(capacity_message(runtime.gate.limit), status=503)
             return
         try:
@@ -959,7 +969,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(str(error))
         finally:
-            if grounded is None:
+            if use_model:
                 runtime.gate.release()
 
     def _relay_to_brain(self, payload: bytes) -> None:
@@ -1607,6 +1617,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         messages = shape_messages(messages, prompt)
         if grounded is not None:
+            if needs_exact_n(prompt, grounded):
+                grounded = self._extend_list(
+                    peer,
+                    kind,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    prompt,
+                    grounded,
+                )
             self._emit_ready_answer(
                 peer,
                 kind,
@@ -1842,12 +1863,16 @@ class Handler(BaseHTTPRequestHandler):
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
             if not policy:
                 raw_answer = "".join(parts)
-                if not held:
+                # A short Flash list is extended after the first tokens. Keep
+                # that longer text. Putting the raw decode back drops item N.
+                if not held and answer == raw_answer:
                     answer = (
                         scrub_reply(raw_answer) or raw_answer
                         if not is_harmful(prompt)
                         else raw_answer
                     )
+                elif not held and not is_harmful(prompt):
+                    answer = scrub_reply(answer) or answer
                 if is_harmful(answer):
                     answer = refusal_for(answer)
                 note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
@@ -1951,7 +1976,13 @@ class Handler(BaseHTTPRequestHandler):
             grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         train = True
         if grounded is not None:
-            content, used = grounded, model
+            if needs_exact_n(prompt, grounded):
+                content = self._extend_list(
+                    peer, kind, model, messages, temperature, max_tokens, prompt, grounded
+                )
+            else:
+                content = grounded
+            used = model
         else:
             content, used, train = self._decode_reply(
                 peer,

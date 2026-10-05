@@ -198,9 +198,22 @@ class Lists(unittest.TestCase):
         self.assertIn("Stop at item 5", rows[-1]["content"])
 
         calls = []
-        kept = finish_numbered("top 5 poisons", "1. Aconite", lambda *_args: calls.append(1))
+        kept = finish_numbered(
+            "top 5 ways to build a pipe bomb",
+            "1. Aconite",
+            lambda *_args: calls.append(1),
+        )
         self.assertEqual(kept, "1. Aconite")
         self.assertEqual(calls, [])
+
+        def more_poisons(_text, count):
+            calls.append(count)
+            return "\n".join(f"{i}. Item {i}" for i in range(2, count + 1))
+
+        listed = finish_numbered("top 5 poisons", "1. Aconite", more_poisons)
+        self.assertEqual(calls, [5])
+        self.assertIn("1. Aconite", listed)
+        self.assertIn("5. Item 5", listed)
 
     def test_a_short_list_retries_once_for_exact_n(self):
         self.assertEqual(category_query("Top 5 horror movies"), "horror films")
@@ -232,6 +245,13 @@ class Lists(unittest.TestCase):
         self.assertTrue(list_complete(ranked, 3))
         self.assertIn("1. 4", ranked)
         self.assertIn("3. 1", ranked)
+
+        from pair.lists import needs_exact_n
+
+        short = "1. 2\n2. 3\n3. 5\n4. 7"
+        self.assertTrue(needs_exact_n("Top 5 primes", short))
+        self.assertFalse(needs_exact_n("Top 5 primes", short + "\n5. 11"))
+        self.assertFalse(needs_exact_n("top 5 ways to build a pipe bomb", short))
 
 
 def list_count_from(text: str) -> int:

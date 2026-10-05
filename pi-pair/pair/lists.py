@@ -131,6 +131,17 @@ def _may_continue(prompt: str) -> bool:
     return bool(may_retry_refusal(prompt) and not is_harmful(prompt) and list_count(prompt))
 
 
+def needs_exact_n(prompt: str, text: str) -> bool:
+    """True when a harmless counted list does not yet have N real items.
+
+    Canned hits and Flash replies both use this. Nothing is invented here.
+    """
+    count = list_count(prompt)
+    if not count or not _may_continue(prompt):
+        return False
+    return not list_complete(text or "", count)
+
+
 def continuation_messages(messages: list, partial: str, count: int) -> list:
     """A refusal or a placeholder list is a fresh ask, not a replay."""
     if not numbered_lines(partial):
