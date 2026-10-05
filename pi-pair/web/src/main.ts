@@ -2,6 +2,10 @@ import { failChart, drawChart } from "./chart";
 import { cardsFrom, renderImageCardsHtml, type ImageCard } from "./images";
 import { renderMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
+import { primaryKind, primaryLabel } from "./primary-action";
+import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
+import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
+import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
 declare global {
@@ -26,6 +30,8 @@ interface SourceLink {
   url: string;
 }
 
+type ModelChoice = ModelMode;
+
 interface SearchInfo {
   status: string;
   sources: SourceLink[];
@@ -35,10 +41,11 @@ interface Turn {
   role: Role;
   content: string;
   effort?: string;
-  mode?: string;
   search?: SearchInfo | null;
   stages?: StageName[];
   images?: ImageCard[];
+  mode?: string;
+  route?: string;
 }
 
 interface LiveTurn {
@@ -52,19 +59,18 @@ interface LiveTurn {
   showImages: (cards: ImageCard[]) => void;
   finish: (text: string, failed: boolean, prompt: string, effort: string, search: SearchInfo | null, stages: StageName[]) => void;
   markErr: () => void;
+  armPro: () => void;
 }
 
 const DEFAULT_MODEL = window.MESH_DEFAULT_MODEL || "qwen2.5:0.5b";
-const MODELS: { flash: string; pro: string } = {
-  flash: DEFAULT_MODEL,
-  pro: "qwen2.5:1.5b",
-};
 const turns: Turn[] = [];
 let sending = false;
 let stopAsked = false;
 let turnCtrl: AbortController | null = null;
-let thinking = "medium";
-let mode = "flash";
+let pageSettings: PageSettings = loadSettings(browserStorage("local"));
+let thinking: ThinkLevel = pageSettings.thinking;
+let modelMode: ModelChoice = pageSettings.mode;
+let enterToSend = pageSettings.enterToSend;
 let listening = false;
 let dictating = false;
 let dictated = "";
@@ -96,12 +102,21 @@ function byId<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-function selectedMode(): string {
-  return mode === "pro" ? "pro" : "flash";
+function modeModel(): string {
+  if (modelMode === "pro") return "qwen2.5:1.5b";
+  if (modelMode === "flash") return "qwen2.5:0.5b";
+  return DEFAULT_MODEL;
 }
 
-function selectedModel(): string {
-  return selectedMode() === "pro" ? MODELS.pro : MODELS.flash;
+function persistSettings(): void {
+  pageSettings = {
+    theme: (document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark") as ThemeName,
+    mode: modelMode,
+    thinking,
+    voiceSilenceMs: endOfUtteranceSilence(),
+    enterToSend,
+  };
+  saveSettings(browserStorage("local"), pageSettings);
 }
 
 function hideEmpty(): void {
@@ -110,7 +125,9 @@ function hideEmpty(): void {
 
 function setSettingsOpen(on: boolean): void {
   byId("ioPanel").classList.toggle("open", on);
-  byId("overlay").classList.toggle("open", on);
+  if (on) byId("sourcesPanel").classList.remove("open");
+  const sourcesOpen = byId("sourcesPanel").classList.contains("open");
+  byId("overlay").classList.toggle("open", on || sourcesOpen);
 }
 
 const PLOTLY_SRC = "/static/plotly.min.js";
@@ -166,7 +183,8 @@ function effortLabel(name: string): string {
   return "";
 }
 
-function showMark(parent: HTMLElement, label: string): void {
+function showEffort(parent: HTMLElement, name: string): void {
+  const label = effortLabel(name);
   if (!label) return;
   const node = el("span", "effort", label);
   const labels = parent.querySelector(".label-row");
@@ -174,35 +192,62 @@ function showMark(parent: HTMLElement, label: string): void {
   else parent.appendChild(node);
 }
 
-function showEffort(parent: HTMLElement, name: string): void {
-  showMark(parent, effortLabel(name));
+function modeChipText(mode: string, route: string): string {
+  const tier = route === "flash" ? "Flash" : route === "pro" ? "Pro" : route === "canned" ? "map" : "";
+  if (mode === "auto") return tier ? "Auto · " + tier : "Auto";
+  if (mode === "flash") return route === "canned" ? "Flash · map" : "Flash";
+  if (mode === "pro") return route === "canned" ? "Pro · map" : "Pro";
+  return "";
 }
 
-function showMode(parent: HTMLElement, name: string): void {
-  const key = String(name || "").toLowerCase();
-  if (key === "pro") showMark(parent, "Pro");
-  else if (key === "flash") showMark(parent, "Flash");
+function showMode(parent: HTMLElement, mode: string, route: string): void {
+  const label = modeChipText(mode, route);
+  if (!label) return;
+  const node = el("span", "mode-chip", label);
+  const labels = parent.querySelector(".label-row");
+  if (labels) labels.insertBefore(node, labels.firstChild);
+  else parent.appendChild(node);
 }
 
-function showSearch(parent: HTMLElement, status: string, sources: SourceLink[]): void {
-  if (status !== "ok" && status !== "failed") return;
-  const note = el("div", "search-note");
+function setSourcesOpen(on: boolean): void {
+  const panel = byId("sourcesPanel");
+  panel.classList.toggle("open", on);
+  panel.setAttribute("aria-hidden", on ? "false" : "true");
+  const settingsOpen = byId("ioPanel").classList.contains("open");
+  byId("overlay").classList.toggle("open", on || settingsOpen);
+}
+
+function openSourcesPanel(detail: PanelDetail): void {
+  const body = byId("sourcesBody");
+  body.replaceChildren(renderSourcesPanelBody(document, detail));
+  setSettingsOpen(false);
+  setSourcesOpen(true);
+  document.querySelectorAll(".sources-pill").forEach((pill) => {
+    pill.setAttribute("aria-expanded", "false");
+  });
+}
+
+function showSearch(parent: HTMLElement, status: string, sources: SourceLink[], stages: StageName[], prompt: string): void {
   if (status === "failed") {
-    note.textContent = "Search failed";
-  } else {
-    note.appendChild(el("span", "search-kicker", "Searched"));
-    sources.slice(0, 3).forEach((src) => {
-      const url = src && src.url ? String(src.url) : "";
-      if (!url.startsWith("http")) return;
-      const link = document.createElement("a");
-      link.href = url;
-      link.target = "_blank";
-      link.rel = "noopener";
-      link.textContent = src.title || url;
-      note.appendChild(link);
-    });
+    parent.appendChild(renderFailedSearch(document));
+    return;
   }
-  parent.appendChild(note);
+  if (status !== "ok") return;
+  const links = (sources || []).filter((src) => src && String(src.url || "").startsWith("http"));
+  if (!links.length) return;
+  const pill = renderSourcesPill(document, links as PillSource[]);
+  const detail: PanelDetail = { status, sources: links, stages, prompt };
+  pill.onclick = () => {
+    const opening = !byId("sourcesPanel").classList.contains("open");
+    if (!opening) {
+      setSourcesOpen(false);
+      pill.setAttribute("aria-expanded", "false");
+      return;
+    }
+    openSourcesPanel(detail);
+    pill.setAttribute("aria-expanded", "true");
+  };
+  parent.appendChild(pill);
 }
 
 function mountImageCards(row: HTMLElement, before: Node | null, raw: unknown): void {
@@ -272,13 +317,6 @@ function fillModels(rows: { models?: string[] }[]): void {
   select.value = list.includes(prev) ? prev : DEFAULT_MODEL;
 }
 
-function rememberModes(body: { modes?: { flash?: string; pro?: string } }): void {
-  const flash = body.modes && body.modes.flash;
-  const pro = body.modes && body.modes.pro;
-  if (flash) MODELS.flash = flash;
-  if (pro) MODELS.pro = pro;
-}
-
 function thumbIcon(): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -315,11 +353,11 @@ async function refresh(): Promise<void> {
   try {
     const response = await fetch("/health", { method: "GET", cache: "no-store" });
     if (!response.ok) throw new Error("offline");
-    const body = await response.json() as { modes?: { flash?: string; pro?: string } };
+    const body = await response.json() as { peers?: { models?: string[] }[] };
     const banner = byId("banner");
     banner.className = "";
     banner.replaceChildren();
-    rememberModes(body);
+    fillModels(body.peers || []);
   } catch {
     showOffline();
   }
@@ -506,11 +544,11 @@ function addFinishedBot(item: Turn, index: number): HTMLElement {
     row.appendChild(body);
   }
   if (item.images?.length) mountImageCards(row, body, item.images);
-  if (item.search) showSearch(row, item.search.status, item.search.sources);
   const asked = promptBefore(index);
+  if (item.search) showSearch(row, item.search.status, item.search.sources, item.stages || [], asked);
   if (asked) attachLabel(row, asked, item.content);
-  showMode(row, item.mode || "");
   showEffort(row, item.effort || "");
+  showMode(row, item.mode || "", item.route || "");
   let labels = row.querySelector(".label-row");
   if (!labels) {
     labels = el("div", "label-row");
@@ -541,9 +579,9 @@ function motionReduced(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function addLiveBot(tier = ""): LiveTurn {
+function addLiveBot(expectPro = false): LiveTurn {
   hideEmpty();
-  const holdPro = tier === "pro";
+  let holdPro = expectPro;
   const row = el("div", "msg bot streaming");
   const stagesEl = el("div", "stages");
   stagesEl.setAttribute("aria-live", "polite");
@@ -724,9 +762,8 @@ function addLiveBot(tier = ""): LiveTurn {
         setBodyContent(body, text, !failed);
         revealReply(text);
       }
-      if (!failed && search) showSearch(row, search.status, search.sources);
+      if (!failed && search) showSearch(row, search.status, search.sources, stages, prompt);
       if (prompt && !failed) attachLabel(row, prompt, text);
-      if (!failed) showMode(row, tier);
       if (!failed) showEffort(row, effort);
       const done = trail(stages, search);
       if (done && !failed) row.insertBefore(done, stagesEl);
@@ -738,6 +775,14 @@ function addLiveBot(tier = ""): LiveTurn {
       row.classList.remove("streaming");
       stagesEl.removeAttribute("aria-busy");
       row.querySelector(".image-cards")?.remove();
+    },
+    armPro() {
+      if (holdPro) return;
+      holdPro = true;
+      stagesEl.classList.add("pro-load");
+      stagesEl.setAttribute("aria-busy", "true");
+      stagesEl.setAttribute("aria-label", "Loading Pro");
+      enqueue("loading");
     },
   };
   if (holdPro) enqueue("loading");
@@ -752,10 +797,11 @@ function keepPartial(
   search: SearchInfo | null,
   stages: StageName[],
   images: ImageCard[],
-  picked = "",
+  mode = "",
+  route = "",
 ): void {
   if (visibleReply(text)) {
-    turns.push({ role: "assistant", content: text, effort, mode: picked, search, stages, images });
+    turns.push({ role: "assistant", content: text, effort, search, stages, images, mode, route });
     paint();
     return;
   }
@@ -781,10 +827,9 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
     paint();
   }
   let voiced = false;
-  const picked = selectedMode();
-  const model = selectedModel();
+  const model = modeModel();
   const effort = thinking || "medium";
-  const live = addLiveBot(picked);
+  const live = addLiveBot(modelMode === "pro");
   let textAccum = "";
   let searchStatus = "";
   let searchSources: SourceLink[] = [];
@@ -800,18 +845,18 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
   try {
     const body: {
       model: string;
-      mode: string;
       messages: { role: string; content: string }[];
       stream: boolean;
       think: string;
+      pi_mode: string;
       pi_target: string;
       pi_mesh: string;
     } = {
       model,
-      mode: picked,
       messages: [],
       stream: true,
       think: effort,
+      pi_mode: modelMode,
       pi_target: "auto",
       pi_mesh: "on",
     };
@@ -836,7 +881,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
             "content-type": "application/json",
             "X-Pi-Target": "auto",
             "X-Pi-Mesh": "on",
-            "X-Pi-Mode": picked,
+            "X-Pi-Mode": modelMode,
           },
           body: JSON.stringify(body),
           signal: turnCtrl.signal,
@@ -855,13 +900,15 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       searchStatus ? { status: searchStatus, sources: searchSources } : null
     );
     if (stopAsked) {
-      keepPartial(live, textAccum, text, effort, searchNow(), stages, imageCards, picked);
+      keepPartial(live, textAccum, text, effort, searchNow(), stages, imageCards, modelMode, "");
       return;
     }
     if (lastErr || !response) throw lastErr || new Error("no response");
 
     let streamedEffort = response.headers.get("X-Pi-Think") || effort;
-    let streamedMode = response.headers.get("X-Pi-Mode") || picked;
+    let streamedMode = response.headers.get("X-Pi-Mode") || modelMode;
+    let streamedRoute = response.headers.get("X-Pi-Route") || "";
+    if (streamedRoute === "pro") live.armPro();
     searchStatus = response.headers.get("X-Pi-Search") || "";
     const contentType = (response.headers.get("content-type") || "").toLowerCase();
     if (!contentType.includes("event-stream")) {
@@ -870,6 +917,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
         error?: string;
         pi_think?: string;
         pi_mode?: string;
+        pi_route?: string;
         pi_search?: string;
         pi_sources?: SourceLink[];
         pi_images?: unknown;
@@ -906,10 +954,11 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
         role: "assistant",
         content: answer,
         effort: payload.pi_think || streamedEffort,
-        mode: payload.pi_mode || streamedMode,
         search,
         stages: doneStages,
         images: imageCards,
+        mode: payload.pi_mode || streamedMode,
+        route: payload.pi_route || streamedRoute,
       });
       paint();
       if (spoken && speakText(answer)) voiced = true;
@@ -946,6 +995,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
           pi_status?: StageName;
           pi_think?: string;
           pi_mode?: string;
+          pi_route?: string;
           pi_search?: string;
           pi_sources?: SourceLink[];
           pi_images?: unknown;
@@ -984,10 +1034,14 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
         }
         if (payload.pi_think) streamedEffort = payload.pi_think;
         if (payload.pi_mode) streamedMode = payload.pi_mode;
+        if (payload.pi_route) {
+          streamedRoute = payload.pi_route;
+          if (streamedRoute === "pro") live.armPro();
+        }
       }
     }
     if (stopAsked) {
-      keepPartial(live, textAccum, text, streamedEffort || effort, searchNow(), stages, imageCards, streamedMode);
+      keepPartial(live, textAccum, text, streamedEffort || effort, searchNow(), stages, imageCards, streamedMode, streamedRoute);
       return;
     }
     if (streamErr || (!response.ok && !visibleReply(textAccum))) {
@@ -1012,16 +1066,17 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       role: "assistant",
       content: textAccum,
       effort: streamedEffort,
-      mode: streamedMode,
       search,
       stages,
       images: imageCards,
+      mode: streamedMode,
+      route: streamedRoute,
     });
     paint();
     if (spoken && speakText(textAccum)) voiced = true;
   } catch (err) {
     if (stopAsked) {
-      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, picked);
+      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
       return;
     }
     const msg = shownError(err);
@@ -1059,31 +1114,18 @@ async function send(): Promise<void> {
   await sendText(text, false);
 }
 
-function syncMode(): void {
-  document.querySelectorAll(".mode-btn").forEach((node) => {
-    const name = node.getAttribute("data-mode") || "";
-    node.classList.toggle("on", name === mode);
-    const busy = sending && mode === "pro" && name === "pro";
-    node.classList.toggle("loading", busy);
-    if (busy) node.setAttribute("aria-busy", "true");
-    else node.removeAttribute("aria-busy");
-  });
+function composerHasDraft(): boolean {
+  const box = byId<HTMLTextAreaElement>("q");
+  return Boolean((box.value || "").trim() || box.dataset.attachText);
 }
 
 function syncSend(): void {
-  syncMode();
-  const box = byId<HTMLTextAreaElement>("q");
   const go = byId<HTMLButtonElement>("go");
-  const has = (box.value || "").trim() || box.dataset.attachText;
-  if (sending) {
-    go.disabled = false;
-    go.classList.add("stop");
-    go.setAttribute("aria-label", "Stop");
-    return;
-  }
-  go.classList.remove("stop");
-  go.setAttribute("aria-label", "Send");
-  go.toggleAttribute("disabled", !has);
+  const kind = primaryKind(sending, composerHasDraft());
+  go.classList.remove("voice", "send", "stop");
+  go.classList.add(kind);
+  go.disabled = false;
+  go.setAttribute("aria-label", primaryLabel(kind));
 }
 
 function autoGrow(box: HTMLTextAreaElement): void {
@@ -1431,6 +1473,10 @@ byId("go").onclick = () => {
     turnCtrl?.abort();
     return;
   }
+  if (!composerHasDraft()) {
+    toggleVoiceMode();
+    return;
+  }
   void send();
 };
 const composer = byId<HTMLTextAreaElement>("q");
@@ -1453,24 +1499,100 @@ composer.addEventListener("keydown", (event) => {
     autoGrow(box);
     return;
   }
+  if (!enterToSend) return;
   event.preventDefault();
   void send();
 });
-document.querySelectorAll(".think-btn").forEach((btn) => {
-  (btn as HTMLButtonElement).onclick = () => {
-    thinking = btn.getAttribute("data-think") || "medium";
-    document.querySelectorAll(".think-btn").forEach((other) => {
-      other.classList.toggle("on", other === btn);
-    });
+function paintThinking(): void {
+  document.querySelectorAll("[data-think]").forEach((node) => {
+    node.classList.toggle("on", node.getAttribute("data-think") === thinking);
+  });
+}
+
+function paintModelMode(): void {
+  const label = modelMode === "flash" ? "Flash" : modelMode === "pro" ? "Pro" : "Auto";
+  const name = document.getElementById("modeLabel");
+  if (name) name.textContent = label;
+  document.querySelectorAll("[data-mode]").forEach((node) => {
+    const on = node.getAttribute("data-mode") === modelMode;
+    node.classList.toggle("on", on);
+    if (node.getAttribute("role") === "menuitemradio") node.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+
+function paintThemeChoice(): void {
+  const theme = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  document.querySelectorAll("[data-theme-choice]").forEach((node) => {
+    node.classList.toggle("on", node.getAttribute("data-theme-choice") === theme);
+  });
+}
+
+function setThinking(next: string): void {
+  thinking = next === "low" || next === "high" ? next : "medium";
+  paintThinking();
+  persistSettings();
+}
+
+function setModelMode(next: string): void {
+  modelMode = next === "flash" || next === "pro" ? next : "auto";
+  paintModelMode();
+  const menu = document.getElementById("modePop");
+  if (menu) menu.hidden = true;
+  byId("modeBtn").setAttribute("aria-expanded", "false");
+  persistSettings();
+}
+
+function setTheme(next: string): void {
+  const theme: ThemeName = next === "light" ? "light" : "dark";
+  applyTheme(theme);
+  paintThemeChoice();
+  persistSettings();
+}
+
+document.querySelectorAll("[data-think]").forEach((btn) => {
+  (btn as HTMLButtonElement).onclick = () => setThinking(btn.getAttribute("data-think") || "medium");
+});
+document.querySelectorAll("[data-mode]").forEach((btn) => {
+  (btn as HTMLButtonElement).onclick = (event) => {
+    event.stopPropagation();
+    setModelMode(btn.getAttribute("data-mode") || "auto");
   };
 });
-document.querySelectorAll(".mode-btn").forEach((btn) => {
-  (btn as HTMLButtonElement).onclick = () => {
-    const next = btn.getAttribute("data-mode") || "flash";
-    mode = next === "pro" ? "pro" : "flash";
-    syncMode();
-  };
+document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
+  (btn as HTMLButtonElement).onclick = () => setTheme(btn.getAttribute("data-theme-choice") || "dark");
 });
+byId("modeBtn").onclick = (event) => {
+  event.stopPropagation();
+  const menu = byId("modePop");
+  const open = menu.hidden;
+  menu.hidden = !open;
+  byId("modeBtn").setAttribute("aria-expanded", open ? "true" : "false");
+};
+document.addEventListener("click", () => {
+  const menu = document.getElementById("modePop");
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  byId("modeBtn").setAttribute("aria-expanded", "false");
+});
+const silenceInput = byId<HTMLInputElement>("voiceSilence");
+silenceInput.value = String(pageSettings.voiceSilenceMs);
+silenceInput.addEventListener("change", () => {
+  const next = Number(silenceInput.value);
+  applyVoiceSilence(next);
+  silenceInput.value = String(endOfUtteranceSilence());
+  persistSettings();
+});
+const enterBox = byId<HTMLInputElement>("enterSend");
+enterBox.checked = enterToSend;
+enterBox.addEventListener("change", () => {
+  enterToSend = enterBox.checked;
+  persistSettings();
+});
+applyTheme(pageSettings.theme);
+applyVoiceSilence(pageSettings.voiceSilenceMs);
+paintThinking();
+paintModelMode();
+paintThemeChoice();
 whenSpeechStarts(() => {
   if (!voiceOn) return;
   setHeard(false);
@@ -1486,13 +1608,18 @@ byId("btnVoice").onclick = () => toggleVoice();
 byId("btnVoiceMode").onclick = () => toggleVoiceMode();
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
-byId("overlay").onclick = () => setSettingsOpen(false);
+byId("overlay").onclick = () => {
+  setSettingsOpen(false);
+  setSourcesOpen(false);
+};
 byId("btnClear").onclick = () => {
+  if (typeof window.confirm === "function" && !window.confirm("Clear this conversation?")) return;
   turns.length = 0;
   stopSpeaking();
   paint();
   setSettingsOpen(false);
 };
+byId("sourcesClose").onclick = () => setSourcesOpen(false);
 byId("btnMd").onclick = () => {
   if (!turns.length) return;
   download("chat.md", threadAsMd(), "text/markdown");
@@ -1507,6 +1634,22 @@ byId<HTMLInputElement>("attach").onchange = (event) => {
   loadFile(input.files && input.files[0]);
 };
 byId("fileClear").onclick = () => clearAttach();
+function bootSplash(): void {
+  const mark = document.getElementById("brandMark");
+  if (mark) appendBrandMark(document, mark);
+  const store = browserStorage("session");
+  const seen = store ? store.getItem(SPLASH_KEY) : null;
+  if (!shouldPlaySplash(seen, navigationType())) return;
+  if (store) store.setItem(SPLASH_KEY, "1");
+  const brand = document.getElementById("brand");
+  if (!brand) return;
+  brand.classList.add("splashing");
+  window.setTimeout(() => {
+    brand.classList.add("splash-out");
+    window.setTimeout(() => brand.classList.remove("splashing", "splash-out"), 480);
+  }, SPLASH_HOLD_MS);
+}
+bootSplash();
 composer.addEventListener("paste", (event) => {
   const items = event.clipboardData?.items;
   if (!items) return;

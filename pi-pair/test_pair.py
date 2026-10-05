@@ -28,7 +28,7 @@ from pair.stream import llamacpp_delta, ollama_delta
 
 def _composer_keydown(script: str) -> str:
     start = script.index('addEventListener("keydown"')
-    end = script.index('querySelectorAll(".think-btn")', start)
+    end = script.index('querySelectorAll("[data-think]")', start)
     return script[start:end]
 
 
@@ -60,6 +60,7 @@ def _start(httpd: ThreadingHTTPServer) -> None:
 class OllamaFake(BaseHTTPRequestHandler):
     posts = 0
     last_payload = None
+    catalog = ["qwen2.5:0.5b"]
 
     def log_message(self, *args):
         pass
@@ -69,7 +70,8 @@ class OllamaFake(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        body = json.dumps({"models": [{"name": "qwen2.5:0.5b"}]}).encode()
+        names = list(type(self).catalog)
+        body = json.dumps({"models": [{"name": name} for name in names]}).encode()
         self._json(body)
 
     def do_POST(self):
@@ -290,6 +292,7 @@ class PairHttp(unittest.TestCase):
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         OllamaFake.posts = 0
         OllamaFake.last_payload = None
+        OllamaFake.catalog = ["qwen2.5:0.5b"]
         self.search_calls = []
         self._lookup_web = pair_server.lookup_web
         self._lookup_images = pair_server.lookup_images
@@ -313,6 +316,7 @@ class PairHttp(unittest.TestCase):
         os.environ.pop("PI_PAIR_ROLE", None)
         os.environ.pop("PI_PAIR_CANNED", None)
         os.environ.pop("PI_PAIR_BRAIN_PORT", None)
+        os.environ.pop("OLLAMA_MAX_LOADED_MODELS", None)
         self._tmp.cleanup()
 
     def _listen(self, handler):
@@ -408,10 +412,11 @@ class PairHttp(unittest.TestCase):
         self.assertIn('data-think="high"', html)
         self.assertIn('aria-label="Thinking"', html)
         self.assertIn('class="think-btn on" data-think="medium"', html)
+        self.assertIn('data-mode="auto"', html)
         self.assertIn('data-mode="flash"', html)
         self.assertIn('data-mode="pro"', html)
-        self.assertIn('aria-label="Mode"', html)
-        self.assertIn('class="mode-btn on" data-mode="flash"', html)
+        self.assertIn('aria-label="Model mode"', html)
+        self.assertIn('id="modeLabel">Auto</span>', html)
         self.assertIn("Ask anything.", html)
         lowered = html.lower()
         for word in ("cache", "brain", "chip", "peer", "pi2", "pi3", "pi4"):
@@ -443,10 +448,11 @@ class PairHttp(unittest.TestCase):
         self.assertIn("if (event.shiftKey) return;", source)
         self.assertIn("event.ctrlKey || event.metaKey", source)
         self.assertNotIn("metaKey||e.ctrlKey", source)
-        self.assertIn("let thinking = \"medium\";", source)
-        self.assertIn("let mode = \"flash\";", source)
         self.assertIn("think: effort", source)
-        self.assertIn("mode: picked", source)
+        self.assertIn("X-Pi-Route", source)
+        settings_src = (ROOT / "web" / "src" / "settings.ts").read_text(encoding="utf-8")
+        self.assertIn('thinking: "medium"', settings_src)
+        self.assertIn('mode: "auto"', settings_src)
         self.assertIn('el("span", "pending")', source)
         self.assertIn("beginEdit", source)
         handler = _composer_keydown(source)
@@ -462,7 +468,7 @@ class PairHttp(unittest.TestCase):
         self.assertIn(".stage", css)
         self.assertIn(".think-btn", css)
         self.assertIn(".mode-btn", css)
-        self.assertIn(".mode-set", css)
+        self.assertIn(".mode-menu", css)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
             health_body = json.loads(response.read().decode())
         self.assertEqual(health_body["mode"], "flash")
@@ -1503,6 +1509,175 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(OllamaFake.posts, 0)
         self.assertEqual(self.search_calls, [prompt])
 
+    def _brain(self):
+        peer_port = self._listen(OllamaFake)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        return self._pair()
+
+    def test_canned_hit_does_not_load_a_chat_model(self):
+        OllamaFake.posts = 0
+        port = self._brain()
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:1.5b",
+                "pi_mode": "auto",
+                "messages": [{"role": "user", "content": "Hi!"}],
+                "stream": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Pi-Chip"), "cache")
+        self.assertEqual(body["pi_model"], "canned")
+        self.assertEqual(body["pi_mode"], "auto")
+        self.assertEqual(body["pi_route"], "canned")
+        self.assertNotIn("pi_resident", body)
+        self.assertEqual(OllamaFake.posts, 0)
+
+    def test_auto_easy_uses_flash_and_explicit_pro_overrides(self):
+        port = self._brain()
+        status, headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "pi_mode": "auto",
+                "messages": [{"role": "user", "content": "nice weather on the porch"}],
+                "stream": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
+        self.assertEqual(body["pi_mode"], "auto")
+        self.assertEqual(body["pi_route"], "flash")
+        self.assertEqual(headers.get("X-Pi-Route"), "flash")
+        self.assertNotIn("pi_resident", body)
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
+        OllamaFake.catalog = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
+        runtime.reset_health()
+        status, _headers, body = self._post(
+            port,
+            {
+                "pi_mode": "pro",
+                "messages": [{"role": "user", "content": "nice weather on the porch"}],
+                "stream": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_mode"], "pro")
+        self.assertEqual(body["pi_route"], "pro")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:1.5b")
+
+    def test_auto_hard_uses_pro_when_present_and_flash_when_it_is_not(self):
+        hard = "Write a python function that reverses a list."
+        port = self._brain()
+        status, _headers, body = self._post(
+            port,
+            {
+                "pi_mode": "auto",
+                "messages": [{"role": "user", "content": hard}],
+                "stream": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_route"], "flash")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
+        OllamaFake.catalog = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
+        runtime.reset_health()
+        os.environ["OLLAMA_MAX_LOADED_MODELS"] = "2"
+        status, headers, body = self._post(
+            port,
+            {
+                "pi_mode": "auto",
+                "think": "high",
+                "messages": [{"role": "user", "content": hard}],
+                "stream": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_mode"], "auto")
+        self.assertEqual(body["pi_route"], "pro")
+        self.assertEqual(headers.get("X-Pi-Route"), "pro")
+        self.assertNotIn("pi_resident", body)
+        self.assertEqual(body["pi_think"], "high")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:1.5b")
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
+        os.environ["OLLAMA_MAX_LOADED_MODELS"] = "3"
+        runtime.reset_health()
+        status, _headers, body = self._post(
+            port,
+            {
+                "pi_mode": "flash",
+                "messages": [{"role": "user", "content": hard}],
+                "stream": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_mode"], "flash")
+        self.assertEqual(body["pi_route"], "flash")
+        self.assertNotIn("pi_resident", body)
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
+
+    def test_search_sources_are_not_cut_to_three(self):
+        def fake(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "context": "notes about the bench",
+                "sources": [{"title": f"T{i}", "url": f"https://ex{i}.test/a"} for i in range(5)],
+            }
+
+        pair_server.lookup_web = fake
+        port = self._brain()
+        status, _headers, body = self._post(
+            port,
+            {
+                "model": "qwen2.5:0.5b",
+                "messages": [{"role": "user", "content": "where is the long bench today"}],
+                "stream": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["pi_sources"]), 5)
+        self.assertEqual(body["pi_sources"][4]["url"], "https://ex4.test/a")
+
+    def test_search_sources_stop_at_eight(self):
+        def fake(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "context": "notes about the bench",
+                "sources": [{"title": f"T{i}", "url": f"https://ex{i}.test/a"} for i in range(12)],
+            }
+
+        pair_server.lookup_web = fake
+        port = self._brain()
+        status, _headers, body = self._post(
+            port,
+            {
+                "model": "custom:tiny",
+                "messages": [{"role": "user", "content": "where is the long bench today"}],
+                "stream": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["pi_sources"]), 8)
+        self.assertEqual(body["pi_sources"][0]["url"], "https://ex0.test/a")
+        self.assertEqual(body["pi_sources"][7]["url"], "https://ex7.test/a")
+        self.assertEqual(body["pi_mode"], "flash")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
+
 
 class ProductCopy(unittest.TestCase):
     """The page title is OpenPi — MicroAstra. READMEs stay plain and do not say Pi PAIR."""
@@ -1528,7 +1703,7 @@ class ProductCopy(unittest.TestCase):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         if f"<title>{product}</title>" not in html:
             problems.append("static/index.html title is not OpenPi — MicroAstra")
-        if f'<div class="brand">{product}</div>' not in html:
+        if f'id="brandName">{product}</span>' not in html:
             problems.append("static/index.html brand is not OpenPi — MicroAstra")
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
         if "Description=Pi GPT 1.0\n" not in install:
