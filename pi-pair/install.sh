@@ -142,6 +142,7 @@ fi
 
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
+API_ENV_LINE=""
 if [[ "$ROLE" == "brain" ]]; then
   # Live pi4 runs this user unit, not the system ollama.service. Refresh the
   # drop-in on every install so a reinstall cannot fall back to one loaded
@@ -164,6 +165,20 @@ EOF
   fi
   echo "Refreshed $LAN_DROP/resident.conf"
   echo "ollama-lan picks up OLLAMA_MAX_LOADED_MODELS=3, OLLAMA_KEEP_ALIVE=-1, and OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL} the next time that user unit starts."
+  # The key stays out of the unit and out of git. The env file is mode 600.
+  API_ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pi-pair"
+  API_ENV_FILE="$API_ENV_DIR/pi-gpt-api.env"
+  mkdir -p "$API_ENV_DIR"
+  if [[ ! -f "$API_ENV_FILE" ]]; then
+    printf '%s\n' \
+      '# Key for POST /api/chat and GET /api/health. Not stored in git.' \
+      'PI_GPT_API_KEY=' > "$API_ENV_FILE"
+    echo "Wrote $API_ENV_FILE — set PI_GPT_API_KEY in that file, then restart the user unit."
+  else
+    echo "Keeping existing $API_ENV_FILE"
+  fi
+  chmod 600 "$API_ENV_FILE"
+  API_ENV_LINE="EnvironmentFile=$API_ENV_FILE"
 fi
 UNIT_FILE="$UNIT_DIR/${SERVICE_NAME}.service"
 cat > "$UNIT_FILE" << UNIT
@@ -181,6 +196,7 @@ Environment=PI_PAIR_HOST=0.0.0.0
 Environment=PI_PAIR_PORT=$PAIR_PORT
 Environment=PI_PAIR_PEERS=$INSTALL_DIR/peers.json
 Environment=MESH_MODEL=${OLLAMA_MODEL_PRIMARY}
+${API_ENV_LINE}
 ExecStart=$(command -v python3) $INSTALL_DIR/mini_chat.py
 Restart=on-failure
 RestartSec=3

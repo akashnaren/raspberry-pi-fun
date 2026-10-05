@@ -96,6 +96,9 @@ def openapi_document() -> dict:
         "`X-API-Key` header. Do not put the key in the query string. "
         f"If {API_KEY_ENV} is unset, chat and health return 503. "
         "A missing or wrong key returns 401. "
+        "POST /api/chat uses the same inference cap as the page. "
+        "When every slot is in use it returns 503 immediately with the same "
+        "capacity error. A map hit does not take a slot. "
         "`GET /openapi.json` and `GET /docs` do not require the key. "
         "If `mode` is omitted, the model is Flash. "
         f"Flash is the fleet checkpoint `{checkpoint}` on pi4 "
@@ -185,7 +188,12 @@ def openapi_document() -> dict:
                             },
                         },
                         "503": {
-                            "description": f"{API_KEY_ENV} is not set, or inference slots are busy.",
+                            "description": (
+                                f"{API_KEY_ENV} is not set, or pi4's inference cap is full. "
+                                "A full cap returns 503 immediately with the same error as "
+                                "POST /v1/chat/completions: pi4 is at capacity. "
+                                "A map hit does not take a slot."
+                            ),
                             "content": {
                                 "application/json": {"schema": error}
                             },
@@ -383,6 +391,7 @@ def openapi_document() -> dict:
                         "peers_up": {"type": "integer"},
                         "peers": {"type": "array", "items": {"type": "object"}},
                         "slots": {"type": "integer"},
+                        "in_flight": {"type": "integer"},
                         "cache_ttl": {"type": "number"},
                     },
                 },
@@ -423,7 +432,7 @@ def swagger_html() -> bytes:
     <h2>Auth</h2>
     <p>Set <code>{API_KEY_ENV}</code> on the router. Send it on chat and health as <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key: &lt;key&gt;</code>. An unset variable returns 503. A wrong key returns 401. The docs and the OpenAPI JSON do not require the key. Do not put the key in a query string.</p>
     <h2>Chat</h2>
-    <p><code>POST /api/chat</code>. If <code>mode</code> is omitted, the model is Flash (<code>{checkpoint}</code> on pi4) at the medium budget. <code>low</code>, <code>medium</code>, and <code>high</code> stay on that checkpoint.</p>
+    <p><code>POST /api/chat</code>. If <code>mode</code> is omitted, the model is Flash (<code>{checkpoint}</code> on pi4) at the medium budget. <code>low</code>, <code>medium</code>, and <code>high</code> stay on that checkpoint. A full inference cap returns 503 immediately, the same error as the page. A map hit does not take a slot.</p>
     <pre>curl -sS http://127.0.0.1:18080/api/chat \\
   -H 'content-type: application/json' \\
   -H 'authorization: Bearer YOUR_KEY' \\

@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -18,6 +21,7 @@ if str(ROOT) not in sys.path:
 
 from pair import runtime
 from pair import server as pair_server
+from pair.gate import capacity_message
 from pair.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
 from pair.server import make_server
 
@@ -390,6 +394,10 @@ class PublicApi(unittest.TestCase):
         self.assertIn(API_KEY_ENV, spec["info"]["description"])
         self.assertIn("qwen2.5:0.5b", spec["info"]["description"])
         self.assertIn("If `mode` is omitted, the model is Flash.", spec["info"]["description"])
+        self.assertIn("same inference cap", spec["info"]["description"])
+        busy = chat["responses"]["503"]["description"]
+        self.assertIn("at capacity", busy)
+        self.assertIn("503 immediately", busy)
 
         alias, _headers, alias_raw = self._open("GET", "/swagger.json")
         self.assertEqual(alias, 200)
@@ -416,8 +424,96 @@ class PublicApi(unittest.TestCase):
             "If `mode` is omitted, the model is Flash.",
             "Authorization: Bearer",
             "X-API-Key",
+            "mode 600",
+            "EnvironmentFile=",
+            "pi4 is at capacity",
         ):
             self.assertIn(phrase, readme, phrase)
+
+    def test_keyed_chat_uses_the_inference_gate(self):
+        previous = runtime.INFER_SLOTS
+        runtime.set_infer_slots(1)
+        self.assertTrue(runtime.gate.try_acquire())
+        try:
+            started = time.perf_counter()
+            status, _headers, body = self._json(
+                "POST",
+                "/api/chat",
+                {"messages": [{"role": "user", "content": "Say hi in five words."}]},
+                self._auth(extra={"X-Pi-Mesh": "off", "X-Pi-Target": "pi4"}),
+            )
+            self.assertLess(time.perf_counter() - started, 0.5)
+            self.assertEqual(status, 503)
+            self.assertEqual(body["error"], capacity_message(1))
+            self.assertEqual(OllamaFake.posts, 0)
+
+            lan, _headers, lan_body = self._json(
+                "POST",
+                "/v1/chat/completions",
+                {"messages": [{"role": "user", "content": "Say hi in five words."}], "stream": False},
+                {
+                    "content-type": "application/json",
+                    "X-Pi-Mesh": "off",
+                    "X-Pi-Target": "pi4",
+                },
+            )
+            self.assertEqual(lan, 503)
+            self.assertEqual(lan_body["error"], body["error"])
+
+            hit, _headers, hit_body = self._json(
+                "POST",
+                "/api/chat",
+                {"messages": [{"role": "user", "content": "Hi!"}]},
+                self._auth(),
+            )
+            self.assertEqual(hit, 200, hit_body)
+            self.assertEqual(hit_body["pi_model"], "canned")
+            self.assertEqual(OllamaFake.posts, 0)
+        finally:
+            runtime.set_infer_slots(previous)
+
+    def test_pi4_install_key_file_is_mode_600_and_empty(self):
+        source = (ROOT / "pair" / "public_api.py").read_text(encoding="utf-8")
+        self.assertIn("hmac.compare_digest", source)
+        example = (ROOT / "configs" / "runtime" / "pi-gpt-api.env.example").read_text(encoding="utf-8")
+        dropin = (ROOT / "configs" / "runtime" / "pi-pair.service.d" / "pi-gpt-api.conf").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("mode 600", example)
+        self.assertRegex(example, r"(?m)^PI_GPT_API_KEY=$")
+        self.assertNotRegex(example, r"PI_GPT_API_KEY=\S")
+        self.assertIn("EnvironmentFile=", dropin)
+        self.assertIn("600", dropin)
+        self.assertNotRegex(dropin, r"PI_GPT_API_KEY=\S")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            env = os.environ.copy()
+            env["HOME"] = str(home)
+            env["PI_PAIR_DIR"] = str(Path(tmp) / "install")
+            env["PI_PAIR_NAME"] = "pi4"
+            env.pop("XDG_CONFIG_HOME", None)
+            env.pop(API_KEY_ENV, None)
+            result = subprocess.run(
+                ["bash", str(ROOT / "install.sh")],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            key_file = home / ".config" / "pi-pair" / "pi-gpt-api.env"
+            self.assertTrue(key_file.is_file(), result.stdout)
+            self.assertEqual(stat.S_IMODE(key_file.stat().st_mode), 0o600)
+            text = key_file.read_text(encoding="utf-8")
+            self.assertRegex(text, r"(?m)^PI_GPT_API_KEY=$")
+            self.assertNotRegex(text, r"PI_GPT_API_KEY=\S")
+            unit = (home / ".config" / "systemd" / "user" / "pi-pair.service").read_text(encoding="utf-8")
+            self.assertIn(f"EnvironmentFile={key_file}", unit)
+            self.assertNotIn("Environment=PI_GPT_API_KEY=", unit)
 
     def test_omitted_mode_resolves_to_flash(self):
         payload = {"messages": [{"role": "user", "content": "Hi"}], "model": "other"}

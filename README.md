@@ -401,13 +401,15 @@ curl -sS http://127.0.0.1:18080/v1/flywheel/feedback \
 
 Other apps call Pi GPT on the same port. The page, `GET /health`, and `POST /v1/chat/completions` stay open on the LAN and do not send a key. Setting the key does not lock that page.
 
-`PI_GPT_API_KEY` is the key. Put it in the router process environment (a systemd `Environment=` line on the Pi is the usual place). This tree does not write the value to disk. If the variable is unset, `POST /api/chat` and `GET /api/health` return 503. A missing or wrong key returns 401. Send the value as `Authorization: Bearer <key>` or as `X-API-Key: <key>`. Do not put it in the query string. `GET /openapi.json` (and `/swagger.json`) and `GET /docs` (and `/swagger`) are readable without the key so a caller can see that scheme. `/docs` is the Swagger UI. It loads the OpenAPI document from this router. The same page lists the auth header and the routes when the Swagger script cannot be fetched.
+`PI_GPT_API_KEY` is the key. On pi4, `install.sh` creates `~/.config/pi-pair/pi-gpt-api.env` with mode 600 and points the user unit at it with `EnvironmentFile=`. Write one line, `PI_GPT_API_KEY=...`, in that file. The installer leaves the value empty and does not copy a key into git or into the unit. A drop-in that uses `Environment=PI_GPT_API_KEY=...` instead must itself be mode 600. The empty example is `pi-pair/configs/runtime/pi-gpt-api.env.example`, and the drop-in template is `pi-pair/configs/runtime/pi-pair.service.d/pi-gpt-api.conf`. If the variable is unset, `POST /api/chat` and `GET /api/health` return 503. A missing or wrong key returns 401. Send the value as `Authorization: Bearer <key>` or as `X-API-Key: <key>`. Do not put it in the query string. `GET /openapi.json` (and `/swagger.json`) and `GET /docs` (and `/swagger`) are readable without the key so a caller can see that scheme. `/docs` is the Swagger UI. It loads the OpenAPI document from this router. The same page lists the auth header and the routes when the Swagger script cannot be fetched.
 
 `POST /api/chat` takes an OpenAI `messages` list. `stream` is optional. `mode` is optional and is one of `flash`, `low`, `medium`, or `high`.
 
 If `mode` is omitted, the model is Flash. Flash is the fleet checkpoint: `qwen2.5:0.5b` on pi4, unless `MESH_MODEL` names another tag. A `model` field in the body does not pick a different checkpoint. `low`, `medium`, and `high` stay on Flash and only change the decode, the same budgets as the page: Low is 64 tokens at 0.6, Medium is 256 at 0.7, High is 768 at 0.8. Omitted mode uses the medium budget. Flash here is that model name. It is not flash attention, which stays off on this CPU.
 
 The JSON body names the public model in `model` (`flash`) and the selected mode in `mode`. `checkpoint` is the Ollama tag. A stored sentence still has `pi_model` `canned`. A generated sentence still has the checkpoint in `pi_model`. Pins of pi2 or pi3 are still refused. A miss is still generated only on pi4.
+
+`POST /api/chat` uses the same inference cap as the page. When every slot is already decoding, the route returns HTTP 503 immediately with `pi4 is at capacity (N generations in flight). Try again in a moment.` An exact map hit does not take a slot.
 
 ```bash
 curl -sS http://127.0.0.1:18080/api/chat \
@@ -454,7 +456,7 @@ Ollama's runner log for this model shows the cache, not a second copy of the wei
 | Embedder down or under 0.85 on pi4 | Treated as a map miss, then the pi4 chat rule. |
 | Map miss, pi4 up | Chip `brain: pi4`. Queue row on pi3. |
 | Map miss, pi4 down | `pi4 unreachable on cache miss. Refusing to answer from pi2 or pi3.` |
-| Cap full | HTTP 503 and `pi4 is at capacity (N generations in flight).` An exact map hit, an embed paraphrase, or a page answer does not take a slot. |
+| Cap full | HTTP 503 and `pi4 is at capacity (N generations in flight).` An exact map hit, an embed paraphrase, or a page answer does not take a slot. `POST /api/chat` returns that same 503. |
 | Pin or direct to pi2 or pi3 | `cannot be the brain` sentence. No model call, including when the map would have hit. |
 | Map file unreadable | Treated as a miss, then the pi4 rule. |
 | Train config names an unknown dataset | Job exits before the queue is moved. |
