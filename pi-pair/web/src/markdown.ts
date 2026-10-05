@@ -1,4 +1,5 @@
 import katex from "katex";
+import { chartBlock, chartFence } from "./chart.ts";
 
 function escapeHtml(text: string): string {
   return text
@@ -44,15 +45,22 @@ function inline(text: string): string {
 
 export function renderMarkdown(source: string): string {
   const text = String(source ?? "").replace(/\r\n/g, "\n");
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    const only = chartBlock(trimmed);
+    if (only) return only;
+  }
   const blocks: string[] = [];
   const stash = (html: string) => {
     const token = `@@BLOCK${blocks.length}@@`;
     blocks.push(html);
     return token;
   };
-  const fenced = text.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_all, _lang, code: string) =>
-    stash(`<pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`),
-  );
+  const fenced = text.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_all, lang: string, code: string) => {
+    const chart = chartFence(lang, code);
+    if (chart) return stash(chart);
+    return stash(`<pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);
+  });
   const withDisplay = fenced
     .replace(/\\\[([\s\S]*?)\\\]/g, (_all, tex: string) => stash(renderTex(tex, true)))
     .replace(/\$\$([\s\S]*?)\$\$/g, (_all, tex: string) => stash(renderTex(tex, true)));

@@ -1,3 +1,4 @@
+import { failChart, drawChart } from "./chart";
 import { renderMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
 import { isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
@@ -5,6 +6,14 @@ import { isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, sta
 declare global {
   interface Window {
     MESH_DEFAULT_MODEL?: string;
+    Plotly?: {
+      newPlot: (
+        node: HTMLElement,
+        data: Record<string, unknown>[],
+        layout: Record<string, unknown>,
+        config: Record<string, unknown>,
+      ) => void | Promise<unknown>;
+    };
   }
 }
 
@@ -81,10 +90,45 @@ function setSettingsOpen(on: boolean): void {
   byId("overlay").classList.toggle("open", on);
 }
 
+const PLOTLY_SRC = "/static/plotly.min.js";
+let plotlyLoader: Promise<NonNullable<Window["Plotly"]> | null> | null = null;
+
+function loadPlotly(): Promise<NonNullable<Window["Plotly"]> | null> {
+  if (window.Plotly?.newPlot) return Promise.resolve(window.Plotly);
+  if (!plotlyLoader) {
+    plotlyLoader = new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = PLOTLY_SRC;
+      script.async = true;
+      script.onload = () => resolve(window.Plotly?.newPlot ? window.Plotly : null);
+      script.onerror = () => {
+        plotlyLoader = null;
+        resolve(null);
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return plotlyLoader;
+}
+
+function mountCharts(root: ParentNode): void {
+  const nodes = [...root.querySelectorAll(".pi-chart")].filter(
+    (node): node is HTMLElement => node instanceof HTMLElement,
+  );
+  if (!nodes.length) return;
+  void loadPlotly().then((api) => {
+    nodes.forEach((node) => {
+      if (!node.isConnected) return;
+      if (!api || !drawChart(node, api.newPlot.bind(api))) failChart(node);
+    });
+  });
+}
+
 function setBodyContent(node: HTMLElement, text: string, asMd: boolean): void {
   if (asMd) {
     node.classList.add("md");
     node.innerHTML = renderMarkdown(text);
+    mountCharts(node);
   } else {
     node.classList.remove("md");
     node.textContent = text;
