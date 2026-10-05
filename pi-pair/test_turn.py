@@ -51,6 +51,11 @@ class TurnShape(unittest.TestCase):
         self.assertFalse(needs_web("plot a bar chart of the picnic"))
         self.assertFalse(needs_web("make a list of picnic foods"))
         self.assertFalse(needs_web("checklist for the trip"))
+        self.assertFalse(needs_web("Top 5 fruits"))
+        self.assertFalse(needs_web("5 best picnic snacks"))
+        self.assertFalse(needs_web("rank the orchard fruit"))
+        self.assertTrue(needs_web("Top 5 latest news about the orchard"))
+        self.assertTrue(needs_web("what is the current score"))
         tail = "A" * 90
         self.assertFalse(needs_web(f"what does this say{ATTACH_MARK}{tail}"))
         self.assertTrue(needs_web("Say hi in five words."))
@@ -368,6 +373,31 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(self.search_calls, ["list the latest news about the bench"])
         self.assertIn("searching", body["pi_stages"])
+        for prompt in (
+            "Top 5 fruits",
+            "5 best picnic snacks",
+            "rank the orchard fruit",
+            "make a table of name and year",
+            "draw a diagram of the login steps",
+            "plot a bar chart of the picnic",
+        ):
+            self.search_calls.clear()
+            status, _headers, _body = self._post(
+                port,
+                {"messages": [{"role": "user", "content": prompt}], "stream": False},
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+            )
+            self.assertEqual(status, 200, prompt)
+            self.assertEqual(self.search_calls, [], prompt)
+        self.search_calls.clear()
+        news = "Top 5 latest news about the orchard"
+        status, _headers, body = self._post(
+            port,
+            {"messages": [{"role": "user", "content": news}], "stream": False},
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.search_calls, [news])
 
     def test_attachment_is_fenced_in_the_prompt(self):
         port = self._pi4()
@@ -569,6 +599,77 @@ class TurnHttp(unittest.TestCase):
         self.assertIn(SLOW_ANSWER, raw)
         self.assertNotIn("Traceback", raw)
         self.assertNotIn("TimeoutError", raw)
+
+    def test_chart_fence_is_kept_or_replaced_after_one_retry(self):
+        from pair.charts import CHART_FALLBACK, CHART_NUDGE
+
+        good = '```chart\n{"title":"Fruit","data":[{"type":"bar","y":[1,2]}]}\n```'
+        ScriptOllama.replies = [
+            {"message": {"content": good}, "done": True, "done_reason": "stop"}
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        status, _headers, body = self._post(
+            port,
+            {
+                "messages": [{"role": "user", "content": "plot a bar chart of the fruit stand"}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["choices"][0]["message"]["content"], good)
+        self.assertEqual(len(ScriptOllama.seen), 1)
+
+        bad = '```json\n{"title":"Fruit","data":[{"type":"bar","points":[1,2]}]}\n```'
+        worse = '```chart\n{"data":[{"type":"scatter","x":[1]}]}\n```'
+        ScriptOllama.replies = [
+            {"message": {"content": bad}, "done": True, "done_reason": "stop"},
+            {"message": {"content": worse}, "done": True, "done_reason": "stop"},
+        ]
+        ScriptOllama.seen = []
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        payload = json.dumps(
+            {
+                "messages": [{"role": "user", "content": "plot a bar chart of the fruit stand"}],
+                "stream": True,
+            }
+        ).encode()
+        conn.request(
+            "POST",
+            "/v1/chat/completions",
+            body=payload,
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Target": "pi4",
+                "X-Pi-Mesh": "off",
+            },
+        )
+        raw = conn.getresponse().read().decode()
+        conn.close()
+        self.assertIn(CHART_FALLBACK, raw)
+        self.assertNotIn("```", raw)
+        self.assertNotIn("points", raw)
+        self.assertEqual(len(ScriptOllama.seen), 2)
+        self.assertNotIn("```json", raw)
+        follow = ScriptOllama.seen[1]["messages"][-1]["content"]
+        self.assertIn(CHART_NUDGE, follow)
+        self.assertFalse(ScriptOllama.seen[0].get("stream"))
 
 
 if __name__ == "__main__":

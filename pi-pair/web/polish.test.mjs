@@ -49,6 +49,18 @@ const gfm = renderMarkdown("| Name | Year |\n| --- | ---: |\n| Dune | 2021 |");
 if (!gfm.includes("<table>") || !gfm.includes("<th>Name</th>") || !gfm.includes("<td>2021</td>")) {
   throw new Error("GFM table stayed prose: " + gfm);
 }
+const wrappedMd = renderMarkdown("```markdown\n| Name | Year |\n| --- | --- |\n| Dune | 2021 |\n```");
+if (!wrappedMd.includes("<table>") || !wrappedMd.includes("<th>Name</th>") || wrappedMd.includes("<pre>")) {
+  throw new Error("a sole markdown fence stayed a code block: " + wrappedMd);
+}
+const wrappedAlias = renderMarkdown("```md\n| Fruit | Count |\n| --- | --- |\n| Apple | 2 |\n```");
+if (!wrappedAlias.includes("<td>Apple</td>") || wrappedAlias.includes("<pre>")) {
+  throw new Error("a sole md fence stayed a code block: " + wrappedAlias);
+}
+const beside = renderMarkdown("Intro\n\n```markdown\n| A | B |\n| --- | --- |\n| 1 | 2 |\n```");
+if (beside.includes("<table>") || !beside.includes("<pre>")) {
+  throw new Error("a markdown fence beside prose was unwrapped: " + beside);
+}
 const bare = renderMarkdown("Name | Year\n--- | ---\nDune | 2021");
 if (!bare.includes("<th>Year</th>") || !bare.includes("<td>Dune</td>")) {
   throw new Error("bare GFM table stayed prose: " + bare);

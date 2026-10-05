@@ -60,8 +60,15 @@ function inline(text: string): string {
   return html;
 }
 
+/** A reply that is only a ```markdown or ```md fence. Inner GFM should render. */
+function unwrapSoleMarkdownFence(text: string): string {
+  const match = /^```(?:markdown|md)[ \t]*\n([\s\S]*?)\n?```$/.exec(text.trim());
+  if (!match) return text;
+  return match[1];
+}
+
 export function renderMarkdown(source: string): string {
-  const text = String(source ?? "").replace(/\r\n/g, "\n");
+  const text = unwrapSoleMarkdownFence(String(source ?? "").replace(/\r\n/g, "\n"));
   const trimmed = text.trim();
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
     const only = chartBlock(trimmed);
