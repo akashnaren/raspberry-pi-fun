@@ -7,15 +7,17 @@ from pair.config import ROOT
 
 _DEFAULTS = {
     "model": "qwen2.5:0.5b",
+    "pro_model": "qwen2.5:1.5b",
     "num_ctx": 2048,
     # -1 keeps the weights loaded. A short duration would reset the server TTL
-    # on every chat or embed call and unload the other model.
+    # on every chat or embed call and drop Arctic, Flash, or Pro.
     "keep_alive": -1,
-    # Chat sequences that share the one loaded qwen2.5:0.5b. Ollama sizes that
-    # model's key/value cache as num_ctx * this value. The map embedder is a
-    # second resident model (Ollama runs it at parallel 1); this number is not
-    # a second chat model. Clamped to 1..4. Default 4: four sequences at
-    # num_ctx 2048 stayed under 1 GB RSS in a same-settings measurement.
+    # Sequences in flight on the chat tag being decoded. Ollama sizes that
+    # model's key/value cache as num_ctx * this value. Flash is the default
+    # tag. Pro is a separate resident tag and uses the same router slot gate.
+    # Arctic stays loaded beside them (Ollama runs the embedder at parallel 1).
+    # Clamped to 1..4. Default 4: four sequences of qwen2.5:0.5b at num_ctx
+    # 2048 stayed under 1 GB RSS in a same-settings measurement.
     "ollama_num_parallel": 4,
     # Pi 4 is four Cortex-A72 cores. Ollama forwards num_thread as llama.cpp -t
     # only when the request sets it; otherwise the runner auto-detects.
@@ -29,8 +31,9 @@ _DEFAULTS = {
 }
 
 
-# qwen2.5:0.5b has no separate reasoning channel. These three presets change the
-# decode Ollama already accepts: temperature and num_predict. Medium is the default.
+# Flash (qwen2.5:0.5b) and Pro (qwen2.5:1.5b) have no separate reasoning channel.
+# These three presets change the decode Ollama already accepts: temperature and
+# num_predict. Medium is the default on whichever mode was selected.
 EFFORT = {
     "low": {"temperature": 0.6, "num_predict": 64},
     "medium": {"temperature": 0.7, "num_predict": 256},
@@ -67,9 +70,10 @@ def keep_alive(knobs: dict | None = None):
     """The one keep_alive knob for the pi4 brain.
 
     Chat, stream, and embed all send this value. -1 matches the Ollama JSON
-    number that leaves a model loaded until the process stops, so arctic-embed
-    and qwen can stay resident together. A missing or blank knob is that same
-    default. 0 is left alone: Ollama unloads when the call returns.
+    number that leaves a model loaded until the process stops, so Arctic,
+    Flash, and an opted-in Pro can stay resident together. A missing or blank
+    knob is that same default. 0 is left alone: Ollama unloads when the call
+    returns. A Flash or Pro chat does not send 0.
     """
     row = knobs if knobs is not None else inference_knobs()
     if "keep_alive" not in row:

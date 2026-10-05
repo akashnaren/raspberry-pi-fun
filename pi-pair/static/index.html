@@ -27,10 +27,16 @@
       <div class="composer">
         <textarea id="q" placeholder="Message" rows="1" enterkeyhint="send" aria-label="Message"></textarea>
         <div class="composer-bar flex items-center justify-between">
-          <div class="think-set" role="group" aria-label="Thinking">
-            <button type="button" class="think-btn" data-think="low">Low</button>
-            <button type="button" class="think-btn on" data-think="medium">Medium</button>
-            <button type="button" class="think-btn" data-think="high">High</button>
+          <div class="knobs">
+            <div class="mode-set" role="group" aria-label="Mode">
+              <button type="button" class="mode-btn on" data-mode="flash">Flash</button>
+              <button type="button" class="mode-btn" data-mode="pro">Pro</button>
+            </div>
+            <div class="think-set" role="group" aria-label="Thinking">
+              <button type="button" class="think-btn" data-think="low">Low</button>
+              <button type="button" class="think-btn on" data-think="medium">Medium</button>
+              <button type="button" class="think-btn" data-think="high">High</button>
+            </div>
           </div>
           <div class="composer-tools flex items-center">
             <button class="tool" id="btnVoiceMode" type="button" aria-label="Voice mode" aria-pressed="false">
@@ -65,8 +71,7 @@
       <textarea id="sys" placeholder="Optional system instructions" rows="3"></textarea>
     </div>
     <div class="field">
-      <label for="modelSel">Model</label>
-      <select id="modelSel"><option value="">__MODEL__</option></select>
+      <p class="mode-note">Flash is the default. Pro is opt-in. The first Pro reply shows Loading Pro while the larger model loads and the first word arrives. Flash stays loaded. Low, Medium, and High still set how long the reply may be.</p>
     </div>
     <div class="drawer-actions">
       <button type="button" id="btnMd">Export .md</button>

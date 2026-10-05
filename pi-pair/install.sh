@@ -115,10 +115,13 @@ else
     echo "Then re-run: bash $ROOT/install.sh"
   else
     echo "Ollama present: $(command -v ollama)"
-    echo "Pulling ${OLLAMA_MODEL_PRIMARY}…"
+    echo "Pulling ${OLLAMA_MODEL_PRIMARY} (Flash). Pro is not pulled."
     ollama pull "$OLLAMA_MODEL_PRIMARY" || echo "WARN: model pull failed — pull manually later on pi4."
     echo "Pulling ${OLLAMA_EMBED_MODEL}…"
     ollama pull "$OLLAMA_EMBED_MODEL" || echo "WARN: embed model pull failed — pull manually later on pi4."
+    echo "Pro is qwen2.5:1.5b. This script does not pull it. Pro stays on disk for measurement."
+    echo "A Flash request does not run ollama pull. If the tag is missing, pull it on pi4 only:"
+    echo "  ollama pull qwen2.5:1.5b"
   fi
   echo
   echo "--- Make Ollama listen on LAN (run these yourself if needed) ---"

@@ -814,7 +814,16 @@ body.voice-session {
   flex-wrap: wrap;
 }
 
-.think-set {
+.knobs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.think-set,
+.mode-set {
   display: flex;
   align-items: center;
   gap: 0;
@@ -824,7 +833,8 @@ body.voice-session {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.think-btn {
+.think-btn,
+.mode-btn {
   color: var(--muted);
   font-size: 12px;
   font-weight: 500;
@@ -836,6 +846,7 @@ body.voice-session {
 
   &:hover { color: var(--ink); }
   &.on { color: #fff; background: rgba(255, 255, 255, 0.12); }
+  &.loading { color: #fff; background: rgba(255, 255, 255, 0.2); }
   &:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.28); outline-offset: 1px; }
 }
 
@@ -1029,6 +1040,18 @@ body.voice-session {
   }
 }
 
+.stages.pro-load .stage-label {
+  color: #fff;
+  font-weight: 600;
+}
+
+.mode-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .drawer-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1056,8 +1079,8 @@ body.voice-session {
   .empty p { font-size: 1.75rem; }
   .composer { border-radius: 24px; }
   .composer-wrap { padding-left: 12px; padding-right: 12px; }
-  .composer-bar { flex-wrap: nowrap; }
-  .think-btn { min-width: 0; padding: 7px 8px; }
+  .composer-bar { flex-wrap: wrap; }
+  .think-btn, .mode-btn { min-width: 0; padding: 7px 8px; }
 }
 
 .msg.streaming .body.arrived { animation: answer-in 0.45s ease; }
