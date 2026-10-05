@@ -1,5 +1,5 @@
 import fs from "fs";
-import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, createUtteranceHold, echoOfSpeech, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, shouldBargeIn, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
+import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, adaptiveEndOfUtterance, createUtteranceHold, echoOfSpeech, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, shouldBargeIn, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
 
 const assistant = "The hall bench is by the east window.";
 const labels = ["Thinking", "Searching", "Searched", "Search failed", "Answering"];
@@ -443,5 +443,62 @@ if (shouldBargeIn("the hall bench", playing, true)) throw new Error("echo barged
 if (!shouldBargeIn("what about the trains", playing, true)) throw new Error("a new phrase did not barge in");
 if (shouldBargeIn("what about the trains", playing, false)) throw new Error("barge-in fired while silent");
 if (!shouldBargeIn("stop", playing, true)) throw new Error("stop did not barge in");
+
+const baseWait = END_OF_UTTERANCE_SILENCE_MS;
+if (adaptiveEndOfUtterance("where is the bench", baseWait) !== baseWait) {
+  throw new Error("an open phrase without a dangling word left the base pause");
+}
+const finishedWait = adaptiveEndOfUtterance("Where is the bench?", baseWait);
+if (!(finishedWait < baseWait && finishedWait >= 700)) {
+  throw new Error("a finished sentence did not commit sooner: " + finishedWait);
+}
+const openWait = adaptiveEndOfUtterance("tickets for the trains and", baseWait);
+if (!(openWait > baseWait && openWait <= 2200)) {
+  throw new Error("a dangling word did not wait longer: " + openWait);
+}
+if (adaptiveEndOfUtterance("hello", 1500) !== 1500) {
+  throw new Error("a short phrase replaced the configured pause");
+}
+if (adaptiveEndOfUtterance("Where is the bench?", 0) !== 0) {
+  throw new Error("a zero pause grew a wait");
+}
+const quickWait = adaptiveEndOfUtterance("where is the bench", baseWait, 200);
+const pausedWait = adaptiveEndOfUtterance("where is the bench", baseWait, 1100);
+if (!(quickWait > baseWait) || !(pausedWait < baseWait)) {
+  throw new Error("the pause did not follow the pace: " + quickWait + " / " + pausedWait);
+}
+
+const asked = [];
+let spokenAt = 5000;
+const pacedQuestion = fakeClock();
+pacedQuestion.clock.now = () => spokenAt;
+const questionHold = createUtteranceHold((text) => asked.push(text), baseWait, pacedQuestion.clock);
+questionHold.final("Where is the bench?");
+if (asked.length !== 0 || pacedQuestion.timers[0]?.ms !== finishedWait) {
+  throw new Error("voice mode ignored the shorter pause after a sentence: " + pacedQuestion.timers[0]?.ms);
+}
+spokenAt += 200;
+questionHold.interim("and the trains");
+const liveQuestion = pacedQuestion.timers.filter((item) => !item.cleared);
+if (liveQuestion.length !== 1 || !(liveQuestion[0].ms > finishedWait)) {
+  throw new Error("new words after a sentence did not adapt again: " + liveQuestion[0]?.ms);
+}
+
+const release = main.slice(main.indexOf("function releaseVoice"), main.indexOf('byId("go")'));
+if (!release.includes("if (speechPending()) return")) {
+  throw new Error("releaseVoice does not wait until playback ends");
+}
+if (/speechPending\(\)\s*\|\|\s*sending/.test(release)) {
+  throw new Error("releaseVoice is gated on the request");
+}
+if (!release.includes("turnCtrl?.abort()")) {
+  throw new Error("a barge during the reply does not cut it off");
+}
+const barge = main.slice(main.indexOf("function takeBarge"), main.indexOf("function armBarge"));
+if (barge.includes("sending")) throw new Error("barge-in waits for the request to finish");
+if (!barge.includes("stopSpeaking()")) throw new Error("barge-in leaves the reply playing");
+if (!main.includes("shouldBargeIn(text, speakingLine, speechPending())")) {
+  throw new Error("barge-in is not tied to playback");
+}
 
 console.log("ok");

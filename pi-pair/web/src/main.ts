@@ -1513,20 +1513,21 @@ function stopBarge(): void {
 
 function takeBarge(text: string): void {
   const said = text.trim();
-  if (!said || pendingBarge || sending) return;
+  if (!said || pendingBarge) return;
   pendingBarge = said;
   stopBarge();
   stopSpeaking();
+  releaseVoice();
 }
 
 function armBarge(): void {
   if (bargeHandle || !voiceOn || listening) return;
   bargeHandle = startListening({
     onInterim(text) {
-      if (shouldBargeIn(text, speakingLine, true)) takeBarge(text);
+      if (shouldBargeIn(text, speakingLine, speechPending())) takeBarge(text);
     },
     onFinal(text) {
-      if (shouldBargeIn(text, speakingLine, true)) takeBarge(text);
+      if (shouldBargeIn(text, speakingLine, speechPending())) takeBarge(text);
     },
     onError() {
       stopBarge();
@@ -1653,8 +1654,15 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
 
 function releaseVoice(): void {
   stopBarge();
-  if (speechPending() || sending) return;
+  if (speechPending()) return;
   const said = pendingBarge.trim();
+  if (sending) {
+    if (said) {
+      stopAsked = true;
+      turnCtrl?.abort();
+    }
+    return;
+  }
   pendingBarge = "";
   voiceHold = false;
   setHeard(false);

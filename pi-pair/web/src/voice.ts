@@ -108,10 +108,11 @@ export const ENDPOINT_MS = 450;
  * Chrome's longer recognizer pause. Auto-send used to follow that same ~450ms
  * cut and interrupted a breath. ChatGPT-like voice waits about 1.0–1.5s.
  * This default is 1200ms, inside that window, measured from the last words
- * that changed the phrase. The same finalized text does not restart it.
- * More speech does. Set another wait with setEndOfUtteranceSilence: 0 sends
- * on the next commit, and values outside 0–10000 are ignored. Dictation does
- * not auto-send and does not use this pause.
+ * that changed the phrase. adaptiveEndOfUtterance shortens it after a
+ * finished sentence and lengthens it when the phrase is still open. The same
+ * finalized text does not restart it. More speech does. Set another wait with
+ * setEndOfUtteranceSilence: 0 sends on the next commit, and values outside
+ * 0–10000 are ignored. Dictation does not auto-send and does not use this pause.
  */
 export const END_OF_UTTERANCE_SILENCE_MS = 1200;
 
@@ -132,6 +133,33 @@ export function setEndOfUtteranceSilence(ms: number): void {
 export interface SilenceClock {
   set(fn: () => void, ms: number): number;
   clear(id: number): void;
+  now?: () => number;
+}
+
+const OPEN_TAIL = /^(?:and|but|or|so|because|if|when|then|with|for|to|of|the|a|an)$/i;
+
+/**
+ * Base silence is the middle. A finished sentence commits sooner, a dangling
+ * word waits longer, a quick run of words waits a little longer, and a pause
+ * that already happened commits sooner.
+ */
+export function adaptiveEndOfUtterance(phrase: string, baseMs: number, gapMs = 0): number {
+  if (!Number.isFinite(baseMs)) return 0;
+  const base = Math.min(END_OF_UTTERANCE_SILENCE_MAX_MS, Math.max(0, Math.round(baseMs)));
+  if (base === 0) return 0;
+  const text = phrase.trim();
+  if (!text) return base;
+  const words = text.split(/\s+/).filter(Boolean);
+  const last = (words[words.length - 1] || "").replace(/[^A-Za-z]/g, "");
+  let scale = 1;
+  if (/[.!?…]['")\]]*$/.test(text) && words.length >= 3) scale = 0.7;
+  else if (/[,:;]['")\]]*$/.test(text) || OPEN_TAIL.test(last)) scale = 1.35;
+  const gap = Number.isFinite(gapMs) ? gapMs : 0;
+  if (gap >= 80 && gap < 450) scale *= 1.15;
+  else if (gap >= 900) scale *= 0.85;
+  if (scale === 1) return base;
+  const next = Math.round(base * scale);
+  return Math.min(END_OF_UTTERANCE_SILENCE_MAX_MS, Math.max(1, next));
 }
 
 export interface UtteranceHold {
@@ -177,6 +205,7 @@ export function createUtteranceHold(
   let live = "";
   let timer: number | null = null;
   let open = true;
+  let changedAt = 0;
 
   const preview = () => joinPhrase(stable, live);
 
@@ -186,17 +215,26 @@ export function createUtteranceHold(
     timer = null;
   };
 
+  const gapSinceChange = () => {
+    const now = typeof clock.now === "function" ? clock.now() : Date.now();
+    const gap = changedAt > 0 ? Math.max(0, now - changedAt) : 0;
+    changedAt = now;
+    return gap;
+  };
+
   const arm = () => {
     clearTimer();
-    if (!open || !preview()) return;
+    const phrase = preview();
+    if (!open || !phrase) return;
+    const gapMs = gapSinceChange();
     if (silenceMs <= 0) {
-      const said = preview();
       stable = "";
       live = "";
       open = false;
-      if (said) deliver(said);
+      deliver(phrase);
       return;
     }
+    const wait = adaptiveEndOfUtterance(phrase, silenceMs, gapMs);
     const id = clock.set(() => {
       if (!open || timer !== id) return;
       timer = null;
@@ -205,7 +243,7 @@ export function createUtteranceHold(
       stable = "";
       live = "";
       if (said) deliver(said);
-    }, silenceMs);
+    }, wait);
     timer = id;
   };
 
