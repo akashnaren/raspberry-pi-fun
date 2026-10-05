@@ -678,9 +678,7 @@ class PairHttp(unittest.TestCase):
         self.assertIn("__FLASH_TIP__", source_page)
         self.assertIn("__PRO_TIP__", source_page)
         self.assertNotIn("qwen3:0.6b, the fast resident model.", source_page)
-        self.assertNotIn(
-            "qwen3:1.7b, loaded when the question needs it.", source_page
-        )
+        self.assertNotIn("qwen3:1.7b, loaded when the question needs it.", source_page)
         self.assertEqual(health_body["peers_up"], 1)
         self.assertEqual(health_body["peers"][0]["kind"], "ollama")
         status, headers, body = self._post(
