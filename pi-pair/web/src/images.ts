@@ -99,7 +99,7 @@ export function cardsFrom(raw: unknown): ImageCard[] {
     const card = cardFrom(item);
     if (!card || cards.some((have) => have.url === card.url)) continue;
     cards.push(card);
-    if (cards.length >= 3) break;
+    if (cards.length >= 8) break;
   }
   return cards;
 }

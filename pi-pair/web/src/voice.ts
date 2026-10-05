@@ -68,6 +68,31 @@ export function turnFromRecognition(transcript: string): { role: "user"; content
   return { role: "user", content };
 }
 
+export function speechKey(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** True when the mic mostly heard the line that is playing. */
+export function echoOfSpeech(heard: string, spoken: string): boolean {
+  const left = speechKey(heard);
+  const right = speechKey(spoken);
+  if (!left || !right) return false;
+  if (right.includes(left)) return left.length >= 3;
+  const words = left.split(" ").filter((word) => word.length > 2);
+  if (!words.length) return false;
+  const hit = words.filter((word) => right.includes(word)).length;
+  return hit / words.length >= 0.6;
+}
+
+/** A distinct phrase while the reply is playing. Echo and tiny noises stay put. */
+export function shouldBargeIn(heard: string, spoken: string, assistantSpeaking: boolean): boolean {
+  const text = heard.trim();
+  if (!assistantSpeaking || text.length < 2) return false;
+  if (isSoloStop(text)) return true;
+  if (text.length < 3) return false;
+  return !echoOfSpeech(text, spoken);
+}
+
 /** The word stop, alone, ends a spoken session. */
 export function isSoloStop(transcript: string): boolean {
   return transcript.trim().toLowerCase().replace(/[^a-z]/g, "") === "stop";
@@ -222,7 +247,7 @@ let duringSpeech: (() => void) | null = null;
 let queuedSay = "";
 let liveUtterances = 0;
 
-/** True while a reply is queued or playing, so the mic stays closed. */
+/** True while a reply is queued or playing. Voice mode may still listen to barge in. */
 export function speechPending(): boolean {
   return liveUtterances > 0;
 }

@@ -1,12 +1,14 @@
+import { docExcerpt, modelUserContent, type DocCard } from "./attach";
 import { failChart, drawChart } from "./chart";
 import { cardsFrom, renderImageCardsHtml, type ImageCard } from "./images";
-import { renderMarkdown } from "./markdown";
+import { renderMarkdown, renderStreamingMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
+import { suppressOfflineBanner } from "./presence";
 import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
 import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
-import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
+import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
 declare global {
   interface Window {
@@ -40,12 +42,26 @@ interface SearchInfo {
 interface Turn {
   role: Role;
   content: string;
+  hidden?: string;
+  attachment?: DocCard | null;
   effort?: string;
   search?: SearchInfo | null;
   stages?: StageName[];
   images?: ImageCard[];
   mode?: string;
   route?: string;
+}
+
+interface HealthBody {
+  peers?: { models?: string[] }[];
+  peers_up?: number;
+  uptime_s?: number;
+  services?: {
+    brain?: { ok?: boolean; latency_ms?: number | null };
+    search?: { ok?: boolean; latency_ms?: number | null };
+    peers_up?: number;
+    peers?: number;
+  };
 }
 
 interface LiveTurn {
@@ -78,6 +94,12 @@ let voiceOn = false;
 let voiceHold = false;
 let listenHandle: { stop: () => void } | null = null;
 let cancelUtterance: (() => void) | null = null;
+let pendingDoc: DocCard | null = null;
+let resumedAt = 0;
+let bargeHandle: { stop: () => void } | null = null;
+let pendingBarge = "";
+let speakingLine = "";
+const serviceLines: string[] = [];
 let attachSerial = 0;
 
 const ATTACH_BYTES = 4 * 1024 * 1024;
@@ -164,10 +186,10 @@ function mountCharts(root: ParentNode): void {
   });
 }
 
-function setBodyContent(node: HTMLElement, text: string, asMd: boolean): void {
+function setBodyContent(node: HTMLElement, text: string, asMd: boolean, streaming = false): void {
   if (asMd) {
     node.classList.add("md");
-    node.innerHTML = renderMarkdown(text);
+    node.innerHTML = streaming ? renderStreamingMarkdown(text) : renderMarkdown(text);
     mountCharts(node);
   } else {
     node.classList.remove("md");
@@ -335,6 +357,7 @@ function thumbIcon(): SVGSVGElement {
 }
 
 function showOffline(): void {
+  if (suppressOfflineBanner(document.hidden, resumedAt, Date.now())) return;
   const banner = byId("banner");
   if (banner.classList.contains("on")) return;
   banner.className = "on";
@@ -353,14 +376,49 @@ async function refresh(): Promise<void> {
   try {
     const response = await fetch("/health", { method: "GET", cache: "no-store" });
     if (!response.ok) throw new Error("offline");
-    const body = await response.json() as { peers?: { models?: string[] }[] };
+    const body = await response.json() as HealthBody;
     const banner = byId("banner");
     banner.className = "";
     banner.replaceChildren();
     fillModels(body.peers || []);
+    paintServices(body);
   } catch {
     showOffline();
   }
+}
+
+function formatUptime(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours) return hours + "h " + minutes + "m";
+  if (minutes) return minutes + "m " + (total % 60) + "s";
+  return total + "s";
+}
+
+function paintServices(body: HealthBody): void {
+  const now = document.getElementById("serviceNow");
+  const log = document.getElementById("serviceLog");
+  if (!now || !log) return;
+  const services = body.services || {};
+  const chat = services.brain?.ok ? "up" : "down";
+  const search = services.search?.ok ? "up" : "down";
+  const up = services.peers_up ?? body.peers_up ?? 0;
+  const total = services.peers ?? (body.peers || []).length;
+  const line = "Up " + formatUptime(body.uptime_s || 0) + " · Chat " + chat + " · Search " + search + " · Fleet " + up + "/" + total;
+  now.textContent = line;
+  if (serviceLines[0] !== line) {
+    serviceLines.unshift(line);
+    if (serviceLines.length > 8) serviceLines.length = 8;
+  }
+  log.replaceChildren();
+  serviceLines.forEach((entry) => log.appendChild(el("p", "service-line", entry)));
+}
+
+async function backgroundMiss(): Promise<boolean> {
+  if (suppressOfflineBanner(document.hidden, resumedAt, Date.now())) return true;
+  await new Promise((resolve) => window.setTimeout(resolve, 350));
+  return suppressOfflineBanner(document.hidden, resumedAt, Date.now());
 }
 
 function attachLabel(parent: HTMLElement, prompt: string, answer: string): void {
@@ -484,15 +542,34 @@ function paint(): void {
   log.lastElementChild?.scrollIntoView({ block: "end" });
 }
 
+function docCardNode(card: DocCard): HTMLElement {
+  const node = el("div", "doc-card");
+  node.setAttribute("role", "group");
+  node.setAttribute("aria-label", card.name);
+  const kind = card.route === "ocr" ? "PDF" : "DOC";
+  node.appendChild(el("span", "doc-card-kind", kind));
+  const copy = el("div", "doc-card-copy");
+  copy.appendChild(el("span", "doc-card-name", card.name));
+  const kb = Math.max(1, Math.round((card.bytes || 0) / 1024));
+  copy.appendChild(el("span", "doc-card-meta", kb + " KB"));
+  if (card.excerpt) copy.appendChild(el("span", "doc-card-preview", card.excerpt));
+  node.appendChild(copy);
+  return node;
+}
+
 function addUser(text: string, index: number): HTMLElement {
   hideEmpty();
+  const item = turns[index];
   const row = el("div", "msg user");
   row.dataset.index = String(index);
-  const body = el("div", "body");
-  body.textContent = text;
-  row.appendChild(body);
+  if (item?.attachment) row.appendChild(docCardNode(item.attachment));
+  if (text.trim()) {
+    const body = el("div", "body");
+    body.textContent = text;
+    row.appendChild(body);
+  }
   const acts = el("div", "msg-actions");
-  acts.appendChild(copyButton(text));
+  acts.appendChild(copyButton(text || item?.attachment?.name || ""));
   const edit = el("button", "text-btn", "Edit");
   edit.setAttribute("aria-label", "Edit");
   edit.onclick = () => beginEdit(index);
@@ -521,9 +598,11 @@ function beginEdit(index: number): void {
   cancel.onclick = () => paint();
   save.onclick = () => {
     const next = box.value.trim();
-    if (!next) return;
+    if (!next && !item.hidden) return;
+    const hidden = item.hidden || "";
+    const attachment = item.attachment || null;
     turns.splice(index);
-    void sendText(next, false);
+    void sendText(next, false, false, { hidden, attachment });
   };
   actions.appendChild(cancel);
   actions.appendChild(save);
@@ -556,13 +635,37 @@ function addFinishedBot(item: Turn, index: number): HTMLElement {
   }
   labels.appendChild(copyButton(item.content));
   if (index === turns.length - 1) {
-    const again = el("button", "text-btn", "Regenerate");
-    again.setAttribute("aria-label", "Regenerate");
-    again.onclick = () => regenerate();
-    labels.appendChild(again);
+    labels.appendChild(retryButton(() => regenerate()));
   }
   byId("log").appendChild(row);
   return row;
+}
+
+function retryIcon(): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.7");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  path.setAttribute("d", "M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5");
+  svg.appendChild(path);
+  return svg;
+}
+
+function retryButton(onClick: () => void): HTMLButtonElement {
+  const again = el("button", "icon-btn retry") as HTMLButtonElement;
+  again.type = "button";
+  again.setAttribute("aria-label", "Retry");
+  again.title = "Retry";
+  again.appendChild(retryIcon());
+  again.onclick = onClick;
+  return again;
 }
 
 function regenerate(): void {
@@ -745,8 +848,7 @@ function addLiveBot(expectPro = false): LiveTurn {
     },
     setText(text) {
       if (!visibleReply(text)) return;
-      body.classList.remove("md");
-      body.textContent = text;
+      setBodyContent(body, text, true, true);
       revealReply(text);
       const current = viewport.querySelector(".stage:not(.leave)") as HTMLElement | null;
       if (current && shown) stageLabel(current, labelFor(shown));
@@ -816,14 +918,26 @@ function searchFrom(payload: { pi_search?: string; pi_sources?: SourceLink[] }, 
   };
 }
 
-async function sendText(text: string, isRetry: boolean, spoken = false): Promise<void> {
+async function sendText(
+  text: string,
+  isRetry: boolean,
+  spoken = false,
+  extra?: { hidden?: string; attachment?: DocCard | null },
+): Promise<void> {
   if (sending) return;
+  const hidden = (extra?.hidden || "").trim();
+  if (!isRetry && !text.trim() && !hidden) return;
   sending = true;
   stopAsked = false;
   stopSpeaking();
   syncSend();
   if (!isRetry) {
-    turns.push({ role: "user", content: text });
+    turns.push({
+      role: "user",
+      content: text,
+      hidden,
+      attachment: extra?.attachment || null,
+    });
     paint();
   }
   let voiced = false;
@@ -863,9 +977,10 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
     const sys = (byId<HTMLTextAreaElement>("sys").value || "").trim();
     if (sys) body.messages.push({ role: "system", content: sys });
     turns.forEach((turn) => {
-      if (turn.role === "user" || turn.role === "assistant") {
-        body.messages.push({ role: turn.role, content: turn.content });
-      }
+      if (turn.role !== "user" && turn.role !== "assistant") return;
+      const content = turn.role === "user" ? modelUserContent(turn.content, turn.hidden || "") : turn.content;
+      if (!content.trim()) return;
+      body.messages.push({ role: turn.role, content });
     });
 
     let response: Response | null = null;
@@ -1049,12 +1164,10 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       live.setText(msg);
       live.markErr();
       live.finish(msg, true, "", "", null, stages);
-      const retry = el("button", "retry", "Retry");
-      retry.onclick = () => {
+      live.root.appendChild(retryButton(() => {
         live.root.remove();
         void sendText(text, true);
-      };
-      live.root.appendChild(retry);
+      }));
       return;
     }
     if (!visibleReply(textAccum)) {
@@ -1079,16 +1192,22 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
       return;
     }
+    if (await backgroundMiss()) {
+      if (visibleReply(textAccum)) {
+        keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
+      } else {
+        live.root.remove();
+      }
+      return;
+    }
     const msg = shownError(err);
     live.setText(msg);
     live.markErr();
     live.finish(msg, true, "", "", null, stages);
-    const retry = el("button", "retry", "Retry");
-    retry.onclick = () => {
+    live.root.appendChild(retryButton(() => {
       live.root.remove();
       void sendText(text, true);
-    };
-    live.root.appendChild(retry);
+    }));
   } finally {
     sending = false;
     stopAsked = false;
@@ -1102,16 +1221,15 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
 async function send(): Promise<void> {
   voiceNote("");
   const box = byId<HTMLTextAreaElement>("q");
-  let text = box.value.trim();
-  const attached = box.dataset.attachText || "";
-  if (attached) {
-    text = text ? text + "\n\n---\n" + attached : attached;
-    clearAttach();
-  }
-  if (!text) return;
+  const text = box.value.trim();
+  const hidden = box.dataset.attachText || "";
+  const attachment = pendingDoc;
+  if (!text && !hidden.trim()) return;
+  if (hidden || attachment) clearAttach();
   box.value = "";
   autoGrow(box);
-  await sendText(text, false);
+  paintBrand();
+  await sendText(text, false, false, { hidden, attachment });
 }
 
 function composerHasDraft(): boolean {
@@ -1160,6 +1278,7 @@ function download(name: string, text: string, mime: string): void {
 function clearAttach(): void {
   const box = byId<HTMLTextAreaElement>("q");
   delete box.dataset.attachText;
+  pendingDoc = null;
   byId("fileTag").classList.remove("on");
   byId<HTMLInputElement>("attach").value = "";
   syncSend();
@@ -1216,6 +1335,12 @@ async function loadFile(file: File | null): Promise<void> {
     }
     voiceNote("");
     byId<HTMLTextAreaElement>("q").dataset.attachText = text;
+    pendingDoc = {
+      name: file.name || "attachment",
+      route: payload.route === "ocr" ? "ocr" : "text",
+      bytes: file.size,
+      excerpt: docExcerpt(text),
+    };
     const kb = Math.round((text.length / 1024) * 10) / 10;
     const via = payload.route === "ocr" ? "ocr" : "text";
     const cut = payload.truncated ? " · cut" : "";
@@ -1245,10 +1370,6 @@ function paintVoice(): void {
   paintMicButton(mic, dictating);
   mic.setAttribute("aria-pressed", dictating ? "true" : "false");
   mic.setAttribute("aria-label", "Voice");
-  const mode = byId("btnVoiceMode");
-  mode.classList.toggle("on", voiceOn);
-  mode.setAttribute("aria-pressed", voiceOn ? "true" : "false");
-  mode.setAttribute("aria-label", voiceOn ? "End voice mode" : "Voice mode");
   document.body.classList.toggle("voice-session", voiceOn);
   byId("voiceStage").setAttribute("aria-hidden", voiceOn ? "false" : "true");
 }
@@ -1346,9 +1467,44 @@ function beginDictation(): void {
   paintVoice();
 }
 
+function stopBarge(): void {
+  bargeHandle?.stop();
+  bargeHandle = null;
+}
+
+function takeBarge(text: string): void {
+  const said = text.trim();
+  if (!said || pendingBarge || sending) return;
+  pendingBarge = said;
+  stopBarge();
+  stopSpeaking();
+}
+
+function armBarge(): void {
+  if (bargeHandle || !voiceOn || listening) return;
+  bargeHandle = startListening({
+    onInterim(text) {
+      if (shouldBargeIn(text, speakingLine, true)) takeBarge(text);
+    },
+    onFinal(text) {
+      if (shouldBargeIn(text, speakingLine, true)) takeBarge(text);
+    },
+    onError() {
+      stopBarge();
+    },
+    onEnd() {
+      const again = voiceOn && !pendingBarge && speechPending();
+      bargeHandle = null;
+      if (again) armBarge();
+    },
+  });
+}
+
 function endVoiceMode(): void {
   voiceOn = false;
   voiceHold = false;
+  pendingBarge = "";
+  stopBarge();
   cancelUtterance?.();
   cancelUtterance = null;
   stopCapture();
@@ -1457,10 +1613,22 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
 }
 
 function releaseVoice(): void {
+  stopBarge();
   if (speechPending() || sending) return;
+  const said = pendingBarge.trim();
+  pendingBarge = "";
   voiceHold = false;
   setHeard(false);
   setSpeaking(false);
+  if (said && isSoloStop(said)) {
+    endVoiceMode();
+    return;
+  }
+  if (said) {
+    voiceCaption(said);
+    void sendText(said, false, true);
+    return;
+  }
   if (!voiceOn || listening) return;
   voiceCaption("Listening");
   beginVoice();
@@ -1483,6 +1651,7 @@ const composer = byId<HTMLTextAreaElement>("q");
 composer.addEventListener("input", () => {
   autoGrow(composer);
   syncSend();
+  paintBrand();
 });
 syncSend();
 composer.addEventListener("keydown", (event) => {
@@ -1593,11 +1762,13 @@ applyVoiceSilence(pageSettings.voiceSilenceMs);
 paintThinking();
 paintModelMode();
 paintThemeChoice();
-whenSpeechStarts(() => {
+whenSpeechStarts((text) => {
   if (!voiceOn) return;
+  speakingLine = text || speakingLine;
   setHeard(false);
   setSpeaking(true);
   voiceCaption("Speaking");
+  armBarge();
 });
 whenSpeechPulses(() => {
   if (!voiceOn) return;
@@ -1605,7 +1776,6 @@ whenSpeechPulses(() => {
 });
 whenSpeechEnds(releaseVoice);
 byId("btnVoice").onclick = () => toggleVoice();
-byId("btnVoiceMode").onclick = () => toggleVoiceMode();
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
 byId("overlay").onclick = () => {
@@ -1634,20 +1804,26 @@ byId<HTMLInputElement>("attach").onchange = (event) => {
   loadFile(input.files && input.files[0]);
 };
 byId("fileClear").onclick = () => clearAttach();
+function paintBrand(): void {
+  const brand = document.getElementById("brand");
+  if (!brand) return;
+  const typing = Boolean(byId<HTMLTextAreaElement>("q").value);
+  brand.classList.toggle("brand-title", typing);
+  brand.classList.toggle("brand-logo", !typing);
+}
+
 function bootSplash(): void {
   const mark = document.getElementById("brandMark");
   if (mark) appendBrandMark(document, mark);
+  paintBrand();
   const store = browserStorage("session");
   const seen = store ? store.getItem(SPLASH_KEY) : null;
   if (!shouldPlaySplash(seen, navigationType())) return;
   if (store) store.setItem(SPLASH_KEY, "1");
   const brand = document.getElementById("brand");
   if (!brand) return;
-  brand.classList.add("splashing");
-  window.setTimeout(() => {
-    brand.classList.add("splash-out");
-    window.setTimeout(() => brand.classList.remove("splashing", "splash-out"), 480);
-  }, SPLASH_HOLD_MS);
+  brand.classList.add("brand-enter");
+  window.setTimeout(() => brand.classList.remove("brand-enter"), SPLASH_HOLD_MS);
 }
 bootSplash();
 composer.addEventListener("paste", (event) => {
@@ -1668,5 +1844,9 @@ composer.addEventListener("paste", (event) => {
 void refresh();
 window.setInterval(() => void refresh(), 8000);
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) void refresh();
+  if (document.hidden) return;
+  resumedAt = Date.now();
+  window.setTimeout(() => {
+    if (!document.hidden) void refresh();
+  }, 500);
 });

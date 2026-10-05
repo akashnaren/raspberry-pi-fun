@@ -8,6 +8,7 @@ import re
 
 from pair.ground import is_grounded_problem
 from pair.knobs import inference_knobs
+from pair.lists import list_count
 
 FLASH = "flash"
 PRO = "pro"
@@ -56,6 +57,8 @@ def task_tier(prompt: str) -> str:
     if not text:
         return FLASH
     if is_grounded_problem(text) or _CODE.search(text) or _SEARCH.search(text) or _MULTI.search(text):
+        return PRO
+    if (list_count(text) or 0) >= 8:
         return PRO
     if len(text) >= 280 or len(text.split()) >= 48:
         return PRO

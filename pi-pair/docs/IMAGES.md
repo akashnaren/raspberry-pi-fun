@@ -8,7 +8,7 @@ A cache hit does not look up pictures. pi2 and pi3 still do not search; they for
 
 ## `pi_images`
 
-The array is on the JSON completion body. On a stream it is copied onto the search-result event, the answering status, and the final chunk. At most three items.
+The array is on the JSON completion body. On a stream it is copied onto the search-result event, the answering status, and the final chunk. One subject is at most three items. A list of cars, movies, products, or places is one card per item, at most eight.
 
 | Field | Required | Meaning |
 | --- | --- | --- |

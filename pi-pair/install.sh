@@ -129,6 +129,19 @@ else
     echo "Pro is qwen2.5:1.5b. This script does not pull it. Pro stays on disk for measurement."
     echo "A Flash request does not run ollama pull. If the tag is missing, pull it on pi4 only:"
     echo "  ollama pull qwen2.5:1.5b"
+    if ollama show qwen2.5:1.5b >/dev/null 2>&1; then
+      echo "Preloading qwen2.5:1.5b with keep_alive -1."
+      if command -v curl >/dev/null 2>&1; then
+        curl -fsS http://127.0.0.1:11434/api/generate \
+          -H "content-type: application/json" \
+          -d '{"model":"qwen2.5:1.5b","prompt":" ","stream":false,"keep_alive":-1,"options":{"num_predict":1}}' \
+          >/dev/null || echo "WARN: Pro preload failed. The server retries it on startup."
+      else
+        echo "WARN: curl is missing, so Pro was not preloaded. The server retries it on startup."
+      fi
+    else
+      echo "Pro tag is not on disk yet, so it was not preloaded."
+    fi
   fi
   echo
   echo "--- Make Ollama listen on LAN (run these yourself if needed) ---"

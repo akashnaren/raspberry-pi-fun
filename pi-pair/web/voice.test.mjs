@@ -1,5 +1,5 @@
 import fs from "fs";
-import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, createUtteranceHold, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
+import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, createUtteranceHold, echoOfSpeech, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, shouldBargeIn, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
 
 const assistant = "The hall bench is by the east window.";
 const labels = ["Thinking", "Searching", "Searched", "Search failed", "Answering"];
@@ -162,8 +162,11 @@ if (!main.includes("whenSpeechEnds(releaseVoice)")) {
 if (!html.includes('id="btnVoice"') || !html.includes('aria-label="Voice"')) {
   throw new Error("dictation control is missing");
 }
-if (!html.includes('id="btnVoiceMode"') || !html.includes('aria-label="Voice mode"')) {
-  throw new Error("voice mode control is missing");
+if (html.includes('id="btnVoiceMode"')) {
+  throw new Error("a second voice-mode button sits next to dictation");
+}
+if (!main.includes("toggleVoiceMode") || !main.includes("shouldBargeIn")) {
+  throw new Error("voice mode lost its turn or barge-in");
 }
 if (!html.includes('id="voiceStage"') || !scss.includes(".voice-stage.heard") || !main.includes('classList.toggle("heard"') || !main.includes('classList.toggle("voice-session"')) {
   throw new Error("voice mode has no speaking visualization");
@@ -433,5 +436,12 @@ setEndOfUtteranceSilence(END_OF_UTTERANCE_SILENCE_MS);
 if (endOfUtteranceSilence() !== END_OF_UTTERANCE_SILENCE_MS) {
   throw new Error("silence did not return to the default");
 }
+
+const playing = "The hall bench is by the east window.";
+if (!echoOfSpeech("the hall bench", playing)) throw new Error("speaker echo was treated as a new turn");
+if (shouldBargeIn("the hall bench", playing, true)) throw new Error("echo barged in");
+if (!shouldBargeIn("what about the trains", playing, true)) throw new Error("a new phrase did not barge in");
+if (shouldBargeIn("what about the trains", playing, false)) throw new Error("barge-in fired while silent");
+if (!shouldBargeIn("stop", playing, true)) throw new Error("stop did not barge in");
 
 console.log("ok");

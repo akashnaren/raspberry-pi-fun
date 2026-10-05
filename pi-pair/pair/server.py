@@ -12,15 +12,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.canned import lookup, start_canned_warm, warm_status
+from pair.charts import is_structured_request, parabola_chart, structure_hint
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
 from pair.config import STATIC_DIR
+from pair.docfit import fit_outbound
 from pair.gate import capacity_message
 from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
+from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, search_note_limit
+from pair.lists import continuation_messages, finish_numbered, list_budget
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
+from pair.preload import start_pro_warm
 from pair.public_api import (
     FLASH_MODE,
     apply_mode,
@@ -31,7 +36,6 @@ from pair.public_api import (
     swagger_html,
 )
 from pair.queue import append_row, apply_label, node_role, note_exchange
-from pair.images import lookup_images, sanitize_card
 from pair.mesh import lookup_for_brain
 from pair.search import lookup_web
 from pair import runtime
@@ -236,23 +240,50 @@ def _with_search(messages, prompt: str):
     return messages, {"status": status, "sources": sources, "context": full}
 
 
-def _image_cards(prompt: str) -> list[dict]:
-    """Public cards for this turn. Empty when the line is not visual or the lookup fails."""
+def _image_cards(prompt: str, answer: str = "") -> list[dict]:
+    """Public cards for this turn. A list of visual items waits for the answer."""
+    mode = visual_mode(prompt)
+    if mode == "none":
+        return []
     try:
-        found = lookup_images(prompt)
+        if mode == "each":
+            if not (answer or "").strip():
+                return []
+            found = cards_for_answer(prompt, answer)
+        else:
+            found = lookup_images(prompt)
     except Exception:
         return []
     if not isinstance(found, list):
         return []
+    cap = 8 if mode == "each" else 3
     cards = []
     for item in found:
         clean = sanitize_card(item)
         if not clean:
             continue
         cards.append(clean)
-        if len(cards) >= 3:
+        if len(cards) >= cap:
             break
     return cards
+
+
+def _cards_after(prompt: str, answer: str, images: list[dict]) -> list[dict]:
+    """One card per listed car, movie, product, or place. Other turns keep theirs."""
+    if visual_mode(prompt) != "each":
+        return images
+    fresh = _image_cards(prompt, answer)
+    return fresh or images
+
+
+def _list_suffix(shown: str, finished: str) -> str:
+    """Text the stream has not already sent. Empty when the list did not grow."""
+    if not finished or finished == shown:
+        return ""
+    trimmed = shown.rstrip()
+    if finished.startswith(trimmed):
+        return finished[len(trimmed) :]
+    return ""
 
 
 def _put_images(payload: dict, images: list[dict]) -> None:
@@ -309,19 +340,47 @@ def write_event(handler, payload: dict) -> bool:
     return safe_write(handler, f"data: {json.dumps(payload)}\n\n".encode(), flush=True)
 
 
+_BOOTED = time.monotonic()
+
+
+def _service_row(peers: list, role: str, name: str) -> dict:
+    match = None
+    for peer in peers:
+        if not isinstance(peer, dict):
+            continue
+        if peer.get("role") == role or peer.get("name") == name:
+            match = peer
+            break
+    if match is None:
+        return {"name": name, "ok": False, "latency_ms": None}
+    return {
+        "name": name,
+        "ok": bool(match.get("ok")),
+        "latency_ms": match.get("latency_ms"),
+    }
+
+
 def health_document() -> dict:
     peers = snapshot_peers()
+    up = sum(1 for peer in peers if isinstance(peer, dict) and peer.get("ok"))
     return {
         "ok": True,
         "model": runtime.MODEL,
         "mode": "flash",
         "modes": mode_table(),
-        "peers_up": sum(1 for peer in peers if peer["ok"]),
+        "peers_up": up,
         "peers": peers,
         "slots": runtime.INFER_SLOTS,
         "in_flight": runtime.gate.in_flight(),
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
         "warm": warm_status(),
+        "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
+        "services": {
+            "brain": _service_row(peers, "brain", "pi4"),
+            "search": _service_row(peers, "health", "pi2"),
+            "peers_up": up,
+            "peers": len(peers),
+        },
     }
 
 
@@ -631,14 +690,21 @@ class Handler(BaseHTTPRequestHandler):
             ]
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
-            do_search = bool(mesh and node_role() == "brain")
+            structured = is_structured_request(prompt)
+            do_search = bool(mesh and node_role() == "brain") and not structured
+            outbound = fit_outbound(outbound)
+            max_tokens = list_budget(prompt, max_tokens)
+            ready = parabola_chart(prompt)
+            hint = None if ready else structure_hint(prompt)
+            if hint:
+                outbound = [{"role": "system", "content": hint}, *outbound]
             search_note = None
             images: list[dict] = []
             if do_search:
                 outbound, search_note = _with_search(outbound, prompt)
                 images = _image_cards(prompt)
-            grounded = None
-            if search_note is not None:
+            grounded = ready
+            if grounded is None and search_note is not None:
                 grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         except Exception as error:
             self._error(str(error))
@@ -672,6 +738,7 @@ class Handler(BaseHTTPRequestHandler):
                     mode_name=mode_name,
                     route_name=route_name,
                     resident_name=resident_name,
+                    ready_answer=grounded,
                 )
             else:
                 stages = ["loading"] if route_name == "pro" else []
@@ -695,6 +762,7 @@ class Handler(BaseHTTPRequestHandler):
                     mode_name,
                     route_name,
                     resident_name,
+                    ready_answer=grounded,
                 )
         except Exception as error:
             self._error(str(error))
@@ -1059,6 +1127,32 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
+    def _extend_list(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        text: str,
+    ) -> str:
+        """Ask once or twice more when a numbered list stops before N."""
+
+        def more(partial: str, count: int) -> str:
+            follow = continuation_messages(messages, partial, count)
+            if kind == "llamacpp":
+                nxt, _used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+            else:
+                nxt, _used = chat_ollama(peer, model, follow, temperature, max_tokens)
+            return nxt
+
+        try:
+            return finish_numbered(prompt, text, more)
+        except Exception:
+            return text
+
     def _stream(
         self,
         peer,
@@ -1078,6 +1172,7 @@ class Handler(BaseHTTPRequestHandler):
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
+        ready_answer: str | None = None,
     ) -> None:
         self.send_response(200)
         self._cors()
@@ -1121,8 +1216,8 @@ class Handler(BaseHTTPRequestHandler):
             _put_images(found, images)
             if not emit_status("searching", found):
                 return
-        grounded = None
-        if search_note is not None:
+        grounded = ready_answer
+        if grounded is None and search_note is not None:
             grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         answer_extra = dict(think_extra or {})
         if search_note:
@@ -1207,6 +1302,30 @@ class Handler(BaseHTTPRequestHandler):
                     note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
                     remember_completion(prompt, answer, chip, peer["name"])
                 return
+            answer = "".join(parts)
+            finished = self._extend_list(
+                peer, kind, model, messages, temperature, max_tokens, prompt, answer
+            )
+            extra = _list_suffix(answer, finished)
+            if extra:
+                more = {
+                    "id": "pi-pair",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": extra},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                if not safe_write(self, f"data: {json.dumps(more)}\n\n".encode(), flush=True):
+                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                    remember_completion(prompt, answer, chip, peer["name"])
+                    return
+                answer = finished
+            images = _cards_after(prompt, answer, images)
             elapsed = int((time.time() - started) * 1000)
             final = {
                 "id": "pi-pair",
@@ -1319,9 +1438,10 @@ class Handler(BaseHTTPRequestHandler):
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
+        ready_answer: str | None = None,
     ) -> None:
-        grounded = None
-        if search_note is not None:
+        grounded = ready_answer
+        if grounded is None and search_note is not None:
             grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         if grounded is not None:
             content, used = grounded, model
@@ -1329,6 +1449,11 @@ class Handler(BaseHTTPRequestHandler):
             content, used = chat_llamacpp(peer, model, messages, temperature, max_tokens)
         else:
             content, used = chat_ollama(peer, model, messages, temperature, max_tokens)
+        if grounded is None:
+            content = self._extend_list(
+                peer, kind, model, messages, temperature, max_tokens, prompt, content
+            )
+            images = _cards_after(prompt, content, list(images or []))
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
         note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
         remember_completion(prompt, content, chip, peer["name"])
@@ -1399,4 +1524,5 @@ def main() -> None:
     # for the duration of the preload.
     server = make_server()
     warm_thread = start_canned_warm()
+    start_pro_warm()
     server.serve_forever()

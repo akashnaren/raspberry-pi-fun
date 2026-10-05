@@ -1,5 +1,7 @@
 import katex from "katex";
 import { chartBlock, chartFence } from "./chart.ts";
+import { mermaidFence } from "./diagram.ts";
+import { isTableRule, markdownTable, tableFence } from "./table.ts";
 
 function escapeHtml(text: string): string {
   return text
@@ -21,6 +23,14 @@ function renderTex(source: string, display: boolean): string {
   }
 }
 
+function isInlineTex(body: string): boolean {
+  const tex = body.trim();
+  if (!tex || tex.length > 120) return false;
+  if (/^\d/.test(tex) && !/[\\^=_]/.test(tex)) return false;
+  if (!/[a-zA-Z\\^_=]/.test(tex)) return false;
+  return true;
+}
+
 function inline(text: string): string {
   const codes: string[] = [];
   const maths: string[] = [];
@@ -33,6 +43,12 @@ function inline(text: string): string {
     const token = `\u0000M${maths.length}\u0000`;
     maths.push(renderTex(tex, false));
     return token;
+  });
+  work = work.replace(/(^|[^\\$])\$(?!\$)([^$\n]+?)\$(?!\$)/g, (all, pre: string, body: string) => {
+    if (!isInlineTex(body)) return all;
+    const token = `\u0000M${maths.length}\u0000`;
+    maths.push(renderTex(body, false));
+    return pre + token;
   });
   let html = escapeHtml(work);
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
@@ -59,6 +75,10 @@ export function renderMarkdown(source: string): string {
   const fenced = text.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_all, lang: string, code: string) => {
     const chart = chartFence(lang, code);
     if (chart) return stash(chart);
+    const table = tableFence(lang, code);
+    if (table) return stash(table);
+    const flow = mermaidFence(lang, code);
+    if (flow) return stash(flow);
     return stash(`<pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);
   });
   const withDisplay = fenced
@@ -80,7 +100,24 @@ export function renderMarkdown(source: string): string {
     buf.length = 0;
   };
   const paragraph: string[] = [];
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.includes("|") && i + 1 < lines.length && isTableRule(lines[i + 1])) {
+      const body: string[] = [];
+      let j = i + 2;
+      while (j < lines.length && lines[j].includes("|") && lines[j].trim()) {
+        body.push(lines[j]);
+        j += 1;
+      }
+      const table = markdownTable(line, body);
+      if (table) {
+        flushParagraph(paragraph);
+        closeList();
+        out.push(stash(table));
+        i = j - 1;
+        continue;
+      }
+    }
     if (/^@@BLOCK\d+@@$/.test(line.trim())) {
       flushParagraph(paragraph);
       closeList();
@@ -134,4 +171,40 @@ export function renderMarkdown(source: string): string {
   return out
     .join("\n")
     .replace(/@@BLOCK(\d+)@@/g, (_all, index: string) => blocks[Number(index)] ?? "");
+}
+
+function oddMarker(text: string, marker: string): boolean {
+  return text.split(marker).length % 2 === 0;
+}
+
+/** Close a fence or display-math marker that the stream has not finished. */
+export function stabilizeMarkdown(source: string): string {
+  let text = String(source ?? "");
+  if (oddMarker(text, "```")) text += "\n```";
+  if (oddMarker(text, "$$")) text += "$$";
+  const openDisp = (text.match(/\\\[/g) || []).length;
+  const closeDisp = (text.match(/\\\]/g) || []).length;
+  if (openDisp > closeDisp) text += "\\]";
+  const openInline = (text.match(/\\\(/g) || []).length;
+  const closeInline = (text.match(/\\\)/g) || []).length;
+  if (openInline > closeInline) text += "\\)";
+  return closeDanglingDollar(text);
+}
+
+function closeDanglingDollar(text: string): string {
+  const masked = text.replace(/\$\$[\s\S]*?\$\$/g, (block) => " ".repeat(block.length));
+  let open = -1;
+  for (let i = 0; i < masked.length; i += 1) {
+    if (masked[i] !== "$") continue;
+    if (masked[i + 1] === "$" || (i > 0 && masked[i - 1] === "$")) continue;
+    open = open < 0 ? i : -1;
+  }
+  if (open < 0) return text;
+  const body = text.slice(open + 1);
+  if (!body || isInlineTex(body)) return text + "$";
+  return text;
+}
+
+export function renderStreamingMarkdown(source: string): string {
+  return renderMarkdown(stabilizeMarkdown(source));
 }
