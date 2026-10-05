@@ -98,19 +98,25 @@ function faviconNode(doc: Document, src: SourceLink): HTMLElement {
   const wrap = doc.createElement("span");
   wrap.className = "sources-fav";
   const plan = faviconPlan(src.url);
+  wrap.appendChild(letterMark(doc, plan.letter));
+  if (!plan.google) return wrap;
   const img = doc.createElement("img");
   img.alt = "";
   img.src = plan.google;
   img.dataset.local = plan.local;
   img.dataset.letter = plan.letter;
   img.dataset.step = "google";
+  img.style.opacity = "0";
+  img.addEventListener("load", () => {
+    if (img.naturalWidth > 0) img.style.opacity = "1";
+  });
   img.addEventListener("error", () => {
     if (img.dataset.step !== "local" && plan.local) {
       img.dataset.step = "local";
       img.src = plan.local;
       return;
     }
-    img.replaceWith(letterMark(doc, plan.letter));
+    img.remove();
   });
   wrap.appendChild(img);
   return wrap;
@@ -202,14 +208,18 @@ export function renderSourcesPanelBody(doc: Document, detail: PanelDetail): HTML
       link.href = src.url;
       link.target = "_blank";
       link.rel = "noopener";
+      link.appendChild(faviconNode(doc, src));
+      const copy = doc.createElement("span");
+      copy.className = "sources-link-copy";
       const title = doc.createElement("span");
       title.className = "sources-title";
       title.textContent = src.title;
       const host = doc.createElement("span");
       host.className = "sources-host";
       host.textContent = sourceHost(src.url);
-      link.appendChild(title);
-      link.appendChild(host);
+      copy.appendChild(title);
+      copy.appendChild(host);
+      link.appendChild(copy);
       item.appendChild(link);
       list.appendChild(item);
     });

@@ -45,6 +45,9 @@ if (pill.querySelector(".sources-count").textContent !== "5 sources") {
 }
 const icons = pill.querySelectorAll(".sources-fav img");
 if (icons.length !== 3) throw new Error("pill icons " + icons.length);
+if (pill.querySelectorAll(".sources-fallback").length !== 3) {
+  throw new Error("favicon discs missing a letter fallback");
+}
 if (!icons[0].src.includes("google.com/s2/favicons") || icons[0].dataset.local !== plan.local) {
   throw new Error("pill favicon " + icons[0].src);
 }
