@@ -8,6 +8,8 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -16,7 +18,15 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.canned import lookup, warm_at_start
+from pair import runtime
+from pair.canned import (
+    lookup,
+    reset_warm_state,
+    set_warm_status,
+    start_canned_warm,
+    warm_at_start,
+    warm_status,
+)
 from pair.embed import (
     COSINE_MIN,
     EMBED_MODEL,
@@ -133,6 +143,10 @@ class SemanticMap(unittest.TestCase):
                 "PI_PAIR_CANNED",
                 "PI_PAIR_OLLAMA",
                 "OLLAMA_HOST",
+                "PI_PAIR_HOST",
+                "PI_PAIR_PORT",
+                "PI_PAIR_PEERS",
+                "PI_PAIR_DATA",
             )
         }
         self.tmp = tempfile.TemporaryDirectory()
@@ -140,6 +154,7 @@ class SemanticMap(unittest.TestCase):
         EmbedFake.hits = []
         EmbedFake.mode = "ok"
         reset_embed_cache()
+        reset_warm_state()
         os.environ["PI_PAIR_ROLE"] = "brain"
         os.environ["PI_PAIR_OLLAMA"] = f"http://127.0.0.1:{self.port}"
         os.environ["PI_PAIR_CANNED"] = str(self.map_path)
@@ -150,11 +165,13 @@ class SemanticMap(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
         reset_embed_cache()
+        reset_warm_state()
         for key, value in self._env.items():
             if value is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+        runtime.configure()
 
     def _write(self, table: dict[str, str]) -> None:
         self.map_path.write_text(json.dumps(table), encoding="utf-8")
@@ -359,45 +376,185 @@ class SemanticMap(unittest.TestCase):
                 self.assertIsNone(lookup(PARAPHRASE), name)
                 self.assertEqual(calls, [], name)
 
-    def test_server_main_warms_before_accept_on_brain_only(self):
-        from pair.server import main
-
+    def test_mid_warm_miss_is_exact_or_one_query(self):
+        release = threading.Event()
+        entered = threading.Event()
         calls: list = []
-        order: list = []
 
         def fake(texts):
-            order.append("embed")
+            copied = list(texts)
+            calls.append(copied)
+            if copied == sorted(DEFAULT_MAP):
+                entered.set()
+                release.wait(5)
+            return [VECTORS.get(text, UNRELATED_VEC) for text in copied]
+
+        thread: threading.Thread | None = None
+        try:
+            with mock.patch("pair.embed.embed_texts", side_effect=fake):
+                thread = start_canned_warm()
+                self.assertTrue(entered.wait(3), "warm did not start")
+                self.assertEqual(warm_status(), "warming")
+                self.assertEqual(lookup("Hi!"), ANSWERS["hi"])
+                before = len(calls)
+                self.assertIsNone(lookup(PARAPHRASE))
+                self.assertEqual(calls[before:], [])
+                self.assertFalse(release.is_set())
+                release.set()
+                thread.join(timeout=2)
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(warm_status(), "ready")
+                calls.clear()
+                self.assertEqual(lookup(PARAPHRASE), ANSWERS["who generates"])
+                self.assertEqual(calls, [[PARAPHRASE]])
+        finally:
+            release.set()
+            if thread is not None:
+                thread.join(timeout=2)
+
+        calls.clear()
+        with mock.patch("pair.embed.embed_texts", side_effect=self._fake_embed(calls)):
+            warm_canned_embeddings(DEFAULT_MAP)
+        calls.clear()
+        set_warm_status("warming")
+        try:
+            with mock.patch("pair.embed.embed_texts", side_effect=RuntimeError("embed down")):
+                self.assertIsNone(lookup(PARAPHRASE))
+                self.assertEqual(lookup("Hi!"), ANSWERS["hi"])
+        finally:
+            reset_warm_state()
+
+        calls.clear()
+        set_warm_status("warming")
+        try:
+            with mock.patch("pair.embed.embed_texts", side_effect=self._fake_embed(calls)):
+                self.assertEqual(lookup(JUST), ANSWERS["who generates"])
+                self.assertEqual(calls, [[JUST]])
+        finally:
+            reset_warm_state()
+
+    def test_health_and_exact_chat_answer_before_warm_finishes(self):
+        from pair import server as server_mod
+
+        release = threading.Event()
+        entered = threading.Event()
+
+        def fake(texts):
+            entered.set()
+            release.wait(5)
+            return [VECTORS.get(text, UNRELATED_VEC) for text in texts]
+
+        peers = Path(self.tmp.name) / "peers.json"
+        peers.write_text(
+            json.dumps(
+                [
+                    {
+                        "name": "pi4",
+                        "host": "127.0.0.1",
+                        "port": 1,
+                        "kind": "ollama",
+                        "generative": True,
+                        "role": "brain",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        os.environ["PI_PAIR_PEERS"] = str(peers)
+        os.environ["PI_PAIR_HOST"] = "127.0.0.1"
+        os.environ["PI_PAIR_PORT"] = "0"
+        os.environ["PI_PAIR_DATA"] = self.tmp.name
+        captured: dict = {}
+        real_make = server_mod.make_server
+
+        def spy(host=None, port=None):
+            httpd = real_make(host, port)
+            captured["httpd"] = httpd
+            return httpd
+
+        httpd = None
+        try:
+            with mock.patch("pair.embed.embed_texts", side_effect=fake), mock.patch(
+                "pair.server.make_server", side_effect=spy
+            ):
+                worker = threading.Thread(target=server_mod.main, daemon=True)
+                worker.start()
+                self.assertTrue(entered.wait(3), "warm did not start")
+                httpd = captured["httpd"]
+                port = httpd.server_address[1]
+                self.assertGreater(port, 0)
+                status, health = self._request(port, "/health")
+                self.assertEqual(status, 200)
+                self.assertTrue(health["ok"])
+                self.assertEqual(health["warm"], "warming")
+                status, chat = self._request(
+                    port,
+                    "/v1/chat/completions",
+                    {
+                        "model": "qwen2.5:0.5b",
+                        "messages": [{"role": "user", "content": "Hi!"}],
+                        "stream": False,
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(chat["pi_chip"], "cache")
+                self.assertEqual(chat["choices"][0]["message"]["content"], ANSWERS["hi"])
+                self.assertTrue(entered.is_set())
+                self.assertFalse(release.is_set())
+                release.set()
+                self.assertIsNotNone(server_mod.warm_thread)
+                server_mod.warm_thread.join(timeout=2)
+                self.assertFalse(server_mod.warm_thread.is_alive())
+                status, ready = self._request(port, "/health")
+                self.assertEqual(status, 200)
+                self.assertEqual(ready["warm"], "ready")
+        finally:
+            release.set()
+            if httpd is not None:
+                httpd.shutdown()
+                httpd.server_close()
+            reset_warm_state()
+
+    def _request(self, port: int, path: str, payload: dict | None = None) -> tuple[int, dict]:
+        data = None if payload is None else json.dumps(payload).encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}",
+            data=data,
+            headers={"content-type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                return response.status, json.loads(response.read().decode())
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read().decode() or "{}")
+
+    def test_off_brain_serves_without_embedding(self):
+        from pair import server as server_mod
+
+        calls: list = []
+
+        def fake(texts):
             calls.append(list(texts))
             return [VECTORS.get(text, UNRELATED_VEC) for text in texts]
 
         def serve():
-            order.append("serve")
+            calls.append("serve")
 
         with mock.patch("pair.embed.embed_texts", side_effect=fake), mock.patch(
             "pair.server.make_server"
         ) as make_server:
             make_server.return_value.serve_forever.side_effect = serve
-            main()
-            self.assertEqual(calls, [sorted(DEFAULT_MAP)])
-            self.assertEqual(order, ["embed", "serve"])
-
-            calls.clear()
-            order.clear()
-            os.environ["PI_PAIR_ROLE"] = "dataset"
-            os.environ["PI_PAIR_NAME"] = "pi3"
-            reset_embed_cache()
-            main()
-            self.assertEqual(calls, [])
-            self.assertEqual(order, ["serve"])
-
-            calls.clear()
-            order.clear()
-            os.environ["PI_PAIR_ROLE"] = "health"
-            os.environ["PI_PAIR_NAME"] = "pi2"
-            reset_embed_cache()
-            main()
-            self.assertEqual(calls, [])
-            self.assertEqual(order, ["serve"])
+            for role, name in (("dataset", "pi3"), ("health", "pi2")):
+                os.environ["PI_PAIR_ROLE"] = role
+                os.environ["PI_PAIR_NAME"] = name
+                calls.clear()
+                reset_embed_cache()
+                reset_warm_state()
+                server_mod.main()
+                self.assertIsNotNone(server_mod.warm_thread)
+                server_mod.warm_thread.join(timeout=2)
+                self.assertEqual(calls, ["serve"], role)
+                self.assertEqual(warm_status(), "ready", role)
 
     def test_ollama_base_defaults_and_rewrites_bind_all(self):
         os.environ.pop("PI_PAIR_OLLAMA", None)

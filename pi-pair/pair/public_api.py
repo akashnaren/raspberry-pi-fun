@@ -393,6 +393,11 @@ def openapi_document() -> dict:
                         "slots": {"type": "integer"},
                         "in_flight": {"type": "integer"},
                         "cache_ttl": {"type": "number"},
+                        "warm": {
+                            "type": "string",
+                            "enum": ["warming", "ready"],
+                            "description": "Canned-key embed preload. Does not block this request.",
+                        },
                     },
                 },
             },

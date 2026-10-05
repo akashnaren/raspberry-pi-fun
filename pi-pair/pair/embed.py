@@ -1,9 +1,11 @@
 """Pi4 paraphrase match for the canned map. Stdlib only.
 
 Exact keys stay in canned.lookup. This client runs only on the brain role,
-which is pi4. Startup embeds the map keys once. A later miss posts only the
-normalized line to Ollama `/api/embed` with `snowflake-arctic-embed:m`.
-If that preload failed, or the map keys changed, the miss embeds the keys
+which is pi4. After the socket is listening, a background thread embeds the
+map keys once. A later miss posts only the normalized line to Ollama
+`/api/embed` with `snowflake-arctic-embed:m`. While that batch is still
+running and the key cache is empty, a miss does not embed the keys again.
+If the preload failed, or the map keys changed, the miss embeds the keys
 and then the line. A cosine at or above COSINE_MIN returns the stored answer.
 A down embedder, a bad payload, or a weaker score is a miss, and the chat
 path still runs.
@@ -24,6 +26,8 @@ EMBED_TIMEOUT_S = 30.0
 
 _LOCK = threading.Lock()
 _CACHE: dict = {"sig": None, "vectors": None}
+_WARM_LOCK = threading.Lock()
+_WARM = {"status": "ready"}
 
 
 def on_pi4() -> bool:
@@ -62,6 +66,26 @@ def reset_embed_cache() -> None:
     with _LOCK:
         _CACHE["sig"] = None
         _CACHE["vectors"] = None
+
+
+def warm_status() -> str:
+    """`warming` while the key batch is in flight, otherwise `ready`.
+
+    Reads a lock and returns. It does not join the preload thread.
+    """
+    with _WARM_LOCK:
+        return str(_WARM["status"])
+
+
+def set_warm_status(status: str) -> None:
+    if status not in ("warming", "ready"):
+        raise ValueError(f"unknown warm status {status}")
+    with _WARM_LOCK:
+        _WARM["status"] = status
+
+
+def reset_warm_state() -> None:
+    set_warm_status("ready")
 
 
 def cosine(left: list[float], right: list[float]) -> float:
@@ -197,10 +221,15 @@ def semantic_lookup(query: str, table: dict[str, str]) -> str | None:
 
     The user line and the map keys are embedded as the same kind of text.
     A retrieval prefix on only one side would score a paraphrase like a passage.
+    While the startup batch is still running and this key cache is empty, this
+    returns None. Scoring the line would embed every key again and hold the
+    chat. Once those vectors are cached, only the line is embedded.
     """
     try:
         keys = sorted(key for key in table if key)
         if not query or not keys:
+            return None
+        if warm_status() == "warming" and _cached_key_vectors(keys) is None:
             return None
         vectors = _key_vectors(keys)
         if not vectors:
