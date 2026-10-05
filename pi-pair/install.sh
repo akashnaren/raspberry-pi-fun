@@ -26,6 +26,10 @@ echo "Target:  $INSTALL_DIR"
 echo "Name:    $NODE_NAME"
 echo "Role:    $ROLE"
 echo "Proxy:   0.0.0.0:${PAIR_PORT}"
+if ! command -v tesseract >/dev/null 2>&1 || ! command -v pdftoppm >/dev/null 2>&1; then
+  echo "Attachment OCR needs local binaries (sudo once, no cloud OCR API):"
+  echo "  sudo apt-get install -y tesseract-ocr poppler-utils"
+fi
 if [[ "$ROLE" == "brain" ]]; then
   echo "Ollama:  0.0.0.0:11434 on this board only"
   echo "Embed:   ${OLLAMA_EMBED_MODEL} for map paraphrases on this board only"
