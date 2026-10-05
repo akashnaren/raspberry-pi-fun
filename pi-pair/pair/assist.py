@@ -1,10 +1,13 @@
 """Keep ordinary replies helpful and free of product internals.
 
+A harmful ask is one fixed short refusal. Self-harm mentions 988. The router
+sends that line before search, canned text, or generation. A reply that uses
+the same harmful wording is replaced with that refusal.
+
 A soft refusal is retried only when the user prompt is a harmless shape and
 the harmful check does not match. One nudge retry comes first. A second soft
 refusal on a list or real-world question can be grounded by the caller (search
 notes or Pro). The last resort is one honest sentence, never a canned item list.
-A harmful request keeps the model's refusal.
 """
 
 from __future__ import annotations
@@ -18,6 +21,9 @@ HELPFUL_NUDGE = "Answer helpfully if the request is safe."
 
 LIST_MISS = "I couldn't get a good list for that, try Pro or rephrase."
 FACT_MISS = "I couldn't get a good answer for that, try Pro or rephrase."
+
+HARM_REFUSAL = "I can't help with that."
+CRISIS_REFUSAL = "I can't help with that. If you are in crisis, call or text 988."
 
 ANSWER_HINT = (
     "Answer the user's question directly. "
@@ -40,24 +46,48 @@ _GREETING = re.compile(
     re.I,
 )
 
+_SELF_HARM = re.compile(
+    r"\b(?:suicid\w*|self[-\s]?harm|kill myself|killing myself|end my life|"
+    r"hang myself|hurt myself|cut myself)\b",
+    re.I,
+)
+
+# Actionable harm. A false positive refuses; a how-to must not reach the model.
 _HARMFUL = re.compile(
     "|".join(
         (
-            r"\b(?:suicid\w*|self[-\s]?harm|kill myself|killing myself|end my life|"
-            r"hang myself|hurt myself|cut myself)\b",
-            r"\b(?:pipe bomb|bomb|explosive|grenade|molotov|improvised explosive)\b",
+            _SELF_HARM.pattern,
+            r"\b(?:pipe[\s-]?bombs?|pipebombs?|ieds?|detonators?|explosives?|"
+            r"grenades?|molotovs?|bombs?)\b",
             r"\b(?:how to|make|build|manufacture)\b.{0,40}\b(?:gun|firearm|rifle|weapon)\b",
             r"\b(?:malware|ransomware|keylogger|rootkit|credential theft)\b",
             r"\b(?:hack(?:ing)? into|how to hack|steal (?:a |the |their |his |her )?"
             r"(?:password|credentials)|phishing)\b",
-            r"\b(?:stalk(?:ing)? (?:someone|a person|him|her|them)|how to stalk)\b",
+            r"\b(?:stalk(?:ing|ed|er)?|how to stalk)\b",
+            r"\b(?:track(?:ing)?|follow(?:ing)?|tail(?:ing)?|locat(?:e|ing))\b.{0,48}"
+            r"\b(?:someone|somebody|a person|people|him|her|them)\b",
+            r"\b(?:find|locate|track|get|obtain)\b.{0,40}"
+            r"\b(?:someone(?:'s|s)?|somebody(?:'s|s)?|their|his|her)\s+"
+            r"(?:home|house|address|location|whereabouts)\b",
+            r"\b(?:home|house|address|location|whereabouts)\s+of\s+"
+            r"(?:someone|somebody|a person|him|her|them)\b",
             r"\b(?:kill|murder|assassinate|shoot|stab)\b.{0,32}"
             r"\b(?:someone|a person|him|her|them|people)\b",
             r"\b(?:meth(?:amphetamine)?|fentanyl|heroin|mdma)\b.{0,40}"
             r"\b(?:synth\w*|cook|recipe|steps?|make)\b",
             r"\b(?:synth\w*|cook)\b.{0,40}\b(?:meth(?:amphetamine)?|fentanyl|heroin|mdma)\b",
-            r"\b(?:csam|child sexual)\b",
-            r"\b(?:child|minor|underage)\b.{0,40}\b(?:porn|sexual|nude|nudes)\b",
+            r"\b(?:csam|child[\s-]?porn(?:ography)?|child[\s-]?sexual)\b",
+            r"\b(?:child|children|kid|kids|minor|minors|underage)\b.{0,48}"
+            r"\b(?:porn(?:ography)?|sexual(?:ly)?|nude|nudes|exploitation)\b",
+            r"\b(?:porn(?:ography)?|nude|nudes|sexual)\b.{0,40}"
+            r"\b(?:child|children|kid|kids|minor|minors|underage)\b",
+            r"\b(?:obtain|download|get|find|buy)\b.{0,70}"
+            r"\b(?:csam|child[\s-]?porn(?:ography)?)\b",
+            r"\b(?:obtain|download|get|find|buy)\b.{0,50}"
+            r"\b(?:images?|videos?|photos?|pictures?|nudes?|content|material)\b.{0,40}"
+            r"\b(?:of\s+)?(?:a\s+|an\s+)?(?:minors?|children|kids|child|underage)\b",
+            r"\b(?:images?|videos?|photos?|pictures?|nudes?)\b.{0,30}"
+            r"\b(?:of\s+)?(?:minors?|children|a child|kids|underage)\b",
             r"\b(?:poison(?:ing|s)?|ricin|cyanide|novichok|sarin|anthrax)\b",
         )
     ),
@@ -147,6 +177,13 @@ def _line(prompt: str) -> str:
 def is_harmful(prompt: str) -> bool:
     """True for self-harm, weapons, malware, stalking, drug synthesis, or CSAM."""
     return bool(_HARMFUL.search(prompt or ""))
+
+
+def refusal_for(text: str) -> str:
+    """One short refusal. Self-harm includes the 988 line. No how-to, no jargon."""
+    if _SELF_HARM.search(text or ""):
+        return CRISIS_REFUSAL
+    return HARM_REFUSAL
 
 
 def is_casual_greeting(prompt: str) -> bool:
@@ -292,12 +329,17 @@ def _usable(prompt: str, text: str) -> str:
 def settle_reply(prompt: str, text: str, retry, ground=None) -> str:
     """Scrub a harmless reply. One nudge, then one grounded retry, then one line.
 
-    `retry` and `ground` are each called at most once. A harmful prompt, or any
-    prompt that is not a harmless shape, keeps a soft refusal as the model wrote it.
+    `retry` and `ground` are each called at most once. A harmful prompt, or a
+    reply that uses the harmful lexicon, becomes the fixed refusal. Any other
+    prompt that is not a harmless shape keeps a soft refusal as the model wrote it.
     """
     raw = text or ""
-    if is_harmful(prompt) or not is_harmless_shape(prompt):
-        if is_harmful(prompt) or is_soft_refusal(raw):
+    if is_harmful(prompt):
+        return refusal_for(prompt)
+    if is_harmful(raw):
+        return refusal_for(raw)
+    if not is_harmless_shape(prompt):
+        if is_soft_refusal(raw):
             return raw
         cleaned = scrub_reply(raw)
         return cleaned or raw

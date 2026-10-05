@@ -11,6 +11,16 @@ _LIST = re.compile(
     re.I,
 )
 _LINE = re.compile(r"(?m)^\s*(\d{1,2})[\.\)]\s+(\S.*)$")
+_CATEGORY = re.compile(
+    r"\b(?:cars?|automobiles?|movies?|films?|books?|songs?|phones?|cities|"
+    r"foods?|fruits?|games?|shows?|restaurants?|albums?)\b",
+    re.I,
+)
+_COUNT_LEAD = re.compile(
+    r"^(?:please\s+)?(?:top|best|list|name|give|rank|number)\s+"
+    r"(?:these\s+|me\s+|the\s+)?\d{1,2}\s+",
+    re.I,
+)
 
 _CAP = 1024
 _PER_ITEM = 40
@@ -27,6 +37,25 @@ def list_count(prompt: str) -> int | None:
     if count < 2 or count > 20:
         return None
     return count
+
+
+def is_real_world_list(prompt: str) -> bool:
+    """Counted lists of cars, films, and similar categories. Primes are not."""
+    from pair.assist import is_harmful
+
+    text = prompt or ""
+    if is_harmful(text) or not list_count(text):
+        return False
+    return bool(_CATEGORY.search(text))
+
+
+def category_query(prompt: str) -> str:
+    """Search text for a Top-N category. 'Top 5 horror movies' is 'horror films'."""
+    text = " ".join((prompt or "").split())
+    trimmed = _COUNT_LEAD.sub("", text, count=1).strip(" ?.!")
+    trimmed = re.sub(r"\bmovies\b", "films", trimmed, count=1, flags=re.I)
+    trimmed = re.sub(r"\bmovie\b", "film", trimmed, count=1, flags=re.I)
+    return " ".join(trimmed.split()) or text
 
 
 def list_budget(prompt: str, base: int) -> int:
@@ -106,14 +135,15 @@ def continuation_messages(messages: list, partial: str, count: int) -> list:
     """A refusal or a placeholder list is a fresh ask, not a replay."""
     if not numbered_lines(partial):
         note = (
-            f"Reply with a numbered list of {count} items, one per line, from 1 to {count}. "
+            f"Reply with exactly {count} items, one per line, numbered from 1 to {count}. "
             "Use a real name or fact on each line, not the item number. "
-            "Answer helpfully if the request is safe. Stop at item "
-            f"{count}."
+            "Answer helpfully if the request is safe. "
+            f"Stop at item {count}."
         )
         return [*list(messages or []), {"role": "user", "content": note}]
     note = (
         f"Continue the numbered list until item {count}. "
+        f"The list must contain exactly {count} items. "
         "Start at the next missing number. Do not repeat earlier items. "
         f"Stop at item {count}."
     )
@@ -125,20 +155,18 @@ def continuation_messages(messages: list, partial: str, count: int) -> list:
 
 
 def finish_numbered(prompt: str, text: str, more) -> str:
-    """Call `more(partial, n)` at most twice when a harmless list stops before N.
+    """Call `more(partial, n)` once when a harmless list stops before N.
 
-    Zero real items get one fresh ask. The refusal or placeholder text is not
-    replayed as the list. A harmful subject is not continued.
+    The retry asks for exactly N. Nothing is invented here. Zero real items
+    get one fresh ask, and that refusal or placeholder is not replayed as the
+    list. A harmful subject is not continued.
     """
     count = list_count(prompt)
     current = text or ""
     if not count or not _may_continue(prompt) or list_complete(current, count):
         return current
+    nxt = more(current, count) or ""
     if not numbered_lines(current):
-        fresh = _bounded(numbered_lines(more(current, count) or ""), count)
+        fresh = _bounded(numbered_lines(nxt), count)
         return fresh or current
-    for _ in range(2):
-        if list_complete(current, count):
-            break
-        current = merge_list(current, more(current, count) or "", count)
-    return current
+    return merge_list(current, nxt, count)
