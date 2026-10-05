@@ -1,0 +1,390 @@
+"""Generation cap: concurrent misses, immediate 503, cache and page answers stay open."""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import threading
+import time
+import unittest
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from pair import runtime
+from pair import server as pair_server
+from pair.config import infer_slots
+from pair.gate import InferenceGate, capacity_message
+from pair.knobs import parallel_limit
+from pair.server import make_server
+
+
+def _start(httpd: ThreadingHTTPServer) -> None:
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+
+
+class HoldOllama(BaseHTTPRequestHandler):
+    """Blocks inside /api/chat so tests can see overlapping generations."""
+
+    lock = threading.Lock()
+    inside = 0
+    peak = 0
+    posts = 0
+    entered = threading.Event()
+    release = threading.Event()
+
+    def log_message(self, *_args):
+        return
+
+    def do_GET(self):
+        body = json.dumps({"models": [{"name": "qwen2.5:0.5b"}]}).encode()
+        self._send(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length") or 0)
+        self.rfile.read(length)
+        kind = type(self)
+        with kind.lock:
+            kind.posts += 1
+            kind.inside += 1
+            kind.peak = max(kind.peak, kind.inside)
+            if kind.inside >= 2:
+                kind.entered.set()
+        kind.release.wait(timeout=8)
+        with kind.lock:
+            kind.inside -= 1
+        self._send(json.dumps({"message": {"content": "held"}}).encode())
+
+    def _send(self, body: bytes) -> None:
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class GateUnit(unittest.TestCase):
+    def test_full_gate_fails_immediately(self):
+        gate = InferenceGate(2)
+        self.assertTrue(gate.try_acquire())
+        self.assertTrue(gate.try_acquire())
+        self.assertEqual(gate.in_flight(), 2)
+        started = time.perf_counter()
+        self.assertFalse(gate.try_acquire())
+        self.assertLess(time.perf_counter() - started, 0.2)
+        self.assertIn("at capacity", capacity_message(gate.limit))
+        gate.release()
+        self.assertEqual(gate.in_flight(), 1)
+        self.assertTrue(gate.try_acquire())
+
+    def test_extra_release_does_not_open_a_slot(self):
+        gate = InferenceGate(1)
+        gate.release()
+        self.assertTrue(gate.try_acquire())
+        self.assertFalse(gate.try_acquire())
+        gate.release()
+        gate.release()
+        self.assertTrue(gate.try_acquire())
+        self.assertFalse(gate.try_acquire())
+
+    def test_default_cap_matches_the_runtime_file(self):
+        previous = os.environ.pop("PI_PAIR_SLOTS", None)
+        try:
+            limit = infer_slots()
+            self.assertGreaterEqual(limit, 2)
+            self.assertLessEqual(limit, 4)
+            self.assertEqual(limit, parallel_limit())
+            os.environ["PI_PAIR_SLOTS"] = "99"
+            self.assertEqual(infer_slots(), 4)
+            os.environ["PI_PAIR_SLOTS"] = "0"
+            self.assertEqual(infer_slots(), 1)
+            os.environ["PI_PAIR_SLOTS"] = "nope"
+            self.assertEqual(infer_slots(), parallel_limit())
+        finally:
+            if previous is None:
+                os.environ.pop("PI_PAIR_SLOTS", None)
+            else:
+                os.environ["PI_PAIR_SLOTS"] = previous
+
+    def test_there_is_no_process_wide_inference_semaphore(self):
+        self.assertFalse(hasattr(runtime, "_infer_sem"))
+        self.assertIsInstance(runtime.gate, InferenceGate)
+
+
+class ConcurrentChat(unittest.TestCase):
+    def setUp(self):
+        self._peers = [dict(peer) for peer in runtime.PEERS]
+        self._slots = runtime.INFER_SLOTS
+        self._gate = runtime.gate
+        runtime.reset_health()
+        self.servers = []
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["PI_PAIR_DATA"] = self._tmp.name
+        os.environ["PI_PAIR_ROLE"] = "brain"
+        os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
+        HoldOllama.inside = 0
+        HoldOllama.peak = 0
+        HoldOllama.posts = 0
+        HoldOllama.entered = threading.Event()
+        HoldOllama.release = threading.Event()
+        self._lookup = pair_server.lookup_web
+        pair_server.lookup_web = lambda query, opener=None: {
+            "status": "failed",
+            "sources": [],
+            "context": "",
+        }
+
+    def tearDown(self):
+        HoldOllama.release.set()
+        for httpd in self.servers:
+            httpd.shutdown()
+            httpd.server_close()
+        pair_server.lookup_web = self._lookup
+        runtime.PEERS = self._peers
+        runtime.INFER_SLOTS = self._slots
+        runtime.gate = self._gate
+        runtime.reset_health()
+        os.environ.pop("PI_PAIR_DATA", None)
+        os.environ.pop("PI_PAIR_ROLE", None)
+        os.environ.pop("PI_PAIR_CANNED", None)
+        self._tmp.cleanup()
+
+    def _listen(self, handler):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.servers.append(httpd)
+        _start(httpd)
+        return httpd.server_address[1]
+
+    def _pair(self) -> int:
+        httpd = make_server("127.0.0.1", 0)
+        self.servers.append(httpd)
+        _start(httpd)
+        return httpd.server_address[1]
+
+    def _pi4(self, handler=HoldOllama) -> int:
+        peer_port = self._listen(handler)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        return self._pair()
+
+    def _post(self, port, content, headers=None, stream=False, timeout=5):
+        payload = {
+            "model": "qwen2.5:0.5b",
+            "messages": [{"role": "user", "content": content}],
+            "stream": stream,
+        }
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"content-type": "application/json", **(headers or {})},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read().decode()
+                body = json.loads(raw or "{}") if "json" in (response.headers.get("content-type") or "") else raw
+                return response.status, response.headers, body
+        except urllib.error.HTTPError as error:
+            raw = error.read().decode()
+            try:
+                body = json.loads(raw or "{}")
+            except json.JSONDecodeError:
+                body = {"error": raw}
+            return error.code, error.headers, body
+
+    def test_two_misses_overlap_and_the_third_is_503(self):
+        runtime.set_infer_slots(2)
+        port = self._pi4()
+        results = [None, None]
+
+        def run(index: int) -> None:
+            results[index] = self._post(
+                port,
+                f"novel overlap {index}",
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+                timeout=10,
+            )
+
+        threads = [threading.Thread(target=run, args=(index,)) for index in (0, 1)]
+        for thread in threads:
+            thread.start()
+        self.assertTrue(HoldOllama.entered.wait(timeout=5))
+        self.assertGreaterEqual(HoldOllama.peak, 2)
+        self.assertEqual(runtime.gate.in_flight(), 2)
+        started = time.perf_counter()
+        status, headers, body = self._post(
+            port,
+            "novel overlap rejected",
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        elapsed = time.perf_counter() - started
+        self.assertEqual(status, 503)
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual(body["error"], capacity_message(2))
+        self.assertIn("application/json", headers.get("content-type", ""))
+        runtime.reset_health()
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
+            health = json.loads(response.read().decode())
+        self.assertEqual(health["slots"], 2)
+        self.assertEqual(health["in_flight"], 2)
+        HoldOllama.release.set()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertTrue(all(item is not None and item[0] == 200 for item in results))
+        self.assertEqual(runtime.gate.in_flight(), 0)
+
+    def test_stream_over_cap_is_json_503(self):
+        runtime.set_infer_slots(1)
+        self.assertTrue(runtime.gate.try_acquire())
+        port = self._pi4()
+        started = time.perf_counter()
+        status, headers, body = self._post(
+            port,
+            "novel stream rejected",
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+            stream=True,
+        )
+        self.assertLess(time.perf_counter() - started, 0.5)
+        self.assertEqual(status, 503)
+        self.assertNotIn("event-stream", headers.get("content-type", ""))
+        self.assertIn("at capacity", body["error"])
+        self.assertEqual(HoldOllama.posts, 0)
+        runtime.gate.release()
+
+    def test_canned_and_page_answers_skip_a_full_gate(self):
+        runtime.set_infer_slots(1)
+        self.assertTrue(runtime.gate.try_acquire())
+        port = self._pi4()
+        started = time.perf_counter()
+        status, headers, body = self._post(
+            port,
+            "Hi!",
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertLess(time.perf_counter() - started, 0.5)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Pi-Chip"), "cache")
+        self.assertEqual(body["choices"][0]["message"]["content"], "Hi. What can I help you with?")
+        self.assertEqual(HoldOllama.posts, 0)
+
+        page = (
+            "The balloon gains 12 cubic centimeters per second. "
+            "When the surface area is 36 pi square centimeters, r = 3. "
+            "dr/dt = 1/(3 pi) centimeters per second."
+        )
+
+        def fake(query, opener=None):
+            return {
+                "status": "ok",
+                "sources": [{"title": "Balloon note", "url": "https://example.com/balloon"}],
+                "context": "Text from the first page:\n" + page,
+            }
+
+        pair_server.lookup_web = fake
+        prompt = (
+            "A spherical balloon is being inflated with gas at a constant rate of "
+            "12 cubic centimeters per second. Find the exact rate at which the radius "
+            "is increasing when the surface area is 36 pi square centimeters."
+        )
+        started = time.perf_counter()
+        status, _headers, body = self._post(
+            port,
+            prompt,
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertLess(time.perf_counter() - started, 0.5)
+        self.assertEqual(status, 200)
+        self.assertIn("dr/dt = 1/(3 pi)", body["choices"][0]["message"]["content"])
+        self.assertEqual(HoldOllama.posts, 0)
+        runtime.gate.release()
+
+    def test_embed_hit_skips_a_full_gate(self):
+        runtime.set_infer_slots(1)
+        self.assertTrue(runtime.gate.try_acquire())
+        port = self._pi4()
+        original = pair_server.lookup
+
+        def fake_lookup(text, path=None):
+            if "paraphrase" in (text or "").lower():
+                return "stored sentence from the map"
+            return original(text, path)
+
+        pair_server.lookup = fake_lookup
+        try:
+            started = time.perf_counter()
+            status, headers, body = self._post(
+                port,
+                "a paraphrase the exact map does not contain",
+                {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+            )
+            self.assertLess(time.perf_counter() - started, 0.5)
+            self.assertEqual(status, 200)
+            self.assertEqual(headers.get("X-Pi-Chip"), "cache")
+            self.assertEqual(body["choices"][0]["message"]["content"], "stored sentence from the map")
+            self.assertEqual(HoldOllama.posts, 0)
+        finally:
+            pair_server.lookup = original
+            runtime.gate.release()
+
+    def test_weak_boards_still_do_not_generate(self):
+        runtime.set_infer_slots(2)
+        peer_port = self._listen(HoldOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi2",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                },
+                {
+                    "name": "pi3",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                },
+            ]
+        )
+        port = self._pair()
+        for name in ("pi2", "pi3"):
+            status, _headers, body = self._post(
+                port,
+                "Hi!",
+                {"X-Pi-Target": name, "X-Pi-Mesh": "on"},
+            )
+            self.assertEqual(status, 502)
+            self.assertIn(f"{name} cannot be the brain", body["error"])
+        self.assertEqual(HoldOllama.posts, 0)
+
+    def test_page_shows_the_capacity_sentence(self):
+        source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
+        self.assertIn("at capacity", source)
+        bundle = (ROOT / "static" / "mesh.js").read_text(encoding="utf-8")
+        self.assertIn("at capacity", bundle)
+
+
+if __name__ == "__main__":
+    unittest.main()

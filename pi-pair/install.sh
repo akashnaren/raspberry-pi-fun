@@ -84,6 +84,26 @@ if [[ ! -f "$INSTALL_DIR/data/canned/canned_seed.jsonl" ]]; then
   cp -f "$ROOT/data/canned/canned_seed.jsonl" "$INSTALL_DIR/data/canned/canned_seed.jsonl"
 fi
 
+parallel_from_config() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    row = json.load(open(path, encoding="utf-8"))
+    value = int(row.get("ollama_num_parallel", 4))
+except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    value = 4
+if value < 1:
+    value = 1
+if value > 4:
+    value = 4
+print(value)
+PY
+}
+OLLAMA_NUM_PARALLEL="$(parallel_from_config "$ROOT/configs/runtime/inference_pi4.json")"
+
 if [[ "$ROLE" != "brain" ]]; then
   echo "Skipping model pull on ${NODE_NAME}: chat and embed models run only on pi4."
 else
@@ -102,12 +122,15 @@ else
   fi
   echo
   echo "--- Make Ollama listen on LAN (run these yourself if needed) ---"
-  cat << 'SUDO'
+  echo "Chat model and map embedder stay loaded. ${OLLAMA_NUM_PARALLEL} chat sequences share qwen2.5:0.5b."
+  echo "The chat router rejects a further generation with HTTP 503."
+  cat << SUDO
 sudo mkdir -p /etc/systemd/system/ollama.service.d
 sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null <<'DROPIN'
 [Service]
 Environment="OLLAMA_HOST=0.0.0.0:11434"
-Environment="OLLAMA_NUM_PARALLEL=1"
+Environment="OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}"
+Environment="OLLAMA_MAX_QUEUE=${OLLAMA_NUM_PARALLEL}"
 Environment="OLLAMA_MAX_LOADED_MODELS=3"
 Environment="OLLAMA_KEEP_ALIVE=-1"
 DROPIN
@@ -125,10 +148,12 @@ if [[ "$ROLE" == "brain" ]]; then
   # model. Leave an existing unit's ExecStart alone.
   LAN_DROP="$UNIT_DIR/ollama-lan.service.d"
   mkdir -p "$LAN_DROP"
-  cat > "$LAN_DROP/resident.conf" << 'EOF'
+  cat > "$LAN_DROP/resident.conf" << EOF
 [Service]
 Environment=OLLAMA_MAX_LOADED_MODELS=3
 Environment=OLLAMA_KEEP_ALIVE=-1
+Environment=OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}
+Environment=OLLAMA_MAX_QUEUE=${OLLAMA_NUM_PARALLEL}
 EOF
   LAN_UNIT="$UNIT_DIR/ollama-lan.service"
   if [[ ! -f "$LAN_UNIT" ]]; then
@@ -138,7 +163,7 @@ EOF
     echo "Keeping existing $LAN_UNIT"
   fi
   echo "Refreshed $LAN_DROP/resident.conf"
-  echo "ollama-lan picks up OLLAMA_MAX_LOADED_MODELS=3 and OLLAMA_KEEP_ALIVE=-1 the next time that user unit starts."
+  echo "ollama-lan picks up OLLAMA_MAX_LOADED_MODELS=3, OLLAMA_KEEP_ALIVE=-1, and OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL} the next time that user unit starts."
 fi
 UNIT_FILE="$UNIT_DIR/${SERVICE_NAME}.service"
 cat > "$UNIT_FILE" << UNIT

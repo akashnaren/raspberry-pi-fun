@@ -220,6 +220,7 @@ function shownError(err: unknown): string {
   if (/Load failed|Failed to fetch|NetworkError|network|abort|AbortError/i.test(text)) {
     return "Connection dropped. Try again.";
   }
+  if (/at capacity/i.test(text)) return text;
   return "The reply did not come back. Try again.";
 }
 
