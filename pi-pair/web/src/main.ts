@@ -8,6 +8,7 @@ import { HEALTH_POLL_MS, serviceView, shouldPollHealth, shouldSoftRetry, softRet
 import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
 import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
+import { modeChipText, scrubAssistant } from "./copy";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
@@ -183,14 +184,15 @@ function mountCharts(root: ParentNode): void {
 }
 
 function setBodyContent(node: HTMLElement, text: string, asMd: boolean, streaming = false): void {
+  const shown = scrubAssistant(text);
   if (asMd) {
     node.classList.add("md");
-    node.innerHTML = streaming ? renderStreamingMarkdown(text) : renderMarkdown(text);
+    node.innerHTML = streaming ? renderStreamingMarkdown(shown) : renderMarkdown(shown);
     mountCharts(node);
     mountDiagrams(node);
   } else {
     node.classList.remove("md");
-    node.textContent = text;
+    node.textContent = shown;
   }
 }
 
@@ -209,14 +211,6 @@ function showEffort(parent: HTMLElement, name: string): void {
   const labels = parent.querySelector(".label-row");
   if (labels) labels.insertBefore(node, labels.firstChild);
   else parent.appendChild(node);
-}
-
-function modeChipText(mode: string, route: string): string {
-  const tier = route === "flash" ? "Flash" : route === "pro" ? "Pro" : route === "canned" ? "map" : "";
-  if (mode === "auto") return tier ? "Auto · " + tier : "Auto";
-  if (mode === "flash") return route === "canned" ? "Flash · map" : "Flash";
-  if (mode === "pro") return route === "canned" ? "Pro · map" : "Pro";
-  return "";
 }
 
 function showMode(parent: HTMLElement, mode: string, route: string): void {
@@ -1290,30 +1284,6 @@ function autoGrow(box: HTMLTextAreaElement): void {
   box.style.height = Math.min(180, box.scrollHeight) + "px";
 }
 
-function threadAsMd(): string {
-  let out = "# OpenPi — MicroAstra\n\n";
-  turns.forEach((turn) => {
-    out += "### " + (turn.role === "user" ? "You" : "Assistant") + "\n\n" + turn.content + "\n\n";
-  });
-  return out;
-}
-
-function threadAsTxt(): string {
-  return turns.map((turn) => {
-    const who = turn.role === "user" ? "You" : "Assistant";
-    return who + ":\n" + turn.content;
-  }).join("\n\n---\n\n");
-}
-
-function download(name: string, text: string, mime: string): void {
-  const blob = new Blob([text], { type: mime });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = name;
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(link.href), 2000);
-}
-
 function clearAttach(): void {
   const box = byId<HTMLTextAreaElement>("q");
   delete box.dataset.attachText;
@@ -1700,8 +1670,11 @@ composer.addEventListener("input", () => {
   syncSend();
   paintBrand();
 });
+composer.addEventListener("keyup", () => paintBrand());
+composer.addEventListener("compositionstart", () => paintBrand(true));
 syncSend();
 composer.addEventListener("keydown", (event) => {
+  if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) paintBrand(true);
   if (event.key !== "Enter") return;
   if (event.shiftKey) return;
   if (event.ctrlKey || event.metaKey) {
@@ -1790,14 +1763,6 @@ document.addEventListener("click", () => {
   menu.hidden = true;
   byId("modeBtn").setAttribute("aria-expanded", "false");
 });
-const silenceInput = byId<HTMLInputElement>("voiceSilence");
-silenceInput.value = String(pageSettings.voiceSilenceMs);
-silenceInput.addEventListener("change", () => {
-  const next = Number(silenceInput.value);
-  applyVoiceSilence(next);
-  silenceInput.value = String(endOfUtteranceSilence());
-  persistSettings();
-});
 const enterBox = byId<HTMLInputElement>("enterSend");
 enterBox.checked = enterToSend;
 enterBox.addEventListener("change", () => {
@@ -1829,34 +1794,20 @@ byId("overlay").onclick = () => {
   setSettingsOpen(false);
   setSourcesOpen(false);
 };
-byId("btnClear").onclick = () => {
-  if (typeof window.confirm === "function" && !window.confirm("Clear this conversation?")) return;
-  turns.length = 0;
-  stopSpeaking();
-  paint();
-  setSettingsOpen(false);
-};
 byId("sourcesClose").onclick = () => setSourcesOpen(false);
-byId("btnMd").onclick = () => {
-  if (!turns.length) return;
-  download("chat.md", threadAsMd(), "text/markdown");
-};
-byId("btnTxt").onclick = () => {
-  if (!turns.length) return;
-  download("chat.txt", threadAsTxt(), "text/plain");
-};
 byId("btnAttach").onclick = () => byId<HTMLInputElement>("attach").click();
 byId<HTMLInputElement>("attach").onchange = (event) => {
   const input = event.target as HTMLInputElement;
   loadFile(input.files && input.files[0]);
 };
 byId("fileClear").onclick = () => clearAttach();
-function paintBrand(): void {
+function paintBrand(typing?: boolean): void {
   const brand = document.getElementById("brand");
-  if (!brand) return;
-  const typing = Boolean(byId<HTMLTextAreaElement>("q").value);
-  brand.classList.toggle("brand-title", typing);
-  brand.classList.toggle("brand-logo", !typing);
+  const box = document.getElementById("q") as HTMLTextAreaElement | null;
+  if (!brand || !box) return;
+  const on = typeof typing === "boolean" ? typing : Boolean(box.value);
+  brand.classList.toggle("brand-title", on);
+  brand.classList.toggle("brand-logo", !on);
 }
 
 function bootSplash(): void {

@@ -65,9 +65,9 @@ try {
               </div>
             </div>
             <div class="think-set" role="group" aria-label="Thinking">
-              <button type="button" class="think-btn" data-think="low" title="Shorter answers, lower temperature.">Low <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-              <button type="button" class="think-btn on" data-think="medium" title="Balanced length and temperature.">Medium <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-              <button type="button" class="think-btn" data-think="high" title="Longer answers, higher temperature.">High <span class="info-dot" aria-hidden="true">ⓘ</span></button>
+              <button type="button" class="think-btn" data-think="low" title="Shorter answers, lower temperature.">Low</button>
+              <button type="button" class="think-btn on" data-think="medium" title="Balanced length and temperature.">Medium</button>
+              <button type="button" class="think-btn" data-think="high" title="Longer answers, higher temperature.">High</button>
             </div>
           </div>
           <div class="composer-tools flex items-center">
@@ -119,39 +119,12 @@ try {
       </div>
     </section>
     <section class="set-block">
-      <h3>Thinking</h3>
-      <div class="seg" role="group" aria-label="Thinking effort">
-        <button type="button" class="seg-btn" data-think="low" title="Shorter answers, lower temperature.">Low <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn on" data-think="medium" title="Balanced length and temperature.">Medium <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn" data-think="high" title="Longer answers, higher temperature.">High <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-      </div>
-    </section>
-    <section class="set-block" id="serviceBlock">
-      <h3>Status</h3>
-      <div id="serviceNow" class="service-now">Checking status…</div>
-      <div id="serviceLog" class="service-log" aria-live="polite"></div>
-    </section>
-    <section class="set-block">
-      <h3>Voice</h3>
-      <label for="voiceSilence">End-of-utterance silence (ms)</label>
-      <input id="voiceSilence" type="number" min="0" max="10000" step="50" value="1200" inputmode="numeric"/>
-    </section>
-    <section class="set-block">
       <h3>Composer</h3>
       <label class="check" for="enterSend"><input id="enterSend" type="checkbox" checked/> Enter to send</label>
     </section>
     <div class="field">
       <label for="sys">System prompt</label>
       <textarea id="sys" placeholder="Optional system instructions" rows="3"></textarea>
-    </div>
-    <div class="field">
-      <label for="modelSel">Installed models</label>
-      <select id="modelSel"><option value="">__MODEL__</option></select>
-    </div>
-    <div class="drawer-actions">
-      <button type="button" id="btnMd">Export .md</button>
-      <button type="button" id="btnTxt">Export .txt</button>
-      <button type="button" class="danger" id="btnClear">Clear conversation</button>
     </div>
   </div>
 </aside>

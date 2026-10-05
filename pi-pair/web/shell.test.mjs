@@ -1,6 +1,7 @@
 import fs from "fs";
 import { register } from "node:module";
 import { parseHTML } from "linkedom";
+import { modeChipText, scrubAssistant } from "./src/copy.ts";
 import { primaryKind, primaryLabel } from "./src/primary-action.ts";
 import { shouldPlaySplash } from "./src/splash.ts";
 
@@ -14,6 +15,18 @@ if (primaryKind(true, true) !== "stop") throw new Error("in-flight composer is n
 if (!shouldPlaySplash(null, "navigate")) throw new Error("first load skipped the splash");
 if (shouldPlaySplash("1", "navigate")) throw new Error("session replayed the splash");
 if (!shouldPlaySplash("1", "reload")) throw new Error("reload could not replay the splash");
+if (modeChipText("flash", "canned") !== "Flash" || modeChipText("auto", "canned") !== "Auto") {
+  throw new Error("a map route leaked into the mode chip");
+}
+if (modeChipText("auto", "pro") !== "Auto · Pro") throw new Error("Pro route lost its label");
+const leaked = scrubAssistant("The Civic is common. I used medium effort in Flash mode.");
+if (/effort|flash mode|can't assist/i.test(leaked) || !leaked.includes("Civic")) {
+  throw new Error("reply still named the thinking control: " + leaked);
+}
+const fenced = scrubAssistant('Keep this.\n```chart\n{"title":"Flash mode"}\n```');
+if (!fenced.includes("```chart") || !fenced.includes("Flash mode")) {
+  throw new Error("a chart fence was scrubbed: " + fenced);
+}
 
 await register("./ts-resolve.mjs", import.meta.url);
 
@@ -148,6 +161,15 @@ if (!document.querySelector("#brandMark svg")) throw new Error("mark was not dra
 if (!document.getElementById("brandName").textContent.includes("OpenPi")) {
   throw new Error("title text is missing");
 }
+box.value = "";
+box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "p", bubbles: true }));
+if (!brand.classList.contains("brand-title") || brand.classList.contains("brand-logo")) {
+  throw new Error("the first key did not morph the logo into the title");
+}
+box.dispatchEvent(new window.KeyboardEvent("keyup", { key: "p", bubbles: true }));
+if (brand.classList.contains("brand-title")) {
+  throw new Error("a key that did not fill the composer left the title up");
+}
 box.value = "plot a curve";
 box.dispatchEvent(new window.Event("input"));
 if (!brand.classList.contains("brand-title") || brand.classList.contains("brand-logo")) {
@@ -161,8 +183,20 @@ if (!brand.classList.contains("brand-logo") || brand.classList.contains("brand-t
 if (!document.getElementById("btnIo").querySelector("svg path[d*='10.2 2.8']")) {
   throw new Error("settings control is not a gear");
 }
-if (!document.getElementById("serviceNow") || !document.getElementById("serviceLog")) {
-  throw new Error("settings has no status log");
+for (const id of ["serviceNow", "serviceLog", "voiceSilence", "modelSel", "btnMd", "btnTxt", "btnClear"]) {
+  if (document.getElementById(id)) throw new Error(id + " is still in settings");
+}
+if (document.querySelector("#ioPanel [data-think]")) {
+  throw new Error("settings still has a thinking control");
+}
+if (document.querySelector(".think-btn .info-dot")) {
+  throw new Error("thinking controls still show an info icon");
+}
+if (document.querySelectorAll(".mode-opt .info-dot").length !== 3) {
+  throw new Error("model choices lost their info icons");
+}
+if (!document.querySelector('.think-btn[data-think="low"]')) {
+  throw new Error("the composer lost Low");
 }
 
 document.getElementById("btnIo").click();
@@ -174,14 +208,10 @@ if (!window.localStorage.getItem("openpi.settings").includes('"theme":"light"'))
 }
 document.querySelector("#ioPanel [data-mode='pro']").click();
 if (document.getElementById("modeLabel").textContent !== "Pro") throw new Error("settings did not select Pro");
-document.querySelector("#ioPanel [data-think='low']").click();
+document.querySelector('.think-btn[data-think="low"]').click();
 if (!document.querySelector('.think-btn[data-think="low"]').classList.contains("on")) {
-  throw new Error("thinking did not follow settings");
+  throw new Error("composer thinking did not change");
 }
-const silence = document.getElementById("voiceSilence");
-silence.value = "900";
-silence.dispatchEvent(new window.Event("change"));
-if (silence.value !== "900") throw new Error("silence did not stick");
 const enter = document.getElementById("enterSend");
 enter.checked = false;
 enter.dispatchEvent(new window.Event("change"));
@@ -233,12 +263,14 @@ if (!document.querySelector(".mode-chip") || !document.querySelector(".mode-chip
 document.getElementById("sourcesClose").click();
 if (panel.classList.contains("open")) throw new Error("sources panel did not close");
 
-window.confirm = () => false;
-const bubbles = document.querySelectorAll(".msg").length;
-document.getElementById("btnClear").click();
-if (document.querySelectorAll(".msg").length !== bubbles) throw new Error("clear ignored cancel");
-window.confirm = () => true;
-document.getElementById("btnClear").click();
-if (document.querySelector(".msg")) throw new Error("confirmed clear left messages");
+const css = fs.readFileSync(new URL("./src/styles.scss", import.meta.url), "utf8");
+const titleRule = css.slice(css.indexOf(".brand.brand-title .brand-name"), css.indexOf(".brand.brand-title .brand-name") + 220);
+if (!/opacity:\s*1/.test(titleRule)) throw new Error("the OpenPi title still waits on an animation");
+if (!/html,\s*body\s*\{[^}]*overflow:\s*hidden/s.test(css)) {
+  throw new Error("the page shell can still scroll");
+}
+if (!/#log\s*\{[^}]*overflow-y:\s*auto/s.test(css) || !css.includes("overscroll-behavior: contain")) {
+  throw new Error("the message list is not the scrollport");
+}
 
 console.log("ok");

@@ -653,9 +653,12 @@ class ModeHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200, body)
         chats = [item[2] for item in ModeOllama.calls if item[0] == "POST" and item[1] == "/api/chat"]
-        self.assertEqual(len(chats), 3)
+        self.assertEqual(len(chats), 2)
         self.assertGreaterEqual(chats[0]["options"]["num_predict"], 448)
-        self.assertIn("until item 10", chats[1]["messages"][-1]["content"])
+        note = chats[1]["messages"][-1]["content"]
+        self.assertIn("from 1 to 10", note)
+        self.assertIn("Stop at item 10", note)
+        self.assertTrue(all(row.get("role") != "assistant" for row in chats[1]["messages"]))
         self.assertEqual(self.search_calls, [])
 
 

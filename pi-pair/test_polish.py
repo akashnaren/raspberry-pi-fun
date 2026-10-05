@@ -165,7 +165,34 @@ class Lists(unittest.TestCase):
         done = finish_numbered("list 5 books", full, lambda *_args: calls.append(1))
         self.assertEqual(done, full)
         self.assertEqual(calls, [])
-        self.assertEqual(merge_list(full, "3. Item 3\n6. Extra", 5), full + "\n6. Extra")
+        self.assertEqual(merge_list(full, "3. Item 3\n6. Extra", 5), full)
+
+    def test_placeholders_do_not_continue_a_refusal(self):
+        from pair.lists import continuation_messages, numbered_lines, placeholder_only
+
+        junk = "I'm sorry, but I can't assist with that.\n" + "\n".join(f"{i}. {i}" for i in range(1, 6))
+        self.assertTrue(placeholder_only(junk))
+        self.assertEqual(numbered_lines(junk), [])
+        self.assertFalse(placeholder_only("1. 2\n2. 3\n3. 5\n4. 7\n5. 11"))
+        seen = []
+
+        def more(partial, count):
+            seen.append(partial)
+            return "\n".join(f"{i}. Film {i}" for i in range(1, count + 1))
+
+        done = finish_numbered("Top 5 movies", junk, more)
+        self.assertEqual(seen, [junk])
+        self.assertIn("1. Film 1", done)
+        self.assertIn("5. Film 5", done)
+        self.assertNotIn("can't assist", done.lower())
+        rows = continuation_messages([{"role": "user", "content": "Top 5 movies"}], junk, 5)
+        self.assertTrue(all(row.get("role") != "assistant" for row in rows))
+        self.assertIn("Stop at item 5", rows[-1]["content"])
+
+        calls = []
+        kept = finish_numbered("top 5 poisons", "1. Aconite", lambda *_args: calls.append(1))
+        self.assertEqual(kept, "1. Aconite")
+        self.assertEqual(calls, [])
 
 
 def list_count_from(text: str) -> int:

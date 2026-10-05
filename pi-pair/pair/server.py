@@ -12,6 +12,17 @@ from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from pair.assist import (
+    HELPFUL_NUDGE,
+    is_harmful,
+    is_honest_miss,
+    is_soft_refusal,
+    may_retry_refusal,
+    scrub_reply,
+    settle_reply,
+    visible_canned,
+    withhold_partial,
+)
 from pair.canned import lookup, start_canned_warm, warm_status
 from pair.charts import (
     CHART_NUDGE,
@@ -30,7 +41,13 @@ from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, search_note_limit
-from pair.lists import continuation_messages, finish_numbered, list_budget, list_count
+from pair.lists import (
+    continuation_messages,
+    finish_numbered,
+    list_budget,
+    list_count,
+    placeholder_only,
+)
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
 from pair.preload import start_pro_warm
@@ -740,6 +757,7 @@ class Handler(BaseHTTPRequestHandler):
             ):
                 hit = lookup(prompt)
                 if hit is not None:
+                    hit = visible_canned(prompt, hit)
                     note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
                     remember_completion(prompt, hit, "cache", "cache")
                     cached_mode, cached_route = self._remember_canned_mode(data)
@@ -1264,7 +1282,11 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, json.JSONDecodeError) as error:
             return degraded_answer(search_note, error), model, False
         content = content or ""
-        if not list_count(prompt) and asks_continuation(prompt, content, str(meta.get("done_reason") or "")):
+        if may_retry_refusal(prompt) and is_soft_refusal(content):
+            content = self._guard_reply(
+                peer, kind, model, messages, temperature, max_tokens, prompt, content
+            )
+        elif not list_count(prompt) and asks_continuation(prompt, content, str(meta.get("done_reason") or "")):
             follow = shape_messages(plain_continuation(messages, content), prompt)
             more = ""
             try:
@@ -1282,9 +1304,100 @@ class Handler(BaseHTTPRequestHandler):
         content = self._repair_chart(
             peer, kind, model, messages, temperature, max_tokens, prompt, content
         )
+        if not is_harmful(prompt):
+            content = self._guard_reply(
+                peer, kind, model, messages, temperature, max_tokens, prompt, content
+            )
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
+
+    def _ask(self, peer, kind, model, messages, temperature, max_tokens) -> str:
+        try:
+            if kind == "llamacpp":
+                more, _used = chat_llamacpp(peer, model, messages, temperature, max_tokens)
+            else:
+                more, _used = chat_ollama(peer, model, messages, temperature, max_tokens)
+        except (OSError, json.JSONDecodeError):
+            return ""
+        return more or ""
+
+    def _guard_reply(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        content: str,
+    ) -> str:
+        """Nudge once. A second soft refusal may use search notes or Pro, not a canned list."""
+
+        def again() -> str:
+            follow = shape_messages(
+                [
+                    *list(messages or []),
+                    {"role": "assistant", "content": content or ""},
+                    {"role": "user", "content": HELPFUL_NUDGE},
+                ],
+                prompt,
+            )
+            return self._ask(peer, kind, model, follow, temperature, max_tokens)
+
+        def ground() -> str:
+            return self._recover_refusal(
+                peer, kind, model, messages, temperature, max_tokens, prompt
+            )
+
+        return settle_reply(prompt, content, again, ground)
+
+    def _mesh_search_on(self) -> bool:
+        mesh = (self.headers.get("X-Pi-Mesh") or "on").strip().lower()
+        return mesh != "off" and node_role() == "brain"
+
+    def _recover_refusal(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+    ) -> str:
+        """One recovery after the nudge: pi2/local search notes, or a Pro tag.
+
+        Search wins when it returns notes. Pro is the other path, used when
+        search is off, already ran, or came back empty. Neither invents items.
+        """
+        rows = list(messages or [])
+        already = any(
+            isinstance(row, dict) and str(row.get("content") or "").startswith("Web search notes")
+            for row in rows
+        )
+        if not already and self._mesh_search_on() and not is_structured_request(prompt):
+            outbound, note = _with_search(rows, prompt)
+            context = ""
+            if isinstance(note, dict) and note.get("status") == "ok":
+                context = str(note.get("context") or "").strip()
+            if context:
+                follow = shape_messages(
+                    [*outbound, {"role": "user", "content": HELPFUL_NUDGE}],
+                    prompt,
+                )
+                return self._ask(peer, kind, model, follow, temperature, max_tokens)
+        pro_tag = mode_table().get("pro") or ""
+        if not pro_tag or pro_tag == model:
+            return ""
+        if not tag_ready(peer.get("models") or [], "pro", pro_tag):
+            return ""
+        follow = shape_messages(
+            [*rows, {"role": "user", "content": HELPFUL_NUDGE}],
+            prompt,
+        )
+        return self._ask(peer, kind, pro_tag, follow, temperature, max_tokens)
 
     def _repair_chart(
         self,
@@ -1482,8 +1595,14 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 gen = stream_ollama(peer, model, messages, temperature, max_tokens)
             closed = False
+            held = True
             for delta in gen:
                 parts.append(delta)
+                if held and not is_harmful(prompt) and withhold_partial("".join(parts)):
+                    continue
+                if held:
+                    delta = "".join(parts)
+                    held = False
                 chunk = {
                     "id": "pi-pair",
                     "object": "chat.completion.chunk",
@@ -1500,13 +1619,52 @@ class Handler(BaseHTTPRequestHandler):
                     break
             if closed:
                 answer = "".join(parts).strip()
+                if not is_harmful(prompt):
+                    answer = scrub_reply(answer) or answer
                 if answer:
                     chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
                     note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
                     remember_completion(prompt, answer, chip, peer["name"])
                 return
             answer = "".join(parts)
-            finished = self._extend_list(
+            if held and may_retry_refusal(prompt) and (
+                is_soft_refusal(answer) or placeholder_only(answer)
+            ):
+                if placeholder_only(answer) and not is_soft_refusal(answer):
+                    answer = self._extend_list(
+                        peer, kind, model, messages, temperature, max_tokens, prompt, answer
+                    )
+                else:
+                    answer = self._guard_reply(
+                        peer, kind, model, messages, temperature, max_tokens, prompt, answer
+                    )
+                if answer and not safe_write(
+                    self,
+                    (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "id": "pi-pair",
+                                "object": "chat.completion.chunk",
+                                "choices": [
+                                    {"index": 0, "delta": {"content": answer}, "finish_reason": None}
+                                ],
+                            }
+                        )
+                        + "\n\n"
+                    ).encode(),
+                    flush=True,
+                ):
+                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                    remember_completion(prompt, answer, chip, peer["name"])
+                    return
+            elif not is_harmful(prompt):
+                answer = scrub_reply(answer) or answer
+            skip_extend = (
+                is_soft_refusal(answer) or is_honest_miss(answer) or placeholder_only(answer)
+            )
+            finished = answer if skip_extend else self._extend_list(
                 peer, kind, model, messages, temperature, max_tokens, prompt, answer
             )
             extra = _list_suffix(answer, finished)
@@ -1555,7 +1713,9 @@ class Handler(BaseHTTPRequestHandler):
             final["pi_stages"] = list(stages)
             final.update(note)
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-            answer = "".join(parts)
+            raw_answer = "".join(parts)
+            if not held:
+                answer = scrub_reply(raw_answer) or raw_answer if not is_harmful(prompt) else raw_answer
             note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
             remember_completion(prompt, answer, chip, peer["name"])
             apply_tier(self, final)

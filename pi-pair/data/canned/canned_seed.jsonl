@@ -1,13 +1,13 @@
 {"id": "syn-e914d79437f0", "input": "hi", "answer": "Hi. What can I help you with?", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-bdabf7349722", "input": "hello", "answer": "Hello. Ready on the private Pi mesh.", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-72f7c36f8e1d", "input": "hey", "answer": "Hey. What do you need from the mesh?", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-f0af7f701206", "input": "good morning", "answer": "Good morning. Cache path warm; pi4 available for novel turns.", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-b88d166da727", "input": "good evening", "answer": "Good evening. Local mesh only — no cloud round-trip required.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-bdabf7349722", "input": "hello", "answer": "Hello! How can I help?", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-72f7c36f8e1d", "input": "hey", "answer": "Hey! How can I help?", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-f0af7f701206", "input": "good morning", "answer": "Good morning! How can I help?", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-b88d166da727", "input": "good evening", "answer": "Good evening! How can I help?", "tags": ["greeting"], "source": "seed"}
 {"id": "syn-be12e120890f", "input": "thanks", "answer": "You're welcome.", "tags": ["greeting"], "source": "seed"}
 {"id": "syn-2187d8c20c62", "input": "thank you", "answer": "Happy to help.", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-c9d84c39188f", "input": "bye", "answer": "Bye. Mesh stays local.", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-e89f6a8f1ada", "input": "goodbye", "answer": "Goodbye. Canned map and pi4 remain on-prem.", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-324ccae6b7e1", "input": "who are you", "answer": "Local mesh assistant for this 3-Pi fleet: cache-first, pi4-only generate.", "tags": ["greeting", "identity"], "source": "seed"}
+{"id": "syn-c9d84c39188f", "input": "bye", "answer": "Bye! Come back anytime.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-e89f6a8f1ada", "input": "goodbye", "answer": "Goodbye! Come back anytime.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-324ccae6b7e1", "input": "who are you", "answer": "I'm OpenPi. How can I help?", "tags": ["greeting", "identity"], "source": "seed"}
 {"id": "syn-6b3f7d246e0c", "input": "what can you do", "answer": "Answer known turns from the canned map instantly; route novel turns to pi4; never generate on pi2/pi3.", "tags": ["help", "identity"], "source": "seed"}
 {"id": "syn-f1f417551f2f", "input": "status", "answer": "Mesh nominal: pi4 generative brain; pi3 cache/train host; pi2 health/mirror.", "tags": ["status", "mesh"], "source": "seed"}
 {"id": "syn-f4ed4cdc78de", "input": "mesh status", "answer": "Private 3-Pi mesh up. Cache probe first; misses go to pi4 only.", "tags": ["status", "mesh"], "source": "seed"}
@@ -51,12 +51,12 @@
 {"id": "syn-c6b616bcc69e", "input": "sandbox", "answer": "Train jobs isolate from chat OOM: train on pi3 (or HF Jobs for heavy CPT); chat path never shares train memory.", "tags": ["ops", "sandbox"], "source": "seed"}
 {"id": "syn-3129f1c766fe", "input": "openai", "answer": "This mesh does not require OpenAI. Local pi4 generate + canned map.", "tags": ["help"], "source": "seed"}
 {"id": "syn-b880cd05278e", "input": "openrouter", "answer": "OpenRouter is parked unless explicitly greenlit. Default is on-Pi.", "tags": ["help", "policy"], "source": "seed"}
-{"id": "syn-f62fe825b281", "input": "hi there", "answer": "Hi there. Mesh assistant ready.", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-cb2daba5e9a7", "input": "hello there", "answer": "Hello there. Ask status or help.", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-02ebedf8d868", "input": "yo", "answer": "Yo. Local mesh online.", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-129339a52677", "input": "sup", "answer": "All good locally. Status or help?", "tags": ["greeting"], "source": "seed"}
-{"id": "syn-be1828379742", "input": "how are you", "answer": "Running on the mesh. Cache first; pi4 for novelty.", "tags": ["greeting", "status"], "source": "seed"}
-{"id": "syn-30e605b8be4d", "input": "what's up", "answer": "Mesh idle-ready. Try status or a novel question.", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-f62fe825b281", "input": "hi there", "answer": "Hi there! How can I help?", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-cb2daba5e9a7", "input": "hello there", "answer": "Hello there! How can I help?", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-02ebedf8d868", "input": "yo", "answer": "Yo! How can I help?", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-129339a52677", "input": "sup", "answer": "Hey! How can I help?", "tags": ["greeting"], "source": "seed"}
+{"id": "syn-be1828379742", "input": "how are you", "answer": "I'm good, thanks. How can I help?", "tags": ["greeting", "status"], "source": "seed"}
+{"id": "syn-30e605b8be4d", "input": "what's up", "answer": "Not much. How can I help?", "tags": ["greeting"], "source": "seed"}
 {"id": "syn-315901c08a79", "input": "system status", "answer": "System: cache path on pi3; health on pi2; generate on pi4.", "tags": ["status"], "source": "seed"}
 {"id": "syn-e789eea5efe2", "input": "fleet status", "answer": "Fleet: 3 boards, asymmetric roles, cache-first auto path.", "tags": ["status", "mesh"], "source": "seed"}
 {"id": "syn-d708d379dfe3", "input": "board roles", "answer": "Asymmetric by measurement: only pi4 generates; pi3 dataset/train; pi2 health/mirror.", "tags": ["roles"], "source": "seed"}
