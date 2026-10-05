@@ -1,4 +1,4 @@
-"""HTTP UI and OpenAI-compatible /v1/chat/completions. Stdlib only."""
+"""HTTP UI, OpenAI-compatible /v1/chat/completions, and the keyed public API."""
 from __future__ import annotations
 
 import gzip
@@ -20,6 +20,15 @@ from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.knobs import decode_effort, search_note_limit
 from pair.health import snapshot_peers
 from pair.peers import pick
+from pair.public_api import (
+    FLASH_MODE,
+    apply_mode,
+    authorize,
+    flash_checkpoint,
+    openapi_bytes,
+    stamp,
+    swagger_html,
+)
 from pair.queue import append_row, apply_label, node_role, note_exchange
 from pair.images import lookup_images, sanitize_card
 from pair.search import lookup_web
@@ -255,7 +264,21 @@ def status_event(stage: str, extra: dict | None = None) -> dict:
 
 
 def write_event(handler, payload: dict) -> bool:
+    stamp(payload, getattr(handler, "public_mode", "") or "")
     return safe_write(handler, f"data: {json.dumps(payload)}\n\n".encode(), flush=True)
+
+
+def health_document() -> dict:
+    peers = snapshot_peers()
+    return {
+        "ok": True,
+        "model": runtime.MODEL,
+        "peers_up": sum(1 for peer in peers if peer["ok"]),
+        "peers": peers,
+        "slots": runtime.INFER_SLOTS,
+        "in_flight": runtime.gate.in_flight(),
+        "cache_ttl": runtime.HEALTH_CACHE_TTL,
+    }
 
 
 def index_body() -> bytes:
@@ -272,6 +295,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        mode = getattr(self, "public_mode", "") or ""
+        if mode:
+            self.send_header("X-Pi-Mode", mode)
+            self.send_header("X-Pi-Model", FLASH_MODE)
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -307,19 +334,17 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             safe_write(self, body)
             return
+        if path in ("/openapi.json", "/swagger.json"):
+            self._openapi()
+            return
+        if path in ("/docs", "/docs/", "/swagger", "/swagger/"):
+            self._docs()
+            return
+        if path == "/api/health":
+            self._api_health()
+            return
         if path.startswith("/health") or path.startswith("/peers"):
-            peers = snapshot_peers()
-            body = json.dumps(
-                {
-                    "ok": True,
-                    "model": runtime.MODEL,
-                    "peers_up": sum(1 for peer in peers if peer["ok"]),
-                    "peers": peers,
-                    "slots": runtime.INFER_SLOTS,
-                    "in_flight": runtime.gate.in_flight(),
-                    "cache_ttl": runtime.HEALTH_CACHE_TTL,
-                }
-            ).encode()
+            body = json.dumps(health_document()).encode()
             self.send_response(200)
             self._cors()
             self.send_header("content-type", "application/json")
@@ -341,6 +366,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/v1/flywheel/feedback":
             self._feedback()
             return
+        if path == "/api/chat":
+            self._api_chat()
+            return
         if path != "/v1/chat/completions":
             self.send_response(404)
             self.end_headers()
@@ -348,6 +376,88 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(length)
         data = json.loads(raw.decode() or "{}")
+        self._serve_chat(data, raw)
+
+    def _api_chat(self) -> None:
+        rejected = authorize(self.headers)
+        if rejected is not None:
+            self._reject_api(*rejected)
+            return
+        length = int(self.headers.get("content-length") or 0)
+        if length > 1_000_000:
+            self._error("chat body is too large", status=413)
+            return
+        try:
+            data = json.loads(self.rfile.read(length).decode() or "{}")
+        except json.JSONDecodeError:
+            self._error("chat body must be JSON", status=400)
+            return
+        if not isinstance(data, dict):
+            self._error("chat body must be an object", status=400)
+            return
+        messages = data.get("messages")
+        if not isinstance(messages, list) or not last_user_text(messages).strip():
+            self._error("chat needs a user message", status=400)
+            return
+        try:
+            self.public_mode = apply_mode(data)
+        except ValueError as error:
+            self._error(str(error), status=400)
+            return
+        self._serve_chat(data, json.dumps(data).encode())
+
+    def _api_health(self) -> None:
+        rejected = authorize(self.headers)
+        if rejected is not None:
+            self._reject_api(*rejected)
+            return
+        body_obj = health_document()
+        body_obj["public_model"] = FLASH_MODE
+        body_obj["default_mode"] = FLASH_MODE
+        body_obj["checkpoint"] = flash_checkpoint()
+        body = json.dumps(body_obj).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _openapi(self) -> None:
+        body = openapi_bytes()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _docs(self) -> None:
+        body = swagger_html()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _reject_api(self, status: int, message: str) -> None:
+        body = json.dumps({"error": message}).encode()
+        self.send_response(status)
+        self._cors()
+        if status == 401:
+            self.send_header("WWW-Authenticate", 'Bearer realm="pi-gpt"')
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _serve_chat(self, data: dict, raw: bytes) -> None:
+        if not isinstance(data, dict):
+            self._error("chat body must be an object", status=400)
+            return
         target = (self.headers.get("X-Pi-Target") or data.pop("pi_target", None) or "auto").strip()
         mesh = (self.headers.get("X-Pi-Mesh") or data.pop("pi_mesh", None) or "on").strip().lower() not in (
             "0",
@@ -476,6 +586,18 @@ class Handler(BaseHTTPRequestHandler):
         except RuntimeError as error:
             self._error(str(error))
             return
+        mode = getattr(self, "public_mode", "") or ""
+        kind = (headers.get("content-type") or "").split(";")[0].strip().lower()
+        if mode and kind != "text/event-stream":
+            try:
+                parsed = json.loads(body.decode() or "{}")
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                stamp(parsed, mode)
+                body = json.dumps(parsed).encode()
+                headers["content-type"] = "application/json"
+                headers.pop("content-length", None)
         self.send_response(status)
         self._cors()
         for key, value in headers.items():
@@ -685,6 +807,7 @@ class Handler(BaseHTTPRequestHandler):
             if think_name:
                 resp["pi_think"] = think_name
             resp["pi_stages"] = ["answering"]
+            stamp(resp, getattr(self, "public_mode", "") or "")
             body = json.dumps(resp).encode()
             self.send_response(200)
             self._cors()
@@ -723,6 +846,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         if think_name:
             first["pi_think"] = think_name
+        stamp(first, getattr(self, "public_mode", "") or "")
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         final = {
             "id": "pi-pair",
@@ -737,6 +861,7 @@ class Handler(BaseHTTPRequestHandler):
         if think_name:
             final["pi_think"] = think_name
         final["pi_stages"] = ["answering"]
+        stamp(final, getattr(self, "public_mode", "") or "")
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
@@ -841,6 +966,7 @@ class Handler(BaseHTTPRequestHandler):
             first["pi_search"] = search_note["status"]
             first["pi_sources"] = search_note["sources"]
         _put_images(first, images)
+        stamp(first, getattr(self, "public_mode", "") or "")
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         parts: list[str] = []
         try:
@@ -900,10 +1026,12 @@ class Handler(BaseHTTPRequestHandler):
             answer = "".join(parts)
             note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
             remember_completion(prompt, answer, chip, peer["name"])
+            stamp(final, getattr(self, "public_mode", "") or "")
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
         except Exception as error:
             err = {"error": str(error)}
+            stamp(err, getattr(self, "public_mode", "") or "")
             safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
 
@@ -932,6 +1060,7 @@ class Handler(BaseHTTPRequestHandler):
             "pi_kind": kind,
         }
         _put_images(chunk, images or [])
+        stamp(chunk, getattr(self, "public_mode", "") or "")
         if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
             return
         note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
@@ -954,6 +1083,7 @@ class Handler(BaseHTTPRequestHandler):
             final["pi_search"] = search_note["status"]
             final["pi_sources"] = search_note["sources"]
         _put_images(final, images or [])
+        stamp(final, getattr(self, "public_mode", "") or "")
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
@@ -1009,6 +1139,7 @@ class Handler(BaseHTTPRequestHandler):
         _put_images(resp, images or [])
         if stages:
             resp["pi_stages"] = stages
+        stamp(resp, getattr(self, "public_mode", "") or "")
         body = json.dumps(resp).encode()
         self.send_response(200)
         self._cors()
