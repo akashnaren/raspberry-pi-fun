@@ -1,6 +1,6 @@
 {
-  "model": "qwen2.5:0.5b",
-  "pro_model": "qwen2.5:1.5b",
+  "model": "qwen3:0.6b",
+  "pro_model": "qwen3:1.7b",
   "graduate_model": "llama3.2:1b",
   "temperature_min": 0.6,
   "temperature_max": 0.8,
@@ -16,5 +16,10 @@
   "flash_num_batch": 128,
   "pro_num_batch": 64,
   "search_note_chars": 640,
-  "role": "pi4"
+  "role": "pi4",
+  "rollback": {
+    "model": "qwen2.5:0.5b",
+    "pro_model": "qwen2.5:1.5b",
+    "note": "Deprecated. Rollback is a config flip: copy these onto model and pro_model. The router does not read this object."
+  }
 }

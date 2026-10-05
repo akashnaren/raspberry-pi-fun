@@ -84,9 +84,9 @@ try {
               </div>
             </div>
             <div class="think-set" role="group" aria-label="Thinking">
-              <button type="button" class="think-btn" data-think="low" title="Shorter answers, lower temperature.">Low</button>
-              <button type="button" class="think-btn on" data-think="medium" title="Balanced length and temperature.">Medium</button>
-              <button type="button" class="think-btn" data-think="high" title="Longer answers, higher temperature.">High</button>
+              <button type="button" class="think-btn" data-think="low" title="Direct answer. No thinking, short reply.">Low</button>
+              <button type="button" class="think-btn on" data-think="medium" title="Direct answer, with a longer reply than Low.">Medium</button>
+              <button type="button" class="think-btn" data-think="high" title="A short think on Flash, then the answer. Stays on Flash unless you pick Pro.">High</button>
             </div>
           </div>
           <div class="composer-tools flex items-center">
@@ -163,6 +163,7 @@ try {
       <label for="sys">System prompt</label>
       <textarea id="sys" placeholder="Optional system instructions" rows="3"></textarea>
     </div>
+    <p class="set-foot"><a class="api-docs-link" id="apiDocsLink" href="/docs" target="_blank" rel="noopener">API docs</a></p>
   </div>
 </aside>
 <script>window.MESH_DEFAULT_MODEL="__MODEL__";</script>

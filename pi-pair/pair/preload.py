@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from pair.embed import ollama_base, on_pi4
+from pair.config import ollama_base, on_pi4
 from pair.http_pool import open_json_request
 from pair.knobs import keep_alive
 from pair.modes import mode_table
@@ -25,13 +25,18 @@ REWARM_PAUSE_S = 30.0
 
 def pro_preload_payload(model: str | None = None) -> dict:
     """A one-token generate that leaves Pro resident. keep_alive is never forced to 0."""
-    tag = (model or mode_table().get("pro") or "qwen2.5:1.5b").strip() or "qwen2.5:1.5b"
+    tag = (model or mode_table().get("pro") or "").strip()
+    if not tag:
+        from pair.modes import PRO_MODEL
+
+        tag = PRO_MODEL
     alive = keep_alive()
     return {
         "model": tag,
         "prompt": " ",
         "stream": False,
         "keep_alive": alive,
+        "think": False,
         "options": {"num_predict": 1, "temperature": 0},
     }
 

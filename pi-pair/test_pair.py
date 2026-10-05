@@ -65,7 +65,7 @@ def _start(httpd: ThreadingHTTPServer) -> None:
 class OllamaFake(BaseHTTPRequestHandler):
     posts = 0
     last_payload = None
-    catalog = ["qwen2.5:0.5b"]
+    catalog = ["qwen3:0.6b"]
 
     def log_message(self, *args):
         pass
@@ -179,29 +179,29 @@ class PairHelpers(unittest.TestCase):
             normalize_peer({"name": "pi2", "host": "x", "port": 1, "kind": "cuda"})
 
     def test_model_match_rules(self):
-        self.assertFalse(model_on_peer([], "qwen2.5:0.5b", "llamacpp"))
-        self.assertTrue(model_on_peer(["tiny"], "qwen2.5:0.5b", "llamacpp"))
-        self.assertTrue(model_on_peer([], "qwen2.5:0.5b", "ollama"))
-        self.assertTrue(model_on_peer(["qwen2.5:0.5b"], "qwen2.5:0.5b", "ollama"))
-        self.assertTrue(model_on_peer(["qwen2.5:1.5b"], "qwen2.5:0.5b", "ollama"))
-        self.assertFalse(model_on_peer(["tinyllama"], "qwen2.5:0.5b", "ollama"))
+        self.assertFalse(model_on_peer([], "qwen3:0.6b", "llamacpp"))
+        self.assertTrue(model_on_peer(["tiny"], "qwen3:0.6b", "llamacpp"))
+        self.assertTrue(model_on_peer([], "qwen3:0.6b", "ollama"))
+        self.assertTrue(model_on_peer(["qwen3:0.6b"], "qwen3:0.6b", "ollama"))
+        self.assertTrue(model_on_peer(["qwen3:1.7b"], "qwen3:0.6b", "ollama"))
+        self.assertFalse(model_on_peer(["tinyllama"], "qwen3:0.6b", "ollama"))
 
     def test_pin_does_not_fall_back(self):
         runtime.set_peers(DEFAULT_PEERS)
         health.peer_health = lambda peer: (False, [], "refused", peer["port"])
         with self.assertRaisesRegex(RuntimeError, "pi3 cannot be the brain"):
-            pick("pi3", True, "qwen2.5:0.5b")
+            pick("pi3", True, "qwen3:0.6b")
         with self.assertRaisesRegex(RuntimeError, "pi2 cannot be the brain"):
-            pick("pi2", False, "qwen2.5:0.5b")
+            pick("pi2", False, "qwen3:0.6b")
         with self.assertRaisesRegex(RuntimeError, "^pi4 offline$"):
-            pick("pi4", True, "qwen2.5:0.5b")
+            pick("pi4", True, "qwen3:0.6b")
         with self.assertRaisesRegex(RuntimeError, "^unknown peer pi9$"):
-            pick("pi9", True, "qwen2.5:0.5b")
+            pick("pi9", True, "qwen3:0.6b")
 
     def test_auto_is_pi4_only(self):
         runtime.set_peers(DEFAULT_PEERS)
-        health.peer_health = lambda peer: (True, ["qwen2.5:0.5b"], None, peer["port"])
-        names = [pick("auto", True, "qwen2.5:0.5b")["name"] for _ in range(3)]
+        health.peer_health = lambda peer: (True, ["qwen3:0.6b"], None, peer["port"])
+        names = [pick("auto", True, "qwen3:0.6b")["name"] for _ in range(3)]
         self.assertEqual(names, ["pi4", "pi4", "pi4"])
 
     def test_auto_miss_does_not_use_a_healthy_weak_peer(self):
@@ -210,11 +210,11 @@ class PairHelpers(unittest.TestCase):
         def probe(peer):
             if peer["name"] == "pi4":
                 return False, [], "down", peer["port"]
-            return True, ["qwen2.5:0.5b"], None, peer["port"]
+            return True, ["qwen3:0.6b"], None, peer["port"]
 
         health.peer_health = probe
         with self.assertRaisesRegex(RuntimeError, "pi4 unreachable on cache miss"):
-            pick("auto", True, "qwen2.5:0.5b")
+            pick("auto", True, "qwen3:0.6b")
 
     def test_stream_line_parsers(self):
         self.assertEqual(
@@ -233,7 +233,7 @@ class PairHelpers(unittest.TestCase):
         self.assertTrue(llamacpp_delta(": comment")[2])
 
     def test_llamacpp_model_swap(self):
-        self.assertEqual(llamacpp_model({"models": ["tiny"]}, "qwen2.5:0.5b"), "tiny")
+        self.assertEqual(llamacpp_model({"models": ["tiny"]}, "qwen3:0.6b"), "tiny")
         self.assertEqual(llamacpp_model({"models": ["tiny"]}, "tiny"), "tiny")
 
     def test_pi2_alt_port_uses_injected_probe(self):
@@ -265,7 +265,7 @@ class PairHelpers(unittest.TestCase):
 
         def fake(peer, *, alt_ports=None, get_json=None):
             calls["n"] += 1
-            return True, ["qwen2.5:0.5b"], None, peer["port"]
+            return True, ["qwen3:0.6b"], None, peer["port"]
 
         previous_peers = list(runtime.PEERS)
         previous_probe = health.peer_health
@@ -470,7 +470,7 @@ class PairHttp(unittest.TestCase):
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         OllamaFake.posts = 0
         OllamaFake.last_payload = None
-        OllamaFake.catalog = ["qwen2.5:0.5b"]
+        OllamaFake.catalog = ["qwen3:0.6b"]
         self.search_calls = []
         self._lookup_web = pair_server.lookup_web
         self._lookup_images = pair_server.lookup_images
@@ -666,8 +666,8 @@ class PairHttp(unittest.TestCase):
         ) as response:
             health_body = json.loads(response.read().decode())
         self.assertEqual(health_body["mode"], "flash")
-        self.assertEqual(health_body["modes"]["flash"], "qwen2.5:0.5b")
-        self.assertEqual(health_body["modes"]["pro"], "qwen2.5:1.5b")
+        self.assertEqual(health_body["modes"]["flash"], "qwen3:0.6b")
+        self.assertEqual(health_body["modes"]["pro"], "qwen3:1.7b")
         flash_tip = f"{health_body['modes']['flash']}, the fast resident model."
         pro_tip = f"{health_body['modes']['pro']}, loaded when the question needs it."
         self.assertIn(flash_tip, html)
@@ -677,16 +677,16 @@ class PairHttp(unittest.TestCase):
         source_page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         self.assertIn("__FLASH_TIP__", source_page)
         self.assertIn("__PRO_TIP__", source_page)
-        self.assertNotIn("qwen2.5:0.5b, the fast resident model.", source_page)
+        self.assertNotIn("qwen3:0.6b, the fast resident model.", source_page)
         self.assertNotIn(
-            "qwen2.5:1.5b, loaded when the question needs it.", source_page
+            "qwen3:1.7b, loaded when the question needs it.", source_page
         )
         self.assertEqual(health_body["peers_up"], 1)
         self.assertEqual(health_body["peers"][0]["kind"], "ollama")
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "Say hi in five words."}],
                 "stream": False,
                 "pi_target": "auto",
@@ -712,7 +712,7 @@ class PairHttp(unittest.TestCase):
             f"http://127.0.0.1:{port}/v1/chat/completions",
             data=json.dumps(
                 {
-                    "model": "qwen2.5:0.5b",
+                    "model": "qwen3:0.6b",
                     "messages": [{"role": "user", "content": "Say hi in five words."}],
                     "stream": True,
                     "pi_target": "pi4",
@@ -767,7 +767,7 @@ class PairHttp(unittest.TestCase):
         status, _headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "novel offline probe"}],
                 "stream": False,
             },
@@ -797,7 +797,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "Hi!"}],
                 "stream": False,
             },
@@ -850,7 +850,7 @@ class PairHttp(unittest.TestCase):
             status, _headers, body = self._post(
                 port,
                 {
-                    "model": "qwen2.5:0.5b",
+                    "model": "qwen3:0.6b",
                     "messages": [{"role": "user", "content": "Hi!"}],
                     "stream": False,
                 },
@@ -890,7 +890,7 @@ class PairHttp(unittest.TestCase):
         status, _headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [
                     {"role": "user", "content": "a question the map has never seen"}
                 ],
@@ -926,7 +926,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "Hi!"}],
                 "stream": False,
             },
@@ -959,14 +959,20 @@ class PairHttp(unittest.TestCase):
             ]
         )
         port = self._pair()
-        expected = {"low": (0.6, 64), "medium": (0.7, 256), "high": (0.8, 768)}
+        expected = {
+            "low": (False, 0.7, 0.8, 64),
+            "medium": (False, 0.7, 0.8, 384),
+            "high": (True, 0.6, 0.95, 960),
+        }
         seen = {}
-        for level, (temperature, num_predict) in expected.items():
+        for level, (think, temperature, top_p, num_predict) in expected.items():
             status, headers, body = self._post(
                 port,
                 {
-                    "model": "qwen2.5:0.5b",
-                    "messages": [{"role": "user", "content": "think " + level}],
+                    "model": "qwen3:0.6b",
+                    "messages": [
+                        {"role": "user", "content": "Explain why the level is " + level}
+                    ],
                     "stream": False,
                     "think": level,
                     "temperature": 0.7,
@@ -979,10 +985,26 @@ class PairHttp(unittest.TestCase):
             self.assertEqual(body["pi_think"], level)
             options = OllamaFake.last_payload["options"]
             seen[level] = options["num_predict"]
+            self.assertEqual(OllamaFake.last_payload["think"], think)
             self.assertEqual(options["temperature"], temperature)
+            self.assertEqual(options["top_p"], top_p)
+            self.assertEqual(options["top_k"], 20)
             self.assertEqual(options["num_predict"], num_predict)
-            self.assertNotIn("think", OllamaFake.last_payload)
         self.assertEqual(len(set(seen.values())), 3)
+        status, _headers, _body = self._post(
+            port,
+            {
+                "model": "qwen3:0.6b",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+                "think": "medium",
+            },
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(OllamaFake.last_payload["think"])
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.7)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 384)
 
     def test_feedback_rates_the_last_completion(self):
         self._pi3_accepts_forwarded_rows()
@@ -1004,7 +1026,7 @@ class PairHttp(unittest.TestCase):
         status, _headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "label this miss"}],
                 "stream": False,
             },
@@ -1086,7 +1108,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "hi"}],
                 "stream": False,
                 "max_tokens": 8,
@@ -1102,7 +1124,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "hi again"}],
                 "stream": False,
                 "think": "high",
@@ -1114,7 +1136,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("X-Pi-Think"), "high")
         self.assertEqual(body["pi_think"], "high")
-        self.assertEqual(LlamaFake.last_payload["temperature"], 0.8)
+        self.assertEqual(LlamaFake.last_payload["temperature"], 0.6)
         self.assertEqual(LlamaFake.last_payload["max_tokens"], 768)
         self.assertNotIn("think", LlamaFake.last_payload)
 
@@ -1157,7 +1179,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
@@ -1192,7 +1214,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
@@ -1214,7 +1236,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
@@ -1261,7 +1283,7 @@ class PairHttp(unittest.TestCase):
         status, _headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
@@ -1280,7 +1302,7 @@ class PairHttp(unittest.TestCase):
         status, _headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
@@ -1312,7 +1334,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [
                     {"role": "user", "content": "What changed?"},
                     {"role": "assistant", "content": "A short note."},
@@ -1471,7 +1493,7 @@ class PairHttp(unittest.TestCase):
             status, headers, body = self._post(
                 port,
                 {
-                    "model": "qwen2.5:0.5b",
+                    "model": "qwen3:0.6b",
                     "messages": [{"role": "user", "content": "Hi!"}],
                     "stream": False,
                 },
@@ -1483,7 +1505,7 @@ class PairHttp(unittest.TestCase):
             status, headers, body = self._post(
                 port,
                 {
-                    "model": "qwen2.5:0.5b",
+                    "model": "qwen3:0.6b",
                     "messages": [
                         {"role": "user", "content": "a question the map has never seen"}
                     ],
@@ -1514,7 +1536,7 @@ class PairHttp(unittest.TestCase):
 
     def _stream_raw(self, port, content, headers=None, extra=None):
         payload = {
-            "model": "qwen2.5:0.5b",
+            "model": "qwen3:0.6b",
             "messages": [{"role": "user", "content": content}],
             "stream": True,
         }
@@ -1591,7 +1613,7 @@ class PairHttp(unittest.TestCase):
         status, response_headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "status order on a miss"}],
                 "stream": False,
             },
@@ -1605,7 +1627,7 @@ class PairHttp(unittest.TestCase):
         status, response_headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "Hi!"}],
                 "stream": False,
             },
@@ -1639,7 +1661,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
@@ -1686,7 +1708,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
@@ -1717,7 +1739,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
@@ -1802,7 +1824,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:1.5b",
+                "model": "qwen3:1.7b",
                 "pi_mode": "auto",
                 "messages": [{"role": "user", "content": "Hi!"}],
                 "stream": False,
@@ -1821,7 +1843,7 @@ class PairHttp(unittest.TestCase):
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "pi_mode": "auto",
                 "messages": [{"role": "user", "content": "nice weather on the porch"}],
                 "stream": False,
@@ -1833,8 +1855,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_route"], "flash")
         self.assertEqual(headers.get("X-Pi-Route"), "flash")
         self.assertNotIn("pi_resident", body)
-        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
-        OllamaFake.catalog = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
+        OllamaFake.catalog = ["qwen3:0.6b", "qwen3:1.7b"]
         runtime.reset_health()
         status, _headers, body = self._post(
             port,
@@ -1847,7 +1869,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "pro")
         self.assertEqual(body["pi_route"], "pro")
-        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:1.5b")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:1.7b")
 
     def test_auto_hard_uses_pro_when_present_and_flash_when_it_is_not(self):
         hard = "Write a python function that reverses a list."
@@ -1862,8 +1884,8 @@ class PairHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_route"], "flash")
-        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
-        OllamaFake.catalog = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
+        OllamaFake.catalog = ["qwen3:0.6b", "qwen3:1.7b"]
         runtime.reset_health()
         os.environ["OLLAMA_MAX_LOADED_MODELS"] = "2"
         status, headers, body = self._post(
@@ -1877,12 +1899,29 @@ class PairHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "auto")
-        self.assertEqual(body["pi_route"], "pro")
-        self.assertEqual(headers.get("X-Pi-Route"), "pro")
+        self.assertEqual(body["pi_route"], "flash")
+        self.assertEqual(headers.get("X-Pi-Route"), "flash")
         self.assertNotIn("pi_resident", body)
         self.assertEqual(body["pi_think"], "high")
-        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:1.5b")
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
+        self.assertTrue(OllamaFake.last_payload["think"])
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.6)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 960)
+        status, headers, body = self._post(
+            port,
+            {
+                "pi_mode": "pro",
+                "think": "high",
+                "messages": [{"role": "user", "content": hard}],
+                "stream": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_mode"], "pro")
+        self.assertEqual(body["pi_route"], "pro")
+        self.assertEqual(headers.get("X-Pi-Route"), "pro")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:1.7b")
+        self.assertTrue(OllamaFake.last_payload["think"])
         os.environ["OLLAMA_MAX_LOADED_MODELS"] = "3"
         runtime.reset_health()
         status, _headers, body = self._post(
@@ -1897,7 +1936,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_mode"], "flash")
         self.assertEqual(body["pi_route"], "flash")
         self.assertNotIn("pi_resident", body)
-        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
 
     def test_search_sources_are_not_cut_to_three(self):
         def fake(query, opener=None):
@@ -1915,7 +1954,7 @@ class PairHttp(unittest.TestCase):
         status, _headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [
                     {"role": "user", "content": "where is the long bench today"}
                 ],
@@ -1955,7 +1994,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_sources"][0]["url"], "https://ex0.test/a")
         self.assertEqual(body["pi_sources"][7]["url"], "https://ex7.test/a")
         self.assertEqual(body["pi_mode"], "flash")
-        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
 
 
 class ProductCopy(unittest.TestCase):

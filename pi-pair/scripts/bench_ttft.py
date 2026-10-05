@@ -81,7 +81,7 @@ def _print_summary(row: dict) -> None:
 def measure_stream(url: str, prompt: str, timeout: float) -> tuple[float | None, float]:
     """TTFT is the first SSE delta that carries assistant content."""
     payload = {
-        "model": "qwen2.5:0.5b",
+        "model": "qwen3:0.6b",
         "messages": [{"role": "user", "content": prompt}],
         "stream": True,
         "pi_mode": "flash",
@@ -131,7 +131,7 @@ def _run_series(
 
 
 class _Drip(BaseHTTPRequestHandler):
-    """Tiny Ollama. Chat tokens pause; embed returns one vector per input."""
+    """Tiny Ollama. Chat tokens pause between NDJSON lines."""
 
     def log_message(self, *_args) -> None:
         return
@@ -142,19 +142,13 @@ class _Drip(BaseHTTPRequestHandler):
             self.end_headers()
             return
         body = json.dumps(
-            {"models": [{"name": "qwen2.5:0.5b"}, {"name": "qwen2.5:1.5b"}]}
+            {"models": [{"name": "qwen3:0.6b"}, {"name": "qwen3:1.7b"}]}
         ).encode()
         self._json(body)
 
     def do_POST(self) -> None:
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        path = self.path.split("?")[0]
-        if path == "/api/embed":
-            texts = payload.get("input") or []
-            vectors = [_vector(str(text)) for text in texts]
-            self._json(json.dumps({"embeddings": vectors}).encode())
-            return
         if payload.get("stream"):
             self.send_response(200)
             self.send_header("content-type", "application/x-ndjson")
@@ -184,12 +178,6 @@ class _Drip(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def _vector(text: str) -> list[float]:
-    """16-d vector. Different lines stay under the canned cosine bar."""
-    digest = abs(hash(text)) % 16
-    return [1.0 if index == digest else 0.0 for index in range(16)]
-
-
 def _start(httpd: ThreadingHTTPServer) -> None:
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
@@ -208,10 +196,8 @@ def bench_mock(runs: int) -> list[dict]:
     os.environ["PI_PAIR_CANNED"] = str(canned)
 
     import pair.runtime as runtime
-    from pair.embed import reset_embed_cache
     from pair.server import lookup_images, lookup_web, make_server
 
-    reset_embed_cache()
     ollama = ThreadingHTTPServer(("127.0.0.1", 0), _Drip)
     _start(ollama)
     runtime.configure()

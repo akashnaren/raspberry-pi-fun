@@ -53,6 +53,8 @@ interface Turn {
   images?: ImageCard[];
   mode?: string;
   route?: string;
+  thought?: string;
+  thoughtSeconds?: number;
 }
 
 interface HealthBody extends HealthSnapshot {
@@ -68,13 +70,17 @@ interface LiveTurn {
   search: SearchInfo | null;
   pushStatus: (name: StageName, search: SearchInfo | null) => void;
   setText: (text: string) => void;
+  setThought: (text: string, live: boolean, seconds: number) => void;
+  clearThought: () => void;
   showImages: (cards: ImageCard[]) => void;
   finish: (text: string, failed: boolean, prompt: string, effort: string, search: SearchInfo | null, stages: StageName[]) => void;
   markErr: () => void;
   armPro: () => void;
 }
 
-const DEFAULT_MODEL = window.MESH_DEFAULT_MODEL || "qwen2.5:0.5b";
+const DEFAULT_MODEL = window.MESH_DEFAULT_MODEL || "qwen3:0.6b";
+const FLASH_TAG = "qwen3:0.6b";
+const PRO_TAG = "qwen3:1.7b";
 const turns: Turn[] = [];
 let sending = false;
 let stopAsked = false;
@@ -126,9 +132,33 @@ function byId<T extends HTMLElement>(id: string): T {
 }
 
 function modeModel(): string {
-  if (modelMode === "pro") return "qwen2.5:1.5b";
-  if (modelMode === "flash") return "qwen2.5:0.5b";
+  if (modelMode === "pro") return PRO_TAG;
+  if (modelMode === "flash") return FLASH_TAG;
   return DEFAULT_MODEL;
+}
+
+function withoutThinkTags(text: string): string {
+  return String(text || "")
+    .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, "")
+    .replace(/<think(?:ing)?>[\s\S]*$/gi, "")
+    .replace(/<\/think(?:ing)?>/gi, "");
+}
+
+function thoughtSummary(seconds: number, live: boolean): string {
+  if (live) return "Thinking…";
+  return "Thought for " + Math.max(1, seconds) + "s";
+}
+
+function thoughtPanel(text: string, seconds: number, live: boolean): HTMLDetailsElement {
+  const box = document.createElement("details");
+  box.className = "thought";
+  if (live) box.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = thoughtSummary(seconds, live);
+  const body = el("div", "thought-body");
+  body.textContent = text;
+  box.append(summary, body);
+  return box;
 }
 
 function persistSettings(): void {
@@ -188,7 +218,7 @@ function mountCharts(root: ParentNode): void {
 }
 
 function setBodyContent(node: HTMLElement, text: string, asMd: boolean, streaming = false): void {
-  const shown = scrubAssistant(text);
+  const shown = scrubAssistant(withoutThinkTags(text));
   if (asMd) {
     node.classList.add("md");
     node.innerHTML = streaming ? renderStreamingMarkdown(shown) : renderMarkdown(shown);
@@ -660,6 +690,9 @@ function addFinishedBot(item: Turn, index: number): HTMLElement {
   const done = trail(item.stages, item.search || null);
   if (done) row.appendChild(done);
   let body: HTMLElement | null = null;
+  if (item.thought) {
+    row.appendChild(thoughtPanel(item.thought, item.thoughtSeconds || 1, false));
+  }
   if (visibleReply(item.content)) {
     body = el("div", "body");
     setBodyContent(body, item.content, true);
@@ -898,6 +931,29 @@ function addLiveBot(expectPro = false): LiveTurn {
       yieldIfAnswer();
       row.scrollIntoView({ block: "end" });
     },
+    setThought(text, liveThought, seconds) {
+      const shownThought = String(text || "");
+      if (!shownThought.trim()) {
+        live.clearThought();
+        return;
+      }
+      let box = row.querySelector("details.thought") as HTMLDetailsElement | null;
+      if (!box) {
+        box = thoughtPanel(shownThought, seconds, liveThought);
+        if (body.isConnected) row.insertBefore(box, body);
+        else row.appendChild(box);
+      } else {
+        const summary = box.querySelector("summary");
+        const inner = box.querySelector(".thought-body");
+        if (summary) summary.textContent = thoughtSummary(seconds, liveThought);
+        if (inner) inner.textContent = shownThought;
+        box.open = liveThought;
+      }
+      row.scrollIntoView({ block: "end" });
+    },
+    clearThought() {
+      row.querySelector("details.thought")?.remove();
+    },
     showImages(cards) {
       mountImageCards(row, body, cards);
     },
@@ -938,9 +994,23 @@ function keepPartial(
   images: ImageCard[],
   mode = "",
   route = "",
+  thought = "",
+  thoughtSeconds = 0,
 ): void {
-  if (visibleReply(text)) {
-    turns.push({ role: "assistant", content: text, effort, search, stages, images, mode, route });
+  const answer = withoutThinkTags(text);
+  if (visibleReply(answer)) {
+    turns.push({
+      role: "assistant",
+      content: answer,
+      effort,
+      search,
+      stages,
+      images,
+      mode,
+      route,
+      thought,
+      thoughtSeconds,
+    });
     paint();
     return;
   }
@@ -984,6 +1054,19 @@ async function sendText(
   const effort = thinking || "medium";
   const live = addLiveBot(modelMode === "pro");
   let textAccum = "";
+  let thoughtAccum = "";
+  let thoughtStarted = 0;
+  let thoughtMs = 0;
+  const thoughtSeconds = () => Math.max(1, Math.round((thoughtMs || 0) / 1000));
+  const closeThought = () => {
+    if (!thoughtAccum.trim()) {
+      thoughtAccum = "";
+      live.clearThought();
+      return;
+    }
+    if (!thoughtMs) thoughtMs = Date.now() - (thoughtStarted || Date.now());
+    live.setThought(thoughtAccum.trim(), false, thoughtSeconds());
+  };
   let searchStatus = "";
   let searchSources: SourceLink[] = [];
   let imageCards: ImageCard[] = [];
@@ -1034,7 +1117,9 @@ async function sendText(
     if (sys) body.messages.push({ role: "system", content: sys });
     turns.forEach((turn) => {
       if (turn.role !== "user" && turn.role !== "assistant") return;
-      const content = turn.role === "user" ? modelUserContent(turn.content, turn.hidden || "") : turn.content;
+      const content = turn.role === "user"
+        ? modelUserContent(turn.content, turn.hidden || "")
+        : withoutThinkTags(turn.content);
       if (!content.trim()) return;
       body.messages.push({ role: turn.role, content });
     });
@@ -1114,15 +1199,20 @@ async function sendText(
       if (unreadable || !visibleReply(answer)) {
         missOrRetry();
       } else {
+        const nonStreamThought = String(
+          (payload.choices?.[0]?.message as { reasoning_content?: string } | undefined)?.reasoning_content || "",
+        ).trim();
         turns.push({
           role: "assistant",
-          content: answer,
+          content: withoutThinkTags(answer),
           effort: payload.pi_think || streamedEffort,
           search,
           stages: doneStages,
           images: imageCards,
           mode: payload.pi_mode || streamedMode,
           route: payload.pi_route || streamedRoute,
+          thought: nonStreamThought,
+          thoughtSeconds: nonStreamThought ? 1 : 0,
         });
         paint();
         if (spoken && speakText(answer)) voiced = true;
@@ -1165,7 +1255,8 @@ async function sendText(
           pi_images?: unknown;
           pi_stages?: StageName[];
           pi_replace?: boolean;
-          choices?: { delta?: { content?: string } }[];
+          pi_reasoning_clear?: boolean;
+          choices?: { delta?: { content?: string; reasoning_content?: string } }[];
         };
         try {
           payload = JSON.parse(payloadText);
@@ -1191,10 +1282,24 @@ async function sendText(
           streamDone = true;
           break;
         }
+        if (payload.pi_reasoning_clear) {
+          thoughtAccum = "";
+          thoughtStarted = 0;
+          thoughtMs = 0;
+          live.clearThought();
+        }
+        const reasoned = payload.choices?.[0]?.delta?.reasoning_content;
+        if (reasoned) {
+          if (!thoughtStarted) thoughtStarted = Date.now();
+          thoughtAccum += reasoned;
+          live.setThought(thoughtAccum, true, thoughtSeconds());
+        }
         const delta = payload.choices?.[0]?.delta?.content;
         if (delta) {
+          if (thoughtAccum && !thoughtMs) closeThought();
           textAccum = payload.pi_replace ? delta : textAccum + delta;
-          live.setText(textAccum);
+          const visible = withoutThinkTags(textAccum);
+          live.setText(visible);
           if (spoken && !voiced && noteSpokenDelta(textAccum)) voiced = true;
         }
         if (payload.pi_think) streamedEffort = payload.pi_think;
@@ -1206,7 +1311,20 @@ async function sendText(
       }
     }
     if (stopAsked) {
-      keepPartial(live, textAccum, text, streamedEffort || effort, searchNow(), stages, imageCards, streamedMode, streamedRoute);
+      closeThought();
+      keepPartial(
+        live,
+        textAccum,
+        text,
+        streamedEffort || effort,
+        searchNow(),
+        stages,
+        imageCards,
+        streamedMode,
+        streamedRoute,
+        thoughtAccum,
+        thoughtSeconds(),
+      );
       return;
     }
     if (streamErr || (!response.ok && !visibleReply(textAccum))) {
@@ -1216,16 +1334,19 @@ async function sendText(
     if (!visibleReply(textAccum)) {
       missOrRetry();
     } else {
+      closeThought();
       const search = searchNow();
       turns.push({
         role: "assistant",
-        content: textAccum,
+        content: withoutThinkTags(textAccum),
         effort: streamedEffort,
         search,
         stages,
         images: imageCards,
         mode: streamedMode,
         route: streamedRoute,
+        thought: thoughtAccum.trim(),
+        thoughtSeconds: thoughtAccum.trim() ? thoughtSeconds() : 0,
       });
       paint();
       if (spoken && speakText(textAccum)) voiced = true;

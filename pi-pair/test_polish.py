@@ -336,13 +336,15 @@ class Documents(unittest.TestCase):
 class Preload(unittest.TestCase):
     def test_pro_payload_keeps_the_model_resident(self):
         payload = pro_preload_payload()
-        self.assertEqual(payload["model"], "qwen2.5:1.5b")
+        self.assertEqual(payload["model"], "qwen3:1.7b")
         self.assertEqual(payload["keep_alive"], -1)
         self.assertNotEqual(payload["keep_alive"], 0)
         self.assertEqual(payload["options"]["num_predict"], 1)
+        self.assertFalse(payload["think"])
         script = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn('"keep_alive":-1', script)
-        self.assertIn("ollama show qwen2.5:1.5b", script)
+        self.assertIn('"think": False', script)
+        self.assertIn('ollama show "$OLLAMA_PRO_MODEL"', script)
         executed = [
             line.strip()
             for line in script.splitlines()

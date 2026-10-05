@@ -6,8 +6,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="${PI_PAIR_DIR:-$HOME/pi-pair}"
 SERVICE_NAME="pi-pair"
-OLLAMA_MODEL_PRIMARY="qwen2.5:0.5b"
-OLLAMA_EMBED_MODEL="snowflake-arctic-embed:m"
+OLLAMA_MODEL_PRIMARY="qwen3:0.6b"
+OLLAMA_PRO_MODEL="qwen3:1.7b"
+REMOVED_EMBED="snowflake-arctic-embed:m"
 PAIR_PORT="${PI_PAIR_PORT:-18080}"
 NODE_NAME="${PI_PAIR_NAME:-$(hostname -s)}"
 
@@ -32,16 +33,15 @@ if ! command -v tesseract >/dev/null 2>&1 || ! command -v pdftoppm >/dev/null 2>
 fi
 if [[ "$ROLE" == "brain" ]]; then
   echo "Ollama:  0.0.0.0:11434 on this board only"
-  echo "Embed:   ${OLLAMA_EMBED_MODEL} for map paraphrases on this board only"
   echo "Search:  pi2 first, then local DuckDuckGo if pi2 is down. Generation stays here."
 elif [[ "$ROLE" == "health" ]]; then
-  echo "Ollama:  not installed here. Chat and embed models run only on pi4."
+  echo "Ollama:  not installed here. Chat models run only on pi4."
   echo "Search:  POST /v1/search on this board. No decode."
 elif [[ "$ROLE" == "dataset" ]]; then
-  echo "Ollama:  not installed here. Chat and embed models run only on pi4."
+  echo "Ollama:  not installed here. Chat models run only on pi4."
   echo "Labels:  HMAC votes stay on this board. Do not set HF_TOKEN until a public dataset is approved. No decode."
 else
-  echo "Ollama:  not installed here. Chat and embed models run only on pi4."
+  echo "Ollama:  not installed here. Chat models run only on pi4."
 fi
 echo
 
@@ -109,10 +109,27 @@ if value > 4:
 print(value)
 PY
 }
-OLLAMA_NUM_PARALLEL="$(parallel_from_config "$ROOT/configs/runtime/inference_pi4.json")"
+read_tag() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json
+import sys
+
+path, key, fallback = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    row = json.load(open(path, encoding="utf-8"))
+    value = str(row.get(key) or "").strip()
+except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    value = ""
+print(value or fallback)
+PY
+}
+INFERENCE_CFG="$ROOT/configs/runtime/inference_pi4.json"
+OLLAMA_MODEL_PRIMARY="$(read_tag "$INFERENCE_CFG" model "$OLLAMA_MODEL_PRIMARY")"
+OLLAMA_PRO_MODEL="$(read_tag "$INFERENCE_CFG" pro_model "$OLLAMA_PRO_MODEL")"
+OLLAMA_NUM_PARALLEL="$(parallel_from_config "$INFERENCE_CFG")"
 
 if [[ "$ROLE" != "brain" ]]; then
-  echo "Skipping model pull on ${NODE_NAME}: chat and embed models run only on pi4."
+  echo "Skipping model pull on ${NODE_NAME}: chat models run only on pi4."
 else
   if ! command -v ollama >/dev/null 2>&1; then
     echo
@@ -124,17 +141,36 @@ else
     echo "Ollama present: $(command -v ollama)"
     echo "Pulling ${OLLAMA_MODEL_PRIMARY} (Flash). Pro is not pulled."
     ollama pull "$OLLAMA_MODEL_PRIMARY" || echo "WARN: model pull failed — pull manually later on pi4."
-    echo "Pulling ${OLLAMA_EMBED_MODEL}…"
-    ollama pull "$OLLAMA_EMBED_MODEL" || echo "WARN: embed model pull failed — pull manually later on pi4."
-    echo "Pro is qwen2.5:1.5b. This script does not pull it. Pro stays on disk for measurement."
+    if ollama show "$REMOVED_EMBED" >/dev/null 2>&1; then
+      echo "Removing ${REMOVED_EMBED}."
+      ollama rm "$REMOVED_EMBED" || echo "WARN: could not remove ${REMOVED_EMBED}."
+    fi
+    echo "Pro is ${OLLAMA_PRO_MODEL}. This script does not pull it. Pro stays on disk for measurement."
     echo "A Flash request does not run ollama pull. If the tag is missing, pull it on pi4 only:"
-    echo "  ollama pull qwen2.5:1.5b"
-    if ollama show qwen2.5:1.5b >/dev/null 2>&1; then
-      echo "Preloading qwen2.5:1.5b with keep_alive -1."
+    echo "  ollama pull ${OLLAMA_PRO_MODEL}"
+    if ollama show "$OLLAMA_PRO_MODEL" >/dev/null 2>&1; then
+      echo "Preloading ${OLLAMA_PRO_MODEL} with keep_alive -1."
       if command -v curl >/dev/null 2>&1; then
+        pro_body="$(python3 - "$OLLAMA_PRO_MODEL" <<'PY'
+import json
+import sys
+
+print(json.dumps(
+    {
+        "model": sys.argv[1],
+        "prompt": " ",
+        "stream": False,
+        "keep_alive":-1,
+        "think": False,
+        "options": {"num_predict": 1},
+    },
+    separators=(",", ":"),
+))
+PY
+)"
         curl -fsS http://127.0.0.1:11434/api/generate \
           -H "content-type: application/json" \
-          -d '{"model":"qwen2.5:1.5b","prompt":" ","stream":false,"keep_alive":-1,"options":{"num_predict":1}}' \
+          -d "$pro_body" \
           >/dev/null || echo "WARN: Pro preload failed. The server retries it on startup."
       else
         echo "WARN: curl is missing, so Pro was not preloaded. The server retries it on startup."
@@ -145,7 +181,7 @@ else
   fi
   echo
   echo "--- Make Ollama listen on LAN (run these yourself if needed) ---"
-  echo "Chat model and map embedder stay loaded. ${OLLAMA_NUM_PARALLEL} chat sequences share qwen2.5:0.5b."
+  echo "Chat models stay loaded. ${OLLAMA_NUM_PARALLEL} chat sequences share ${OLLAMA_MODEL_PRIMARY}."
   echo "The chat router rejects a further generation with HTTP 503."
   cat << SUDO
 sudo mkdir -p /etc/systemd/system/ollama.service.d
@@ -154,7 +190,7 @@ sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null <<'DROPIN
 Environment="OLLAMA_HOST=0.0.0.0:11434"
 Environment="OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}"
 Environment="OLLAMA_MAX_QUEUE=${OLLAMA_NUM_PARALLEL}"
-Environment="OLLAMA_MAX_LOADED_MODELS=3"
+Environment="OLLAMA_MAX_LOADED_MODELS=2"
 Environment="OLLAMA_KEEP_ALIVE=-1"
 DROPIN
 sudo systemctl daemon-reload
@@ -176,7 +212,7 @@ if [[ "$ROLE" == "brain" ]]; then
   mkdir -p "$LAN_DROP"
   cat > "$LAN_DROP/resident.conf" << EOF
 [Service]
-Environment=OLLAMA_MAX_LOADED_MODELS=3
+Environment=OLLAMA_MAX_LOADED_MODELS=2
 Environment=OLLAMA_KEEP_ALIVE=-1
 Environment=OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}
 Environment=OLLAMA_MAX_QUEUE=${OLLAMA_NUM_PARALLEL}
@@ -189,7 +225,7 @@ EOF
     echo "Keeping existing $LAN_UNIT"
   fi
   echo "Refreshed $LAN_DROP/resident.conf"
-  echo "ollama-lan picks up OLLAMA_MAX_LOADED_MODELS=3, OLLAMA_KEEP_ALIVE=-1, and OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL} the next time that user unit starts."
+  echo "ollama-lan picks up OLLAMA_MAX_LOADED_MODELS=2, OLLAMA_KEEP_ALIVE=-1, and OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL} the next time that user unit starts."
   # The key stays out of the unit and out of git. The env file is mode 600.
   API_ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pi-pair"
   API_ENV_FILE="$API_ENV_DIR/pi-gpt-api.env"

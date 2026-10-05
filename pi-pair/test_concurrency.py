@@ -47,7 +47,7 @@ class HoldOllama(BaseHTTPRequestHandler):
         return
 
     def do_GET(self):
-        body = json.dumps({"models": [{"name": "qwen2.5:0.5b"}]}).encode()
+        body = json.dumps({"models": [{"name": "qwen3:0.6b"}]}).encode()
         self._send(body)
 
     def do_POST(self):
@@ -219,7 +219,7 @@ class ConcurrentChat(unittest.TestCase):
 
     def _post(self, port, content, headers=None, stream=False, timeout=5):
         payload = {
-            "model": "qwen2.5:0.5b",
+            "model": "qwen3:0.6b",
             "messages": [{"role": "user", "content": content}],
             "stream": stream,
         }
@@ -326,7 +326,7 @@ class ConcurrentChat(unittest.TestCase):
             try:
                 payload = json.dumps(
                     {
-                        "model": "qwen2.5:0.5b",
+                        "model": "qwen3:0.6b",
                         "messages": [{"role": "user", "content": "novel stream waits"}],
                         "stream": True,
                     }
@@ -452,7 +452,7 @@ class ConcurrentChat(unittest.TestCase):
         self.assertEqual(HoldOllama.posts, 0)
         runtime.gate.release()
 
-    def test_embed_hit_skips_a_full_gate(self):
+    def test_canned_hit_skips_a_full_gate(self):
         runtime.set_infer_slots(1)
         self.assertTrue(runtime.gate.try_acquire())
         port = self._pi4()

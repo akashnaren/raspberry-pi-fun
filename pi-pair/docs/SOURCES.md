@@ -20,6 +20,6 @@ Synthetic seeds, not live queues:
 - https://huggingface.co/datasets/akashnaren/pi-flywheel-eval
 - https://huggingface.co/datasets/akashnaren/pi-mesh-labels (HMAC votes only, not created until Akash approves it; raw chat stays on pi3)
 
-Qwen2.5-0.5B-Instruct layer sizes cited in the router README come from the published config: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct
+Qwen3-0.6B layer sizes cited in the router README come from the published config: https://huggingface.co/Qwen/Qwen3-0.6B. Qwen3-1.7B is https://huggingface.co/Qwen/Qwen3-1.7B.
 
 Fetched supporting notes, 2026-10-02: Axolotl `AGENTS.md`, Open-Instruct README, LLaMA-Factory `data/README.md` and `examples/README.md`, TRL CLI docs, LitGPT README, nanoGPT README, TinyLlama README.

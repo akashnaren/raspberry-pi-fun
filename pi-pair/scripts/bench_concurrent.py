@@ -2,7 +2,7 @@
 """Time simultaneous chats and sample process RSS.
 
 Stdlib only. Does not start or stop Ollama. On pi4, with the service already
-up and qwen2.5:0.5b loaded:
+up and qwen3:0.6b loaded:
 
   python3 scripts/bench_concurrent.py --url http://127.0.0.1:18080 --n 2 --rounds 5
 
@@ -119,7 +119,7 @@ def main() -> None:
     if args.ollama:
         endpoint = args.ollama.rstrip("/") + "/api/chat"
         payload = {
-            "model": "qwen2.5:0.5b",
+            "model": "qwen3:0.6b",
             "messages": [
                 {"role": "user", "content": "Reply with one short sentence about rain."}
             ],
@@ -136,7 +136,7 @@ def main() -> None:
     else:
         endpoint = args.url.rstrip("/") + "/v1/chat/completions"
         payload = {
-            "model": "qwen2.5:0.5b",
+            "model": "qwen3:0.6b",
             "messages": [
                 {"role": "user", "content": "Reply with one short sentence about rain."}
             ],

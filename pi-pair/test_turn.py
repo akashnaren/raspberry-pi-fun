@@ -24,7 +24,6 @@ if str(ROOT) not in sys.path:
 from pair import runtime
 from pair import server as pair_server
 from pair.chat import start_model_warm, warm_residents
-from pair.embed import EMBED_MODEL
 from pair.modes import FLASH_MODEL, PRO_MODEL
 from pair.errors import UNREACHABLE
 from pair.turn import (
@@ -200,12 +199,7 @@ class ModelWarm(unittest.TestCase):
                 raise AssertionError(url)
             if payload.get("model") == PRO_MODEL:
                 raise urllib.error.HTTPError(url, 404, "missing", None, io.BytesIO(b""))
-            raw = json.dumps(
-                {"embeddings": [[0.1, 0.2]]}
-                if "input" in payload
-                else {"message": {"content": "ok"}}
-            )
-            return _Body(raw.encode())
+            return _Body(json.dumps({"message": {"content": "ok"}}).encode())
 
         peer = {
             "name": "pi4",
@@ -215,21 +209,17 @@ class ModelWarm(unittest.TestCase):
             "generative": True,
             "role": "brain",
         }
-        with (
-            patch("pair.chat.urllib.request.urlopen", urlopen),
-            patch("pair.embed.urllib.request.urlopen", urlopen),
-        ):
+        with patch("pair.chat.urllib.request.urlopen", urlopen):
             loaded = warm_residents(peer, timeout=1)
         self.assertEqual(
-            [item[1].get("model") for item in seen[:2]], [FLASH_MODEL, PRO_MODEL]
+            [item[1].get("model") for item in seen], [FLASH_MODEL, PRO_MODEL]
         )
         flash = seen[0][1]
         self.assertEqual(flash["keep_alive"], -1)
         self.assertFalse(flash["stream"])
         self.assertEqual(flash["options"]["num_predict"], 1)
         self.assertEqual(flash["messages"], [{"role": "user", "content": "ok"}])
-        self.assertEqual(seen[2][1]["input"], ["."])
-        self.assertEqual(loaded, [FLASH_MODEL, EMBED_MODEL])
+        self.assertEqual(loaded, [FLASH_MODEL])
         self.assertTrue(all("/api/pull" not in url for url, _payload in seen))
 
         seen.clear()
@@ -244,11 +234,13 @@ class ModelWarm(unittest.TestCase):
             self.assertEqual(warm_residents(weak, timeout=1), [])
         self.assertEqual(seen, [])
 
-    def test_model_warm_starts_after_the_canned_batch(self):
+    def test_model_warm_does_not_wait_on_an_embed_batch(self):
         src = inspect.getsource(pair_server.main)
-        self.assertLess(src.index("start_canned_warm()"), src.index("start_model_warm"))
+        self.assertNotIn("start_canned_warm", src)
+        self.assertIn("start_model_warm", src)
         warm_src = inspect.getsource(start_model_warm)
-        self.assertIn("after.join", warm_src)
+        self.assertNotIn("after.join", warm_src)
+        self.assertNotIn("embed", warm_src)
 
 
 class _Body:

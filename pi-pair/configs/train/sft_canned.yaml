@@ -1,6 +1,6 @@
 id: sft_canned
 stage: sft
-base_model: qwen2.5:0.5b
+base_model: qwen3:0.6b
 delete_shards: true
 datasets:
   - pi_flywheel_canned

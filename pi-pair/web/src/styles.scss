@@ -473,6 +473,31 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
   font-size: 13px;
 }
 
+.thought {
+  width: min(100%, 38rem);
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+
+  summary {
+    cursor: pointer;
+    list-style: none;
+    color: var(--dim);
+    user-select: none;
+  }
+
+  summary::-webkit-details-marker { display: none; }
+
+  .thought-body {
+    margin-top: 6px;
+    white-space: pre-wrap;
+    max-height: 240px;
+    overflow: auto;
+    color: var(--muted);
+  }
+}
+
 .effort {
   display: inline-flex;
   align-items: center;
@@ -1526,6 +1551,20 @@ body.voice-session {
   gap: 14px;
 }
 
+.set-foot {
+  margin: auto 0 0;
+  padding-top: 4px;
+}
+
+.api-docs-link {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+  text-decoration: none;
+
+  &:hover { color: var(--ink); text-decoration: underline; }
+}
+
 .set-block {
   display: flex;
   flex-direction: column;
@@ -1717,5 +1756,7 @@ html[data-theme="light"] {
   .sources-links a:hover, .mode-opt:hover { background: rgba(0, 0, 0, 0.04); }
   .search-failed, .sources-step-failed { color: #9d2c28; }
   .overlay { background: rgba(20, 20, 20, 0.28); }
+  .api-docs-link { color: var(--dim); }
+  .api-docs-link:hover { color: var(--ink); }
   .drawer-actions button, .field input, .field select, .field textarea { border-color: rgba(0, 0, 0, 0.1); }
 }

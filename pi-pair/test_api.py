@@ -77,7 +77,7 @@ class OllamaFake(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        body = json.dumps({"models": [{"name": "qwen2.5:0.5b"}]}).encode()
+        body = json.dumps({"models": [{"name": "qwen3:0.6b"}]}).encode()
         self._json(body)
 
     def do_POST(self):
@@ -239,14 +239,15 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(status, 200, body)
         self.assertEqual(body["mode"], FLASH_MODE)
         self.assertEqual(body["model"], FLASH_MODE)
-        self.assertEqual(body["checkpoint"], "qwen2.5:0.5b")
-        self.assertEqual(body["pi_model"], "qwen2.5:0.5b")
+        self.assertEqual(body["checkpoint"], "qwen3:0.6b")
+        self.assertEqual(body["pi_model"], "qwen3:0.6b")
         self.assertEqual(body["pi_think"], "medium")
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertEqual(headers.get("X-Pi-Model"), FLASH_MODE)
-        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
         self.assertNotEqual(OllamaFake.last_payload["model"], "llama3.2:1b")
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 256)
+        self.assertFalse(OllamaFake.last_payload["think"])
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 384)
         self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.7)
 
         status, _headers, body = self._json(
@@ -262,9 +263,10 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(body["mode"], "high")
         self.assertEqual(body["model"], FLASH_MODE)
         self.assertEqual(body["pi_think"], "high")
-        self.assertEqual(OllamaFake.last_payload["model"], "qwen2.5:0.5b")
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
-        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.8)
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
+        self.assertTrue(OllamaFake.last_payload["think"])
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 960)
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.6)
 
     def test_chat_requires_the_api_key(self):
         missing, headers, body = self._json(
@@ -392,7 +394,7 @@ class PublicApi(unittest.TestCase):
             self._auth(),
         )
         self.assertEqual(status, 200, body)
-        self.assertEqual(BrainPage.last_payload["model"], "qwen2.5:0.5b")
+        self.assertEqual(BrainPage.last_payload["model"], "qwen3:0.6b")
         self.assertEqual(BrainPage.last_payload["think"], "medium")
         self.assertNotIn("mode", BrainPage.last_payload)
         self.assertEqual(body["mode"], FLASH_MODE)
@@ -452,7 +454,7 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(mode["default"], FLASH_MODE)
         self.assertIn("flash", mode["enum"])
         self.assertIn(API_KEY_ENV, spec["info"]["description"])
-        self.assertIn("qwen2.5:0.5b", spec["info"]["description"])
+        self.assertIn("qwen3:0.6b", spec["info"]["description"])
         self.assertIn(
             "If `mode` is omitted, the model is Flash.", spec["info"]["description"]
         )

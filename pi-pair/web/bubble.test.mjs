@@ -13,7 +13,7 @@ const rawClearInterval = globalThis.clearInterval.bind(globalThis);
 globalThis.window = window;
 globalThis.document = document;
 Object.defineProperty(document, "compatMode", { value: "CSS1Compat" });
-window.MESH_DEFAULT_MODEL = "qwen2.5:0.5b";
+window.MESH_DEFAULT_MODEL = "qwen3:0.6b";
 window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
 window.matchMedia = () => ({
   matches: true,
@@ -94,7 +94,7 @@ function openStream() {
 globalThis.fetch = async (input) => {
   const url = typeof input === "string" ? input : input.url;
   if (url.includes("/health")) {
-    return new Response(JSON.stringify({ peers: [{ models: ["qwen2.5:0.5b"] }] }), {
+    return new Response(JSON.stringify({ peers: [{ models: ["qwen3:0.6b"] }] }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });

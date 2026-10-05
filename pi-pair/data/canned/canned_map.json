@@ -39,7 +39,7 @@
   "how do i add a canned answer": "Promote frequent misses via the train queue on pi3, or seed curated rows into the canned JSONL registry.",
   "how does routing work": "Cache probe first. Hit → canned. Miss → pi4 only. Pin weak as brain → hard reject. Primary down on miss → named fail.",
   "how do i train": "Enqueue miss exchanges on pi3; run SFT/map-update job from prepared artifacts; eval gate; promote; delete raw shards.",
-  "what model runs on pi4": "Start with compact chat (e.g. qwen2.5:0.5b class); graduate ~1B after health. temperature ~0.6–0.8; num_ctx ~2048; parallel 1.",
+  "what model runs on pi4": "Start with compact chat (e.g. qwen3:0.6b class); graduate ~1B after health. temperature ~0.6–0.8; num_ctx ~2048; parallel 1.",
   "is this cloud": "No. Private on-prem Pi mesh. Public HF/Kaggle seeds are optional mirrors of synthetic datasets only.",
   "privacy": "Conversations stay on-mesh. Train shards are ephemeral (train→delete). No real user PII in hub seeds.",
   "latency": "Canned hits target sub-second local I/O. Misses pay prefill+decode on pi4.",
