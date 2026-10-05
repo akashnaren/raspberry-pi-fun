@@ -26,11 +26,26 @@ export function sourceCountLabel(count: number): string {
   return n === 1 ? "1 source" : n + " sources";
 }
 
+function httpSource(value: string): string {
+  const text = String(value || "").trim();
+  if (!text || text.startsWith("//") || /[\s]/.test(text)) return "";
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return "";
+  }
+  if (url.username || url.password) return "";
+  if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+  if (!url.hostname) return "";
+  return text;
+}
+
 export function validSources(sources: SourceLink[]): SourceLink[] {
   const out: SourceLink[] = [];
   (sources || []).forEach((src) => {
-    const url = src && src.url ? String(src.url) : "";
-    if (!url.startsWith("http")) return;
+    const url = httpSource(src && src.url ? String(src.url) : "");
+    if (!url) return;
     const title = (src.title || url).trim() || url;
     out.push({ title, url });
   });

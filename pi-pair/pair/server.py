@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -43,7 +44,7 @@ from pair.turn import (
     is_plot,
     join_continuation,
     needs_web,
-    neutralize,
+    prepare_search_note,
     public_failure,
     shape_messages,
 )
@@ -232,16 +233,13 @@ def _with_search(messages, prompt: str):
             break
         if not isinstance(item, dict):
             continue
-        url = str(item.get("url") or "").strip()
-        if not url.startswith("http"):
+        url = _source_url(str(item.get("url") or ""))
+        if not url:
             continue
         title = str(item.get("title") or url).strip() or url
         sources.append({"title": title[:120], "url": url})
     full = str(found.get("context") or "").strip()
-    shown = neutralize(full)
-    limit = search_note_limit()
-    if limit and len(shown) > limit:
-        shown = shown[:limit].rstrip()
+    shown = prepare_search_note(full, search_note_limit())
     if status == "ok" and shown:
         messages = [{"role": "system", "content": shown}, *messages]
     return messages, {"status": status, "sources": sources, "context": full}
@@ -342,13 +340,82 @@ def index_body() -> bytes:
     return html.replace("__MODEL__", runtime.MODEL).encode("utf-8")
 
 
+def _source_url(url: str) -> str:
+    """http(s) link with no userinfo. Anything else is dropped before the page."""
+    text = (url or "").strip()
+    if not text or text.startswith("//") or any(ch in text for ch in "\r\n\t "):
+        return ""
+    parsed = urlparse(text)
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    if not parsed.hostname or parsed.username or parsed.password:
+        return ""
+    return text
+
+
+def _canonical_origin(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw or raw.lower() == "null" or any(ch in raw for ch in "\r\n\x00"):
+        return ""
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    if parsed.username or parsed.password:
+        return ""
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host:
+        return ""
+    if parsed.path not in ("", "/") or parsed.query or parsed.params or parsed.fragment:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{parsed.port}" if parsed.port is not None else host
+    return f"{parsed.scheme}://{netloc}"
+
+
+def allowed_api_origin(origin: str, host: str, allowlist: str = "") -> str:
+    """Origin to echo on /api/*, or empty when the browser must not be allowed.
+
+    The page's own host matches without a setting. PI_PAIR_CORS_ORIGINS adds
+    more, comma-separated. There is no wildcard on these routes.
+    """
+    echo = _canonical_origin(origin)
+    if not echo:
+        return ""
+    for item in (allowlist or "").split(","):
+        if item.strip() and _canonical_origin(item) == echo:
+            return echo
+    request_host = (host or "").strip().lower()
+    if request_host and urlparse(echo).netloc.lower() == request_host:
+        return echo
+    return ""
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def _api_route(self) -> bool:
+        path = (self.path or "").split("?", 1)[0]
+        return path == "/api" or path.startswith("/api/")
+
     def _cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "*")
+        if self._api_route():
+            origin = allowed_api_origin(
+                self.headers.get("Origin", ""),
+                self.headers.get("Host", ""),
+                os.environ.get("PI_PAIR_CORS_ORIGINS", ""),
+            )
+            self.send_header("Vary", "Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Authorization, Content-Type, X-API-Key",
+            )
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         public = getattr(self, "public_mode", "") or ""
         tier = getattr(self, "pi_mode", "") or ""

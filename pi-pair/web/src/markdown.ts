@@ -15,6 +15,7 @@ function renderTex(source: string, display: boolean): string {
       throwOnError: false,
       strict: "ignore",
       output: "html",
+      trust: false,
     });
   } catch {
     return `<code>${escapeHtml(source)}</code>`;
@@ -59,7 +60,11 @@ export function renderMarkdown(source: string): string {
   const fenced = text.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_all, lang: string, code: string) => {
     const chart = chartFence(lang, code);
     if (chart) return stash(chart);
-    return stash(`<pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);
+    const body = escapeHtml(code.replace(/\n$/, ""));
+    if (String(lang || "").toLowerCase() === "mermaid") {
+      return stash(`<pre><code class="language-mermaid">${body}</code></pre>`);
+    }
+    return stash(`<pre><code>${body}</code></pre>`);
   });
   const withDisplay = fenced
     .replace(/\\\[([\s\S]*?)\\\]/g, (_all, tex: string) => stash(renderTex(tex, true)))
