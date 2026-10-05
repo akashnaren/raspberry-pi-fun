@@ -314,7 +314,7 @@ class AttachmentWire(unittest.TestCase):
         self.assertIn("/v1/attachments", readme)
         self.assertIn("4 MB", readme)
         self.assertIn("4096", readme)
-        self.assertIn("no cloud OCR API", readme.lower())
+        self.assertIn("no cloud ocr api", readme.lower())
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn("tesseract-ocr", install)
         self.assertIn("poppler-utils", install)

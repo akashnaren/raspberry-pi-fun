@@ -1006,18 +1006,28 @@ function clearAttach(): void {
   syncSend();
 }
 
+function releaseAttachButton(): void {
+  const button = byId<HTMLButtonElement>("btnAttach");
+  button.classList.remove("live");
+  button.disabled = false;
+  button.removeAttribute("aria-busy");
+}
+
 async function loadFile(file: File | null): Promise<void> {
   if (!file) return;
   const serial = ++attachSerial;
   const button = byId<HTMLButtonElement>("btnAttach");
   const current = () => serial === attachSerial;
   clearAttach();
+  if (!current()) return;
   if (file.size <= 0) {
     voiceNote("That file is empty.");
+    releaseAttachButton();
     return;
   }
   if (file.size > ATTACH_BYTES) {
     voiceNote("That file is over 4 MB.");
+    releaseAttachButton();
     return;
   }
   button.classList.add("live");
@@ -1056,11 +1066,7 @@ async function loadFile(file: File | null): Promise<void> {
   } catch {
     if (current()) voiceNote("Could not read that file.");
   } finally {
-    if (current()) {
-      button.classList.remove("live");
-      button.disabled = false;
-      button.removeAttribute("aria-busy");
-    }
+    if (current()) releaseAttachButton();
   }
 }
 
