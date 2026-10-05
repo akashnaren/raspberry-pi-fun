@@ -15,6 +15,7 @@ from pair.charts import (  # noqa: E402
     CHART_FALLBACK,
     chart_json_ok,
     is_structured_request,
+    normalize_chart_reply,
     parabola_chart,
     repair_chart_reply,
     structure_hint,
@@ -73,6 +74,67 @@ class Charts(unittest.TestCase):
         self.assertNotIn("```", sentence)
         self.assertEqual(calls["n"], 2)
         self.assertEqual(sentence.count("."), 1)
+
+    def test_a_loose_chart_fence_becomes_one_block(self):
+        messy = 'Here.\n```JSON\n{"title":"  Picnic   foods","data":[{"type":"Bar","y":[2, 4,],}],}\n```\n'
+        clean = normalize_chart_reply(messy)
+        self.assertEqual(clean.count("```"), 2)
+        self.assertTrue(clean.startswith("Here.\n```chart\n"))
+        spec = json.loads(clean.split("```chart\n", 1)[1].split("\n```", 1)[0])
+        self.assertEqual(spec["data"][0]["type"], "bar")
+        self.assertEqual(spec["data"][0]["y"], [2, 4])
+        self.assertEqual(spec["title"], "Picnic foods")
+        self.assertTrue(chart_json_ok(clean.split("```chart\n", 1)[1].split("\n```", 1)[0]))
+        self.assertEqual(normalize_chart_reply(clean), clean)
+        pie = '```plotly\n{"data":[{"type":"pie","values":[1.0, 2.5]}]}\n```'
+        drawn = normalize_chart_reply(pie)
+        pie_spec = json.loads(drawn.split("```chart\n", 1)[1].split("\n```", 1)[0])
+        self.assertEqual(pie_spec["data"][0], {"type": "pie", "y": [1, 2.5]})
+        rounded = normalize_chart_reply('```chart\n{"data":[{"type":"line","y":[1.23456]}]}\n```')
+        self.assertIn('"y":[1.2346]', rounded)
+        bare = '{"data":[{"type":"scatter","mode":"lines","name":"Load","y":[1,2]}]}'
+        wrapped = normalize_chart_reply(bare)
+        self.assertTrue(wrapped.startswith("```chart\n"))
+        self.assertEqual(normalize_chart_reply("hello"), "hello")
+        self.assertEqual(normalize_chart_reply('{"host":"pi4"}'), '{"host":"pi4"}')
+        mermaid = "```mermaid\nflowchart TD\nA-->B\n```"
+        self.assertEqual(normalize_chart_reply(mermaid), mermaid)
+        python = '```python\n{"data":[{"type":"bar","y":[1]}]}\n```'
+        self.assertEqual(normalize_chart_reply(python), python)
+        hostile = '```chart\n{"data":[{"type":"bar","x":["<b>"],"y":[1]}]}\n```'
+        self.assertEqual(normalize_chart_reply(hostile), hostile)
+        missed = '```chart\n{"data":[{"type":"bar","points":[1,2]}]}\n```'
+        self.assertEqual(normalize_chart_reply(missed), missed)
+
+    def test_normalize_runs_before_repair_and_leaves_the_retry(self):
+        prompt = "plot a bar chart of picnic foods"
+        loose = 'Here.\n```JSON\n{"title":"Picnic","data":[{"type":"Bar","y":[2, 4,],}],}\n```\n'
+        calls = {"n": 0}
+
+        def retry():
+            calls["n"] += 1
+            return "still bad"
+
+        clean = normalize_chart_reply(loose)
+        self.assertEqual(repair_chart_reply(clean, retry, prompt=prompt), clean)
+        self.assertEqual(calls["n"], 0)
+        self.assertEqual(repair_chart_reply(loose, retry, prompt=prompt), CHART_FALLBACK)
+        self.assertEqual(calls["n"], 1)
+        missed = '```chart\n{"data":[{"type":"bar","points":[1]}]}\n```'
+        salvage = '```json\n{"data":[{"type":"Line","y":[3, 4,],}]}\n```'
+
+        def again():
+            calls["n"] += 1
+            return normalize_chart_reply(salvage)
+
+        kept = repair_chart_reply(normalize_chart_reply(missed), again, prompt=prompt)
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(kept, normalize_chart_reply(salvage))
+        self.assertNotEqual(kept, CHART_FALLBACK)
+        config = '```json\n{"host":"pi4"}\n```'
+        self.assertEqual(normalize_chart_reply(config), config)
+        self.assertEqual(repair_chart_reply(config, retry, prompt="what host is this"), config)
+        self.assertEqual(calls["n"], 2)
 
 
 class Lists(unittest.TestCase):

@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 
 from pair import runtime
 from pair import server as pair_server
+from pair.charts import CHART_FALLBACK, CHART_NUDGE, normalize_chart_reply
 from pair.chat import start_model_warm, warm_residents
 from pair.embed import EMBED_MODEL
 from pair.modes import FLASH_MODEL, PRO_MODEL
@@ -347,6 +348,80 @@ class TurnHttp(unittest.TestCase):
         blob = "\n".join(item["content"] for item in OllamaFake.last_payload["messages"])
         self.assertIn("```chart", blob)
         self.assertNotIn("Web search notes", blob)
+
+    def _scripted(self, replies):
+        ScriptOllama.replies = list(replies)
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        OllamaFake.catalog = [FLASH_MODEL, PRO_MODEL]
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        return self._pair()
+
+    def _plot(self, port, prompt):
+        return self._post(
+            port,
+            {"pi_mode": "auto", "messages": [{"role": "user", "content": prompt}], "stream": False},
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+        )
+
+    def test_loose_chart_is_compacted_on_flash_without_a_retry(self):
+        loose = 'Here.\n```JSON\n{"title":"Picnic","data":[{"type":"Bar","y":[2, 4,],}],}\n```\n'
+        port = self._scripted([{"message": {"content": loose}, "done": True, "done_reason": "stop"}])
+        status, _headers, body = self._plot(port, "plot a bar chart of picnic foods")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_route"], "flash")
+        self.assertEqual(body["choices"][0]["message"]["content"], normalize_chart_reply(loose))
+        self.assertEqual(len(ScriptOllama.seen), 1)
+        self.assertEqual(ScriptOllama.seen[0]["model"], FLASH_MODEL)
+        self.assertEqual(self.search_calls, [])
+
+    def test_unfixable_chart_still_retries_once_on_flash(self):
+        bad = '```chart\n{"data":[{"type":"bar","points":[1,2]}]}\n```'
+        worse = '```chart\n{"data":[{"type":"scatter","x":[1]}]}\n```'
+        port = self._scripted(
+            [
+                {"message": {"content": bad}, "done": True, "done_reason": "stop"},
+                {"message": {"content": worse}, "done": True, "done_reason": "stop"},
+            ]
+        )
+        status, _headers, body = self._plot(port, "plot a bar chart of picnic foods")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_route"], "flash")
+        self.assertEqual(body["choices"][0]["message"]["content"], CHART_FALLBACK)
+        self.assertEqual(len(ScriptOllama.seen), 2)
+        self.assertEqual([item["model"] for item in ScriptOllama.seen], [FLASH_MODEL, FLASH_MODEL])
+        follow = "\n".join(item.get("content", "") for item in ScriptOllama.seen[1]["messages"])
+        self.assertIn(CHART_NUDGE, follow)
+
+    def test_a_loose_retry_is_compacted_instead_of_the_sentence(self):
+        bad = '```chart\n{"data":[{"type":"bar","points":[1]}]}\n```'
+        salvage = '```json\n{"data":[{"type":"Line","y":[3, 4,],}]}\n```'
+        port = self._scripted(
+            [
+                {"message": {"content": bad}, "done": True, "done_reason": "stop"},
+                {"message": {"content": salvage}, "done": True, "done_reason": "stop"},
+            ]
+        )
+        status, _headers, body = self._plot(port, "plot a bar chart of picnic foods")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_route"], "flash")
+        self.assertEqual(body["choices"][0]["message"]["content"], normalize_chart_reply(salvage))
+        self.assertEqual(len(ScriptOllama.seen), 2)
+        self.assertEqual(ScriptOllama.seen[0]["model"], FLASH_MODEL)
+        self.assertEqual(ScriptOllama.seen[1]["model"], FLASH_MODEL)
 
     def test_plain_list_skips_search_and_news_does_not(self):
         port = self._pi4()

@@ -107,9 +107,19 @@ function sameNumbers(left: number[], right: number[]): boolean {
   return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
+function chartJson(source: string): string {
+  let text = String(source ?? "").trim().replace(/^json\s*/i, "").trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) text = text.slice(start, end + 1);
+  return text.replace(/,\s*([}\]])/g, "$1");
+}
+
 function seriesFrom(item: unknown): ChartSeries | null {
   const row = asRecord(item);
-  if (!row || typeof row.type !== "string" || !CHART_TYPES.has(row.type)) return null;
+  if (!row || typeof row.type !== "string") return null;
+  const kind = row.type.trim().toLowerCase();
+  if (!CHART_TYPES.has(kind)) return null;
   const y = numbers(row.y);
   const values = numbers(row.values);
   let points: number[] | null = null;
@@ -122,7 +132,7 @@ function seriesFrom(item: unknown): ChartSeries | null {
   if (!points) return null;
   const labels = categories(row.x != null ? row.x : row.labels, points.length);
   if (!labels) return null;
-  const series: ChartSeries = { type: row.type as ChartType, y: points };
+  const series: ChartSeries = { type: kind as ChartType, y: points };
   const name = plain(row.name, MAX_LABEL);
   if (name) series.name = name;
   if (labels.length) series.x = labels;
@@ -141,7 +151,7 @@ function titleFrom(root: Record<string, unknown>): string | undefined {
 }
 
 export function parseChart(source: string): ChartSpec | null {
-  const text = String(source ?? "").trim();
+  const text = chartJson(source);
   if (!text) return null;
   let raw: unknown;
   try {
@@ -213,7 +223,8 @@ export function chartBlock(source: string): string | null {
 }
 
 export function chartFence(lang: string, code: string): string | null {
-  if (!CHART_LANG.has(String(lang || "").trim().toLowerCase())) return null;
+  const name = String(lang || "").trim().toLowerCase();
+  if (name !== "json" && !CHART_LANG.has(name)) return null;
   return chartBlock(code);
 }
 

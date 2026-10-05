@@ -17,6 +17,7 @@ from pair.charts import (
     CHART_NUDGE,
     is_chart_request,
     is_structured_request,
+    normalize_chart_reply,
     parabola_chart,
     repair_chart_reply,
     structure_hint,
@@ -1297,7 +1298,7 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         content: str,
     ) -> str:
-        """One strict-JSON retry when a chart fence is invalid, else one sentence."""
+        """Compact a salvageable chart, then one retry, else one sentence."""
 
         def again() -> str:
             follow = shape_messages(
@@ -1315,9 +1316,10 @@ class Handler(BaseHTTPRequestHandler):
                     more, _used = chat_ollama(peer, model, follow, temperature, max_tokens)
             except (OSError, json.JSONDecodeError):
                 return ""
-            return more or ""
+            return normalize_chart_reply(more or "")
 
-        return repair_chart_reply(content, again, prompt=prompt)
+        cleaned = normalize_chart_reply(content)
+        return repair_chart_reply(cleaned, again, prompt=prompt)
 
     def _stream(
         self,

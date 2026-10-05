@@ -142,6 +142,12 @@ function main() {
   assert.equal(hostile.title, "Kept");
   assert.equal(JSON.stringify(figureFrom(hostile)).includes("<img>"), false);
 
+  const loose = renderMarkdown('```JSON\n{"data":[{"type":"Bar","y":[1, 2,],}]}\n```');
+  assert.match(loose, /class="pi-chart"/);
+  assert.deepEqual(JSON.parse(loose.match(/<script type="application\/json">([\s\S]*?)<\/script>/)[1]).data[0].y, [1, 2]);
+  const config = renderMarkdown('```json\n{"host":"pi4"}\n```');
+  assert.equal(config.includes("pi-chart"), false);
+
   const node = hostFrom(chartBlock(JSON.stringify({ data: [{ type: "bar", y: [1] }] })));
   node.isConnected = true;
   node.textContent = "";
