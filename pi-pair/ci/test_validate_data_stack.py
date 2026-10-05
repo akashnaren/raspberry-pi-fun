@@ -41,6 +41,7 @@ class ValidateDataStack(unittest.TestCase):
         self.assertEqual(body["locks"]["generate"], ["pi4"])
         self.assertEqual(body["locks"]["dataset_and_train"], ["pi3"])
         self.assertEqual(body["locks"]["health"], ["pi2"])
+        self.assertEqual(body["locks"]["search"], ["pi2"])
         self.assertIs(body["locks"]["train_then_delete"], True)
         self.assertIs(body["locks"]["weak_gen"], False)
 

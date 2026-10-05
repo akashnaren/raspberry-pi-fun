@@ -1,5 +1,7 @@
 .env
 .env.*
+hf.env
+kaggle.json
 pi-gpt-api.env
 *.log
 .DS_Store
@@ -14,6 +16,8 @@ node_modules/
 uploads/
 pi-pair/peers.json
 pi-pair/data/metrics.json
+pi-pair/data/train/public/*
+!pi-pair/data/train/public/.gitkeep
 pi-pair/data/train/pending/*
 !pi-pair/data/train/pending/.gitkeep
 pi-pair/data/train/active/*

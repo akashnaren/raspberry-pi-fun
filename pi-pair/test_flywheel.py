@@ -34,8 +34,12 @@ class Flywheel(unittest.TestCase):
                 "PI_PAIR_NAME",
                 "PI_PAIR_LABEL_HIGH_WATER_BYTES",
                 "PI_PAIR_DISK_HIGH_WATER",
+                "HF_TOKEN",
+                "KAGGLE_API_TOKEN",
             )
         }
+        os.environ.pop("HF_TOKEN", None)
+        os.environ.pop("KAGGLE_API_TOKEN", None)
         self.tmp = tempfile.TemporaryDirectory()
         self.base = Path(self.tmp.name)
         os.environ["PI_PAIR_ROLE"] = "dataset"
@@ -317,7 +321,12 @@ class Flywheel(unittest.TestCase):
             "The canned map is not a custom model",
             "only when a run updates weights",
             "which this board does not do",
-            "pi2 does not search",
+            "pi2 does not decode",
+            "POST /v1/search",
+            "HF_TOKEN",
+            "akashnaren/pi-mesh-labels",
+            "KAGGLE_API_TOKEN",
+            "short connect timeout",
             "scripts/chat_label.py",
             "--dry-run",
             "another caller",

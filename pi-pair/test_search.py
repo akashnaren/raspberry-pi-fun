@@ -7,8 +7,10 @@ import unittest
 from pair.search import (
     DEFAULT_RESULTS,
     MAX_RESULTS,
+    PAGE_READ_CAP,
     PAGE_TIMEOUT,
     SEARCH_TIMEOUT,
+    _public_http,
     lookup_web,
 )
 
@@ -47,12 +49,14 @@ class _Resp:
         self._body = body.encode() if isinstance(body, str) else body
         self.status = status
         self.headers = headers or {"Content-Type": "text/html; charset=utf-8"}
+        self.given = 0
 
     def read(self, n=-1):
         if n is None or n < 0:
             data, self._body = self._body, b""
-            return data
-        data, self._body = self._body[:n], self._body[n:]
+        else:
+            data, self._body = self._body[:n], self._body[n:]
+        self.given += len(data)
         return data
 
     def close(self):
@@ -226,3 +230,71 @@ class SearchParse(unittest.TestCase):
         self.assertGreaterEqual(PAGE_TIMEOUT, 1)
         self.assertLessEqual(SEARCH_TIMEOUT + PAGE_TIMEOUT, 12)
         self.assertLessEqual((2 * SEARCH_TIMEOUT) + PAGE_TIMEOUT, 15)
+
+    def test_page_reads_block_private_ranges_and_cap_the_body(self):
+        blocked = (
+            "http://10.1.2.3/secret",
+            "http://127.0.0.1/secret",
+            "http://169.254.1.1/secret",
+            "http://100.64.0.1/secret",
+            "http://100.127.255.9/secret",
+            "http://[::ffff:10.1.2.3]/secret",
+        )
+        for url in blocked:
+            self.assertFalse(_public_http(url), url)
+        self.assertTrue(_public_http("https://example.com/bench"))
+        self.assertTrue(_public_http("https://8.8.8.8/dns"))
+
+        rows = []
+        for url in blocked:
+            rows.append(f'<a class="result__a" href="{url}">Hidden</a>')
+            rows.append('<a class="result__snippet">do not fetch</a>')
+        rows.append('<a class="result__a" href="https://example.com/ok">Public</a>')
+        rows.append('<a class="result__snippet">visible snippet</a>')
+        html = "<html><body>" + "".join(rows) + "</body></html>"
+        fetched = []
+        page = _Resp(b"P" * (PAGE_READ_CAP + 8000))
+
+        def opener(request, timeout=None):
+            url = request.full_url
+            fetched.append(url)
+            if "duckduckgo.com/html" in url:
+                return _Resp(html)
+            if url == "https://example.com/ok":
+                return page
+            raise AssertionError(url)
+
+        result = lookup_web("bench height", opener=opener)
+        self.assertEqual([item["url"] for item in result["sources"]], ["https://example.com/ok"])
+        blob = json.dumps(result)
+        for marker in ("10.1.2.3", "127.0.0.1", "169.254.1.1", "100.64.0.1", "100.127.255.9"):
+            self.assertNotIn(marker, blob)
+        self.assertEqual(page.given, PAGE_READ_CAP)
+        self.assertLessEqual(blob.count("P"), PAGE_READ_CAP)
+        self.assertEqual(
+            [url for url in fetched if "duckduckgo.com" not in url],
+            ["https://example.com/ok"],
+        )
+
+        def redirect(request, timeout=None):
+            url = request.full_url
+            fetched.append(url)
+            if "duckduckgo.com/html" in url:
+                body = (
+                    '<html><body><a class="result__a" href="https://example.com/go">Go</a>'
+                    '<a class="result__snippet">out</a></body></html>'
+                )
+                return _Resp(body)
+            if url == "https://example.com/go":
+                return _Resp(
+                    "",
+                    status=302,
+                    headers={"Location": "http://100.64.8.8/secret", "Content-Type": "text/html"},
+                )
+            raise AssertionError(url)
+
+        fetched.clear()
+        hopped = lookup_web("bench height", opener=redirect)
+        self.assertNotIn("100.64.8.8", json.dumps(hopped))
+        self.assertNotIn("Text from the first page", hopped["context"])
+        self.assertFalse(any("100.64.8.8" in url for url in fetched))

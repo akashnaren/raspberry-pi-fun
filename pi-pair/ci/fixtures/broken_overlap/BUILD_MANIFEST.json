@@ -21,6 +21,9 @@
     "health": [
       "pi2"
     ],
+    "search": [
+      "pi2"
+    ],
     "train_then_delete": true,
     "weak_gen": false
   }

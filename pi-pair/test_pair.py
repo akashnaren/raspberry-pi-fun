@@ -289,6 +289,7 @@ class PairHttp(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         os.environ["PI_PAIR_DATA"] = self._tmp.name
         os.environ["PI_PAIR_ROLE"] = "brain"
+        os.environ["PI_PAIR_REMOTE_SEARCH"] = "0"
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         OllamaFake.posts = 0
         OllamaFake.last_payload = None
@@ -314,6 +315,7 @@ class PairHttp(unittest.TestCase):
         runtime.reset_health()
         os.environ.pop("PI_PAIR_DATA", None)
         os.environ.pop("PI_PAIR_ROLE", None)
+        os.environ.pop("PI_PAIR_REMOTE_SEARCH", None)
         os.environ.pop("PI_PAIR_CANNED", None)
         os.environ.pop("PI_PAIR_BRAIN_PORT", None)
         os.environ.pop("OLLAMA_MAX_LOADED_MODELS", None)

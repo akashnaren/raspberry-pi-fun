@@ -262,13 +262,26 @@ def apply_label(
                 raw_lines = raw_lines[-bound:]
         path.write_text("\n".join(raw_lines) + "\n", encoding="utf-8")
         shed_raw_labels(root or data_root())
-        return {
+        result = {
             "ok": True,
             "forwarded": False,
             "queued": len(raw_lines),
             "updated": updated,
             "row": payload,
         }
+    _publish_label(result, root)
+    return result
+
+
+def _publish_label(result: dict, root: Path | None) -> None:
+    """Store a hashed vote beside the raw row. The hub call does not block the vote."""
+    try:
+        from pair.publish import record_public_labels, schedule_public_sync
+
+        saved = record_public_labels([result.get("row") or {}], root)
+        schedule_public_sync(saved, root)
+    except Exception:
+        return
 
 
 def note_exchange(prompt: str, answer: str, *, chip: str, peer: str, train: bool) -> None:

@@ -1,9 +1,13 @@
-"""Public lookup for a canned-map miss. Stdlib only. No API key."""
+"""Local public lookup for a canned-map miss. Stdlib only. No API key.
+
+pi4 calls this when pi2's search HTTP is down. pi2's /v1/search calls it directly.
+Neither path decodes.
+"""
 from __future__ import annotations
 
 import json
 from html.parser import HTMLParser
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -26,6 +30,8 @@ SNIPPET_CAP = 240
 PAGE_READ_CAP = 32000
 PAGE_TEXT_CAP = 1200
 MAX_REDIRECTS = 2
+# CGNAT, including Tailscale. Python 3.12 does not mark this range private.
+_CGNAT = ip_network("100.64.0.0/10")
 _LOGIN = {"login", "signin", "sign-in", "auth"}
 _VOID = {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
 
@@ -64,6 +70,11 @@ def _public_http(url: str) -> bool:
         ip = ip_address(host)
     except ValueError:
         return True
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    if ip.version == 4 and ip in _CGNAT:
+        return False
     return not (
         ip.is_private
         or ip.is_loopback

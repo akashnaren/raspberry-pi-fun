@@ -1,0 +1,14 @@
+{
+  "generate": ["pi4"],
+  "decode": ["pi4"],
+  "embed": ["pi4"],
+  "search": ["pi2"],
+  "health": ["pi2"],
+  "dataset_and_train": ["pi3"],
+  "public_labels": ["pi3"],
+  "remote_search_connect_timeout_s": 0.6,
+  "remote_search_read_timeout_s": 9,
+  "hf_dataset": "akashnaren/pi-mesh-labels",
+  "kaggle": "optional-stub-after-huggingface",
+  "note": "pi4 generates. pi2 searches and answers health. pi3 keeps labels, train-then-delete, and the public hash sync. pi2 and pi3 do not decode."
+}

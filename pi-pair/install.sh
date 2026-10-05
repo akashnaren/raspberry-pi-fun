@@ -33,6 +33,13 @@ fi
 if [[ "$ROLE" == "brain" ]]; then
   echo "Ollama:  0.0.0.0:11434 on this board only"
   echo "Embed:   ${OLLAMA_EMBED_MODEL} for map paraphrases on this board only"
+  echo "Search:  pi2 first, then local DuckDuckGo if pi2 is down. Generation stays here."
+elif [[ "$ROLE" == "health" ]]; then
+  echo "Ollama:  not installed here. Chat and embed models run only on pi4."
+  echo "Search:  POST /v1/search on this board. No decode."
+elif [[ "$ROLE" == "dataset" ]]; then
+  echo "Ollama:  not installed here. Chat and embed models run only on pi4."
+  echo "Labels:  HMAC votes stay on this board. Do not set HF_TOKEN until a public dataset is approved. No decode."
 else
   echo "Ollama:  not installed here. Chat and embed models run only on pi4."
 fi
@@ -146,6 +153,8 @@ fi
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
 API_ENV_LINE=""
+REMOTE_SEARCH_LINE=""
+HF_ENV_LINE=""
 if [[ "$ROLE" == "brain" ]]; then
   # Live pi4 runs this user unit, not the system ollama.service. Refresh the
   # drop-in on every install so a reinstall cannot fall back to one loaded
@@ -182,6 +191,27 @@ EOF
   fi
   chmod 600 "$API_ENV_FILE"
   API_ENV_LINE="EnvironmentFile=$API_ENV_FILE"
+  REMOTE_SEARCH_LINE="Environment=PI_PAIR_REMOTE_SEARCH=1"
+fi
+if [[ "$ROLE" == "dataset" ]]; then
+  # Empty values skip the upload. The token stays in this mode-600 file, not in git.
+  HF_ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pi-pair"
+  HF_ENV_FILE="$HF_ENV_DIR/hf.env"
+  mkdir -p "$HF_ENV_DIR"
+  if [[ ! -f "$HF_ENV_FILE" ]]; then
+    printf '%s\n' \
+      '# Public label sync for pi3. Leave every value blank on rollout. Do not commit this file.' \
+      '# Do not set HF_TOKEN, and do not create akashnaren/pi-mesh-labels, until Akash approves a public dataset.' \
+      '# Mint PI_PAIR_LABEL_PEPPER locally later: 32 bytes as 64 hex digits, or raw text of at least 32 bytes.' \
+      'HF_TOKEN=' \
+      'KAGGLE_API_TOKEN=' \
+      'PI_PAIR_LABEL_PEPPER=' > "$HF_ENV_FILE"
+    echo "Wrote $HF_ENV_FILE — leave HF_TOKEN blank. Mint PI_PAIR_LABEL_PEPPER on this board later."
+  else
+    echo "Keeping existing $HF_ENV_FILE"
+  fi
+  chmod 600 "$HF_ENV_FILE"
+  HF_ENV_LINE="EnvironmentFile=$HF_ENV_FILE"
 fi
 UNIT_FILE="$UNIT_DIR/${SERVICE_NAME}.service"
 cat > "$UNIT_FILE" << UNIT
@@ -199,7 +229,9 @@ Environment=PI_PAIR_HOST=0.0.0.0
 Environment=PI_PAIR_PORT=$PAIR_PORT
 Environment=PI_PAIR_PEERS=$INSTALL_DIR/peers.json
 Environment=MESH_MODEL=${OLLAMA_MODEL_PRIMARY}
+${REMOTE_SEARCH_LINE}
 ${API_ENV_LINE}
+${HF_ENV_LINE}
 ExecStart=$(command -v python3) $INSTALL_DIR/mini_chat.py
 Restart=on-failure
 RestartSec=3
@@ -224,6 +256,8 @@ if [[ "$ROLE" == "dataset" ]]; then
   echo
   echo "Train-then-delete (pi3 only, after the queue has misses):"
   echo "  python3 $INSTALL_DIR/scripts/lifecycle/post_train.py"
+  echo "Public HMAC votes stay local while HF_TOKEN is blank. Do not set HF_TOKEN during rollout."
+  echo "  python3 $INSTALL_DIR/scripts/data/sync_mesh_labels.py"
 fi
 echo
 echo "Done. Chat UI: http://<this-pi-ip>:${PAIR_PORT}/"

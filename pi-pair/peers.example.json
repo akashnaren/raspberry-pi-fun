@@ -4,7 +4,7 @@
     "host": "10.0.0.180",
     "port": 18080,
     "kind": "health",
-    "note": "armv7 ~1GB; health and read-only canned mirror",
+    "note": "armv7 ~1GB; health, web search, and read-only canned mirror. No decode.",
     "generative": false,
     "role": "health"
   },
@@ -13,7 +13,7 @@
     "host": "10.0.0.228",
     "port": 18080,
     "kind": "health",
-    "note": "arm64 ~1GB; dataset, queue, and train-then-delete",
+    "note": "arm64 ~1GB; dataset, queue, train-then-delete, and public hashed votes. No decode.",
     "generative": false,
     "role": "dataset"
   },
