@@ -15,7 +15,14 @@ INFER_SLOTS = infer_slots()
 HEALTH_CACHE_TTL = health_ttl()
 
 _health_lock = threading.Lock()
-_health_cache = {"t": 0.0, "peers": None}
+_health_cache = {
+    "t": 0.0,
+    "peers": None,
+    "seen": {},
+    "gen": 0,
+    "refreshing": False,
+    "thread": None,
+}
 gate = InferenceGate(INFER_SLOTS)
 
 
@@ -49,6 +56,10 @@ def reset_health() -> None:
     with _health_lock:
         _health_cache["t"] = 0.0
         _health_cache["peers"] = None
+        _health_cache["seen"] = {}
+        _health_cache["gen"] = int(_health_cache.get("gen") or 0) + 1
+        _health_cache["refreshing"] = False
+        _health_cache["thread"] = None
 
 
 configure()

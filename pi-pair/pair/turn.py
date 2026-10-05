@@ -35,6 +35,8 @@ _PLOT = re.compile(
     re.I,
 )
 _LIST = re.compile(r"\b(?:bullet list|checklist|enumerate|list)\b", re.I)
+_RANK = re.compile(r"\btop\s+\d{1,2}\b|\b\d{1,2}\s+best\b|\brank(?:ing)?\b", re.I)
+_FRESH = re.compile(r"\b(?:news|latest|current)\b", re.I)
 _SEARCH = re.compile(
     r"\b(?:search for|look up|lookup|latest news|news about|sources for|find articles|find sources)\b",
     re.I,
@@ -153,17 +155,30 @@ def is_plain_list(prompt: str) -> bool:
     return bool(_LIST.search(question))
 
 
-def needs_web(prompt: str) -> bool:
-    """False for a plot, a plain list, or an attachment the user already supplied.
+def is_list_intent(prompt: str) -> bool:
+    """List, top-N, N-best, and rank lines skip search unless they ask for news.
 
-    Grounded math still looks pages up. A question that asks for sources does too.
+    "latest", "current", and "news" still look the web up. Plot, table, and
+    diagram asks are a separate skip and are not decided here.
+    """
+    question = user_question(prompt)
+    if _SEARCH.search(question) or _FRESH.search(question):
+        return False
+    return bool(_LIST.search(question) or _RANK.search(question))
+
+
+def needs_web(prompt: str) -> bool:
+    """False for a plot, a list-shaped ask, or an attachment the user already supplied.
+
+    Grounded math still looks pages up. A question that asks for sources,
+    news, latest, or current does too.
     """
     question = user_question(prompt)
     if is_grounded_problem(question):
         return True
     if attachment_tail(prompt) and not _SEARCH.search(question):
         return False
-    if is_plot(prompt) or is_plain_list(prompt):
+    if is_plot(prompt) or is_list_intent(prompt):
         return False
     return True
 

@@ -13,7 +13,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.canned import lookup, start_canned_warm, warm_status
-from pair.charts import is_structured_request, parabola_chart, structure_hint
+from pair.charts import (
+    CHART_NUDGE,
+    is_chart_request,
+    is_structured_request,
+    parabola_chart,
+    repair_chart_reply,
+    structure_hint,
+)
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model, start_model_warm
 from pair.config import STATIC_DIR
 from pair.docfit import fit_outbound
@@ -1272,9 +1279,45 @@ class Handler(BaseHTTPRequestHandler):
             content = self._extend_list(
                 peer, kind, model, messages, temperature, max_tokens, prompt, content
             )
+        content = self._repair_chart(
+            peer, kind, model, messages, temperature, max_tokens, prompt, content
+        )
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
+
+    def _repair_chart(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        content: str,
+    ) -> str:
+        """One strict-JSON retry when a chart fence is invalid, else one sentence."""
+
+        def again() -> str:
+            follow = shape_messages(
+                [
+                    *list(messages or []),
+                    {"role": "assistant", "content": content},
+                    {"role": "user", "content": CHART_NUDGE},
+                ],
+                prompt,
+            )
+            try:
+                if kind == "llamacpp":
+                    more, _used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+                else:
+                    more, _used = chat_ollama(peer, model, follow, temperature, max_tokens)
+            except (OSError, json.JSONDecodeError):
+                return ""
+            return more or ""
+
+        return repair_chart_reply(content, again, prompt=prompt)
 
     def _stream(
         self,
@@ -1366,6 +1409,42 @@ class Handler(BaseHTTPRequestHandler):
                 route_name,
                 resident_name,
             )
+            return
+        if is_chart_request(prompt):
+            content, used, train = self._decode_reply(
+                peer,
+                kind,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                prompt,
+                search_note,
+            )
+            if train:
+                self._emit_ready_answer(
+                    peer,
+                    kind,
+                    used,
+                    prompt,
+                    content,
+                    started,
+                    think_name,
+                    search_note,
+                    stages,
+                    images,
+                    mode_name,
+                    route_name,
+                    resident_name,
+                )
+                return
+            chunk = {
+                "id": "pi-pair",
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+            }
+            safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
+            safe_write(self, b"data: [DONE]\n\n", flush=True)
             return
         safe_write(
             self,

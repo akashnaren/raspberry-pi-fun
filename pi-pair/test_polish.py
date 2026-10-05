@@ -12,8 +12,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pair.charts import (  # noqa: E402
+    CHART_FALLBACK,
+    chart_json_ok,
     is_structured_request,
     parabola_chart,
+    repair_chart_reply,
     structure_hint,
 )
 from pair.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
@@ -43,6 +46,33 @@ class Charts(unittest.TestCase):
         self.assertTrue(is_structured_request("draw a flowchart of the login steps"))
         self.assertIn("mermaid", structure_hint("draw a flowchart of the login steps"))
         self.assertFalse(is_structured_request("where is the hall bench"))
+
+    def test_valid_chart_is_kept_and_invalid_retries_once(self):
+        prompt = "plot a bar chart of the fruit stand"
+        good = 'Apples lead.\n```chart\n{"title":"Fruit","data":[{"type":"bar","y":[1,2]}]}\n```'
+        calls = {"n": 0}
+
+        def retry():
+            calls["n"] += 1
+            return good
+
+        self.assertTrue(chart_json_ok('{"title":"Fruit","data":[{"type":"pie","values":[1,2]}]}'))
+        self.assertFalse(chart_json_ok('{"data":[{"type":"bar","points":[1,2]}]}'))
+        self.assertEqual(repair_chart_reply(good, retry, prompt=prompt), good)
+        self.assertEqual(calls["n"], 0)
+        bad = '```json\n{"title":"Fruit","data":[{"type":"bar","points":[1,2]}]}\n```'
+        self.assertEqual(repair_chart_reply(bad, retry, prompt=prompt), good)
+        self.assertEqual(calls["n"], 1)
+
+        def still_bad():
+            calls["n"] += 1
+            return '```chart\n{"data":[{"type":"scatter","x":[1]}]}\n```'
+
+        sentence = repair_chart_reply(bad, still_bad, prompt=prompt)
+        self.assertEqual(sentence, CHART_FALLBACK)
+        self.assertNotIn("```", sentence)
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(sentence.count("."), 1)
 
 
 class Lists(unittest.TestCase):

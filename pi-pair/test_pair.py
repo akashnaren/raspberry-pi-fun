@@ -6,9 +6,11 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -276,6 +278,165 @@ class PairHelpers(unittest.TestCase):
             self.assertEqual(calls["n"], 2)
             self.assertEqual(forced[0]["name"], "pi3")
         finally:
+            runtime.HEALTH_CACHE_TTL = previous
+            health.peer_health = previous_probe
+            runtime.set_peers(previous_peers)
+
+    def test_local_health_does_not_probe_itself(self):
+        seen = []
+
+        def fake(url, timeout=2.5):
+            seen.append((url, timeout))
+            return {"ok": True}
+
+        peer = {
+            "name": "pi3",
+            "host": "10.0.0.228",
+            "port": 18080,
+            "kind": "health",
+            "role": "dataset",
+        }
+        previous = os.environ.get("PI_PAIR_ROLE")
+        try:
+            os.environ["PI_PAIR_ROLE"] = "dataset"
+            ok, _models, err, port = health.peer_health(peer, get_json=fake)
+            self.assertTrue(ok)
+            self.assertIsNone(err)
+            self.assertEqual(port, 18080)
+            self.assertEqual(seen, [])
+            os.environ["PI_PAIR_ROLE"] = "brain"
+            ok, _models, err, port = health.peer_health(peer, get_json=fake)
+            self.assertTrue(ok)
+            self.assertEqual(seen, [("http://10.0.0.228:18080/health", health.PEER_PROBE_S)])
+            self.assertEqual(health.PEER_PROBE_S, 2.5)
+        finally:
+            if previous is None:
+                os.environ.pop("PI_PAIR_ROLE", None)
+            else:
+                os.environ["PI_PAIR_ROLE"] = previous
+
+    def test_health_skips_queue_disk_and_load_scans(self):
+        def boom(*_args, **_kwargs):
+            raise AssertionError("scan on the health path")
+
+        previous_probe = health.peer_health
+        previous_peers = list(runtime.PEERS)
+        try:
+            health.peer_health = lambda peer, **_kwargs: (True, [], None, peer["port"])
+            runtime.set_peers(
+                [
+                    {
+                        "name": "pi3",
+                        "host": "10.0.0.228",
+                        "port": 18080,
+                        "kind": "health",
+                        "role": "dataset",
+                        "generative": False,
+                        "note": "",
+                    }
+                ]
+            )
+            with (
+                patch("shutil.disk_usage", boom),
+                patch("os.getloadavg", boom),
+                patch("pair.queue._pending_jsonl", boom),
+            ):
+                body = pair_server.health_document()
+            self.assertEqual(body["peers_up"], 1)
+        finally:
+            health.peer_health = previous_probe
+            runtime.set_peers(previous_peers)
+
+    def test_one_failed_probe_does_not_drop_peers_up_inside_grace(self):
+        """A miss inside the short grace keeps peers_up. The peer timeout stays 2.5s."""
+        self.assertEqual(health.PEER_PROBE_S, 2.5)
+        self.assertGreater(health.PEER_GRACE_S, health.PEER_PROBE_S)
+        self.assertLess(health.PEER_GRACE_S, 16)
+        clock = {"t": 1000.0}
+        calls = {"n": 0}
+
+        def fake(peer, *, alt_ports=None, get_json=None):
+            del alt_ports, get_json
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return True, [], None, peer["port"]
+            return False, [], "timed out", peer["port"]
+
+        previous_probe = health.peer_health
+        previous_peers = list(runtime.PEERS)
+        try:
+            runtime.set_peers(
+                [
+                    {
+                        "name": "pi3",
+                        "host": "10.0.0.228",
+                        "port": 18080,
+                        "kind": "health",
+                        "role": "dataset",
+                        "generative": False,
+                        "note": "",
+                    }
+                ]
+            )
+            health.peer_health = fake
+            with patch("pair.health.time.monotonic", lambda: clock["t"]):
+                first = health.snapshot_peers(force=True)
+                self.assertEqual(sum(peer["ok"] for peer in first), 1)
+                clock["t"] += 3
+                second = health.snapshot_peers(force=True)
+                self.assertEqual(sum(peer["ok"] for peer in second), 1)
+                clock["t"] += health.PEER_GRACE_S
+                third = health.snapshot_peers(force=True)
+                self.assertEqual(sum(peer["ok"] for peer in third), 0)
+        finally:
+            health.peer_health = previous_probe
+            runtime.set_peers(previous_peers)
+
+    def test_stale_health_returns_before_a_slow_probe(self):
+        """A rescan slower than the 2.5s peer timeout stays off the /health return."""
+        release = threading.Event()
+        entered = threading.Event()
+        calls = {"n": 0}
+
+        def fake(peer, *, alt_ports=None, get_json=None):
+            del alt_ports, get_json
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return True, [], None, peer["port"]
+            entered.set()
+            self.assertTrue(release.wait(3))
+            return False, [], "timed out", peer["port"]
+
+        previous = runtime.HEALTH_CACHE_TTL
+        previous_probe = health.peer_health
+        previous_peers = list(runtime.PEERS)
+        try:
+            runtime.HEALTH_CACHE_TTL = 0
+            runtime.set_peers(
+                [
+                    {
+                        "name": "pi3",
+                        "host": "10.0.0.228",
+                        "port": 18080,
+                        "kind": "health",
+                        "role": "dataset",
+                        "generative": False,
+                        "note": "",
+                    }
+                ]
+            )
+            health.peer_health = fake
+            first = health.snapshot_peers()
+            self.assertEqual(sum(peer["ok"] for peer in first), 1)
+            started = time.monotonic()
+            second = health.snapshot_peers()
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, health.PEER_PROBE_S)
+            self.assertEqual(sum(peer["ok"] for peer in second), 1)
+            self.assertTrue(entered.wait(1))
+        finally:
+            release.set()
+            health.join_refresh(3)
             runtime.HEALTH_CACHE_TTL = previous
             health.peer_health = previous_probe
             runtime.set_peers(previous_peers)

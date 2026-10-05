@@ -7,6 +7,7 @@ small model would talk about Desmos. Other plots stay on the model.
 from __future__ import annotations
 
 import json
+import math
 import re
 
 CHART_HINT = (
@@ -22,6 +23,17 @@ TABLE_HINT = (
     'JSON shape: {"title":"Comparison","columns":["Name","Value"],"rows":[["A","1"],["B","2"]]}. '
     "Use the columns and rows from the question. Do not dump an unformatted list."
 )
+
+CHART_FALLBACK = "I could not draw that chart."
+CHART_NUDGE = (
+    "That chart fence was not strict JSON. Reply again with one ```chart fence only. "
+    '{"title":"Title","data":[{"type":"bar","x":["a","b"],"y":[1,2]}]}. '
+    "type is bar, scatter, line, or pie. "
+    "Each series needs y or values as a non-empty array of finite numbers. "
+    "No trailing commas and no ```json fence."
+)
+_CHART_TYPES = frozenset({"bar", "scatter", "line", "pie"})
+_FENCE = re.compile(r"```([^\n`]*)\n([\s\S]*?)```")
 
 FLOW_HINT = (
     "The user wants a flowchart or diagram. Reply with one ```mermaid fence and at most one short sentence. "
@@ -145,6 +157,122 @@ def _parabola_title(a: float, b: float, c: float) -> str:
     body = "".join(parts).replace("x²", "x^2")
     title = "y = " + body.replace("x^2", "x²")
     return title[:120]
+
+
+def _finite(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(float(value))
+
+
+def _points(value: object) -> bool:
+    if not isinstance(value, list) or not 1 <= len(value) <= 240:
+        return False
+    return all(_finite(item) for item in value)
+
+
+def _labels(value: object, count: int) -> bool:
+    if not isinstance(value, list) or len(value) != count:
+        return False
+    for item in value:
+        if isinstance(item, bool) or isinstance(item, (int, float)):
+            if not _finite(item):
+                return False
+            continue
+        if not isinstance(item, str):
+            return False
+        text = item.strip()
+        if not text or len(text) > 80 or "<" in text or ">" in text:
+            return False
+    return True
+
+
+def chart_json_ok(raw: str) -> bool:
+    """True when one fence body is a bar, scatter, line, or pie spec.
+
+    Required: a data array, and each series needs type plus y or values.
+    """
+    try:
+        data = json.loads((raw or "").strip())
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    rows = data.get("data")
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 6:
+        return False
+    for item in rows:
+        if not _series_ok(item):
+            return False
+    return True
+
+
+def _series_ok(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    kind = item.get("type")
+    if kind not in _CHART_TYPES:
+        return False
+    y = item.get("y")
+    values = item.get("values")
+    if y is None and values is None:
+        return False
+    if y is not None and not _points(y):
+        return False
+    if values is not None and not _points(values):
+        return False
+    if isinstance(y, list) and isinstance(values, list) and list(y) != list(values):
+        return False
+    points = y if isinstance(y, list) else values
+    if not isinstance(points, list):
+        return False
+    labels = item.get("x")
+    if labels is None and "labels" in item:
+        labels = item.get("labels")
+    if labels is not None and not _labels(labels, len(points)):
+        return False
+    return True
+
+
+def _chart_attempts(text: str, prompt: str) -> list[str]:
+    """Bodies of chart fences. ```json counts when the user asked for a plot."""
+    raw = (text or "").replace("\r\n", "\n")
+    want_json = is_chart_request(prompt)
+    bodies: list[str] = []
+    for match in _FENCE.finditer(raw):
+        lang = (match.group(1) or "").strip().lower().split()
+        name = lang[0] if lang else ""
+        if name in {"chart", "plotly"} or (name == "json" and want_json):
+            bodies.append(match.group(2) or "")
+    if bodies:
+        return bodies
+    lowered = raw.lower()
+    if raw.count("```") % 2 == 1 and (
+        "```chart" in lowered or "```plotly" in lowered or (want_json and "```json" in lowered)
+    ):
+        return ["{"]
+    return []
+
+
+def repair_chart_reply(text: str, retry, prompt: str = "") -> str:
+    """Keep a valid chart fence. One retry, then a single sentence.
+
+    `retry` is called at most once and should return the next model reply.
+    """
+    attempts = _chart_attempts(text, prompt)
+    if not attempts:
+        return text or ""
+    if all(chart_json_ok(body) for body in attempts):
+        return text
+    second = ""
+    try:
+        second = retry() or ""
+    except Exception:
+        second = ""
+    again = _chart_attempts(second, prompt)
+    if again and all(chart_json_ok(body) for body in again):
+        return second
+    return CHART_FALLBACK
 
 
 def parabola_chart(prompt: str) -> str | None:
