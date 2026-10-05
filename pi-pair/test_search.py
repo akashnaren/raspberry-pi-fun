@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 
+import pair.search as search
 from pair.search import (
     DEFAULT_RESULTS,
     MAX_RESULTS,
     PAGE_READ_CAP,
     PAGE_TIMEOUT,
     SEARCH_TIMEOUT,
+    _fetch,
     _public_http,
     lookup_web,
 )
@@ -64,6 +67,13 @@ class _Resp:
 
 
 class SearchParse(unittest.TestCase):
+    def setUp(self):
+        self._resolve = search._resolve
+        search._resolve = lambda host: ["8.8.8.8"]
+
+    def tearDown(self):
+        search._resolve = self._resolve
+
     def test_parses_snippets_and_fetches_one_public_page(self):
         fetched = []
 
@@ -298,3 +308,172 @@ class SearchParse(unittest.TestCase):
         self.assertNotIn("100.64.8.8", json.dumps(hopped))
         self.assertNotIn("Text from the first page", hopped["context"])
         self.assertFalse(any("100.64.8.8" in url for url in fetched))
+
+    def test_hostname_resolving_to_private_or_tailscale_is_rejected(self):
+        records = {
+            "inside.example": ["10.1.2.3"],
+            "tailscale.example": ["100.64.1.5"],
+            "loop.example": ["127.0.0.1"],
+            "link.example": ["169.254.4.4"],
+            "split.example": ["8.8.8.8", "10.0.0.9"],
+            "v6split.example": ["1.1.1.1", "fd7a:115c:a1e0::1"],
+        }
+
+        def resolve(host):
+            if host in records:
+                return list(records[host])
+            if host in ("html.duckduckgo.com", "api.duckduckgo.com"):
+                return ["8.8.8.8"]
+            raise AssertionError(host)
+
+        search._resolve = resolve
+        for name in records:
+            self.assertFalse(_public_http(f"https://{name}/secret"), name)
+        calls = []
+
+        def opener(request, timeout=None):
+            calls.append(request.full_url)
+            if "duckduckgo.com/html" in request.full_url:
+                body = (
+                    '<html><body><a class="result__a" href="https://inside.example/hid">Hidden</a>'
+                    '<a class="result__snippet">no</a>'
+                    '<a class="result__a" href="https://tailscale.example/ts">Tail</a>'
+                    '<a class="result__snippet">no</a></body></html>'
+                )
+                return _Resp(body)
+            if "api.duckduckgo.com" in request.full_url:
+                return _Resp("{}", headers={"Content-Type": "application/json"})
+            raise AssertionError(request.full_url)
+
+        result = lookup_web("bench height", opener=opener)
+        self.assertEqual(result["sources"], [])
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(calls)
+        self.assertTrue(all("duckduckgo.com" in url for url in calls))
+
+    def test_public_hostname_is_allowed_and_connection_is_pinned(self):
+        def resolve(host):
+            if host == "public.example":
+                return ["1.1.1.1", "2606:4700:4700::1111"]
+            if host == "html.duckduckgo.com":
+                return ["8.8.8.8"]
+            if host == "missing.example":
+                return []
+            raise AssertionError(host)
+
+        search._resolve = resolve
+        self.assertTrue(_public_http("https://public.example/bench"))
+        self.assertFalse(_public_http("https://missing.example/bench"))
+        seen = []
+
+        def opener(request, timeout=None):
+            seen.append((request.full_url, request.pinned_ip))
+            if "duckduckgo.com/html" in request.full_url:
+                body = (
+                    '<html><body><a class="result__a" href="https://public.example/bench">Bench</a>'
+                    '<a class="result__snippet">a short snippet about the bench</a></body></html>'
+                )
+                return _Resp(body)
+            if request.full_url == "https://public.example/bench":
+                return _Resp("<html><body>from the pinned page</body></html>")
+            raise AssertionError(request.full_url)
+
+        result = lookup_web("bench height", opener=opener)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["sources"][0]["url"], "https://public.example/bench")
+        self.assertIn("from the pinned page", result["context"])
+        self.assertEqual(
+            seen,
+            [
+                ("https://html.duckduckgo.com/html/?q=bench+height", "8.8.8.8"),
+                ("https://public.example/bench", "1.1.1.1"),
+            ],
+        )
+
+        created = []
+
+        def create(address, timeout=None, source_address=None):
+            created.append(address)
+            raise OSError("stop")
+
+        def boom(*_args, **_kwargs):
+            raise AssertionError("re-resolved")
+
+        for url, pin, port in (
+            ("https://public.example/x", "1.1.1.1", 443),
+            ("http://public.example/x", "1.1.1.1", 80),
+        ):
+            created.clear()
+            with mock.patch("socket.getaddrinfo", boom), mock.patch("socket.create_connection", create):
+                with self.assertRaises(OSError):
+                    _fetch(url, None, 1, 64)
+            self.assertEqual(created, [(pin, port)], url)
+
+    def test_redirect_rechecks_resolved_addresses(self):
+        def resolve(host):
+            return {
+                "html.duckduckgo.com": ["8.8.8.8"],
+                "public.example": ["1.1.1.1"],
+                "evil.example": ["10.9.9.9"],
+                "tail.example": ["100.64.0.2"],
+                "next.example": ["9.9.9.9"],
+            }[host]
+
+        search._resolve = resolve
+        seen = []
+
+        def opener(request, timeout=None):
+            seen.append((request.full_url, getattr(request, "pinned_ip", "")))
+            if "duckduckgo.com/html" in request.full_url:
+                body = (
+                    '<html><body><a class="result__a" href="https://public.example/go">Go</a>'
+                    '<a class="result__snippet">out</a></body></html>'
+                )
+                return _Resp(body)
+            if request.full_url == "https://public.example/go":
+                target = "https://evil.example/secret" if not seen_tail["on"] else "https://tail.example/secret"
+                return _Resp(
+                    "",
+                    status=302,
+                    headers={"Location": target, "Content-Type": "text/html"},
+                )
+            if request.full_url == "https://next.example/ok":
+                return _Resp("<html><body>second hop</body></html>")
+            raise AssertionError(request.full_url)
+
+        seen_tail = {"on": False}
+        blocked = lookup_web("bench height", opener=opener)
+        self.assertNotIn("10.9.9.9", json.dumps(blocked))
+        self.assertNotIn("Text from the first page", blocked["context"])
+        self.assertNotIn("https://evil.example/secret", [url for url, _pin in seen])
+        self.assertEqual(seen[-1][0], "https://public.example/go")
+        self.assertEqual(seen[-1][1], "1.1.1.1")
+
+        seen.clear()
+        seen_tail["on"] = True
+        tail = lookup_web("bench height", opener=opener)
+        self.assertNotIn("100.64.0.2", json.dumps(tail))
+        self.assertFalse(any("tail.example" in url for url, _pin in seen))
+
+        def follow(request, timeout=None):
+            seen.append((request.full_url, request.pinned_ip))
+            if "duckduckgo.com/html" in request.full_url:
+                body = (
+                    '<html><body><a class="result__a" href="https://public.example/go">Go</a>'
+                    '<a class="result__snippet">out</a></body></html>'
+                )
+                return _Resp(body)
+            if request.full_url == "https://public.example/go":
+                return _Resp(
+                    "",
+                    status=302,
+                    headers={"Location": "https://next.example/ok", "Content-Type": "text/html"},
+                )
+            if request.full_url == "https://next.example/ok":
+                return _Resp("<html><body>second hop</body></html>")
+            raise AssertionError(request.full_url)
+
+        seen.clear()
+        hopped = lookup_web("bench height", opener=follow)
+        self.assertIn("second hop", hopped["context"])
+        self.assertEqual(seen[-1], ("https://next.example/ok", "9.9.9.9"))

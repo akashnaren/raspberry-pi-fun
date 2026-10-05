@@ -5,12 +5,14 @@ Neither path decodes.
 """
 from __future__ import annotations
 
+import http.client
 import json
+import socket
 from html.parser import HTMLParser
 from ipaddress import ip_address, ip_network
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPHandler, HTTPSHandler, HTTPRedirectHandler, Request, build_opener
 
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 INSTANT_URL = "https://api.duckduckgo.com/"
@@ -41,7 +43,65 @@ class _NoFollow(HTTPRedirectHandler):
         return None
 
 
-_OPENER = build_opener(_NoFollow)
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """Connect to the address checked at resolve time. Do not look the name up again."""
+
+    def __init__(self, host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, *, pin: str, **kwargs):
+        self._pin = pin
+        super().__init__(host, timeout=timeout, **kwargs)
+
+    def connect(self):
+        if not self._pin:
+            raise OSError("unpinned host")
+        saved = self.host
+        self.host = self._pin
+        try:
+            super().connect()
+        finally:
+            self.host = saved
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """Same pin as HTTP. The TLS name stays the original host."""
+
+    def __init__(self, host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, *, pin: str, **kwargs):
+        self._pin = pin
+        super().__init__(host, timeout=timeout, **kwargs)
+
+    def connect(self):
+        if not self._pin:
+            raise OSError("unpinned host")
+        saved = self.host
+        self.host = self._pin
+        try:
+            http.client.HTTPConnection.connect(self)
+        finally:
+            self.host = saved
+        server_hostname = self._tunnel_host or saved
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)
+
+
+class _PinHTTP(HTTPHandler):
+    def http_open(self, req):
+        pin = getattr(req, "pinned_ip", "") or ""
+
+        def factory(host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):
+            return _PinnedHTTPConnection(host, timeout=timeout, pin=pin, **kwargs)
+
+        return self.do_open(factory, req)
+
+
+class _PinHTTPS(HTTPSHandler):
+    def https_open(self, req):
+        pin = getattr(req, "pinned_ip", "") or ""
+
+        def factory(host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):
+            return _PinnedHTTPSConnection(host, timeout=timeout, pin=pin, **kwargs)
+
+        return self.do_open(factory, req, context=self._context)
+
+
+_OPENER = build_opener(_NoFollow(), _PinHTTP(), _PinHTTPS())
 
 
 def _failed() -> dict:
@@ -59,23 +119,13 @@ def _result_limit(limit: int | None) -> int:
     return limit
 
 
-def _public_http(url: str) -> bool:
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        return False
-    host = (parsed.hostname or "").lower().rstrip(".")
-    if not host or host == "localhost" or host.endswith(".local") or host.endswith(".localhost"):
-        return False
-    try:
-        ip = ip_address(host)
-    except ValueError:
-        return True
+def _address_blocked(ip) -> bool:
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
     if ip.version == 4 and ip in _CGNAT:
-        return False
-    return not (
+        return True
+    return bool(
         ip.is_private
         or ip.is_loopback
         or ip.is_link_local
@@ -83,6 +133,60 @@ def _public_http(url: str) -> bool:
         or ip.is_multicast
         or ip.is_unspecified
     )
+
+
+def _literal_ip(host: str):
+    try:
+        return ip_address(host)
+    except ValueError:
+        return None
+
+
+def _resolve(host: str) -> list[str]:
+    """A and AAAA records. Tests replace this. An error is an empty list."""
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    found: list[str] = []
+    for info in infos:
+        addr = str(info[4][0]).split("%", 1)[0]
+        if addr and addr not in found:
+            found.append(addr)
+    return found
+
+
+def _pin_for(url: str) -> str | None:
+    """One checked address, or None when any record is private or lookup fails."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return None
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host or host == "localhost" or host.endswith(".local") or host.endswith(".localhost"):
+        return None
+    literal = _literal_ip(host)
+    if literal is not None:
+        if _address_blocked(literal):
+            return None
+        return str(literal)
+    addresses = _resolve(host)
+    if not addresses:
+        return None
+    chosen = ""
+    for addr in addresses:
+        try:
+            ip = ip_address(addr)
+        except ValueError:
+            return None
+        if _address_blocked(ip):
+            return None
+        if not chosen:
+            chosen = addr
+    return chosen or None
+
+
+def _public_http(url: str) -> bool:
+    return _pin_for(url) is not None
 
 
 def _login_url(url: str) -> bool:
@@ -148,12 +252,14 @@ def _fetch(url: str, opener, timeout: float, cap: int) -> tuple[bytes, str]:
     current = url
     redirects = 0
     while True:
-        if not _public_http(current):
+        pin = _pin_for(current)
+        if not pin:
             raise ValueError("blocked url")
         request = Request(
             current,
             headers={"User-Agent": USER_AGENT, "Accept": "text/html,text/plain,application/json"},
         )
+        request.pinned_ip = pin
         try:
             response = _open(request, timeout, opener)
             status = getattr(response, "status", None)
