@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate the train config against dataset_info.json and count registered rows."""
+
 from __future__ import annotations
 
 import json

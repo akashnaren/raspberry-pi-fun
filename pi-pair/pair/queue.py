@@ -1,4 +1,5 @@
 """Bounded miss queue. Raw rows stay off pi4 and pi2."""
+
 from __future__ import annotations
 
 import json
@@ -44,7 +45,9 @@ def _bump(root: Path, field: str) -> None:
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(loaded, dict):
-            current.update({key: int(loaded.get(key) or 0) for key in ("hits", "misses")})
+            current.update(
+                {key: int(loaded.get(key) or 0) for key in ("hits", "misses")}
+            )
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         pass
     current[field] = int(current.get(field) or 0) + 1
@@ -69,7 +72,9 @@ def _pending_jsonl(root: Path) -> list[Path]:
     pending = root / "train" / "pending"
     if not pending.is_dir():
         return []
-    files = [path for path in pending.iterdir() if path.is_file() and path.suffix == ".jsonl"]
+    files = [
+        path for path in pending.iterdir() if path.is_file() and path.suffix == ".jsonl"
+    ]
     files.sort(key=lambda path: (path.stat().st_mtime, path.name))
     return files
 
@@ -107,7 +112,11 @@ def shed_raw_labels(root: Path) -> list[str]:
         queue = queue_path(root)
         if not queue.is_file():
             break
-        lines = [line for line in queue.read_text(encoding="utf-8").splitlines() if line.strip()]
+        lines = [
+            line
+            for line in queue.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
         if not lines:
             queue.unlink()
             removed.append(queue.name)
@@ -133,7 +142,11 @@ def append_row(row: dict, root: Path | None = None, bound: int = QUEUE_BOUND) ->
     with _LOCK:
         lines = []
         if path.exists():
-            lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            lines = [
+                line
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
         lines.append(json.dumps(row, ensure_ascii=False))
         if len(lines) > bound:
             lines = lines[-bound:]
@@ -142,7 +155,11 @@ def append_row(row: dict, root: Path | None = None, bound: int = QUEUE_BOUND) ->
         shed_raw_labels(root or data_root())
         if not path.exists():
             return 0
-        kept = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        kept = [
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
         return len(kept)
 
 
@@ -224,13 +241,22 @@ def apply_label(
     if fixed:
         payload["correction"] = fixed
     if node_role() != "dataset":
-        return {"ok": forward_feedback(payload), "forwarded": True, "queued": 0, "row": payload}
+        return {
+            "ok": forward_feedback(payload),
+            "forwarded": True,
+            "queued": 0,
+            "row": payload,
+        }
     path = queue_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK:
         raw_lines = []
         if path.exists():
-            raw_lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            raw_lines = [
+                line
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
         updated = False
         for index in range(len(raw_lines) - 1, -1, -1):
             try:
@@ -284,7 +310,9 @@ def _publish_label(result: dict, root: Path | None) -> None:
         return
 
 
-def note_exchange(prompt: str, answer: str, *, chip: str, peer: str, train: bool) -> None:
+def note_exchange(
+    prompt: str, answer: str, *, chip: str, peer: str, train: bool
+) -> None:
     try:
         if not train:
             note_hit()

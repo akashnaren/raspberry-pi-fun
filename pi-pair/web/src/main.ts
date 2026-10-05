@@ -419,7 +419,9 @@ function paintServices(body: HealthBody): void {
     if (serviceLines.length > 8) serviceLines.length = 8;
   }
   log.replaceChildren();
-  serviceLines.forEach((entry) => log.appendChild(el("p", "service-line", entry)));
+  serviceLines.forEach((entry) => {
+    log.appendChild(el("p", "service-line", entry));
+  });
 }
 
 async function quietNetwork(): Promise<boolean> {

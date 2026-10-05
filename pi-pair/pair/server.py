@@ -1,4 +1,5 @@
 """HTTP UI, OpenAI-compatible /v1/chat/completions, and the keyed public API."""
+
 from __future__ import annotations
 
 import gzip
@@ -21,8 +22,8 @@ from pair.assist import (
     refusal_for,
     scrub_reply,
     settle_reply,
+    stream_release,
     visible_canned,
-    withhold_partial,
 )
 from pair.canned import lookup, start_canned_warm, warm_status
 from pair.charts import (
@@ -33,7 +34,13 @@ from pair.charts import (
     repair_chart_reply,
     structure_hint,
 )
-from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model, start_model_warm
+from pair.chat import (
+    chat_llamacpp,
+    chat_ollama,
+    llamacpp_model,
+    start_model_warm,
+    warm_in_flight,
+)
 from pair.config import STATIC_DIR
 from pair.docfit import fit_outbound
 from pair.gate import capacity_message
@@ -41,7 +48,7 @@ from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
-from pair.knobs import decode_effort, inference_knobs, search_note_limit
+from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
 from pair.lists import (
     category_query,
     continuation_messages,
@@ -106,6 +113,7 @@ def remember_completion(prompt: str, answer: str, chip: str, peer: str) -> None:
 def last_completion() -> dict:
     with _LAST_LOCK:
         return dict(_LAST)
+
 
 _TYPES = {
     ".css": "text/css; charset=utf-8",
@@ -215,7 +223,9 @@ def brain_chat_url() -> str:
     return f"http://{peer['host']}:{port}/v1/chat/completions"
 
 
-def relay_chat(payload: bytes, target: str, mesh: str, mode: str = "") -> tuple[int, dict[str, str], bytes]:
+def relay_chat(
+    payload: bytes, target: str, mesh: str, mode: str = ""
+) -> tuple[int, dict[str, str], bytes]:
     """Hand the chat to pi4. This relay does not search and does not generate."""
     headers = {
         "content-type": "application/json",
@@ -233,9 +243,18 @@ def relay_chat(payload: bytes, target: str, mesh: str, mode: str = "") -> tuple[
         with urllib.request.urlopen(request, timeout=180) as response:
             raw = response.read()
             headers = {
-                "content-type": response.headers.get("content-type", "application/json"),
+                "content-type": response.headers.get(
+                    "content-type", "application/json"
+                ),
             }
-            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search", "X-Pi-Mode", "X-Pi-Route"):
+            for name in (
+                "X-Pi-Peer",
+                "X-Pi-Chip",
+                "X-Pi-Think",
+                "X-Pi-Search",
+                "X-Pi-Mode",
+                "X-Pi-Route",
+            ):
                 value = response.headers.get(name)
                 if value:
                     headers[name] = value
@@ -248,12 +267,36 @@ def relay_chat(payload: bytes, target: str, mesh: str, mode: str = "") -> tuple[
         raise RuntimeError(PI4_MISS_DOWN) from None
 
 
-def _with_search(messages, prompt: str):
+def _tuned_knobs(model: str) -> dict:
+    """File knobs with this mode's context, threads, and batch."""
+    row = inference_knobs()
+    tuned = dict(row)
+    tuned.update(mode_limits(str(model or ""), row))
+    return tuned
+
+
+def _with_search(messages, prompt: str, images: list | None = None):
     """On pi4, after a miss, attach public notes. Failures stay on the local model.
 
     A real-world Top-N searches the category. Horror movies become horror films.
+    Image cards and an in-flight model warm run beside the lookup.
     """
+    warm = warm_in_flight()
+    worker = None
+    if images is not None:
+
+        def _load_images() -> None:
+            images.extend(_image_cards(prompt))
+
+        worker = threading.Thread(
+            target=_load_images, name="search-images", daemon=True
+        )
+        worker.start()
     if not (prompt or "").strip():
+        if worker is not None:
+            worker.join()
+        if warm is not None:
+            warm.join(timeout=40)
         return messages, None
     query = category_query(prompt) if is_real_world_list(prompt) else prompt
     try:
@@ -280,6 +323,10 @@ def _with_search(messages, prompt: str):
     shown = prepare_search_note(full, search_note_limit())
     if status == "ok" and shown:
         messages = [{"role": "system", "content": shown}, *messages]
+    if worker is not None:
+        worker.join()
+    if warm is not None:
+        warm.join(timeout=40)
     return messages, {"status": status, "sources": sources, "context": full}
 
 
@@ -290,7 +337,9 @@ def _search_context(note, rows) -> str:
         if text:
             return text
     for row in rows or []:
-        if isinstance(row, dict) and str(row.get("content") or "").startswith("Web search notes"):
+        if isinstance(row, dict) and str(row.get("content") or "").startswith(
+            "Web search notes"
+        ):
             return str(row.get("content") or "")
     return ""
 
@@ -555,7 +604,9 @@ class Handler(BaseHTTPRequestHandler):
             body, encoding = encoded_body(self, asset.read_bytes())
             self.send_response(200)
             self._cors()
-            self.send_header("content-type", _TYPES.get(asset.suffix, "application/octet-stream"))
+            self.send_header(
+                "content-type", _TYPES.get(asset.suffix, "application/octet-stream")
+            )
             self.send_header("Cache-Control", "no-cache")
             if encoding:
                 self.send_header("Content-Encoding", encoding)
@@ -824,8 +875,12 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             self._error("chat body must be an object", status=400)
             return
-        target = (self.headers.get("X-Pi-Target") or data.pop("pi_target", None) or "auto").strip()
-        mesh = (self.headers.get("X-Pi-Mesh") or data.pop("pi_mesh", None) or "on").strip().lower() not in (
+        target = (
+            self.headers.get("X-Pi-Target") or data.pop("pi_target", None) or "auto"
+        ).strip()
+        mesh = (
+            self.headers.get("X-Pi-Mesh") or data.pop("pi_mesh", None) or "on"
+        ).strip().lower() not in (
             "0",
             "off",
             "false",
@@ -840,8 +895,12 @@ class Handler(BaseHTTPRequestHandler):
             data.pop("max_completion_tokens", None)
         else:
             think_name = ""
-            temperature = float(data.get("temperature") if data.get("temperature") is not None else 0.7)
-            max_tokens = int(data.get("max_tokens") or data.get("max_completion_tokens") or 256)
+            temperature = float(
+                data.get("temperature") if data.get("temperature") is not None else 0.7
+            )
+            max_tokens = int(
+                data.get("max_tokens") or data.get("max_completion_tokens") or 256
+            )
         started = time.time()
         want_stream = bool(data.get("stream"))
         prompt = last_user_text(messages)
@@ -851,7 +910,9 @@ class Handler(BaseHTTPRequestHandler):
         canned_partial = ""
         try:
             if target and target != "auto":
-                named = next((peer for peer in runtime.PEERS if peer["name"] == target), None)
+                named = next(
+                    (peer for peer in runtime.PEERS if peer["name"] == target), None
+                )
                 if named is not None and not may_generate(named):
                     raise RuntimeError(weak_brain_error(named["name"]))
             if (
@@ -866,7 +927,9 @@ class Handler(BaseHTTPRequestHandler):
                     if needs_exact_n(prompt, hit):
                         canned_partial = hit
                     else:
-                        note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
+                        note_exchange(
+                            prompt, hit, chip="cache", peer="cache", train=False
+                        )
                         remember_completion(prompt, hit, "cache", "cache")
                         cached_mode, cached_route = self._remember_canned_mode(data)
                         self._cached(
@@ -894,7 +957,10 @@ class Handler(BaseHTTPRequestHandler):
             resident_name = ""
             peer = pick(target, mesh, model)
             outbound = [
-                {"role": message.get("role", "user"), "content": message_text(message.get("content", ""))}
+                {
+                    "role": message.get("role", "user"),
+                    "content": message_text(message.get("content", "")),
+                }
                 for message in messages
                 if isinstance(message, dict)
             ]
@@ -909,7 +975,8 @@ class Handler(BaseHTTPRequestHandler):
                 and needs_web(prompt)
             )
             max_tokens = list_budget(prompt, max_tokens)
-            ctx = int(inference_knobs().get("num_ctx") or 2048)
+            tuned = _tuned_knobs(used if kind != "llamacpp" else model)
+            ctx = int(tuned.get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
             hint = None if ready else structure_hint(prompt)
             if hint:
@@ -917,13 +984,14 @@ class Handler(BaseHTTPRequestHandler):
             search_note = None
             images: list[dict] = []
             if do_search and not want_stream:
-                outbound, search_note = _with_search(outbound, prompt)
-                images = _image_cards(prompt)
+                outbound, search_note = _with_search(outbound, prompt, images)
             if not want_stream:
-                outbound = shape_messages(outbound, prompt)
+                outbound = shape_messages(outbound, prompt, tuned)
             grounded = ready
             if grounded is None and search_note is not None:
-                grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
+                grounded = answer_from_search(
+                    prompt, str(search_note.get("context") or "")
+                )
             # A finished sequence or chart stays. A short canned list still
             # continues once when the ready text is missing or incomplete.
             if canned_partial and (grounded is None or needs_exact_n(prompt, grounded)):
@@ -1005,7 +1073,9 @@ class Handler(BaseHTTPRequestHandler):
         target = (self.headers.get("X-Pi-Target") or "auto").strip()
         mesh = (self.headers.get("X-Pi-Mesh") or "on").strip()
         try:
-            status, headers, body = relay_chat(payload, target, mesh, getattr(self, "pi_mode", "") or "")
+            status, headers, body = relay_chat(
+                payload, target, mesh, getattr(self, "pi_mode", "") or ""
+            )
         except RuntimeError as error:
             self._error(str(error))
             return
@@ -1070,7 +1140,14 @@ class Handler(BaseHTTPRequestHandler):
             )
             self.send_header("Cache-Control", "no-cache")
             self.send_header("X-Accel-Buffering", "no")
-            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search", "X-Pi-Mode", "X-Pi-Route"):
+            for name in (
+                "X-Pi-Peer",
+                "X-Pi-Chip",
+                "X-Pi-Think",
+                "X-Pi-Search",
+                "X-Pi-Mode",
+                "X-Pi-Route",
+            ):
                 value = response.headers.get(name)
                 if value:
                     self.send_header(name, value)
@@ -1132,8 +1209,10 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(
             {
                 "status": found.get("status") if isinstance(found, dict) else "failed",
-                "sources": (found.get("sources") if isinstance(found, dict) else []) or [],
-                "context": (found.get("context") if isinstance(found, dict) else "") or "",
+                "sources": (found.get("sources") if isinstance(found, dict) else [])
+                or [],
+                "context": (found.get("context") if isinstance(found, dict) else "")
+                or "",
             }
         ).encode()
         self.send_response(200)
@@ -1321,7 +1400,13 @@ class Handler(BaseHTTPRequestHandler):
         first = {
             "id": "pi-pair",
             "object": "chat.completion.chunk",
-            "choices": [{"index": 0, "delta": {"role": "assistant", "content": answer}, "finish_reason": None}],
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": answer},
+                    "finish_reason": None,
+                }
+            ],
             "pi_peer": "cache",
             "pi_chip": "cache",
             "pi_model": "canned",
@@ -1385,9 +1470,13 @@ class Handler(BaseHTTPRequestHandler):
             def more(partial: str, count: int) -> str:
                 follow = continuation_messages(rows, partial, count)
                 if kind == "llamacpp":
-                    nxt, _used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+                    nxt, _used = chat_llamacpp(
+                        peer, model, follow, temperature, max_tokens
+                    )
                 else:
-                    nxt, _used = chat_ollama(peer, model, follow, temperature, max_tokens)
+                    nxt, _used = chat_ollama(
+                        peer, model, follow, temperature, max_tokens
+                    )
                 return nxt
 
             current = text
@@ -1417,9 +1506,13 @@ class Handler(BaseHTTPRequestHandler):
         meta: dict = {}
         try:
             if kind == "llamacpp":
-                content, used = chat_llamacpp(peer, model, messages, temperature, max_tokens, meta=meta)
+                content, used = chat_llamacpp(
+                    peer, model, messages, temperature, max_tokens, meta=meta
+                )
             else:
-                content, used = chat_ollama(peer, model, messages, temperature, max_tokens, meta=meta)
+                content, used = chat_ollama(
+                    peer, model, messages, temperature, max_tokens, meta=meta
+                )
         except (OSError, json.JSONDecodeError) as error:
             return degraded_answer(search_note, error), model, False
         content = content or ""
@@ -1429,14 +1522,20 @@ class Handler(BaseHTTPRequestHandler):
             content = self._guard_reply(
                 peer, kind, model, messages, temperature, max_tokens, prompt, content
             )
-        elif not list_count(prompt) and asks_continuation(prompt, content, str(meta.get("done_reason") or "")):
+        elif not list_count(prompt) and asks_continuation(
+            prompt, content, str(meta.get("done_reason") or "")
+        ):
             follow = shape_messages(plain_continuation(messages, content), prompt)
             more = ""
             try:
                 if kind == "llamacpp":
-                    more, used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+                    more, used = chat_llamacpp(
+                        peer, model, follow, temperature, max_tokens
+                    )
                 else:
-                    more, used = chat_ollama(peer, model, follow, temperature, max_tokens)
+                    more, used = chat_ollama(
+                        peer, model, follow, temperature, max_tokens
+                    )
             except (OSError, json.JSONDecodeError):
                 more = ""
             content = join_continuation(content, more or "")
@@ -1460,9 +1559,13 @@ class Handler(BaseHTTPRequestHandler):
     def _ask(self, peer, kind, model, messages, temperature, max_tokens) -> str:
         try:
             if kind == "llamacpp":
-                more, _used = chat_llamacpp(peer, model, messages, temperature, max_tokens)
+                more, _used = chat_llamacpp(
+                    peer, model, messages, temperature, max_tokens
+                )
             else:
-                more, _used = chat_ollama(peer, model, messages, temperature, max_tokens)
+                more, _used = chat_ollama(
+                    peer, model, messages, temperature, max_tokens
+                )
         except (OSError, json.JSONDecodeError):
             return ""
         return more or ""
@@ -1519,7 +1622,8 @@ class Handler(BaseHTTPRequestHandler):
         """
         rows = list(messages or [])
         already = any(
-            isinstance(row, dict) and str(row.get("content") or "").startswith("Web search notes")
+            isinstance(row, dict)
+            and str(row.get("content") or "").startswith("Web search notes")
             for row in rows
         )
         if not already and self._mesh_search_on() and not is_structured_request(prompt):
@@ -1568,9 +1672,13 @@ class Handler(BaseHTTPRequestHandler):
             )
             try:
                 if kind == "llamacpp":
-                    more, _used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+                    more, _used = chat_llamacpp(
+                        peer, model, follow, temperature, max_tokens
+                    )
                 else:
-                    more, _used = chat_ollama(peer, model, follow, temperature, max_tokens)
+                    more, _used = chat_ollama(
+                        peer, model, follow, temperature, max_tokens
+                    )
             except (OSError, json.JSONDecodeError):
                 return ""
             return more or ""
@@ -1604,7 +1712,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("X-Pi-Peer", peer["name"])
-        self.send_header("X-Pi-Chip", "brain: pi4" if peer["name"] == "pi4" else peer["name"])
+        self.send_header(
+            "X-Pi-Chip", "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+        )
         if think_name:
             self.send_header("X-Pi-Think", think_name)
         self._write_mode_headers(mode_name, route_name, resident_name)
@@ -1631,8 +1741,9 @@ class Handler(BaseHTTPRequestHandler):
             if not emit_status("searching", {"pi_tool": "search"}):
                 return
             if not searched:
-                messages, search_note = _with_search(messages, prompt)
-                images = _image_cards(prompt)
+                fresh: list[dict] = []
+                messages, search_note = _with_search(messages, prompt, fresh)
+                images = fresh
             found = {"pi_tool": "search"}
             if search_note:
                 found["pi_search"] = search_note["status"]
@@ -1650,7 +1761,7 @@ class Handler(BaseHTTPRequestHandler):
         _put_images(answer_extra, images)
         if not emit_status("answering", answer_extra or None):
             return
-        messages = shape_messages(messages, prompt)
+        messages = shape_messages(messages, prompt, _tuned_knobs(model))
         if grounded is not None:
             if needs_exact_n(prompt, grounded):
                 grounded = self._extend_list(
@@ -1710,7 +1821,9 @@ class Handler(BaseHTTPRequestHandler):
             chunk = {
                 "id": "pi-pair",
                 "object": "chat.completion.chunk",
-                "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+                "choices": [
+                    {"index": 0, "delta": {"content": content}, "finish_reason": None}
+                ],
             }
             safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
@@ -1752,41 +1865,52 @@ class Handler(BaseHTTPRequestHandler):
                 gen = stream_ollama(peer, model, messages, temperature, max_tokens)
             closed = False
             held = True
-            buffered: list[str] = []
+            policy = ""
+            flushed = 0
             for delta in gen:
-                buffered.append(delta)
-            joined = "".join(buffered)
-            # Hold the whole decode so a harmful reply is replaced, not streamed.
-            policy = refusal_for(joined) if is_harmful(joined) else ""
-            if not policy:
-                for delta in buffered:
-                    parts.append(delta)
-                    if held and withhold_partial("".join(parts)):
-                        continue
-                    if held:
-                        delta = "".join(parts)
-                        held = False
-                    chunk = {
-                        "id": "pi-pair",
-                        "object": "chat.completion.chunk",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"content": delta},
-                                "finish_reason": None,
-                            }
-                        ],
-                    }
-                    if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
-                        closed = True
-                        break
+                parts.append(delta)
+                joined = "".join(parts)
+                release = stream_release(joined)
+                if release == "refuse":
+                    # Nothing harmful has been written. Replace the whole reply.
+                    policy = refusal_for(joined)
+                    if flushed == 0:
+                        parts.clear()
+                    else:
+                        parts[:] = [joined[:flushed]]
+                    break
+                if release == "hold":
+                    continue
+                text = joined[flushed:]
+                flushed = len(joined)
+                held = False
+                if not text:
+                    continue
+                chunk = {
+                    "id": "pi-pair",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": text},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                if not safe_write(
+                    self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True
+                ):
+                    closed = True
+                    break
             if closed:
                 answer = "".join(parts).strip()
                 if not is_harmful(prompt):
                     answer = scrub_reply(answer) or answer
                 if answer:
                     chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                    note_exchange(
+                        prompt, answer, chip=chip, peer=peer["name"], train=True
+                    )
                     remember_completion(prompt, answer, chip, peer["name"])
                 return
             if policy:
@@ -1802,22 +1926,41 @@ class Handler(BaseHTTPRequestHandler):
                         }
                     ],
                 }
-                if not safe_write(self, f"data: {json.dumps(refused)}\n\n".encode(), flush=True):
+                if not safe_write(
+                    self, f"data: {json.dumps(refused)}\n\n".encode(), flush=True
+                ):
                     chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
                     remember_completion(prompt, answer, chip, peer["name"])
                     return
             else:
                 answer = "".join(parts)
-            if not policy and held and may_retry_refusal(prompt) and (
-                is_soft_refusal(answer) or placeholder_only(answer)
+            if (
+                not policy
+                and held
+                and may_retry_refusal(prompt)
+                and (is_soft_refusal(answer) or placeholder_only(answer))
             ):
                 if placeholder_only(answer) and not is_soft_refusal(answer):
                     answer = self._extend_list(
-                        peer, kind, model, messages, temperature, max_tokens, prompt, answer
+                        peer,
+                        kind,
+                        model,
+                        messages,
+                        temperature,
+                        max_tokens,
+                        prompt,
+                        answer,
                     )
                 else:
                     answer = self._guard_reply(
-                        peer, kind, model, messages, temperature, max_tokens, prompt, answer
+                        peer,
+                        kind,
+                        model,
+                        messages,
+                        temperature,
+                        max_tokens,
+                        prompt,
+                        answer,
                     )
                 if answer and not safe_write(
                     self,
@@ -1828,7 +1971,11 @@ class Handler(BaseHTTPRequestHandler):
                                 "id": "pi-pair",
                                 "object": "chat.completion.chunk",
                                 "choices": [
-                                    {"index": 0, "delta": {"content": answer}, "finish_reason": None}
+                                    {
+                                        "index": 0,
+                                        "delta": {"content": answer},
+                                        "finish_reason": None,
+                                    }
                                 ],
                             }
                         )
@@ -1837,16 +1984,24 @@ class Handler(BaseHTTPRequestHandler):
                     flush=True,
                 ):
                     chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                    note_exchange(
+                        prompt, answer, chip=chip, peer=peer["name"], train=True
+                    )
                     remember_completion(prompt, answer, chip, peer["name"])
                     return
             elif not policy and not is_harmful(prompt):
                 answer = scrub_reply(answer) or answer
             skip_extend = policy or (
-                is_soft_refusal(answer) or is_honest_miss(answer) or placeholder_only(answer)
+                is_soft_refusal(answer)
+                or is_honest_miss(answer)
+                or placeholder_only(answer)
             )
-            finished = answer if skip_extend else self._extend_list(
-                peer, kind, model, messages, temperature, max_tokens, prompt, answer
+            finished = (
+                answer
+                if skip_extend
+                else self._extend_list(
+                    peer, kind, model, messages, temperature, max_tokens, prompt, answer
+                )
             )
             if not policy and is_harmful(finished):
                 finished = answer
@@ -1863,9 +2018,13 @@ class Handler(BaseHTTPRequestHandler):
                         }
                     ],
                 }
-                if not safe_write(self, f"data: {json.dumps(more)}\n\n".encode(), flush=True):
+                if not safe_write(
+                    self, f"data: {json.dumps(more)}\n\n".encode(), flush=True
+                ):
                     chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                    note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                    note_exchange(
+                        prompt, answer, chip=chip, peer=peer["name"], train=True
+                    )
                     remember_completion(prompt, answer, chip, peer["name"])
                     return
                 answer = finished
@@ -1920,7 +2079,9 @@ class Handler(BaseHTTPRequestHandler):
             chunk = {
                 "id": "pi-pair",
                 "object": "chat.completion.chunk",
-                "choices": [{"index": 0, "delta": {"content": sentence}, "finish_reason": None}],
+                "choices": [
+                    {"index": 0, "delta": {"content": sentence}, "finish_reason": None}
+                ],
             }
             safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
@@ -1951,7 +2112,9 @@ class Handler(BaseHTTPRequestHandler):
         chunk = {
             "id": "pi-pair",
             "object": "chat.completion.chunk",
-            "choices": [{"index": 0, "delta": {"content": answer}, "finish_reason": None}],
+            "choices": [
+                {"index": 0, "delta": {"content": answer}, "finish_reason": None}
+            ],
             "pi_peer": peer["name"],
             "pi_chip": chip,
             "pi_model": used,
@@ -2013,7 +2176,14 @@ class Handler(BaseHTTPRequestHandler):
         if grounded is not None:
             if needs_exact_n(prompt, grounded):
                 content = self._extend_list(
-                    peer, kind, model, messages, temperature, max_tokens, prompt, grounded
+                    peer,
+                    kind,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    prompt,
+                    grounded,
                 )
             else:
                 content = grounded
@@ -2077,7 +2247,9 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, body)
 
 
-def make_server(host: str | None = None, port: int | None = None) -> ThreadingHTTPServer:
+def make_server(
+    host: str | None = None, port: int | None = None
+) -> ThreadingHTTPServer:
     bind_host = runtime.HOST if host is None else host
     bind_port = runtime.PORT if port is None else port
     return ThreadingHTTPServer((bind_host, bind_port), Handler)

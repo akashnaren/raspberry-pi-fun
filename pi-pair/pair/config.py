@@ -1,4 +1,5 @@
 """Listen settings and the peer list. Stdlib only."""
+
 from __future__ import annotations
 
 import json

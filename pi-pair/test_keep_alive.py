@@ -1,4 +1,5 @@
 """pi4 keep_alive stays -1 so chat, stream, and embed do not shrink model TTL."""
+
 from __future__ import annotations
 
 import json
@@ -59,7 +60,9 @@ class KeepAliveDefault(unittest.TestCase):
         self.assertEqual(keep_alive({"keep_alive": ""}), -1)
         self.assertEqual(keep_alive({"keep_alive": 0}), 0)
         shipped = json.loads(
-            (ROOT / "configs" / "runtime" / "inference_pi4.json").read_text(encoding="utf-8")
+            (ROOT / "configs" / "runtime" / "inference_pi4.json").read_text(
+                encoding="utf-8"
+            )
         )
         self.assertEqual(shipped["keep_alive"], -1)
         self.assertEqual(shipped["ollama_num_parallel"], 2)
@@ -107,13 +110,17 @@ class KeepAliveDefault(unittest.TestCase):
 
     def test_install_keeps_two_models_resident(self):
         script = (ROOT / "install.sh").read_text(encoding="utf-8")
-        unit = (ROOT / "configs" / "runtime" / "ollama-lan.service").read_text(encoding="utf-8")
+        unit = (ROOT / "configs" / "runtime" / "ollama-lan.service").read_text(
+            encoding="utf-8"
+        )
         for text in (script, unit):
             self.assertIn("OLLAMA_MAX_LOADED_MODELS=3", text)
             self.assertIn("OLLAMA_KEEP_ALIVE=-1", text)
             self.assertNotIn("OLLAMA_MAX_LOADED_MODELS=1", text)
         self.assertIn("ollama-lan.service", script)
-        self.assertIn('Environment="OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}"', script)
+        self.assertIn(
+            'Environment="OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}"', script
+        )
         self.assertIn("Environment=OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}", script)
         self.assertNotIn("OLLAMA_NUM_PARALLEL=1", script)
         self.assertIn("Environment=OLLAMA_NUM_PARALLEL=2", unit)
@@ -126,7 +133,9 @@ class KeepAliveDefault(unittest.TestCase):
             self.assertNotIn('"5m"', path.read_text(encoding="utf-8"), path.name)
         self.assertNotIn(
             '"5m"',
-            (ROOT / "configs" / "runtime" / "inference_pi4.json").read_text(encoding="utf-8"),
+            (ROOT / "configs" / "runtime" / "inference_pi4.json").read_text(
+                encoding="utf-8"
+            ),
         )
 
 

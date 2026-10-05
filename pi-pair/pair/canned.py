@@ -7,6 +7,7 @@ accept during the preload. A miss in that window stays on the exact map until
 the key cache is filled, then embeds the line only. Generation stays outside
 this module.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,19 +50,34 @@ def map_path() -> Path:
     return data_root() / "canned" / "canned_map.json"
 
 
+_MAPS: dict = {}
+_MAP_GEN = 0
+
+
 def load_map(path: Path | None = None) -> dict[str, str]:
+    """The canned map. A repeat read with the same mtime skips the disk."""
+    global _MAP_GEN
     target = path or map_path()
+    try:
+        stat = target.stat()
+        key = (str(target), stat.st_mtime_ns, stat.st_size, _MAP_GEN)
+    except OSError:
+        key = (str(target), None, None, _MAP_GEN)
+    cached = _MAPS.get(key)
+    if isinstance(cached, dict):
+        return dict(cached)
     try:
         raw = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
-        return {}
-    if not isinstance(raw, dict):
-        return {}
+        raw = None
     out: dict[str, str] = {}
-    for key, value in raw.items():
-        if isinstance(key, str) and isinstance(value, str) and key and value:
-            out[key] = value
-    return out
+    if isinstance(raw, dict):
+        for item, value in raw.items():
+            if isinstance(item, str) and isinstance(value, str) and item and value:
+                out[item] = value
+    _MAPS.clear()
+    _MAPS[key] = out
+    return dict(out)
 
 
 def _semantic_table(table: dict[str, str]) -> dict[str, str]:
@@ -131,6 +147,9 @@ def lookup(text: str, path: Path | None = None) -> str | None:
 
 
 def write_map(table: dict[str, str], path: Path | None = None) -> None:
+    global _MAP_GEN
+    _MAP_GEN += 1
+    _MAPS.clear()
     target = path or map_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(table, ensure_ascii=False, indent=2, sort_keys=True) + "\n"

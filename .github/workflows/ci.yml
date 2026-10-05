@@ -30,8 +30,16 @@ jobs:
           python-version: "3.12"
       - name: Install ruff
         run: pip install ruff==0.13.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Ruff
-        run: ruff check pi-pair
+        run: |
+          ruff check pi-pair
+          ruff format --check pi-pair
+      - name: Front-end lint
+        working-directory: pi-pair/web
+        run: npm ci && npm run lint:js
       - name: ShellCheck
         run: |
           sudo apt-get update -qq

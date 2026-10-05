@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Delete active shards and prepared artifacts. The pending queue is not touched."""
+
 from __future__ import annotations
 
 import json

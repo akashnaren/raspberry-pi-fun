@@ -13,6 +13,7 @@ Direct to the model server, same options the router sends:
 RSS is the sum of VmRSS for the named process and its children, sampled while
 the requests run. p50 and p95 are nearest-rank over the successful latencies.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -49,7 +50,11 @@ def _family_rss_kib(comm: str) -> int:
         end = stat.rfind(")")
         ppid = int(stat[end + 2 :].split()[1]) if end != -1 else 0
         rows.append((pid, ppid, rss, command))
-    roots = {pid for pid, _ppid, _rss, command in rows if command == comm or command.startswith(comm)}
+    roots = {
+        pid
+        for pid, _ppid, _rss, command in rows
+        if command == comm or command.startswith(comm)
+    }
     if not roots:
         return 0
     seen = set(roots)
@@ -76,7 +81,11 @@ def _chat(url: str, payload: dict, timeout: float) -> tuple[int, float]:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
-        headers={"content-type": "application/json", "X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        headers={
+            "content-type": "application/json",
+            "X-Pi-Target": "pi4",
+            "X-Pi-Mesh": "off",
+        },
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -89,12 +98,20 @@ def _chat(url: str, payload: dict, timeout: float) -> tuple[int, float]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Concurrent chat latency and RSS")
-    parser.add_argument("--url", default="", help="Router origin, for example http://127.0.0.1:18080")
-    parser.add_argument("--ollama", default="", help="Ollama origin, for example http://127.0.0.1:11434")
-    parser.add_argument("--n", type=int, default=2, help="Simultaneous requests per round")
+    parser.add_argument(
+        "--url", default="", help="Router origin, for example http://127.0.0.1:18080"
+    )
+    parser.add_argument(
+        "--ollama", default="", help="Ollama origin, for example http://127.0.0.1:11434"
+    )
+    parser.add_argument(
+        "--n", type=int, default=2, help="Simultaneous requests per round"
+    )
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--predict", type=int, default=32)
-    parser.add_argument("--rss-comm", default="ollama", help="Process name whose tree RSS is sampled")
+    parser.add_argument(
+        "--rss-comm", default="ollama", help="Process name whose tree RSS is sampled"
+    )
     parser.add_argument("--timeout", type=float, default=180)
     args = parser.parse_args()
     if bool(args.url) == bool(args.ollama):
@@ -103,7 +120,9 @@ def main() -> None:
         endpoint = args.ollama.rstrip("/") + "/api/chat"
         payload = {
             "model": "qwen2.5:0.5b",
-            "messages": [{"role": "user", "content": "Reply with one short sentence about rain."}],
+            "messages": [
+                {"role": "user", "content": "Reply with one short sentence about rain."}
+            ],
             "stream": False,
             "keep_alive": "10m",
             "options": {
@@ -118,7 +137,9 @@ def main() -> None:
         endpoint = args.url.rstrip("/") + "/v1/chat/completions"
         payload = {
             "model": "qwen2.5:0.5b",
-            "messages": [{"role": "user", "content": "Reply with one short sentence about rain."}],
+            "messages": [
+                {"role": "user", "content": "Reply with one short sentence about rain."}
+            ],
             "stream": False,
             "temperature": 0.7,
             "max_tokens": args.predict,

@@ -10,7 +10,11 @@ ROOT = Path(__file__).resolve().parent
 class MicButtonColor(unittest.TestCase):
     def test_listening_and_idle_use_different_color_classes(self):
         completed = subprocess.run(
-            ["node", "--experimental-strip-types", str(ROOT / "web" / "mic-button.test.mjs")],
+            [
+                "node",
+                "--experimental-strip-types",
+                str(ROOT / "web" / "mic-button.test.mjs"),
+            ],
             cwd=ROOT,
             capture_output=True,
             text=True,

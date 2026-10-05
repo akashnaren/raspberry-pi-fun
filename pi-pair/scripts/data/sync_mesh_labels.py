@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Upload hashed votes from pi3. Refuses every other role. Prints no raw chat."""
+
 from __future__ import annotations
 
 import json

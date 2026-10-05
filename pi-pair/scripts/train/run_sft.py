@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Pi-scale train entry. Runs the full cycle so a fold cannot outlive its shards."""
+
 from __future__ import annotations
 
 import json

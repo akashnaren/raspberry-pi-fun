@@ -1,4 +1,5 @@
 """Subset loader for the train config files. Stdlib only."""
+
 from __future__ import annotations
 
 from pathlib import Path

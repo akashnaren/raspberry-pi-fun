@@ -1,4 +1,5 @@
 """Generation cap: concurrent misses, immediate 503, cache and page answers stay open."""
+
 from __future__ import annotations
 
 import json
@@ -201,7 +202,11 @@ class ConcurrentChat(unittest.TestCase):
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 raw = response.read().decode()
-                body = json.loads(raw or "{}") if "json" in (response.headers.get("content-type") or "") else raw
+                body = (
+                    json.loads(raw or "{}")
+                    if "json" in (response.headers.get("content-type") or "")
+                    else raw
+                )
                 return response.status, response.headers, body
         except urllib.error.HTTPError as error:
             raw = error.read().decode()
@@ -242,7 +247,9 @@ class ConcurrentChat(unittest.TestCase):
         self.assertEqual(body["error"], capacity_message(2))
         self.assertIn("application/json", headers.get("content-type", ""))
         runtime.reset_health()
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/health", timeout=5
+        ) as response:
             health = json.loads(response.read().decode())
         self.assertEqual(health["slots"], 2)
         self.assertEqual(health["in_flight"], 2)
@@ -283,7 +290,9 @@ class ConcurrentChat(unittest.TestCase):
         self.assertLess(time.perf_counter() - started, 0.5)
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("X-Pi-Chip"), "cache")
-        self.assertEqual(body["choices"][0]["message"]["content"], "Hi. What can I help you with?")
+        self.assertEqual(
+            body["choices"][0]["message"]["content"], "Hi. What can I help you with?"
+        )
         self.assertEqual(HoldOllama.posts, 0)
 
         page = (
@@ -295,7 +304,9 @@ class ConcurrentChat(unittest.TestCase):
         def fake(query, opener=None):
             return {
                 "status": "ok",
-                "sources": [{"title": "Balloon note", "url": "https://example.com/balloon"}],
+                "sources": [
+                    {"title": "Balloon note", "url": "https://example.com/balloon"}
+                ],
                 "context": "Text from the first page:\n" + page,
             }
 
@@ -339,7 +350,9 @@ class ConcurrentChat(unittest.TestCase):
             self.assertLess(time.perf_counter() - started, 0.5)
             self.assertEqual(status, 200)
             self.assertEqual(headers.get("X-Pi-Chip"), "cache")
-            self.assertEqual(body["choices"][0]["message"]["content"], "stored sentence from the map")
+            self.assertEqual(
+                body["choices"][0]["message"]["content"], "stored sentence from the map"
+            )
             self.assertEqual(HoldOllama.posts, 0)
         finally:
             pair_server.lookup = original

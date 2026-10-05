@@ -401,7 +401,9 @@ abandoned.final("hello");
 abandoned.cancel();
 const stale = cancelled.timers.find((item) => !item.cleared);
 if (stale) stale.fn();
-cancelled.timers.forEach((item) => item.fn());
+cancelled.timers.forEach((item) => {
+  item.fn();
+});
 if (dropped.length || abandoned.text()) {
   throw new Error("cancelled speech still auto-sent: " + JSON.stringify(dropped));
 }

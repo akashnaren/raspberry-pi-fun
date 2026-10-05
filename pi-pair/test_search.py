@@ -1,4 +1,5 @@
 """Parser and fetch limits for the miss lookup. No live network."""
+
 from __future__ import annotations
 
 import json
@@ -38,11 +39,15 @@ def _many_html() -> str:
     rows = []
     for i in range(12):
         if i == 4:
-            rows.append('<a class="result__a" href="https://example.com/login">Sign in</a>')
+            rows.append(
+                '<a class="result__a" href="https://example.com/login">Sign in</a>'
+            )
             rows.append('<a class="result__snippet">please sign in</a>')
             rows.append('<a class="result__a" href="http://10.0.0.8/secret">Local</a>')
             rows.append('<a class="result__snippet">hidden</a>')
-        rows.append(f'<a class="result__a" href="https://example.com/p{i}">Title {i}</a>')
+        rows.append(
+            f'<a class="result__a" href="https://example.com/p{i}">Title {i}</a>'
+        )
         rows.append(f'<a class="result__snippet">snippet {i} about the bench</a>')
     return "<html><body>" + "".join(rows) + "</body></html>"
 
@@ -165,12 +170,20 @@ class SearchParse(unittest.TestCase):
         result = lookup_web("bench height", opener=opener)
         urls = [item["url"] for item in result["sources"]]
         self.assertEqual(len(urls), DEFAULT_RESULTS)
-        self.assertEqual(urls, [f"https://example.com/p{i}" for i in range(DEFAULT_RESULTS)])
-        self.assertIn(f"snippet {DEFAULT_RESULTS - 1} about the bench", result["context"])
-        self.assertNotIn(f"snippet {DEFAULT_RESULTS} about the bench", result["context"])
+        self.assertEqual(
+            urls, [f"https://example.com/p{i}" for i in range(DEFAULT_RESULTS)]
+        )
+        self.assertIn(
+            f"snippet {DEFAULT_RESULTS - 1} about the bench", result["context"]
+        )
+        self.assertNotIn(
+            f"snippet {DEFAULT_RESULTS} about the bench", result["context"]
+        )
         self.assertNotIn("example.com/login", json.dumps(result))
         self.assertNotIn("10.0.0.8", json.dumps(result))
-        pages = [(url, timeout) for url, timeout in calls if "duckduckgo.com" not in url]
+        pages = [
+            (url, timeout) for url, timeout in calls if "duckduckgo.com" not in url
+        ]
         self.assertEqual(pages, [("https://example.com/p0", PAGE_TIMEOUT)])
         search_calls = [timeout for url, timeout in calls if "duckduckgo.com" in url]
         self.assertEqual(search_calls, [SEARCH_TIMEOUT])
@@ -193,17 +206,25 @@ class SearchParse(unittest.TestCase):
             [f"https://example.com/p{i}" for i in range(6)],
         )
         self.assertEqual(len(lookup_web("bench", opener=opener, limit=0)["sources"]), 1)
-        self.assertEqual(len(lookup_web("bench", opener=opener, limit="8")["sources"]), DEFAULT_RESULTS)
+        self.assertEqual(
+            len(lookup_web("bench", opener=opener, limit="8")["sources"]),
+            DEFAULT_RESULTS,
+        )
 
     def test_instant_topics_honor_the_same_cap(self):
         topics = []
         for i in range(15):
             if i == 2:
-                topics.append({"FirstURL": "https://example.com/login", "Text": "sign in"})
+                topics.append(
+                    {"FirstURL": "https://example.com/login", "Text": "sign in"}
+                )
                 topics.append("not a topic")
                 continue
             topics.append(
-                {"FirstURL": f"https://example.com/t{i}", "Text": f"instant topic {i} about the bench"}
+                {
+                    "FirstURL": f"https://example.com/t{i}",
+                    "Text": f"instant topic {i} about the bench",
+                }
             )
 
         def opener(request, timeout=None):
@@ -233,7 +254,9 @@ class SearchParse(unittest.TestCase):
 
         capped = lookup_web("bench height", opener=opener, limit=40)
         self.assertEqual(len(capped["sources"]), MAX_RESULTS)
-        self.assertNotIn("https://example.com/login", [item["url"] for item in capped["sources"]])
+        self.assertNotIn(
+            "https://example.com/login", [item["url"] for item in capped["sources"]]
+        )
 
     def test_pi_timeouts_stay_one_fetch(self):
         self.assertGreaterEqual(SEARCH_TIMEOUT, 2)
@@ -275,9 +298,17 @@ class SearchParse(unittest.TestCase):
             raise AssertionError(url)
 
         result = lookup_web("bench height", opener=opener)
-        self.assertEqual([item["url"] for item in result["sources"]], ["https://example.com/ok"])
+        self.assertEqual(
+            [item["url"] for item in result["sources"]], ["https://example.com/ok"]
+        )
         blob = json.dumps(result)
-        for marker in ("10.1.2.3", "127.0.0.1", "169.254.1.1", "100.64.0.1", "100.127.255.9"):
+        for marker in (
+            "10.1.2.3",
+            "127.0.0.1",
+            "169.254.1.1",
+            "100.64.0.1",
+            "100.127.255.9",
+        ):
             self.assertNotIn(marker, blob)
         self.assertEqual(page.given, PAGE_READ_CAP)
         self.assertLessEqual(blob.count("P"), PAGE_READ_CAP)
@@ -299,7 +330,10 @@ class SearchParse(unittest.TestCase):
                 return _Resp(
                     "",
                     status=302,
-                    headers={"Location": "http://100.64.8.8/secret", "Content-Type": "text/html"},
+                    headers={
+                        "Location": "http://100.64.8.8/secret",
+                        "Content-Type": "text/html",
+                    },
                 )
             raise AssertionError(url)
 
@@ -404,7 +438,10 @@ class SearchParse(unittest.TestCase):
             ("http://public.example/x", "1.1.1.1", 80),
         ):
             created.clear()
-            with mock.patch("socket.getaddrinfo", boom), mock.patch("socket.create_connection", create):
+            with (
+                mock.patch("socket.getaddrinfo", boom),
+                mock.patch("socket.create_connection", create),
+            ):
                 with self.assertRaises(OSError):
                     _fetch(url, None, 1, 64)
             self.assertEqual(created, [(pin, port)], url)
@@ -431,7 +468,11 @@ class SearchParse(unittest.TestCase):
                 )
                 return _Resp(body)
             if request.full_url == "https://public.example/go":
-                target = "https://evil.example/secret" if not seen_tail["on"] else "https://tail.example/secret"
+                target = (
+                    "https://evil.example/secret"
+                    if not seen_tail["on"]
+                    else "https://tail.example/secret"
+                )
                 return _Resp(
                     "",
                     status=302,
@@ -467,7 +508,10 @@ class SearchParse(unittest.TestCase):
                 return _Resp(
                     "",
                     status=302,
-                    headers={"Location": "https://next.example/ok", "Content-Type": "text/html"},
+                    headers={
+                        "Location": "https://next.example/ok",
+                        "Content-Type": "text/html",
+                    },
                 )
             if request.full_url == "https://next.example/ok":
                 return _Resp("<html><body>second hop</body></html>")

@@ -120,7 +120,9 @@ def is_flow_request(prompt: str) -> bool:
 
 def is_structured_request(prompt: str) -> bool:
     """A plot, table, or diagram. These skip grounded web search."""
-    return is_chart_request(prompt) or is_table_request(prompt) or is_flow_request(prompt)
+    return (
+        is_chart_request(prompt) or is_table_request(prompt) or is_flow_request(prompt)
+    )
 
 
 def structure_hint(prompt: str) -> str | None:
@@ -290,7 +292,9 @@ def _chart_attempts(text: str, prompt: str) -> list[str]:
         return bodies
     lowered = raw.lower()
     if raw.count("```") % 2 == 1 and (
-        "```chart" in lowered or "```plotly" in lowered or (want_json and "```json" in lowered)
+        "```chart" in lowered
+        or "```plotly" in lowered
+        or (want_json and "```json" in lowered)
     ):
         return ["{"]
     return []

@@ -5,6 +5,7 @@ Stdlib only. Auto and mesh stay on, so a miss is still generated on pi4.
 A bot is another caller of that HTTP API. --dry-run prints the posts and
 does not open a connection.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,7 +38,15 @@ def feedback_body(prompt: str, answer: str, vote: str, correction: str) -> dict:
     return body
 
 
-def plan(base: str, prompt: str, vote: str, correction: str, think: str, model: str, mode: str) -> dict:
+def plan(
+    base: str,
+    prompt: str,
+    vote: str,
+    correction: str,
+    think: str,
+    model: str,
+    mode: str,
+) -> dict:
     root = base.rstrip("/")
     return {
         "dry_run": True,
@@ -97,7 +106,12 @@ def run(
     timeout: float,
 ) -> dict:
     root = base.rstrip("/")
-    chat = _post(root + "/v1/chat/completions", chat_body(prompt, think, model, mode), timeout, mode)
+    chat = _post(
+        root + "/v1/chat/completions",
+        chat_body(prompt, think, model, mode),
+        timeout,
+        mode,
+    )
     answer = answer_text(chat)
     if not answer:
         raise RuntimeError("chat returned no answer")
@@ -112,7 +126,9 @@ def run(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Post one chat turn and a label.")
-    parser.add_argument("--base", default=DEFAULT_BASE, help="Router origin, port 18080")
+    parser.add_argument(
+        "--base", default=DEFAULT_BASE, help="Router origin, port 18080"
+    )
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--vote", required=True, choices=("up", "down"))
     parser.add_argument("--correction", default="")
@@ -120,7 +136,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--mode", default=DEFAULT_MODE, choices=("flash", "pro"))
     parser.add_argument("--timeout", type=float, default=180)
-    parser.add_argument("--dry-run", action="store_true", help="Print the posts and do not connect")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print the posts and do not connect"
+    )
     args = parser.parse_args(argv)
     prompt = args.prompt.strip()
     correction = args.correction.strip()
@@ -131,7 +149,19 @@ def main(argv: list[str] | None = None) -> int:
         print("base is empty", file=sys.stderr)
         return 2
     if args.dry_run:
-        print(json.dumps(plan(args.base, prompt, args.vote, correction, args.think, args.model, args.mode)))
+        print(
+            json.dumps(
+                plan(
+                    args.base,
+                    prompt,
+                    args.vote,
+                    correction,
+                    args.think,
+                    args.model,
+                    args.mode,
+                )
+            )
+        )
         return 0
     try:
         print(

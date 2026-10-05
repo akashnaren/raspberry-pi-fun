@@ -6,8 +6,10 @@ stripped, the file and the notes are fenced, and the whole prompt is cut
 so a 2048-token context still has room to answer. A list that hits the
 token cap can be continued once.
 """
+
 from __future__ import annotations
 
+import functools
 import json
 import re
 
@@ -16,19 +18,20 @@ from pair.ground import is_grounded_problem
 from pair.knobs import attachment_limit, inference_knobs
 
 ATTACH_MARK = "\n\n---\n"
-CONTINUE_NUDGE = "Continue the list from the next item. Do not repeat items already written."
+CONTINUE_NUDGE = (
+    "Continue the list from the next item. Do not repeat items already written."
+)
 SLOW_ANSWER = "That took too long on this Pi. Ask again with a shorter question."
 SHORT_ANSWER = "I could not finish that on this Pi. Ask again with a shorter question."
 NOTES_ANSWER = "I could not finish a full answer. From the notes: "
 
 CHART_HINT = (
-    "Chart replies use one fenced block and no other plot format. "
-    "When the user asks for a plot or chart, write one short sentence, then:\n"
+    "Chart replies use one fenced block and no other plot format.\n"
     "```chart\n"
     '{"title":"Title","data":[{"type":"bar","x":["a","b"],"y":[1,2]}]}\n'
     "```\n"
-    "type is bar, scatter, line, or pie. Put finite numbers in y or values. "
-    "If the user gave no numbers, say so and do not invent points."
+    "type is bar, scatter, line, or pie. Finite numbers only. "
+    "If the user gave no numbers, say so."
 )
 
 _PLOT = re.compile(
@@ -124,6 +127,7 @@ def _wrap_attachment(body: str, limit: int) -> str:
     )
 
 
+@functools.lru_cache(maxsize=256)
 def user_question(prompt: str) -> str:
     """The line the user typed. A fenced attachment is not part of the question."""
     raw = prompt or ""
@@ -145,10 +149,12 @@ def attachment_tail(prompt: str) -> str:
     return tail
 
 
+@functools.lru_cache(maxsize=256)
 def is_plot(prompt: str) -> bool:
     return bool(_PLOT.search(user_question(prompt)))
 
 
+@functools.lru_cache(maxsize=256)
 def is_plain_list(prompt: str) -> bool:
     question = user_question(prompt)
     if _SEARCH.search(question):
@@ -156,6 +162,7 @@ def is_plain_list(prompt: str) -> bool:
     return bool(_LIST.search(question))
 
 
+@functools.lru_cache(maxsize=256)
 def is_list_intent(prompt: str) -> bool:
     """List, top-N, N-best, and rank lines skip search unless they ask for news.
 
@@ -168,6 +175,7 @@ def is_list_intent(prompt: str) -> bool:
     return bool(_LIST.search(question) or _RANK.search(question))
 
 
+@functools.lru_cache(maxsize=256)
 def needs_web(prompt: str) -> bool:
     """False for a plot, a list-shaped ask, or an attachment the user already supplied.
 
@@ -298,10 +306,18 @@ def add_answer_hint(messages, prompt: str) -> list:
         return list(messages or [])
     rows = list(messages or [])
     for row in rows:
-        if isinstance(row, dict) and row.get("role") == "system" and hint in str(row.get("content") or ""):
+        if (
+            isinstance(row, dict)
+            and row.get("role") == "system"
+            and hint in str(row.get("content") or "")
+        ):
             return rows
     index = 0
-    while index < len(rows) and isinstance(rows[index], dict) and rows[index].get("role") == "system":
+    while (
+        index < len(rows)
+        and isinstance(rows[index], dict)
+        and rows[index].get("role") == "system"
+    ):
         index += 1
     rows.insert(index, {"role": "system", "content": hint})
     return rows

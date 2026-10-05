@@ -57,7 +57,9 @@ def _tokens(text: str) -> int:
     return (size + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
 
 
-def excerpt_limit(num_ctx: int = 2048, reserved: str = "", reply_tokens: int = 256) -> int:
+def excerpt_limit(
+    num_ctx: int = 2048, reserved: str = "", reply_tokens: int = 256
+) -> int:
     """Characters of document text that still leave the thread and reply in num_ctx."""
     try:
         ctx = int(num_ctx)
@@ -170,6 +172,11 @@ def fit_outbound(messages: list, num_ctx: int = 2048, reply_tokens: int = 256) -
         outbound.append(message)
     if not changed:
         return outbound
-    if any(isinstance(item, dict) and item.get("role") == "system" and item.get("content") == DOC_HINT for item in outbound):
+    if any(
+        isinstance(item, dict)
+        and item.get("role") == "system"
+        and item.get("content") == DOC_HINT
+        for item in outbound
+    ):
         return outbound
     return [{"role": "system", "content": DOC_HINT}, *outbound]

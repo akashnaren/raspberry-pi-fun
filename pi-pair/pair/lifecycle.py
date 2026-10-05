@@ -1,4 +1,5 @@
 """pi3 cycle: prepare queue, fold canned map, gate, promote, delete shards."""
+
 from __future__ import annotations
 
 import hashlib
@@ -145,7 +146,9 @@ def _prepare(active: Path | None, root: Path, run_id: str) -> tuple[Path, list[d
     return prepared, rows
 
 
-def _fold(table: dict[str, str], rows: list[dict], heldout: set[str]) -> tuple[dict[str, str], int, int]:
+def _fold(
+    table: dict[str, str], rows: list[dict], heldout: set[str]
+) -> tuple[dict[str, str], int, int]:
     added = 0
     rejected = 0
     for row in rows:
@@ -173,7 +176,9 @@ def _fold(table: dict[str, str], rows: list[dict], heldout: set[str]) -> tuple[d
 
 
 def _gate(table: dict[str, str], heldout: set[str], before: dict[str, str]) -> None:
-    leaked = sorted(key for key in heldout if key in table or normalize_key(key) in table)
+    leaked = sorted(
+        key for key in heldout if key in table or normalize_key(key) in table
+    )
     if leaked:
         raise GateError("eval gate failed: held-out input present in canned map")
     missing = [key for key in before if key not in table]
@@ -182,7 +187,13 @@ def _gate(table: dict[str, str], heldout: set[str], before: dict[str, str]) -> N
 
 
 def _tombstone(
-    root: Path, run_id: str, added: int, rejected: int, digest: str, rows_after: int, labeled: int = 0
+    root: Path,
+    run_id: str,
+    added: int,
+    rejected: int,
+    digest: str,
+    rows_after: int,
+    labeled: int = 0,
 ) -> Path:
     path = root / "train" / "done" / f"{run_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)

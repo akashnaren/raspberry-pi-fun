@@ -55,7 +55,9 @@ class Sequences(unittest.TestCase):
 
 class GroundedLists(unittest.TestCase):
     def test_horror_list_uses_the_source_titles(self):
-        invented = "1. The Shapen\n2. The Exorcist\n3. Hereditary\n4. Get Out\n5. Halloween"
+        invented = (
+            "1. The Shapen\n2. The Exorcist\n3. Hereditary\n4. Get Out\n5. Halloween"
+        )
         done = ground_category_list("Top 5 horror movies", invented, HORROR_NOTES)
         titles = [line.split(". ", 1)[1] for line in done.splitlines()]
         self.assertEqual(

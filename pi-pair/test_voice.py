@@ -10,7 +10,11 @@ ROOT = Path(__file__).resolve().parent
 class SpokenTurn(unittest.TestCase):
     def test_reply_is_spoken_from_the_assistant_message_and_final_speech_is_sent(self):
         completed = subprocess.run(
-            ["node", "--experimental-strip-types", str(ROOT / "web" / "voice.test.mjs")],
+            [
+                "node",
+                "--experimental-strip-types",
+                str(ROOT / "web" / "voice.test.mjs"),
+            ],
             cwd=ROOT,
             capture_output=True,
             text=True,

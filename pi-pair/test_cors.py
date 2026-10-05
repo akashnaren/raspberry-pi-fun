@@ -1,4 +1,5 @@
 """CORS on /api/* is an allowlist. The page and /v1 stay open."""
+
 from __future__ import annotations
 
 import os
@@ -34,14 +35,18 @@ class ApiCors(unittest.TestCase):
     def test_origin_helper_rejects_foreign_and_script_urls(self):
         self.assertEqual(allowed_api_origin("", "127.0.0.1:18080", ""), "")
         self.assertEqual(allowed_api_origin("null", "127.0.0.1:18080", "null"), "")
-        self.assertEqual(allowed_api_origin("javascript:alert(1)", "127.0.0.1:9", ""), "")
+        self.assertEqual(
+            allowed_api_origin("javascript:alert(1)", "127.0.0.1:9", ""), ""
+        )
         self.assertEqual(allowed_api_origin("data:text/html,hi", "127.0.0.1:9", ""), "")
         self.assertEqual(
             allowed_api_origin("https://evil.example", "127.0.0.1:18080", ""),
             "",
         )
         self.assertEqual(
-            allowed_api_origin("https://user:pass@lab.example", "127.0.0.1:9", "https://lab.example"),
+            allowed_api_origin(
+                "https://user:pass@lab.example", "127.0.0.1:9", "https://lab.example"
+            ),
             "",
         )
         self.assertEqual(
@@ -49,7 +54,9 @@ class ApiCors(unittest.TestCase):
             "http://127.0.0.1:18080",
         )
         self.assertEqual(
-            allowed_api_origin("https://lab.example/", "127.0.0.1:9", "https://lab.example"),
+            allowed_api_origin(
+                "https://lab.example/", "127.0.0.1:9", "https://lab.example"
+            ),
             "https://lab.example",
         )
 

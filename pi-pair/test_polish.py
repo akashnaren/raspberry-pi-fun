@@ -1,4 +1,5 @@
 """Charts, lists, document excerpts, and the Pro preload."""
+
 from __future__ import annotations
 
 import json
@@ -64,7 +65,9 @@ class Charts(unittest.TestCase):
             calls["n"] += 1
             return good
 
-        self.assertTrue(chart_json_ok('{"title":"Fruit","data":[{"type":"pie","values":[1,2]}]}'))
+        self.assertTrue(
+            chart_json_ok('{"title":"Fruit","data":[{"type":"pie","values":[1,2]}]}')
+        )
         self.assertFalse(chart_json_ok('{"data":[{"type":"bar","points":[1,2]}]}'))
         self.assertEqual(repair_chart_reply(good, retry, prompt=prompt), good)
         self.assertEqual(calls["n"], 0)
@@ -94,9 +97,15 @@ class Charts(unittest.TestCase):
 
         fenced = "Here.\n```json\n" + body + "\n```\n"
         self.assertEqual(repair_chart_reply(fenced, retry, prompt=prompt), fence)
-        self.assertEqual(repair_chart_reply("```JSON\n" + body + "\n```", retry, prompt=prompt), fence)
+        self.assertEqual(
+            repair_chart_reply("```JSON\n" + body + "\n```", retry, prompt=prompt),
+            fence,
+        )
         self.assertEqual(repair_chart_reply(body, retry, prompt=prompt), fence)
-        self.assertEqual(repair_chart_reply("```json\r\n" + body + "\r\n```", retry, prompt=prompt), fence)
+        self.assertEqual(
+            repair_chart_reply("```json\r\n" + body + "\r\n```", retry, prompt=prompt),
+            fence,
+        )
         self.assertEqual(calls["n"], 0)
         self.assertTrue(chart_json_ok(body))
 
@@ -110,12 +119,21 @@ class Charts(unittest.TestCase):
         chart = "Apples lead.\n" + fence
         self.assertEqual(repair_chart_reply(chart, retry, prompt=prompt), chart)
         mixed = fence + "\n```json\n" + body + "\n```"
-        self.assertEqual(repair_chart_reply(mixed, retry, prompt=prompt), fence + "\n" + fence)
-        self.assertNotIn("```json", repair_chart_reply(mixed, retry, prompt=prompt).lower())
+        self.assertEqual(
+            repair_chart_reply(mixed, retry, prompt=prompt), fence + "\n" + fence
+        )
+        self.assertNotIn(
+            "```json", repair_chart_reply(mixed, retry, prompt=prompt).lower()
+        )
         python = '```python\n{"data":[{"type":"bar","y":[1]}]}\n```'
         self.assertEqual(repair_chart_reply(python, retry, prompt=prompt), python)
-        self.assertEqual(repair_chart_reply('{"host":"pi4"}', retry, prompt=prompt), '{"host":"pi4"}')
-        self.assertEqual(repair_chart_reply("No points were given.", retry, prompt=prompt), "No points were given.")
+        self.assertEqual(
+            repair_chart_reply('{"host":"pi4"}', retry, prompt=prompt), '{"host":"pi4"}'
+        )
+        self.assertEqual(
+            repair_chart_reply("No points were given.", retry, prompt=prompt),
+            "No points were given.",
+        )
         kept = repair_chart_reply(fenced, retry, prompt="what host is this")
         self.assertEqual(kept, fenced)
         self.assertIn("```json", kept)
@@ -178,7 +196,9 @@ class Lists(unittest.TestCase):
     def test_placeholders_do_not_continue_a_refusal(self):
         from pair.lists import continuation_messages, numbered_lines, placeholder_only
 
-        junk = "I'm sorry, but I can't assist with that.\n" + "\n".join(f"{i}. {i}" for i in range(1, 6))
+        junk = "I'm sorry, but I can't assist with that.\n" + "\n".join(
+            f"{i}. {i}" for i in range(1, 6)
+        )
         self.assertTrue(placeholder_only(junk))
         self.assertEqual(numbered_lines(junk), [])
         self.assertFalse(placeholder_only("1. 2\n2. 3\n3. 5\n4. 7\n5. 11"))
@@ -193,7 +213,9 @@ class Lists(unittest.TestCase):
         self.assertIn("1. Film 1", done)
         self.assertIn("5. Film 5", done)
         self.assertNotIn("can't assist", done.lower())
-        rows = continuation_messages([{"role": "user", "content": "Top 5 movies"}], junk, 5)
+        rows = continuation_messages(
+            [{"role": "user", "content": "Top 5 movies"}], junk, 5
+        )
         self.assertTrue(all(row.get("role") != "assistant" for row in rows))
         self.assertIn("Stop at item 5", rows[-1]["content"])
 
@@ -255,7 +277,9 @@ class Lists(unittest.TestCase):
 
 
 def list_count_from(text: str) -> int:
-    nums = [int(line.split(".", 1)[0]) for line in text.splitlines() if line[:1].isdigit()]
+    nums = [
+        int(line.split(".", 1)[0]) for line in text.splitlines() if line[:1].isdigit()
+    ]
     return nums[-1] if nums else 0
 
 
@@ -268,7 +292,13 @@ class Documents(unittest.TestCase):
         self.assertIn("400 degrees", fitted)
         self.assertNotIn(body, fitted)
         outbound = fit_outbound(
-            [{"role": "user", "content": "What temperature does the catalyst reach?\n\n---\n" + body}]
+            [
+                {
+                    "role": "user",
+                    "content": "What temperature does the catalyst reach?\n\n---\n"
+                    + body,
+                }
+            ]
         )
         self.assertEqual(outbound[0]["role"], "system")
         self.assertIn("400 degrees", outbound[1]["content"])
@@ -334,7 +364,9 @@ class VisualLists(unittest.TestCase):
             url = request.full_url
             title = "Dune" if "Dune" in url else "Arrival"
             if "list=search" in url:
-                return _Resp(json.dumps({"query": {"search": [{"title": title + " (film)"}]}}))
+                return _Resp(
+                    json.dumps({"query": {"search": [{"title": title + " (film)"}]}})
+                )
             return _Resp(
                 json.dumps(
                     {
@@ -346,7 +378,11 @@ class VisualLists(unittest.TestCase):
                             "width": 100,
                             "height": 140,
                         },
-                        "content_urls": {"desktop": {"page": f"https://en.wikipedia.org/wiki/{title}"}},
+                        "content_urls": {
+                            "desktop": {
+                                "page": f"https://en.wikipedia.org/wiki/{title}"
+                            }
+                        },
                     }
                 )
             )
@@ -371,13 +407,19 @@ class _Resp:
 class WebPolish(unittest.TestCase):
     def test_streaming_math_diagrams_and_presence(self):
         completed = subprocess.run(
-            ["node", "--experimental-strip-types", str(ROOT / "web" / "polish.test.mjs")],
+            [
+                "node",
+                "--experimental-strip-types",
+                str(ROOT / "web" / "polish.test.mjs"),
+            ],
             cwd=ROOT / "web",
             capture_output=True,
             text=True,
             check=False,
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout + "\n" + completed.stderr)
+        self.assertEqual(
+            completed.returncode, 0, completed.stdout + "\n" + completed.stderr
+        )
         self.assertIn("ok", completed.stdout)
 
 

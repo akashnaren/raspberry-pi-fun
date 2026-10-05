@@ -4,6 +4,7 @@
 scan, is OCR'd on this machine first. Both finish as the same string the
 composer sends on /v1/chat/completions. There is no cloud OCR call.
 """
+
 from __future__ import annotations
 
 import re
@@ -18,7 +19,9 @@ MAX_TEXT_CHARS = 4096
 
 TEXT_EXTS = frozenset({".txt", ".md", ".markdown"})
 TEXT_MIMES = frozenset({"text/plain", "text/markdown", "text/x-markdown"})
-IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".tif", ".tiff", ".bmp"})
+IMAGE_EXTS = frozenset(
+    {".png", ".jpg", ".jpeg", ".gif", ".webp", ".tif", ".tiff", ".bmp"}
+)
 IMAGE_MIMES = frozenset(
     {
         "image/png",
@@ -116,7 +119,9 @@ def ocr_kind(name: str, mime: str, data: bytes) -> str:
 
 
 def cap_text(text: str) -> tuple[str, bool]:
-    cleaned = neutralize(text.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")).strip()
+    cleaned = neutralize(
+        text.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")
+    ).strip()
     limit = MAX_TEXT_CHARS
     if len(cleaned) <= limit:
         return cleaned, False
@@ -174,7 +179,9 @@ def _parts(body: bytes, boundary: str) -> list[tuple[dict[str, str], bytes]]:
             if b":" not in line:
                 continue
             key, value = line.split(b":", 1)
-            headers[key.decode("latin1").lower().strip()] = value.decode("latin1").strip()
+            headers[key.decode("latin1").lower().strip()] = value.decode(
+                "latin1"
+            ).strip()
         found.append((headers, data))
     return found
 

@@ -1,4 +1,5 @@
 """pi4 asks pi2 for search and falls back locally. pi3 publishes hashed votes."""
+
 from __future__ import annotations
 
 import base64
@@ -86,7 +87,9 @@ class SearchPage(_Quiet, BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        type(self).seen.append(self.path.split("?")[0] + " " + str(payload.get("q") or ""))
+        type(self).seen.append(
+            self.path.split("?")[0] + " " + str(payload.get("q") or "")
+        )
         body = json.dumps(
             {
                 "status": "ok",
@@ -536,7 +539,9 @@ class ChatOffload(unittest.TestCase):
             data=json.dumps(
                 {
                     "model": "qwen2.5:0.5b",
-                    "messages": [{"role": "user", "content": "How tall is the zinc bench today?"}],
+                    "messages": [
+                        {"role": "user", "content": "How tall is the zinc bench today?"}
+                    ],
                     "stream": False,
                 }
             ).encode(),
@@ -561,7 +566,9 @@ class ChatOffload(unittest.TestCase):
         blob = json.dumps(OllamaPage.last_payload)
         self.assertIn("bench from pi2", blob)
         self.assertTrue(all(item.startswith("/v1/search ") for item in SearchPage.seen))
-        self.assertFalse(may_generate({"name": "pi2", "role": "health", "generative": False}))
+        self.assertFalse(
+            may_generate({"name": "pi2", "role": "health", "generative": False})
+        )
 
         self.servers[0].shutdown()
         self.servers[0].server_close()
@@ -643,7 +650,11 @@ class PublicLabels(unittest.TestCase):
         self.assertEqual(public["chip"], "brain: pi4")
 
     def test_published_hash_is_hmac_not_plain_sha256(self):
-        samples = ("hi", "what is the weather today?", "How tall is the zinc bench today?")
+        samples = (
+            "hi",
+            "what is the weather today?",
+            "How tall is the zinc bench today?",
+        )
         os.environ["PI_PAIR_LABEL_PEPPER"] = PEPPER
         for text in samples:
             public = redact_label({"prompt": text, "answer": "sunny", "vote": "up"})
@@ -661,12 +672,18 @@ class PublicLabels(unittest.TestCase):
         )
         self.assertNotEqual(public["prompt_sha256"], hashlib.sha256(b"hi").hexdigest())
         self.assertEqual(public["prompt_sha256"], _label_hmac("hi", raw_pepper))
-        self.assertNotEqual(public["correction_sha256"], hashlib.sha256(b"clear").hexdigest())
+        self.assertNotEqual(
+            public["correction_sha256"], hashlib.sha256(b"clear").hexdigest()
+        )
         self.assertEqual(public["correction_sha256"], _label_hmac("clear", raw_pepper))
         os.environ["PI_PAIR_LABEL_PEPPER"] = "too-short"
-        self.assertIsNone(redact_label({"prompt": "hi", "answer": "sunny", "vote": "up"}))
+        self.assertIsNone(
+            redact_label({"prompt": "hi", "answer": "sunny", "vote": "up"})
+        )
         os.environ.pop("PI_PAIR_LABEL_PEPPER", None)
-        self.assertIsNone(redact_label({"prompt": "hi", "answer": "sunny", "vote": "up"}))
+        self.assertIsNone(
+            redact_label({"prompt": "hi", "answer": "sunny", "vote": "up"})
+        )
         os.environ["HF_TOKEN"] = TOKEN
 
         def opener(request, timeout):
@@ -773,12 +790,16 @@ class PublicLabels(unittest.TestCase):
         for line in seen[2].data.decode().splitlines():
             item = json.loads(line)
             if item["key"] == "file":
-                files[item["value"]["path"]] = base64.b64decode(item["value"]["content"]).decode()
+                files[item["value"]["path"]] = base64.b64decode(
+                    item["value"]["content"]
+                ).decode()
         self.assertNotIn(SECRET, files["labels.jsonl"])
         self.assertNotIn(SECRET, files["README.md"])
         row = json.loads(files["labels.jsonl"].splitlines()[0])
         self.assertEqual(row["vote"], "up")
-        self.assertNotEqual(row["prompt_sha256"], hashlib.sha256(SECRET.encode()).hexdigest())
+        self.assertNotEqual(
+            row["prompt_sha256"], hashlib.sha256(SECRET.encode()).hexdigest()
+        )
         self.assertEqual(row["prompt_sha256"], _label_hmac(SECRET))
         self.assertNotIn(TOKEN, json.dumps(result))
         self.assertNotIn(KAGGLE, json.dumps(result))
@@ -839,7 +860,9 @@ class PublicLabels(unittest.TestCase):
                 encoding="utf-8",
             )
             result = post_train(root=data, adapters=base / "adapters")
-            public = (data / "train" / "public" / "labels.jsonl").read_text(encoding="utf-8")
+            public = (data / "train" / "public" / "labels.jsonl").read_text(
+                encoding="utf-8"
+            )
             self.assertNotIn(SECRET, public)
             self.assertNotIn("hidden reply", public)
             self.assertNotIn(hashlib.sha256(SECRET.encode()).hexdigest(), public)
@@ -886,7 +909,9 @@ class PublicLabels(unittest.TestCase):
         self.assertIn("Do not set HF_TOKEN", install)
         for line in ("'HF_TOKEN='", "'KAGGLE_API_TOKEN='", "'PI_PAIR_LABEL_PEPPER='"):
             self.assertIn(line, install)
-        self.assertNotRegex(install, r"(?:HF_TOKEN|KAGGLE_API_TOKEN|PI_PAIR_LABEL_PEPPER)=[A-Za-z0-9]")
+        self.assertNotRegex(
+            install, r"(?:HF_TOKEN|KAGGLE_API_TOKEN|PI_PAIR_LABEL_PEPPER)=[A-Za-z0-9]"
+        )
         banned = re.compile(
             r"hf_[A-Za-z0-9]{8,}|HF_TOKEN\s*=\s*['\"]?[A-Za-z0-9]|KAGGLE_API_TOKEN\s*=\s*['\"]?[A-Za-z0-9]"
         )

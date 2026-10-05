@@ -1,4 +1,5 @@
 """Keyed HTTP API for apps: chat, health, OpenAPI, and the docs page."""
+
 from __future__ import annotations
 
 import hmac
@@ -145,9 +146,7 @@ def openapi_document() -> dict:
                             "application/json": {
                                 "schema": {"$ref": "#/components/schemas/ChatRequest"},
                                 "example": {
-                                    "messages": [
-                                        {"role": "user", "content": "status"}
-                                    ]
+                                    "messages": [{"role": "user", "content": "status"}]
                                 },
                             }
                         },
@@ -165,27 +164,19 @@ def openapi_document() -> dict:
                         },
                         "400": {
                             "description": "The body or mode was rejected.",
-                            "content": {
-                                "application/json": {"schema": error}
-                            },
+                            "content": {"application/json": {"schema": error}},
                         },
                         "401": {
                             "description": "Missing or invalid API key.",
-                            "content": {
-                                "application/json": {"schema": error}
-                            },
+                            "content": {"application/json": {"schema": error}},
                         },
                         "413": {
                             "description": "The JSON body is larger than 1 MB.",
-                            "content": {
-                                "application/json": {"schema": error}
-                            },
+                            "content": {"application/json": {"schema": error}},
                         },
                         "502": {
                             "description": "pi4 did not answer, or the pin was refused.",
-                            "content": {
-                                "application/json": {"schema": error}
-                            },
+                            "content": {"application/json": {"schema": error}},
                         },
                         "503": {
                             "description": (
@@ -194,9 +185,7 @@ def openapi_document() -> dict:
                                 "POST /v1/chat/completions: pi4 is at capacity. "
                                 "A map hit does not take a slot."
                             ),
-                            "content": {
-                                "application/json": {"schema": error}
-                            },
+                            "content": {"application/json": {"schema": error}},
                         },
                     },
                 }
@@ -216,23 +205,17 @@ def openapi_document() -> dict:
                             "description": "Router is answering.",
                             "content": {
                                 "application/json": {
-                                    "schema": {
-                                        "$ref": "#/components/schemas/Health"
-                                    }
+                                    "schema": {"$ref": "#/components/schemas/Health"}
                                 }
                             },
                         },
                         "401": {
                             "description": "Missing or invalid API key.",
-                            "content": {
-                                "application/json": {"schema": error}
-                            },
+                            "content": {"application/json": {"schema": error}},
                         },
                         "503": {
                             "description": f"{API_KEY_ENV} is not set.",
-                            "content": {
-                                "application/json": {"schema": error}
-                            },
+                            "content": {"application/json": {"schema": error}},
                         },
                     },
                 }
@@ -247,9 +230,7 @@ def openapi_document() -> dict:
                         "200": {
                             "description": "This document.",
                             "content": {
-                                "application/json": {
-                                    "schema": {"type": "object"}
-                                }
+                                "application/json": {"schema": {"type": "object"}}
                             },
                         }
                     },
@@ -265,9 +246,7 @@ def openapi_document() -> dict:
                     "responses": {
                         "200": {
                             "description": "HTML page.",
-                            "content": {
-                                "text/html": {"schema": {"type": "string"}}
-                            },
+                            "content": {"text/html": {"schema": {"type": "string"}}},
                         }
                     },
                 }
