@@ -2,20 +2,41 @@
 from __future__ import annotations
 
 import json
+import threading
 import urllib.request
 
-from pair.guard import require_generative
+from pair import runtime
+from pair.embed import EMBED_MODEL, embed_texts, on_pi4
+from pair.guard import may_generate, require_generative
 from pair.knobs import inference_knobs, keep_alive, ollama_options
+from pair.modes import FLASH, PRO, mode_table
 
 
-def _post_json(url: str, payload: dict, timeout: float) -> dict:
+def open_json(url: str, payload: dict, timeout: float):
+    """POST JSON. Chat, stream, and the startup warm share this opener."""
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
         headers={"content-type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
+def _post_json(url: str, payload: dict, timeout: float) -> dict:
+    with open_json(url, payload, timeout) as response:
         return json.loads(response.read().decode())
+
+
+def ollama_payload(model, messages, temperature, max_tokens, stream: bool, knobs=None) -> dict:
+    """The one Ollama chat body. keep_alive is the pi4 knob, not a per-call TTL."""
+    row = inference_knobs() if knobs is None else knobs
+    return {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "keep_alive": keep_alive(row),
+        "options": ollama_options(temperature, max_tokens, row),
+    }
 
 
 def llamacpp_model(peer, model: str) -> str:
@@ -25,23 +46,19 @@ def llamacpp_model(peer, model: str) -> str:
     return model
 
 
-def chat_ollama(peer, model, messages, temperature=0.7, max_tokens=256):
+def chat_ollama(peer, model, messages, temperature=0.7, max_tokens=256, meta: dict | None = None):
     require_generative(peer)
     knobs = inference_knobs()
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False,
-        "keep_alive": keep_alive(knobs),
-        "options": ollama_options(temperature, max_tokens, knobs),
-    }
+    payload = ollama_payload(model, messages, temperature, max_tokens, False, knobs)
     out = _post_json(url, payload, timeout=180)
+    if meta is not None:
+        meta["done_reason"] = str(out.get("done_reason") or "")
     text = (out.get("message") or {}).get("content") or out.get("response") or ""
     return text, model
 
 
-def chat_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256):
+def chat_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256, meta: dict | None = None):
     require_generative(peer)
     use = llamacpp_model(peer, model)
     url = f"http://{peer['host']}:{peer['port']}/v1/chat/completions"
@@ -53,5 +70,76 @@ def chat_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256):
         "max_tokens": max_tokens,
     }
     out = _post_json(url, payload, timeout=300)
-    content = (out.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+    choice = (out.get("choices") or [{}])[0]
+    if meta is not None:
+        meta["done_reason"] = str(choice.get("finish_reason") or "")
+    content = (choice.get("message") or {}).get("content") or ""
     return content, use
+
+
+def warm_chat_model(peer: dict, model: str, timeout: float = 45) -> bool:
+    """Load one tag with keep_alive -1. A missing tag returns False and is not pulled."""
+    if not may_generate(peer) or not model:
+        return False
+    url = f"http://{peer['host']}:{peer['port']}/api/chat"
+    payload = ollama_payload(
+        model,
+        [{"role": "user", "content": "ok"}],
+        0.0,
+        1,
+        False,
+    )
+    try:
+        with open_json(url, payload, timeout) as response:
+            response.read()
+        return True
+    except Exception:
+        return False
+
+
+def warm_residents(peer: dict, timeout: float = 45) -> list[str]:
+    """Load Flash, then Pro if it is already on disk, then ping the embedder.
+
+    Pro is not pulled. A 404 or a down socket is skipped. Off a generative
+    peer this returns without a request.
+    """
+    if not may_generate(peer):
+        return []
+    table = mode_table()
+    loaded: list[str] = []
+    for name in (table[FLASH], table[PRO]):
+        if name and warm_chat_model(peer, name, timeout=timeout):
+            loaded.append(name)
+    try:
+        if embed_texts(["."]):
+            loaded.append(EMBED_MODEL)
+    except Exception:
+        pass
+    return loaded
+
+
+def start_model_warm(after: threading.Thread | None = None) -> threading.Thread:
+    """Load Flash, Pro, and the embedder after the canned-key batch.
+
+    The thread does not block accept. A failure is logged and ignored.
+    `after` is joined first so the embed batch is not racing the chat loads.
+    """
+
+    def run() -> None:
+        if after is not None:
+            after.join(timeout=120)
+        if not on_pi4():
+            return
+        peer = next((item for item in runtime.PEERS if item.get("name") == "pi4"), None)
+        if not isinstance(peer, dict):
+            return
+        try:
+            loaded = warm_residents(peer)
+        except Exception as exc:
+            print(f"model warm skipped: {type(exc).__name__}", flush=True)
+            return
+        print(f"model warm: {', '.join(loaded) or 'none'}", flush=True)
+
+    thread = threading.Thread(target=run, name="model-warm", daemon=True)
+    thread.start()
+    return thread

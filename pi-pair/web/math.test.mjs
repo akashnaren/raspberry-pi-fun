@@ -31,4 +31,20 @@ if (coded.includes('class="katex"')) {
   throw new Error("code span was typeset");
 }
 
+const linked = renderMarkdown("$$\\href{javascript:alert(1)}{click}$$");
+if (/href\s*=\s*["']?\s*javascript:/i.test(linked)) {
+  throw new Error("katex trusted a javascript href: " + linked.slice(0, 500));
+}
+if (!linked.includes('class="katex"')) {
+  throw new Error("href formula was not rendered");
+}
+
+const mermaid = renderMarkdown("```mermaid\nflowchart TD\nA[<script>alert(1)</script>]\n```");
+if (mermaid.includes("<script>") || mermaid.includes("<svg")) {
+  throw new Error("mermaid was executed: " + mermaid);
+}
+if (!mermaid.includes("&lt;script&gt;") || !mermaid.includes('class="language-mermaid"')) {
+  throw new Error("mermaid was not escaped: " + mermaid);
+}
+
 console.log("ok");

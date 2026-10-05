@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from pair import ocr
+from pair.turn import neutralize
 
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 MAX_TEXT_CHARS = 4096
@@ -115,7 +116,7 @@ def ocr_kind(name: str, mime: str, data: bytes) -> str:
 
 
 def cap_text(text: str) -> tuple[str, bool]:
-    cleaned = text.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    cleaned = neutralize(text.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")).strip()
     limit = MAX_TEXT_CHARS
     if len(cleaned) <= limit:
         return cleaned, False

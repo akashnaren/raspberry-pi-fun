@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "lint": "tsc --noEmit",
     "build": "tsc --noEmit && node build.mjs"
   },
   "devDependencies": {

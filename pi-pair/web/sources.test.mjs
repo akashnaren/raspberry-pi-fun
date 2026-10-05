@@ -80,4 +80,30 @@ if (anchors.some((node) => node.getAttribute("href") === "not-a-url")) {
   throw new Error("panel kept a bad url");
 }
 
+const hostile = [
+  { title: "js", url: "javascript:alert(1)" },
+  { title: "data", url: "data:text/html,hi" },
+  { title: "proto", url: "//evil.example/a" },
+  { title: "prefix", url: "http-not-a-url" },
+  { title: "creds", url: "https://user:pass@example.com/a" },
+  { title: "ok", url: "http://example.com/plain" },
+];
+const kept = validSources(hostile);
+if (kept.length !== 1 || kept[0].url !== "http://example.com/plain") {
+  throw new Error("hostile sources leaked " + JSON.stringify(kept));
+}
+const hostilePanel = renderSourcesPanelBody(document, {
+  status: "ok",
+  sources: hostile,
+  stages: ["searching"],
+  prompt: "x",
+});
+const hrefs = [...hostilePanel.querySelectorAll("a")].map((node) => node.getAttribute("href"));
+if (hrefs.length !== 1 || hrefs[0] !== "http://example.com/plain") {
+  throw new Error("panel href " + hrefs.join(","));
+}
+if (hrefs.some((href) => /javascript:|data:/i.test(href))) {
+  throw new Error("script href " + hrefs.join(","));
+}
+
 console.log("ok");

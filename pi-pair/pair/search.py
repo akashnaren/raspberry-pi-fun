@@ -1,18 +1,19 @@
 """Local public lookup for a canned-map miss. Stdlib only. No API key.
 
 pi4 calls this when pi2's search HTTP is down. pi2's /v1/search calls it directly.
-Neither path decodes.
+Neither path decodes. HTML parsing lives in search_html. Address pinning stays here.
 """
 from __future__ import annotations
 
 import http.client
 import json
 import socket
-from html.parser import HTMLParser
 from ipaddress import ip_address, ip_network
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 from urllib.request import HTTPHandler, HTTPSHandler, HTTPRedirectHandler, Request, build_opener
+
+from pair.search_html import parse_result_page, plain_text
 
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 INSTANT_URL = "https://api.duckduckgo.com/"
@@ -35,7 +36,6 @@ MAX_REDIRECTS = 2
 # CGNAT, including Tailscale. Python 3.12 does not mark this range private.
 _CGNAT = ip_network("100.64.0.0/10")
 _LOGIN = {"login", "signin", "sign-in", "auth"}
-_VOID = {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
 
 
 class _NoFollow(HTTPRedirectHandler):
@@ -289,87 +289,12 @@ def _fetch(url: str, opener, timeout: float, cap: int) -> tuple[bytes, str]:
         return body, ctype
 
 
-class _ResultParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.results: list[dict] = []
-        self._mode = ""
-        self._depth = 0
-        self._href = ""
-        self._buf: list[str] = []
-
-    def handle_starttag(self, tag, attrs):
-        attr = {key: value or "" for key, value in attrs}
-        classes = set(attr.get("class", "").split())
-        if self._mode:
-            if tag not in _VOID:
-                self._depth += 1
-            return
-        if tag == "a" and "result__a" in classes:
-            self._mode = "a"
-            self._depth = 1
-            self._href = attr.get("href", "")
-            self._buf = []
-        elif "result__snippet" in classes:
-            self._mode = "s"
-            self._depth = 1
-            self._buf = []
-
-    def handle_endtag(self, tag):
-        if not self._mode or tag in _VOID:
-            return
-        self._depth -= 1
-        if self._depth > 0:
-            return
-        text = " ".join("".join(self._buf).split())
-        if self._mode == "a":
-            url = _unwrap(self._href)
-            if url:
-                title = (text or url)[:TITLE_CAP]
-                self.results.append({"title": title, "url": url, "snippet": ""})
-        elif self._mode == "s" and self.results and not self.results[-1]["snippet"]:
-            self.results[-1]["snippet"] = text[:SNIPPET_CAP]
-        self._mode = ""
-        self._buf = []
-
-    def handle_data(self, data):
-        if self._mode:
-            self._buf.append(data)
-
-
-class _TextParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-        self._skip = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style", "noscript"):
-            self._skip += 1
-
-    def handle_endtag(self, tag):
-        if tag in ("script", "style", "noscript") and self._skip:
-            self._skip -= 1
-
-    def handle_data(self, data):
-        if not self._skip:
-            self.parts.append(data)
-
-
 def _plain(raw: str) -> str:
-    parser = _TextParser()
-    parser.feed(raw)
-    text = " ".join("".join(parser.parts).split())
-    head = text[:400].lower()
-    if "password" in head and ("sign in" in head or "log in" in head):
-        return ""
-    return text[:PAGE_TEXT_CAP]
+    return plain_text(raw, PAGE_TEXT_CAP)
 
 
 def _parse_results(page: str, limit: int) -> list[dict]:
-    parser = _ResultParser()
-    parser.feed(page)
-    return parser.results[:limit]
+    return parse_result_page(page, limit, _unwrap, TITLE_CAP, SNIPPET_CAP)
 
 
 def _search_html(query: str, opener, limit: int) -> list[dict]:
