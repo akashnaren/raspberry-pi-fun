@@ -13,7 +13,8 @@ Locks (manifest `locks`, fail closed):
   train_then_delete is true
   weak_gen is false
 
-Eval `input` values must not match canned `input` values (case/whitespace folded).
+Eval `input` values must not match canned `input` values (case, whitespace,
+and edge punctuation folded, the same way the serve path folds a map key).
 """
 from __future__ import annotations
 
@@ -239,7 +240,9 @@ def _read_jsonl(path: Path, errors: list[dict]) -> list[tuple[int, dict]]:
 
 
 def _norm(text: str) -> str:
-    return " ".join(text.strip().lower().split())
+    """Same fold as pair.canned.normalize_key. A trailing dot is not a new key."""
+    collapsed = " ".join(text.strip().lower().split())
+    return collapsed.strip(" \t\r\n?!.,;:\"'")
 
 
 def _posix_rel(from_dir: Path, target: Path) -> str:
@@ -425,6 +428,28 @@ def _check_canned_map(data_root: Path, canned_rows: list[dict], errors: list[dic
     for key, answer in expect.items():
         if key in doc and doc[key] != answer:
             _add(errors, "canned_map_mismatch", f"answer mismatch for {key!r}")
+    seen_fold: dict[str, str] = {}
+    for key in doc:
+        if not isinstance(key, str):
+            continue
+        folded = _norm(key)
+        if key != folded:
+            _add(
+                errors,
+                "canned_map_mismatch",
+                f"key {key!r} must already be normalized ({folded!r})",
+            )
+        if not folded:
+            continue
+        prior = seen_fold.get(folded)
+        if prior is not None and prior != key:
+            _add(
+                errors,
+                "canned_map_mismatch",
+                f"keys {prior!r} and {key!r} fold to {folded!r}",
+            )
+        else:
+            seen_fold.setdefault(folded, key)
 
 
 def _check_decontam(data_root: Path, eval_rows: list[dict], canned_inputs: dict[str, str], errors: list[dict]) -> None:

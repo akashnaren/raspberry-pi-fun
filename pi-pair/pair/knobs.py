@@ -28,6 +28,9 @@ _DEFAULTS = {
     # Characters of search notes pasted into the prompt. Sources on the page
     # are not cut. A shorter note is a shorter prefill.
     "search_note_chars": 640,
+    # Characters of one attachment kept in the prompt. The upload route may
+    # return more for the composer. The model sees this cut, inside a fence.
+    "attachment_chars": 1200,
 }
 
 
@@ -90,6 +93,14 @@ def search_note_limit(knobs: dict | None = None) -> int:
         return max(0, int(row.get("search_note_chars") or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def attachment_limit(knobs: dict | None = None) -> int:
+    row = knobs if knobs is not None else inference_knobs()
+    try:
+        return max(0, int(row.get("attachment_chars") if row.get("attachment_chars") is not None else 1200))
+    except (TypeError, ValueError):
+        return 1200
 
 
 PARALLEL_MIN = 1

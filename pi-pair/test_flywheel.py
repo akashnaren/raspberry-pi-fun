@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.canned import lookup, normalize_key
+from pair.canned import _semantic_table, lookup, normalize_key
 from pair.chat import chat_ollama
 from pair.guard import may_generate
 from pair.lifecycle import GateError, _prepare, post_train
@@ -83,6 +83,13 @@ class Flywheel(unittest.TestCase):
         for line in (ROOT / "data" / "seed" / "eval_heldout" / "eval_heldout.jsonl").read_text().splitlines():
             row = json.loads(line)
             self.assertNotIn(normalize_key(row["input"]), keys)
+
+    def test_folded_map_keeps_the_first_answer(self):
+        folded = _semantic_table({"hello.": "dotted", "hello": "plain"})
+        self.assertEqual(folded, {"hello": "dotted"})
+        again = _semantic_table({"Hello.": "first", "HELLO!": "second"})
+        self.assertEqual(again, {"hello": "first"})
+        self.assertEqual(normalize_key("hello."), "hello")
 
     def test_lookup_normalizes(self):
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")

@@ -8,12 +8,13 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.canned import lookup, start_canned_warm, warm_status
 from pair.charts import is_structured_request, parabola_chart, structure_hint
-from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
+from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model, start_model_warm
 from pair.config import STATIC_DIR
 from pair.docfit import fit_outbound
 from pair.gate import capacity_message
@@ -22,7 +23,7 @@ from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, search_note_limit
-from pair.lists import continuation_messages, finish_numbered, list_budget
+from pair.lists import continuation_messages, finish_numbered, list_budget, list_count
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
 from pair.preload import start_pro_warm
@@ -40,6 +41,16 @@ from pair.mesh import lookup_for_brain
 from pair.search import lookup_web
 from pair import runtime
 from pair.stream import stream_llamacpp, stream_ollama
+from pair.turn import (
+    asks_continuation,
+    continuation_messages as plain_continuation,
+    degraded_answer,
+    join_continuation,
+    needs_web,
+    prepare_search_note,
+    public_failure,
+    shape_messages,
+)
 from pair.upload import UploadRejected, ingest, read_limited
 
 SOURCE_CAP = 8
@@ -225,16 +236,13 @@ def _with_search(messages, prompt: str):
             break
         if not isinstance(item, dict):
             continue
-        url = str(item.get("url") or "").strip()
-        if not url.startswith("http"):
+        url = _source_url(str(item.get("url") or ""))
+        if not url:
             continue
         title = str(item.get("title") or url).strip() or url
         sources.append({"title": title[:120], "url": url})
     full = str(found.get("context") or "").strip()
-    shown = full
-    limit = search_note_limit()
-    if limit and len(shown) > limit:
-        shown = shown[:limit].rstrip()
+    shown = prepare_search_note(full, search_note_limit())
     if status == "ok" and shown:
         messages = [{"role": "system", "content": shown}, *messages]
     return messages, {"status": status, "sources": sources, "context": full}
@@ -390,13 +398,82 @@ def index_body() -> bytes:
     return html.replace("__MODEL__", runtime.MODEL).encode("utf-8")
 
 
+def _source_url(url: str) -> str:
+    """http(s) link with no userinfo. Anything else is dropped before the page."""
+    text = (url or "").strip()
+    if not text or text.startswith("//") or any(ch in text for ch in "\r\n\t "):
+        return ""
+    parsed = urlparse(text)
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    if not parsed.hostname or parsed.username or parsed.password:
+        return ""
+    return text
+
+
+def _canonical_origin(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw or raw.lower() == "null" or any(ch in raw for ch in "\r\n\x00"):
+        return ""
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    if parsed.username or parsed.password:
+        return ""
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host:
+        return ""
+    if parsed.path not in ("", "/") or parsed.query or parsed.params or parsed.fragment:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{parsed.port}" if parsed.port is not None else host
+    return f"{parsed.scheme}://{netloc}"
+
+
+def allowed_api_origin(origin: str, host: str, allowlist: str = "") -> str:
+    """Origin to echo on /api/*, or empty when the browser must not be allowed.
+
+    The page's own host matches without a setting. PI_PAIR_CORS_ORIGINS adds
+    more, comma-separated. There is no wildcard on these routes.
+    """
+    echo = _canonical_origin(origin)
+    if not echo:
+        return ""
+    for item in (allowlist or "").split(","):
+        if item.strip() and _canonical_origin(item) == echo:
+            return echo
+    request_host = (host or "").strip().lower()
+    if request_host and urlparse(echo).netloc.lower() == request_host:
+        return echo
+    return ""
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def _api_route(self) -> bool:
+        path = (self.path or "").split("?", 1)[0]
+        return path == "/api" or path.startswith("/api/")
+
     def _cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "*")
+        if self._api_route():
+            origin = allowed_api_origin(
+                self.headers.get("Origin", ""),
+                self.headers.get("Host", ""),
+                os.environ.get("PI_PAIR_CORS_ORIGINS", ""),
+            )
+            self.send_header("Vary", "Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Authorization, Content-Type, X-API-Key",
+            )
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         public = getattr(self, "public_mode", "") or ""
         tier = getattr(self, "pi_mode", "") or ""
@@ -691,7 +768,7 @@ class Handler(BaseHTTPRequestHandler):
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             structured = is_structured_request(prompt)
-            do_search = bool(mesh and node_role() == "brain") and not structured
+            do_search = bool(mesh and node_role() == "brain") and not structured and needs_web(prompt)
             max_tokens = list_budget(prompt, max_tokens)
             ctx = int(inference_knobs().get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
@@ -701,9 +778,11 @@ class Handler(BaseHTTPRequestHandler):
                 outbound = [{"role": "system", "content": hint}, *outbound]
             search_note = None
             images: list[dict] = []
-            if do_search:
+            if do_search and not want_stream:
                 outbound, search_note = _with_search(outbound, prompt)
                 images = _image_cards(prompt)
+            if not want_stream:
+                outbound = shape_messages(outbound, prompt)
             grounded = ready
             if grounded is None and search_note is not None:
                 grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
@@ -733,9 +812,9 @@ class Handler(BaseHTTPRequestHandler):
                     prompt,
                     think_name,
                     do_search,
-                    searched=do_search,
-                    search_note=search_note,
-                    images=images,
+                    searched=False,
+                    search_note=None,
+                    images=[],
                     mode_name=mode_name,
                     route_name=route_name,
                     resident_name=resident_name,
@@ -1150,9 +1229,52 @@ class Handler(BaseHTTPRequestHandler):
             return nxt
 
         try:
-            return finish_numbered(prompt, text, more)
+            extended = finish_numbered(prompt, text, more)
         except Exception:
             return text
+        if extended != text or list_count(prompt):
+            return extended
+        return text
+
+    def _decode_reply(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        search_note: dict | None,
+    ) -> tuple[str, str, bool]:
+        """One completion. A plain list may continue once. A failed decode is one sentence."""
+        meta: dict = {}
+        try:
+            if kind == "llamacpp":
+                content, used = chat_llamacpp(peer, model, messages, temperature, max_tokens, meta=meta)
+            else:
+                content, used = chat_ollama(peer, model, messages, temperature, max_tokens, meta=meta)
+        except (OSError, json.JSONDecodeError) as error:
+            return degraded_answer(search_note, error), model, False
+        content = content or ""
+        if not list_count(prompt) and asks_continuation(prompt, content, str(meta.get("done_reason") or "")):
+            follow = shape_messages(plain_continuation(messages, content), prompt)
+            more = ""
+            try:
+                if kind == "llamacpp":
+                    more, used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+                else:
+                    more, used = chat_ollama(peer, model, follow, temperature, max_tokens)
+            except (OSError, json.JSONDecodeError):
+                more = ""
+            content = join_continuation(content, more or "")
+        else:
+            content = self._extend_list(
+                peer, kind, model, messages, temperature, max_tokens, prompt, content
+            )
+        if not str(content).strip():
+            return degraded_answer(search_note, None), used, False
+        return content, used, True
 
     def _stream(
         self,
@@ -1227,6 +1349,7 @@ class Handler(BaseHTTPRequestHandler):
         _put_images(answer_extra, images)
         if not emit_status("answering", answer_extra or None):
             return
+        messages = shape_messages(messages, prompt)
         if grounded is not None:
             self._emit_ready_answer(
                 peer,
@@ -1359,8 +1482,17 @@ class Handler(BaseHTTPRequestHandler):
             apply_tier(self, final)
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
+        except (OSError, json.JSONDecodeError) as error:
+            sentence = degraded_answer(search_note, error)
+            chunk = {
+                "id": "pi-pair",
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {"content": sentence}, "finish_reason": None}],
+            }
+            safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
+            safe_write(self, b"data: [DONE]\n\n", flush=True)
         except Exception as error:
-            err = {"error": str(error)}
+            err = {"error": public_failure(error, search_note)}
             apply_tier(self, err)
             safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
@@ -1444,19 +1576,24 @@ class Handler(BaseHTTPRequestHandler):
         grounded = ready_answer
         if grounded is None and search_note is not None:
             grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
+        train = True
         if grounded is not None:
             content, used = grounded, model
-        elif kind == "llamacpp":
-            content, used = chat_llamacpp(peer, model, messages, temperature, max_tokens)
         else:
-            content, used = chat_ollama(peer, model, messages, temperature, max_tokens)
-        if grounded is None:
-            content = self._extend_list(
-                peer, kind, model, messages, temperature, max_tokens, prompt, content
+            content, used, train = self._decode_reply(
+                peer,
+                kind,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                prompt,
+                search_note,
             )
             images = _cards_after(prompt, content, list(images or []))
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-        note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
+        if train:
+            note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
         remember_completion(prompt, content, chip, peer["name"])
         elapsed = int((time.time() - started) * 1000)
         resp = {
@@ -1526,4 +1663,5 @@ def main() -> None:
     server = make_server()
     warm_thread = start_canned_warm()
     start_pro_warm()
+    start_model_warm(warm_thread)
     server.serve_forever()

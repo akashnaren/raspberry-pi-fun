@@ -17,6 +17,7 @@ function renderTex(source: string, display: boolean): string {
       throwOnError: false,
       strict: "ignore",
       output: "html",
+      trust: false,
     });
   } catch {
     return `<code>${escapeHtml(source)}</code>`;

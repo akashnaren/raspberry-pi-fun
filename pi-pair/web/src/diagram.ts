@@ -117,7 +117,7 @@ export function mermaidFence(lang: string, code: string): string | null {
   if (lang.trim().toLowerCase() !== "mermaid") return null;
   if (parseFlow(code)) return diagramPlaceholder(code);
   const source = escapeHtml(code.replace(/\n$/, ""));
-  return `<pre class="diagram-source"><code>${source}</code></pre>`;
+  return `<pre class="diagram-source"><code class="language-mermaid">${source}</code></pre>`;
 }
 
 export function mountDiagrams(root: ParentNode): void {

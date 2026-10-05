@@ -85,7 +85,6 @@ class KeepAliveDefault(unittest.TestCase):
         }
         with (
             patch("pair.chat.urllib.request.urlopen", urlopen),
-            patch("pair.stream.urllib.request.urlopen", urlopen),
             patch("pair.embed.urllib.request.urlopen", urlopen),
         ):
             text, model = chat_ollama(

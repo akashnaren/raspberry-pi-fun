@@ -65,9 +65,13 @@ def load_map(path: Path | None = None) -> dict[str, str]:
 
 
 def _semantic_table(table: dict[str, str]) -> dict[str, str]:
-    """Normalized keys the paraphrase match scores. Empty keys drop out."""
-    folded = {normalize_key(item): answer for item, answer in table.items()}
-    return {item: answer for item, answer in folded.items() if item}
+    """Normalized keys the paraphrase match scores. The first key wins a fold."""
+    folded: dict[str, str] = {}
+    for item, answer in table.items():
+        key = normalize_key(item)
+        if key and key not in folded:
+            folded[key] = answer
+    return folded
 
 
 def warm_at_start(path: Path | None = None) -> None:

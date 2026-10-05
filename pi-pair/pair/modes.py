@@ -9,6 +9,7 @@ import re
 from pair.ground import is_grounded_problem
 from pair.knobs import inference_knobs
 from pair.lists import list_count
+from pair.turn import is_plain_list, is_plot, user_question
 
 FLASH = "flash"
 PRO = "pro"
@@ -52,11 +53,19 @@ def resolve_mode(mode: str | None, model: object | None = None, knobs: dict | No
 
 
 def task_tier(prompt: str) -> str:
-    """flash for short chitchat. pro for length, math, code, multi-step, or search."""
-    text = (prompt or "").strip()
+    """flash for short chitchat, plots, and plain lists.
+
+    pro for math, code, multi-step, search, or a long question. A long
+    attachment does not count as a long question. Auto uses this to pick a tag.
+    """
+    text = user_question(prompt)
     if not text:
         return FLASH
-    if is_grounded_problem(text) or _CODE.search(text) or _SEARCH.search(text) or _MULTI.search(text):
+    if _CODE.search(text) or is_grounded_problem(text):
+        return PRO
+    if is_plot(text) or is_plain_list(text):
+        return FLASH
+    if _SEARCH.search(text) or _MULTI.search(text):
         return PRO
     if (list_count(text) or 0) >= 8:
         return PRO
