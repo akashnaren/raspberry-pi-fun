@@ -13,12 +13,20 @@ if str(ROOT) not in sys.path:
 
 from pair.charts import (  # noqa: E402
     is_structured_request,
+    normalize_chart_reply,
     parabola_chart,
     structure_hint,
 )
 from pair.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
 from pair.images import cards_for_answer, item_names, visual_mode  # noqa: E402
-from pair.lists import finish_numbered, list_budget, list_complete, list_count, merge_list  # noqa: E402
+from pair.lists import (  # noqa: E402
+    finish_numbered,
+    list_budget,
+    list_complete,
+    list_count,
+    merge_list,
+    reply_truncated,
+)
 from pair.preload import pro_preload_payload  # noqa: E402
 
 
@@ -44,6 +52,15 @@ class Charts(unittest.TestCase):
         self.assertIn("mermaid", structure_hint("draw a flowchart of the login steps"))
         self.assertFalse(is_structured_request("where is the hall bench"))
 
+    def test_a_loose_chart_fence_becomes_one_block(self):
+        messy = "Here.\n```JSON\n{\"title\":\"Picnic\",\"data\":[{\"type\":\"Bar\",\"y\":[2, 4,],}],}\n```\n"
+        clean = normalize_chart_reply(messy)
+        self.assertIn("```chart\n", clean)
+        spec = json.loads(clean.split("```chart\n", 1)[1].split("\n```", 1)[0])
+        self.assertEqual(spec["data"][0]["type"], "bar")
+        self.assertEqual(spec["data"][0]["y"], [2, 4])
+        self.assertEqual(normalize_chart_reply("```mermaid\nflowchart TD\nA-->B\n```"), "```mermaid\nflowchart TD\nA-->B\n```")
+
 
 class Lists(unittest.TestCase):
     def test_a_short_list_is_continued_until_n(self):
@@ -63,6 +80,10 @@ class Lists(unittest.TestCase):
         self.assertIn("7. Title 7", done)
         self.assertIn("10. Title 10", done)
         self.assertEqual(done.count("1. Title 1"), 1)
+        self.assertTrue(reply_truncated(prompt, partial, "stop"))
+        self.assertFalse(reply_truncated(prompt, done, "length"))
+        self.assertTrue(reply_truncated("say hi", "partial", "length"))
+        self.assertFalse(reply_truncated("say hi", "done", "stop"))
 
     def test_a_finished_list_is_left_alone(self):
         calls = []
@@ -148,6 +169,8 @@ class VisualLists(unittest.TestCase):
         self.assertEqual(visual_mode("top 10 prime numbers"), "none")
         answer = "1. Dune — desert\n2. Arrival — language"
         self.assertEqual(item_names(answer, 5), ["Dune", "Arrival"])
+        titled = "1. **Dune: Part Two** (2021) — sand\n2. Arrival"
+        self.assertEqual(item_names(titled, 5), ["Dune: Part Two", "Arrival"])
 
         def opener(request, timeout=None):
             url = request.full_url
@@ -173,6 +196,49 @@ class VisualLists(unittest.TestCase):
         cards = cards_for_answer("top 2 movies", answer, opener=opener)
         self.assertEqual([card["title"] for card in cards], ["Dune", "Arrival"])
         self.assertEqual(cards_for_answer("top 10 prime numbers", "1. 2\n2. 3"), [])
+
+        def refill(request, timeout=None):
+            url = request.full_url
+            if "list=search" in url:
+                if "%28film%29" in url:
+                    return _Resp(json.dumps({"query": {"search": [{"title": "Dune (2021 film)"}]}}))
+                if "Arrival" in url:
+                    return _Resp(json.dumps({"query": {"search": [{"title": "Arrival"}]}}))
+                return _Resp(json.dumps({"query": {"search": [{"title": "Dune (soundtrack)"}]}}))
+            if "soundtrack" in url:
+                return _Resp(
+                    json.dumps(
+                        {
+                            "type": "standard",
+                            "title": "Dune (soundtrack)",
+                            "description": "album",
+                            "thumbnail": {
+                                "source": "https://upload.wikimedia.org/wikipedia/en/album.jpg",
+                                "width": 100,
+                                "height": 100,
+                            },
+                        }
+                    )
+                )
+            title = "Dune (2021 film)" if "2021" in url else "Arrival"
+            return _Resp(
+                json.dumps(
+                    {
+                        "type": "standard",
+                        "title": title,
+                        "description": "film",
+                        "thumbnail": {
+                            "source": f"https://upload.wikimedia.org/wikipedia/en/{title}.jpg",
+                            "width": 100,
+                            "height": 140,
+                        },
+                        "content_urls": {"desktop": {"page": f"https://en.wikipedia.org/wiki/{title}"}},
+                    }
+                )
+            )
+
+        filled = cards_for_answer("top 2 movies", answer, opener=refill)
+        self.assertEqual([card["title"] for card in filled], ["Dune (2021 film)", "Arrival"])
 
 
 class _Resp:

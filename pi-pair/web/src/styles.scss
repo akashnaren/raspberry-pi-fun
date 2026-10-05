@@ -116,7 +116,11 @@ header {
 .brand.brand-title .brand-mark { animation: mark-away 0.4s ease forwards; }
 .brand.brand-title .brand-name { animation: name-in 0.4s ease forwards; visibility: visible; }
 .brand.brand-logo .brand-name { opacity: 0; visibility: hidden; }
-.brand.brand-logo .brand-mark { display: block; opacity: 1; animation: mark-back 0.35s ease; }
+.brand.brand-logo .brand-mark {
+  display: block;
+  opacity: 1;
+  animation: mark-back 0.35s ease, mark-breathe 3.6s ease-in-out 0.4s infinite;
+}
 .brand.brand-enter .brand-mark { animation: mark-pulse 0.7s ease; }
 
 .brand.splashing .brand-name { opacity: 0; visibility: hidden; }
@@ -138,6 +142,11 @@ header {
 @keyframes mark-back {
   from { opacity: 0; transform: scale(0.86); }
   to { opacity: 1; transform: none; }
+}
+
+@keyframes mark-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
 }
 
 @keyframes mark-pulse {
@@ -1547,7 +1556,10 @@ body.voice-session {
 
   .stage { opacity: 1; transform: none; }
   .stages { transition: none; }
-  .drawer, .sources-panel, .brand-mark, .brand-name, .send-btn svg { transition: none; animation: none; }
+  .drawer, .sources-panel, .brand-mark, .brand-name, .send-btn svg,
+  .brand.brand-logo .brand-mark,
+  .brand.brand-title .brand-mark,
+  .brand.brand-enter .brand-mark { transition: none; animation: none; }
 }
 
 html[data-theme="light"] {

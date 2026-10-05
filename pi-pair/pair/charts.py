@@ -147,6 +147,120 @@ def _parabola_title(a: float, b: float, c: float) -> str:
     return title[:120]
 
 
+_FENCE = re.compile(r"```([^\n`]*)\n?([\s\S]*?)```")
+_CHART_LANG = {"", "chart", "plotly", "json"}
+_CHART_TYPES = {"bar", "scatter", "line", "pie"}
+
+
+def _chart_number(value: object) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    rounded = round(float(value), 4)
+    if rounded == int(rounded):
+        return int(rounded)
+    return rounded
+
+
+def _chart_spec(raw: str) -> dict | None:
+    """One chart object, or None when the text is not the chart schema."""
+    text = (raw or "").strip()
+    text = re.sub(r"^json\s*", "", text, count=1, flags=re.I).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    blob = re.sub(r",(\s*[}\]])", r"\1", text[start : end + 1])
+    try:
+        data = json.loads(blob)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+        return None
+    rows = data["data"]
+    if not rows or len(rows) > 6:
+        return None
+    cleaned: list[dict] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            return None
+        kind = str(item.get("type") or "").strip().lower()
+        if kind not in _CHART_TYPES:
+            return None
+        points_raw = item.get("y")
+        if points_raw is None:
+            points_raw = item.get("values")
+        if not isinstance(points_raw, list) or not points_raw or len(points_raw) > 240:
+            return None
+        points = []
+        for value in points_raw:
+            number = _chart_number(value)
+            if number is None:
+                return None
+            points.append(number)
+        row: dict = {"type": kind, "y": points}
+        labels = item.get("x")
+        if labels is None:
+            labels = item.get("labels")
+        if isinstance(labels, list) and len(labels) == len(points):
+            kept = []
+            for label in labels:
+                if isinstance(label, bool) or not isinstance(label, (int, float, str)):
+                    return None
+                if isinstance(label, str):
+                    label = " ".join(label.split())
+                    if not label or len(label) > 80 or "<" in label or ">" in label:
+                        return None
+                elif isinstance(label, float):
+                    label = _chart_number(label)
+                kept.append(label)
+            row["x"] = kept
+        name = item.get("name")
+        if isinstance(name, str):
+            name = " ".join(name.split())
+            if name and len(name) <= 80 and "<" not in name and ">" not in name:
+                row["name"] = name
+        mode = str(item.get("mode") or "").strip()
+        if kind == "scatter" and mode in {"lines", "markers", "lines+markers"}:
+            row["mode"] = mode
+        cleaned.append(row)
+    spec: dict = {"data": cleaned}
+    title = data.get("title")
+    if isinstance(title, dict):
+        title = title.get("text")
+    if isinstance(title, str):
+        title = " ".join(title.split())
+        if title and len(title) <= 120 and "<" not in title and ">" not in title:
+            spec["title"] = title
+    return spec
+
+
+def _chart_fence(spec: dict) -> str:
+    return "```chart\n" + json.dumps(spec, separators=(",", ":")) + "\n```"
+
+
+def normalize_chart_reply(text: str) -> str:
+    """Rewrite a chart-shaped fence as one compact ```chart block.
+
+    Other fences stay as written. A reply that is only a chart object is wrapped.
+    """
+    raw = text or ""
+    if "```" not in raw:
+        spec = _chart_spec(raw) if raw.strip().startswith("{") else None
+        return _chart_fence(spec) if spec else raw
+
+    def repl(match: re.Match) -> str:
+        lang = (match.group(1) or "").strip().lower().split()
+        name = lang[0] if lang else ""
+        if name not in _CHART_LANG:
+            return match.group(0)
+        spec = _chart_spec(match.group(2) or "")
+        if spec is None:
+            return match.group(0)
+        return _chart_fence(spec)
+
+    return _FENCE.sub(repl, raw)
+
+
 def parabola_chart(prompt: str) -> str | None:
     """A ```chart fence for a simple parabola, or None when the model should try."""
     if not is_chart_request(prompt):

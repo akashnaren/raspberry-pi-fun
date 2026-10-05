@@ -656,6 +656,8 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(len(chats), 3)
         self.assertGreaterEqual(chats[0]["options"]["num_predict"], 448)
         self.assertIn("until item 10", chats[1]["messages"][-1]["content"])
+        self.assertTrue(body.get("pi_truncated"))
+        self.assertEqual(body["choices"][0]["finish_reason"], "length")
         self.assertEqual(self.search_calls, [])
 
 

@@ -119,8 +119,10 @@ def item_names(answer: str, limit: int) -> list[str]:
     names: list[str] = []
     for match in _ITEM_LINE.finditer(answer or ""):
         raw = match.group(1).strip()
-        raw = re.split(r"\s+[—–]\s+|\s+-\s+|\s+\(|:\s+", raw, maxsplit=1)[0]
-        raw = raw.strip(" .*\"'")
+        raw = re.sub(r"[*_`]+", "", raw)
+        raw = re.split(r"\s+[—–]\s+|\s+-\s+", raw, maxsplit=1)[0]
+        raw = re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", raw)
+        raw = raw.strip(" .\"'")
         if len(raw) < 2 or len(raw) > 80:
             continue
         names.append(raw)
@@ -315,13 +317,14 @@ def _fetch_json(url: str, opener) -> dict:
         return data
 
 
-def _titles(phrase: str, opener) -> list[str]:
+def _titles(phrase: str, opener, limit: int = 5) -> list[str]:
+    cap = max(1, min(int(limit), 8))
     url = SEARCH_API + "?" + urlencode(
         {
             "action": "query",
             "list": "search",
             "srsearch": phrase,
-            "srlimit": "5",
+            "srlimit": str(cap),
             "srnamespace": "0",
             "format": "json",
             "formatversion": "2",
@@ -338,7 +341,7 @@ def _titles(phrase: str, opener) -> list[str]:
         if not title or title.lower().endswith("(disambiguation)"):
             continue
         found.append(title)
-    return found[:5]
+    return found[:cap]
 
 
 def _mentions_film(title: str, description: str) -> bool:
@@ -404,13 +407,20 @@ def lookup_images(query: str, opener=None) -> list[dict]:
     return cards
 
 
-def _lookup_named(name: str, opener, movie: bool) -> dict | None:
-    phrase = f"{name} film" if movie else name
+def _lookup_named(
+    name: str,
+    opener,
+    movie: bool,
+    phrase: str | None = None,
+    tries: int = 4,
+) -> dict | None:
+    query = phrase or (f"{name} film" if movie else name)
+    window = 8 if movie else 5
     try:
-        titles = _titles(phrase, opener)
+        titles = _titles(query, opener, limit=window)
     except Exception:
         return None
-    for title in titles[:2]:
+    for title in titles[:tries]:
         try:
             card = _summary_card(title, opener, movie)
         except Exception:
@@ -435,9 +445,33 @@ def cards_for_answer(prompt: str, answer: str, opener=None) -> list[dict]:
     movie = bool(_MOVIE.search(prompt or "") or re.search(r"\b(?:movies?|films?)\b", prompt or "", re.I))
     if not names:
         return []
+
+    def fetch(name: str, phrase: str | None = None) -> dict | None:
+        return _lookup_named(name, opener, movie, phrase=phrase, tries=4 if movie else 2)
+
     workers = min(4, len(names))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        found = list(pool.map(lambda name: _lookup_named(name, opener, movie), names))
+        found = list(pool.map(fetch, names))
+    if movie:
+        missing = [index for index, card in enumerate(found) if not card]
+        if missing:
+            refill = min(4, len(missing))
+            with ThreadPoolExecutor(max_workers=refill) as pool:
+                again = list(
+                    pool.map(
+                        lambda index: _lookup_named(
+                            names[index],
+                            opener,
+                            True,
+                            phrase=f"{names[index]} (film)",
+                            tries=4,
+                        ),
+                        missing,
+                    )
+                )
+            for index, card in zip(missing, again):
+                if card:
+                    found[index] = card
     cards: list[dict] = []
     for card in found:
         if not card:

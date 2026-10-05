@@ -53,17 +53,20 @@ def resolve_mode(mode: str | None, model: object | None = None, knobs: dict | No
 
 
 def task_tier(prompt: str) -> str:
-    """flash for short chitchat, plots, and plain lists.
+    """flash for short chitchat and plain lists.
 
-    pro for math, code, multi-step, search, or a long question. A long
-    attachment does not count as a long question. Auto uses this to pick a tag.
+    pro for a plot, math, code, multi-step, search, a long list, or a long
+    question. A long attachment does not count as a long question. Auto uses
+    this to pick a tag.
     """
     text = user_question(prompt)
     if not text:
         return FLASH
     if _CODE.search(text) or is_grounded_problem(text):
         return PRO
-    if is_plot(text) or is_plain_list(text):
+    if is_plot(text):
+        return PRO
+    if is_plain_list(text):
         return FLASH
     if _SEARCH.search(text) or _MULTI.search(text):
         return PRO

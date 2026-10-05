@@ -50,6 +50,14 @@ def list_complete(text: str, count: int) -> bool:
     return count in nums and len(nums) >= count
 
 
+def reply_truncated(prompt: str, text: str, reason: str = "") -> bool:
+    """True when a numbered list is still short of N, or a reply hit the token cap."""
+    count = list_count(prompt)
+    if count:
+        return not list_complete(text or "", count)
+    return str(reason or "").strip().lower() in {"length", "max_tokens"}
+
+
 def merge_list(base: str, more: str, count: int) -> str:
     """Append continuation lines that continue past the last number already present."""
     del count

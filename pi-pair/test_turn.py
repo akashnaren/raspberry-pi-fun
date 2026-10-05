@@ -324,7 +324,7 @@ class TurnHttp(unittest.TestCase):
         )
         with urllib.request.urlopen(request, timeout=5) as response:
             return response.status, response.headers, json.loads(response.read().decode())
-    def test_plot_skips_search_and_stays_on_flash(self):
+    def test_plot_skips_search_and_uses_pro(self):
         OllamaFake.catalog = [FLASH_MODEL, PRO_MODEL]
         runtime.reset_health()
         port = self._pi4()
@@ -336,9 +336,9 @@ class TurnHttp(unittest.TestCase):
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["pi_route"], "flash")
+        self.assertEqual(body["pi_route"], "pro")
         self.assertEqual(self.search_calls, [])
-        self.assertEqual(OllamaFake.last_payload["model"], FLASH_MODEL)
+        self.assertEqual(OllamaFake.last_payload["model"], PRO_MODEL)
         blob = "\n".join(item["content"] for item in OllamaFake.last_payload["messages"])
         self.assertIn("```chart", blob)
         self.assertNotIn("Web search notes", blob)

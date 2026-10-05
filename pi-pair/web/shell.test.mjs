@@ -142,6 +142,8 @@ if (!go.classList.contains("voice") || go.classList.contains("send")) {
 }
 
 const brand = document.getElementById("brand");
+const brandCss = fs.readFileSync(new URL("./src/styles.scss", import.meta.url), "utf8");
+if (!brandCss.includes("mark-breathe")) throw new Error("idle logo does not breathe");
 if (!brand.classList.contains("brand-logo")) throw new Error("idle header is not the logo");
 if (brand.classList.contains("brand-title")) throw new Error("idle header showed the title");
 if (!document.querySelector("#brandMark svg")) throw new Error("mark was not drawn");

@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.canned import lookup, start_canned_warm, warm_status
-from pair.charts import is_structured_request, parabola_chart, structure_hint
+from pair.charts import is_structured_request, normalize_chart_reply, parabola_chart, structure_hint
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model, start_model_warm
 from pair.config import STATIC_DIR
 from pair.docfit import fit_outbound
@@ -23,7 +23,7 @@ from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, search_note_limit
-from pair.lists import continuation_messages, finish_numbered, list_budget, list_count
+from pair.lists import continuation_messages, finish_numbered, list_budget, list_count, reply_truncated
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
 from pair.preload import start_pro_warm
@@ -1246,7 +1246,7 @@ class Handler(BaseHTTPRequestHandler):
         max_tokens,
         prompt: str,
         search_note: dict | None,
-    ) -> tuple[str, str, bool]:
+    ) -> tuple[str, str, bool, bool]:
         """One completion. A plain list may continue once. A failed decode is one sentence."""
         meta: dict = {}
         try:
@@ -1255,26 +1255,31 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 content, used = chat_ollama(peer, model, messages, temperature, max_tokens, meta=meta)
         except (OSError, json.JSONDecodeError) as error:
-            return degraded_answer(search_note, error), model, False
+            return degraded_answer(search_note, error), model, False, False
         content = content or ""
-        if not list_count(prompt) and asks_continuation(prompt, content, str(meta.get("done_reason") or "")):
+        reason = str(meta.get("done_reason") or "")
+        if not list_count(prompt) and asks_continuation(prompt, content, reason):
             follow = shape_messages(plain_continuation(messages, content), prompt)
             more = ""
+            follow_meta: dict = {}
             try:
                 if kind == "llamacpp":
-                    more, used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
+                    more, used = chat_llamacpp(peer, model, follow, temperature, max_tokens, meta=follow_meta)
                 else:
-                    more, used = chat_ollama(peer, model, follow, temperature, max_tokens)
+                    more, used = chat_ollama(peer, model, follow, temperature, max_tokens, meta=follow_meta)
             except (OSError, json.JSONDecodeError):
                 more = ""
             content = join_continuation(content, more or "")
+            if follow_meta.get("done_reason"):
+                reason = str(follow_meta.get("done_reason") or "")
         else:
             content = self._extend_list(
                 peer, kind, model, messages, temperature, max_tokens, prompt, content
             )
+        content = normalize_chart_reply(content)
         if not str(content).strip():
-            return degraded_answer(search_note, None), used, False
-        return content, used, True
+            return degraded_answer(search_note, None), used, False, False
+        return content, used, True, reply_truncated(prompt, content, reason)
 
     def _stream(
         self,
@@ -1426,6 +1431,7 @@ class Handler(BaseHTTPRequestHandler):
                     note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
                     remember_completion(prompt, answer, chip, peer["name"])
                 return
+            reason = str(getattr(gen, "done_reason", "") or "")
             answer = "".join(parts)
             finished = self._extend_list(
                 peer, kind, model, messages, temperature, max_tokens, prompt, answer
@@ -1451,6 +1457,7 @@ class Handler(BaseHTTPRequestHandler):
                 answer = finished
             images = _cards_after(prompt, answer, images)
             elapsed = int((time.time() - started) * 1000)
+            truncated = reply_truncated(prompt, answer, reason)
             final = {
                 "id": "pi-pair",
                 "object": "chat.completion.chunk",
@@ -1458,7 +1465,7 @@ class Handler(BaseHTTPRequestHandler):
                     {
                         "index": 0,
                         "delta": {},
-                        "finish_reason": "stop",
+                        "finish_reason": "length" if truncated else "stop",
                     }
                 ],
                 "pi_peer": peer["name"],
@@ -1467,6 +1474,8 @@ class Handler(BaseHTTPRequestHandler):
                 "pi_model": used,
                 "pi_kind": kind,
             }
+            if truncated:
+                final["pi_truncated"] = True
             if think_name:
                 final["pi_think"] = think_name
             if search_note:
@@ -1577,10 +1586,11 @@ class Handler(BaseHTTPRequestHandler):
         if grounded is None and search_note is not None:
             grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         train = True
+        truncated = False
         if grounded is not None:
             content, used = grounded, model
         else:
-            content, used, train = self._decode_reply(
+            content, used, train, truncated = self._decode_reply(
                 peer,
                 kind,
                 model,
@@ -1603,7 +1613,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "index": 0,
                     "message": {"role": "assistant", "content": content},
-                    "finish_reason": "stop",
+                    "finish_reason": "length" if truncated else "stop",
                 }
             ],
             "pi_peer": peer["name"],
@@ -1612,6 +1622,8 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
+        if truncated:
+            resp["pi_truncated"] = True
         if think_name:
             resp["pi_think"] = think_name
         if search_note:

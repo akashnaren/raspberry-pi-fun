@@ -25,12 +25,13 @@ class TaskTier(unittest.TestCase):
         for name, line in samples.items():
             self.assertEqual(task_tier(line), "pro", name)
 
-    def test_plots_and_plain_lists_stay_on_flash(self):
+    def test_plots_route_pro_and_plain_lists_stay_on_flash(self):
         long_plot = "plot a bar chart of " + ("picnic " * 40)
-        self.assertEqual(task_tier(long_plot), "flash")
+        self.assertEqual(task_tier(long_plot), "pro")
+        self.assertEqual(task_tier("plot a bar chart of picnic foods"), "pro")
         self.assertEqual(task_tier("make a list of picnic foods"), "flash")
         attached = "plot the bars\n\n---\n" + ("ocr text " * 80)
-        self.assertEqual(task_tier(attached), "flash")
+        self.assertEqual(task_tier(attached), "pro")
         self.assertEqual(task_tier("Write a python function that reverses a list."), "pro")
         self.assertEqual(task_tier("Search for the latest raspberry pi news."), "pro")
 
