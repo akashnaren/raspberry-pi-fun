@@ -921,8 +921,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Pi-Mode", fields["pi_mode"])
         if fields.get("pi_route"):
             self.send_header("X-Pi-Route", fields["pi_route"])
-        if fields.get("pi_resident"):
-            self.send_header("X-Pi-Resident", fields["pi_resident"])
 
     def _cached(
         self,
