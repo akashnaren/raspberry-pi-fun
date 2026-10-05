@@ -14,6 +14,7 @@ from pathlib import Path
 from pair.canned import lookup, warm_at_start
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
 from pair.config import STATIC_DIR
+from pair.gate import capacity_message
 from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.knobs import decode_effort, search_note_limit
@@ -315,6 +316,7 @@ class Handler(BaseHTTPRequestHandler):
                     "peers_up": sum(1 for peer in peers if peer["ok"]),
                     "peers": peers,
                     "slots": runtime.INFER_SLOTS,
+                    "in_flight": runtime.gate.in_flight(),
                     "cache_ttl": runtime.HEALTH_CACHE_TTL,
                 }
             ).encode()
@@ -390,16 +392,6 @@ class Handler(BaseHTTPRequestHandler):
         if node_role() != "brain":
             self._relay_to_brain(raw)
             return
-        acquired = runtime._infer_sem.acquire(timeout=120)
-        if not acquired:
-            body = json.dumps({"error": "inference slots busy — try again"}).encode()
-            self.send_response(503)
-            self._cors()
-            self.send_header("content-type", "application/json")
-            self.send_header("content-length", str(len(body)))
-            self.end_headers()
-            safe_write(self, body)
-            return
         try:
             peer = pick(target, mesh, model)
             outbound = [
@@ -410,6 +402,23 @@ class Handler(BaseHTTPRequestHandler):
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             do_search = bool(mesh and node_role() == "brain")
+            search_note = None
+            images: list[dict] = []
+            if do_search:
+                outbound, search_note = _with_search(outbound, prompt)
+                images = _image_cards(prompt)
+            grounded = None
+            if search_note is not None:
+                grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
+        except Exception as error:
+            self._error(str(error))
+            return
+        # Map hits already returned. A page answer never enters the model, so it
+        # does not take a generation slot either.
+        if grounded is None and not runtime.gate.try_acquire():
+            self._error(capacity_message(runtime.gate.limit), status=503)
+            return
+        try:
             if want_stream:
                 self._stream(
                     peer,
@@ -423,15 +432,14 @@ class Handler(BaseHTTPRequestHandler):
                     prompt,
                     think_name,
                     do_search,
+                    searched=do_search,
+                    search_note=search_note,
+                    images=images,
                 )
             else:
                 stages = ["thinking"]
-                search_note = None
-                images: list[dict] = []
                 if do_search:
                     stages.append("searching")
-                    outbound, search_note = _with_search(outbound, prompt)
-                    images = _image_cards(prompt)
                 stages.append("answering")
                 self._complete(
                     peer,
@@ -450,7 +458,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(str(error))
         finally:
-            runtime._infer_sem.release()
+            if grounded is None:
+                runtime.gate.release()
 
     def _relay_to_brain(self, payload: bytes) -> None:
         try:
@@ -744,6 +753,9 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         think_name: str = "",
         do_search: bool = False,
+        searched: bool = False,
+        search_note: dict | None = None,
+        images: list[dict] | None = None,
     ) -> None:
         self.send_response(200)
         self._cors()
@@ -756,7 +768,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Pi-Think", think_name)
         self.end_headers()
         stages: list[str] = []
-        search_note = None
 
         def emit_status(stage: str, extra: dict | None = None) -> bool:
             if stage not in stages:
@@ -766,12 +777,13 @@ class Handler(BaseHTTPRequestHandler):
         think_extra = {"pi_think": think_name} if think_name else None
         if not emit_status("thinking", think_extra):
             return
-        images: list[dict] = []
+        images = list(images or [])
         if do_search:
             if not emit_status("searching", {"pi_tool": "search"}):
                 return
-            messages, search_note = _with_search(messages, prompt)
-            images = _image_cards(prompt)
+            if not searched:
+                messages, search_note = _with_search(messages, prompt)
+                images = _image_cards(prompt)
             found = {"pi_tool": "search"}
             if search_note:
                 found["pi_search"] = search_note["status"]

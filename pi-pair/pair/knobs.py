@@ -11,7 +11,12 @@ _DEFAULTS = {
     # -1 keeps the weights loaded. A short duration would reset the server TTL
     # on every chat or embed call and unload the other model.
     "keep_alive": -1,
-    "ollama_num_parallel": 1,
+    # Chat sequences that share the one loaded qwen2.5:0.5b. Ollama sizes that
+    # model's key/value cache as num_ctx * this value. The map embedder is a
+    # second resident model (Ollama runs it at parallel 1); this number is not
+    # a second chat model. Clamped to 1..4. Default 4: four sequences at
+    # num_ctx 2048 stayed under 1 GB RSS in a same-settings measurement.
+    "ollama_num_parallel": 4,
     # Pi 4 is four Cortex-A72 cores. Ollama forwards num_thread as llama.cpp -t
     # only when the request sets it; otherwise the runner auto-detects.
     "num_thread": 4,
@@ -81,6 +86,28 @@ def search_note_limit(knobs: dict | None = None) -> int:
         return max(0, int(row.get("search_note_chars") or 0))
     except (TypeError, ValueError):
         return 0
+
+
+PARALLEL_MIN = 1
+PARALLEL_MAX = 4
+
+
+def clamp_parallel(value: int) -> int:
+    if value < PARALLEL_MIN:
+        return PARALLEL_MIN
+    if value > PARALLEL_MAX:
+        return PARALLEL_MAX
+    return value
+
+
+def parallel_limit(knobs: dict | None = None) -> int:
+    """In-flight generations, and the OLLAMA_NUM_PARALLEL the Pi should run."""
+    row = knobs if knobs is not None else inference_knobs()
+    try:
+        value = int(row.get("ollama_num_parallel"))
+    except (TypeError, ValueError):
+        value = int(_DEFAULTS["ollama_num_parallel"])
+    return clamp_parallel(value)
 
 
 def inference_knobs() -> dict:

@@ -58,7 +58,20 @@ def default_model() -> str:
 
 
 def infer_slots() -> int:
-    return int(os.environ.get("PI_PAIR_SLOTS", "3"))
+    """Generations allowed at once. PI_PAIR_SLOTS overrides the runtime file.
+
+    The override is clamped to 1..4. Unset means the `ollama_num_parallel`
+    knob, which is the same number install.sh prints for Ollama.
+    """
+    from pair.knobs import clamp_parallel, parallel_limit
+
+    raw = os.environ.get("PI_PAIR_SLOTS", "").strip()
+    if not raw:
+        return parallel_limit()
+    try:
+        return clamp_parallel(int(raw))
+    except ValueError:
+        return parallel_limit()
 
 
 def health_ttl() -> float:
