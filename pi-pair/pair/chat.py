@@ -5,7 +5,7 @@ import json
 import urllib.request
 
 from pair.guard import require_generative
-from pair.knobs import inference_knobs, ollama_options
+from pair.knobs import inference_knobs, keep_alive, ollama_options
 
 
 def _post_json(url: str, payload: dict, timeout: float) -> dict:
@@ -33,7 +33,7 @@ def chat_ollama(peer, model, messages, temperature=0.7, max_tokens=256):
         "model": model,
         "messages": messages,
         "stream": False,
-        "keep_alive": knobs.get("keep_alive") or "5m",
+        "keep_alive": keep_alive(knobs),
         "options": ollama_options(temperature, max_tokens, knobs),
     }
     out = _post_json(url, payload, timeout=180)

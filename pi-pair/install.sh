@@ -104,6 +104,8 @@ sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null <<'DROPIN
 [Service]
 Environment="OLLAMA_HOST=0.0.0.0:11434"
 Environment="OLLAMA_NUM_PARALLEL=1"
+Environment="OLLAMA_MAX_LOADED_MODELS=3"
+Environment="OLLAMA_KEEP_ALIVE=-1"
 DROPIN
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
@@ -113,6 +115,27 @@ fi
 
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
+if [[ "$ROLE" == "brain" ]]; then
+  # Live pi4 runs this user unit, not the system ollama.service. Refresh the
+  # drop-in on every install so a reinstall cannot fall back to one loaded
+  # model. Leave an existing unit's ExecStart alone.
+  LAN_DROP="$UNIT_DIR/ollama-lan.service.d"
+  mkdir -p "$LAN_DROP"
+  cat > "$LAN_DROP/resident.conf" << 'EOF'
+[Service]
+Environment=OLLAMA_MAX_LOADED_MODELS=3
+Environment=OLLAMA_KEEP_ALIVE=-1
+EOF
+  LAN_UNIT="$UNIT_DIR/ollama-lan.service"
+  if [[ ! -f "$LAN_UNIT" ]]; then
+    cp -f "$ROOT/configs/runtime/ollama-lan.service" "$LAN_UNIT"
+    echo "Wrote $LAN_UNIT"
+  else
+    echo "Keeping existing $LAN_UNIT"
+  fi
+  echo "Refreshed $LAN_DROP/resident.conf"
+  echo "ollama-lan picks up OLLAMA_MAX_LOADED_MODELS=3 and OLLAMA_KEEP_ALIVE=-1 the next time that user unit starts."
+fi
 UNIT_FILE="$UNIT_DIR/${SERVICE_NAME}.service"
 cat > "$UNIT_FILE" << UNIT
 [Unit]
