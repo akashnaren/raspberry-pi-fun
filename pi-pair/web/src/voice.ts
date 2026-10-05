@@ -165,6 +165,7 @@ export function adaptiveEndOfUtterance(phrase: string, baseMs: number, gapMs = 0
 export interface UtteranceHold {
   interim(text: string): string;
   final(text: string): string;
+  flush(): string;
   cancel(): void;
   text(): string;
 }
@@ -250,8 +251,10 @@ export function createUtteranceHold(
   return {
     interim(text: string) {
       if (!open) return preview();
+      const nextLive = text.trim();
+      if (!nextLive) return preview();
       const before = preview();
-      live = text.trim();
+      live = nextLive;
       const after = preview();
       if (silenceMs > 0 && after && phraseKey(after) !== phraseKey(before)) arm();
       return after;
@@ -268,6 +271,16 @@ export function createUtteranceHold(
       const grew = phraseKey(after) !== phraseKey(before);
       if (after && (grew || timer == null)) arm();
       return after;
+    },
+    flush() {
+      if (!open) return preview();
+      clearTimer();
+      const said = preview();
+      stable = "";
+      live = "";
+      open = false;
+      if (said) deliver(said);
+      return said;
     },
     cancel() {
       open = false;
@@ -404,7 +417,10 @@ export interface ListenHandlers {
   onError: () => void;
 }
 
-export function startListening(handlers: ListenHandlers): { stop: () => void } | null {
+export function startListening(
+  handlers: ListenHandlers,
+  options?: { restart?: boolean },
+): { stop: () => void } | null {
   const Ctor = recognitionCtor();
   if (!Ctor) return null;
   const rec = new Ctor();
@@ -415,11 +431,37 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
   let stopped = false;
   let echo = "";
   let echoAt = 0;
+  let restarts = 0;
   let quietTimer: ReturnType<typeof setTimeout> | null = null;
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  const restarting = Boolean(options?.restart);
   const clearQuiet = () => {
     if (quietTimer == null) return;
     clearTimeout(quietTimer);
     quietTimer = null;
+  };
+  const clearRestart = () => {
+    if (restartTimer == null) return;
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  };
+  const kick = () => {
+    if (stopped) return;
+    if (!restarting || restarts >= 12) {
+      handlers.onEnd();
+      return;
+    }
+    restarts += 1;
+    clearRestart();
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      if (stopped) return;
+      try {
+        rec.start();
+      } catch {
+        handlers.onEnd();
+      }
+    }, 250);
   };
   const deliver = (text: string) => {
     const said = text.trim();
@@ -440,6 +482,7 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
     }, ENDPOINT_MS);
   };
   rec.onresult = (event: SpeechEvent) => {
+    restarts = 0;
     const start = event.resultIndex ?? 0;
     let interim = "";
     for (let i = start; i < event.results.length; i += 1) {
@@ -456,9 +499,11 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
   rec.onerror = (event: SpeechError) => {
     const code = event.error || "";
     // Chrome reports no-speech when an utterance simply ends. That is not a failed turn.
-    if (code === "no-speech") {
+    if (code === "no-speech" || code === "aborted" || code === "network") {
+      const had = Boolean(pending);
       if (pending) deliver(pending);
-      return;
+      if (stopped || code === "aborted") return;
+      if (restarting || code === "no-speech" || had) return;
     }
     if (code === "aborted" || stopped) return;
     if (pending) deliver(pending);
@@ -466,6 +511,11 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
   };
   rec.onend = () => {
     if (!stopped && pending) deliver(pending);
+    if (stopped) return;
+    if (restarting) {
+      kick();
+      return;
+    }
     handlers.onEnd();
   };
   try {
@@ -478,6 +528,7 @@ export function startListening(handlers: ListenHandlers): { stop: () => void } |
       stopped = true;
       pending = "";
       clearQuiet();
+      clearRestart();
       try {
         rec.abort();
       } catch {

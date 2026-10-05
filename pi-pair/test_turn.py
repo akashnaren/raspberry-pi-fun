@@ -26,6 +26,7 @@ from pair import server as pair_server
 from pair.chat import start_model_warm, warm_residents
 from pair.embed import EMBED_MODEL
 from pair.modes import FLASH_MODEL, PRO_MODEL
+from pair.errors import UNREACHABLE
 from pair.turn import (
     ATTACH_MARK,
     CHART_HINT,
@@ -166,7 +167,7 @@ class TurnShape(unittest.TestCase):
         )
         self.assertEqual(
             public_failure(RuntimeError("pi4 unreachable on cache miss")),
-            "pi4 unreachable on cache miss",
+            UNREACHABLE,
         )
         self.assertEqual(
             public_failure(RuntimeError("Traceback (most recent call last): boom")),

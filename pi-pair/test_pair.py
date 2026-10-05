@@ -583,7 +583,11 @@ class PairHttp(unittest.TestCase):
             html = response.read().decode()
         self.assertIn("/static/mesh.css", html)
         self.assertIn("/static/mesh.js", html)
-        self.assertIn("<title>OpenPi — MicroAstra</title>", html)
+        self.assertIn("<title>OpenPi</title>", html)
+        self.assertNotIn("<title>OpenPi — MicroAstra</title>", html)
+        self.assertIn("/static/favicon.svg", html)
+        self.assertIn("/static/favicon-32.png", html)
+        self.assertIn("apple-touch-icon.png", html)
         self.assertIn("OpenPi — MicroAstra", html)
         self.assertIn('aria-label="Voice"', html)
         self.assertNotIn("jsdelivr", html)
@@ -617,7 +621,7 @@ class PairHttp(unittest.TestCase):
             "Search failed",
             "X-Pi-Think",
             "X-Pi-Mode",
-            "Loading Pro",
+            "Waiting for a free slot",
             "X-Pi-Search",
             "search-note",
             "Retry",
@@ -628,6 +632,7 @@ class PairHttp(unittest.TestCase):
             "Stop",
         ):
             self.assertIn(needle, script, needle)
+        self.assertNotIn("Loading Pro", script)
         source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
         self.assertIn('if (event.key !== "Enter") return;', source)
         self.assertIn("if (event.shiftKey) return;", source)
@@ -756,7 +761,8 @@ class PairHttp(unittest.TestCase):
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 502)
-        self.assertIn("pi4 offline", body["error"])
+        self.assertEqual(body["error"], "The chat service is not reachable. Try again.")
+        self.assertNotIn("pi4", body["error"])
 
     def test_cache_hit_skips_pi4(self):
         peer_port = self._listen(OllamaFake)
@@ -838,8 +844,8 @@ class PairHttp(unittest.TestCase):
                 {"X-Pi-Target": name, "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 502)
-            self.assertIn(f"{name} cannot be the brain", body["error"])
-            self.assertIn("does not run a chat model", body["error"])
+            self.assertEqual(body["error"], "That machine cannot answer chats.")
+            self.assertNotIn(name, body["error"])
         self.assertEqual(OllamaFake.posts, 0)
 
     def test_cache_miss_pi4_down_does_not_call_pi3(self):
@@ -880,8 +886,10 @@ class PairHttp(unittest.TestCase):
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 502)
-        self.assertIn("pi4 unreachable on cache miss", body["error"])
-        self.assertNotIn("pi2", body["error"].split("Refusing")[0])
+        self.assertEqual(body["error"], "The chat service is not reachable. Try again.")
+        self.assertNotIn("pi4", body["error"])
+        self.assertNotIn("pi2", body["error"])
+        self.assertNotIn("pi3", body["error"])
         self.assertEqual(OllamaFake.posts, 0)
 
     def test_direct_ollama_bypasses_cache(self):
@@ -1959,8 +1967,10 @@ class ProductCopy(unittest.TestCase):
             if "Pi PAIR" in text or "PI PAIR" in text:
                 problems.append(f"{rel} still says Pi PAIR")
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
-        if f"<title>{product}</title>" not in html:
-            problems.append("static/index.html title is not OpenPi — MicroAstra")
+        if "<title>OpenPi</title>" not in html:
+            problems.append("static/index.html title is not OpenPi")
+        if f"<title>{product}</title>" in html:
+            problems.append("static/index.html tab title still includes MicroAstra")
         if f'id="brandName">{product}</span>' not in html:
             problems.append("static/index.html brand is not OpenPi — MicroAstra")
         install = (ROOT / "install.sh").read_text(encoding="utf-8")

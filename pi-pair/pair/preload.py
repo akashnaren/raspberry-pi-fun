@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import json
 import threading
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
 
 from pair.embed import ollama_base, on_pi4
@@ -16,6 +19,8 @@ from pair.knobs import keep_alive
 from pair.modes import mode_table
 
 PRELOAD_TIMEOUT_S = 3.0
+RESIDENT_TIMEOUT_S = 0.6
+REWARM_PAUSE_S = 30.0
 
 
 def pro_preload_payload(model: str | None = None) -> dict:
@@ -29,6 +34,67 @@ def pro_preload_payload(model: str | None = None) -> dict:
         "keep_alive": alive,
         "options": {"num_predict": 1, "temperature": 0},
     }
+
+
+def resident_models(host: str, port: int) -> list[str] | None:
+    """Names from /api/ps. None when the probe fails, so a cold guess is not made."""
+    url = f"http://{host}:{int(port)}/api/ps"
+    try:
+        with urllib.request.urlopen(url, timeout=RESIDENT_TIMEOUT_S) as response:
+            payload = json.loads(response.read().decode() or "{}")
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    names: list[str] = []
+    for row in payload.get("models") or []:
+        if isinstance(row, dict):
+            name = str(row.get("name") or row.get("model") or "").strip()
+        else:
+            name = str(row or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
+    """Background /api/generate so this turn can answer on Flash."""
+    payload = pro_preload_payload(model)
+
+    def run() -> None:
+        request = urllib.request.Request(
+            f"http://{host}:{int(port)}/api/generate",
+            data=json.dumps(payload).encode(),
+            headers={"content-type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=PRELOAD_TIMEOUT_S) as response:
+                response.read()
+        except Exception as exc:
+            print(f"pro preload skipped: {exc}", flush=True)
+
+    threading.Thread(target=run, name="pro-rewarm", daemon=True).start()
+
+
+def _local_endpoint() -> tuple[str, int]:
+    parsed = urllib.parse.urlparse(ollama_base())
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 11434)
+    return host, int(port)
+
+
+def rewarm_pro_if_evicted() -> None:
+    """Health-ping /api/ps and reload Pro when Ollama dropped it."""
+    if not on_pi4():
+        return
+    host, port = _local_endpoint()
+    resident = resident_models(host, port)
+    if resident is None:
+        return
+    tag = str(pro_preload_payload().get("model") or "")
+    if not tag or tag in resident:
+        return
+    warm_pro_model()
 
 
 def warm_pro_model() -> None:
@@ -55,10 +121,12 @@ def start_pro_warm() -> threading.Thread:
     """Daemon preload so listen is not blocked on the Pro weights."""
 
     def run() -> None:
-        try:
-            warm_pro_model()
-        except Exception as exc:
-            print(f"pro preload skipped: {exc}", flush=True)
+        while True:
+            try:
+                rewarm_pro_if_evicted()
+            except Exception as exc:
+                print(f"pro preload skipped: {exc}", flush=True)
+            time.sleep(REWARM_PAUSE_S)
 
     thread = threading.Thread(target=run, name="pro-preload", daemon=True)
     thread.start()

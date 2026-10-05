@@ -412,7 +412,8 @@ class SearchRoute(unittest.TestCase):
             _start(httpd)
             status, body = self._post(httpd.server_address[1])
             self.assertEqual(status, 403, role)
-            self.assertIn("health host", body["error"])
+            self.assertEqual(body["error"], "Search is not available from here.")
+            self.assertNotIn("health host", body["error"])
 
     def test_search_rejects_a_body_over_4kb(self):
         calls = []

@@ -64,7 +64,7 @@ from pair.lists import (
 from pair.sequences import sequence_answer
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
-from pair.preload import start_pro_warm
+from pair.preload import resident_models, schedule_pro_warm, start_pro_warm
 from pair.public_api import (
     FLASH_MODE,
     apply_mode,
@@ -1011,6 +1011,18 @@ class Handler(BaseHTTPRequestHandler):
             if not tag_ready(peer.get("models") or [], "pro", model):
                 self._error(pull_needed(model))
                 return
+            host = str(peer.get("host") or "127.0.0.1")
+            try:
+                peer_port = int(peer.get("port") or 0)
+            except (TypeError, ValueError):
+                peer_port = 0
+            resident = resident_models(host, peer_port) if peer_port else None
+            if resident is not None and model not in resident:
+                schedule_pro_warm(host, peer_port, model)
+                model = mode_table().get("flash") or model
+                used = model
+                route_name = "flash"
+                self.pi_route = "flash"
         # A finished map hit already returned. A short list still needs one
         # Flash continuation, and that continuation takes a generation slot.
         finish_list = bool(grounded) and needs_exact_n(prompt, grounded)
@@ -1052,8 +1064,7 @@ class Handler(BaseHTTPRequestHandler):
                 if slot["waiting"] and not _claim_wait(slot):
                     self._error(BUSY, status=503)
                     return
-                stages = ["loading"] if route_name == "pro" else []
-                stages.append("thinking")
+                stages = ["thinking"]
                 if do_search:
                     stages.append("searching")
                 stages.append("answering")
@@ -1768,9 +1779,6 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         think_extra = {"pi_think": think_name} if think_name else None
-        if route_name == "pro":
-            if not emit_status("loading", {"pi_loading": "Loading Pro"}):
-                return
         if not emit_status("thinking", think_extra):
             return
         images = list(images or [])

@@ -62,6 +62,10 @@ fs.writeFileSync(
   `${imports.join("")}\n${tw.css}\n${compiled.css}\n${katexCss}`,
 );
 fs.copyFileSync(path.join(root, "index.html"), path.join(outDir, "index.html"));
+for (const name of ["favicon.svg", "favicon-32.png", "apple-touch-icon.png"]) {
+  const src = path.join(root, name);
+  if (fs.existsSync(src)) fs.copyFileSync(src, path.join(outDir, name));
+}
 
 await esbuild.build({
   entryPoints: [path.join(root, "src/main.ts")],

@@ -9,7 +9,7 @@ import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
 import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
 import { modeChipText, scrubAssistant } from "./copy";
-import { friendlyError, PICTURE_LINE, WAITING_LINE } from "./errors";
+import { BIG_LINE, friendlyError, PICTURE_LINE, WAITING_LINE } from "./errors";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
@@ -99,6 +99,8 @@ let pendingBarge = "";
 let speakingLine = "";
 const serviceLines: string[] = [];
 let attachSerial = 0;
+let uploading = false;
+let voiceUtterance: ReturnType<typeof createUtteranceHold> | null = null;
 
 const ATTACH_BYTES = 4 * 1024 * 1024;
 
@@ -285,7 +287,7 @@ function mountImageCards(row: HTMLElement, before: Node | null, raw: unknown): v
 }
 
 function stageText(name: StageName, search: SearchInfo | null): string {
-  if (name === "loading") return "Loading Pro";
+  if (name === "loading") return "Thinking";
   if (name === "waiting") return WAITING_LINE;
   if (name === "thinking") return "Thinking";
   if (name === "searching") {
@@ -708,7 +710,7 @@ function addLiveBot(expectPro = false): LiveTurn {
   if (holdPro) {
     stagesEl.classList.add("pro-load");
     stagesEl.setAttribute("aria-busy", "true");
-    stagesEl.setAttribute("aria-label", "Loading Pro");
+    stagesEl.setAttribute("aria-label", "Thinking");
   }
   const viewport = el("div", "stage-viewport");
   const dots = el("span", "pending");
@@ -771,7 +773,6 @@ function addLiveBot(expectPro = false): LiveTurn {
 
   function labelFor(name: StageName): string {
     if (name === "waiting") return WAITING_LINE;
-    if (holdPro && !visibleReply(body.textContent || "")) return "Loading Pro";
     return stageText(name, live.search);
   }
 
@@ -897,15 +898,9 @@ function addLiveBot(expectPro = false): LiveTurn {
       row.querySelector(".image-cards")?.remove();
     },
     armPro() {
-      if (holdPro) return;
       holdPro = true;
-      stagesEl.classList.add("pro-load");
-      stagesEl.setAttribute("aria-busy", "true");
-      stagesEl.setAttribute("aria-label", "Loading Pro");
-      enqueue("loading");
     },
   };
-  if (holdPro) enqueue("loading");
   return live;
 }
 
@@ -1279,8 +1274,8 @@ function syncSend(): void {
   const kind = primaryKind(sending, composerHasDraft());
   go.classList.remove("voice", "send", "stop");
   go.classList.add(kind);
-  go.disabled = false;
-  go.setAttribute("aria-label", primaryLabel(kind));
+  go.disabled = uploading;
+  go.setAttribute("aria-label", uploading ? "Uploading" : primaryLabel(kind));
 }
 
 function autoGrow(box: HTMLTextAreaElement): void {
@@ -1304,6 +1299,11 @@ function releaseAttachButton(): void {
   button.removeAttribute("aria-busy");
 }
 
+function showUploadChip(label: string): void {
+  byId("fileName").textContent = label;
+  byId("fileTag").classList.add("on");
+}
+
 async function loadFile(file: File | null): Promise<void> {
   if (!file) return;
   const serial = ++attachSerial;
@@ -1317,39 +1317,66 @@ async function loadFile(file: File | null): Promise<void> {
     return;
   }
   if (file.size > ATTACH_BYTES) {
-    voiceNote("That file is over 4 MB.");
+    voiceNote(BIG_LINE);
     releaseAttachButton();
     return;
   }
   button.classList.add("live");
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
-  voiceNote("Reading " + (file.name || "file") + "…");
+  uploading = true;
+  syncSend();
+  const label = file.name || "attachment";
+  showUploadChip(label + " · 0%");
+  voiceNote("");
   const body = new FormData();
-  body.append("file", file, file.name || "attachment");
+  body.append("file", file, label);
   try {
-    const response = await fetch("/v1/attachments", { method: "POST", body });
+    const response = await new Promise<{ ok: boolean; status: number; text: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/v1/attachments");
+      xhr.upload.onprogress = (event) => {
+        if (!current() || !event.lengthComputable || event.total <= 0) return;
+        const pct = Math.min(100, Math.round((100 * event.loaded) / event.total));
+        showUploadChip(label + " · " + pct + "%");
+      };
+      xhr.onload = () => {
+        resolve({
+          ok: xhr.status >= 200 && xhr.status < 300,
+          status: xhr.status,
+          text: xhr.responseText || "",
+        });
+      };
+      xhr.onerror = () => reject(new Error("network"));
+      xhr.onabort = () => reject(new Error("abort"));
+      xhr.send(body);
+    });
     let payload: AttachmentResult = {};
     try {
-      payload = (await response.json()) as AttachmentResult;
+      payload = response.text ? (JSON.parse(response.text) as AttachmentResult) : {};
     } catch {
-      if (current()) voiceNote("Could not read that file.");
+      if (current()) {
+        clearAttach();
+        voiceNote(friendlyError("Could not read that file."));
+      }
       return;
     }
     if (!current()) return;
     if (!response.ok) {
+      clearAttach();
       voiceNote(friendlyError(payload.error || "Could not read that file."));
       return;
     }
     const text = String(payload.text || "").trim();
     if (!text) {
+      clearAttach();
       voiceNote("No text in that file.");
       return;
     }
     voiceNote("");
     byId<HTMLTextAreaElement>("q").dataset.attachText = text;
     pendingDoc = {
-      name: file.name || "attachment",
+      name: label,
       route: payload.route === "ocr" ? "ocr" : "text",
       bytes: file.size,
       excerpt: docExcerpt(text),
@@ -1357,13 +1384,18 @@ async function loadFile(file: File | null): Promise<void> {
     const kb = Math.round((text.length / 1024) * 10) / 10;
     const via = payload.route === "ocr" ? "ocr" : "text";
     const cut = payload.truncated ? " · cut" : "";
-    byId("fileName").textContent = (file.name || "attachment") + " · " + via + cut + " (" + kb + " KB)";
-    byId("fileTag").classList.add("on");
-    syncSend();
+    showUploadChip(label + " · " + via + cut + " (" + kb + " KB)");
   } catch (err) {
-    if (current()) voiceNote(friendlyError(err));
+    if (current()) {
+      clearAttach();
+      voiceNote(friendlyError(err));
+    }
   } finally {
-    if (current()) releaseAttachButton();
+    if (current()) {
+      uploading = false;
+      releaseAttachButton();
+      syncSend();
+    }
   }
 }
 
@@ -1385,6 +1417,12 @@ function paintVoice(): void {
   mic.setAttribute("aria-label", "Voice");
   document.body.classList.toggle("voice-session", voiceOn);
   byId("voiceStage").setAttribute("aria-hidden", voiceOn ? "false" : "true");
+  const tap = document.getElementById("voiceSend");
+  if (tap) tap.hidden = !voiceOn;
+}
+
+function setVoiceThinking(on: boolean): void {
+  byId("voiceStage").classList.toggle("thinking", on && voiceOn);
 }
 
 function setHeard(on: boolean): void {
@@ -1394,6 +1432,7 @@ function setHeard(on: boolean): void {
 function setSpeaking(on: boolean): void {
   const stage = byId("voiceStage");
   stage.classList.toggle("speaking", on && voiceOn);
+  if (on) setVoiceThinking(false);
   if (!on) stage.classList.remove("beat");
 }
 
@@ -1518,6 +1557,7 @@ function endVoiceMode(): void {
   voiceOn = false;
   voiceHold = false;
   pendingBarge = "";
+  voiceUtterance = null;
   stopBarge();
   cancelUtterance?.();
   cancelUtterance = null;
@@ -1525,6 +1565,7 @@ function endVoiceMode(): void {
   stopSpeaking();
   setHeard(false);
   setSpeaking(false);
+  setVoiceThinking(false);
   voiceCaption("");
   voiceNote("");
   paintVoice();
@@ -1573,9 +1614,11 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
       if (voiceOn) beginVoice();
       return;
     }
-    voiceCaption(turn.content);
+    voiceCaption("Thinking");
+    setVoiceThinking(true);
     void sendText(turn.content, false, true);
   }, endOfUtteranceSilence());
+  voiceUtterance = hold;
   cancelUtterance = () => hold.cancel();
   const handle = startListening({
     onInterim(text) {
@@ -1609,7 +1652,7 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
       if (pendingLine) beginVoice(hold);
       else beginVoice();
     },
-  });
+  }, { restart: true });
   if (!handle) {
     hold.cancel();
     cancelUtterance = null;
@@ -1628,6 +1671,7 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
 
 function releaseVoice(): void {
   stopBarge();
+  setVoiceThinking(false);
   if (speechPending()) return;
   const said = pendingBarge.trim();
   if (sending) {
@@ -1656,6 +1700,7 @@ function releaseVoice(): void {
 }
 
 byId("go").onclick = () => {
+  if (uploading) return;
   if (sending) {
     stopAsked = true;
     stopSpeaking();
@@ -1681,6 +1726,10 @@ composer.addEventListener("keydown", (event) => {
   if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) paintBrand(true);
   if (event.key !== "Enter") return;
   if (event.shiftKey) return;
+  if (uploading) {
+    event.preventDefault();
+    return;
+  }
   if (event.ctrlKey || event.metaKey) {
     event.preventDefault();
     const box = event.target as HTMLTextAreaElement;
@@ -1856,6 +1905,8 @@ whenSpeechPulses(() => {
 });
 whenSpeechEnds(releaseVoice);
 byId("btnVoice").onclick = () => toggleVoice();
+const voiceSend = document.getElementById("voiceSend");
+if (voiceSend) voiceSend.onclick = () => voiceUtterance?.flush();
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
 byId("overlay").onclick = () => {

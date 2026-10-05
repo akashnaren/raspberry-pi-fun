@@ -344,7 +344,7 @@ class ConcurrentChat(unittest.TestCase):
                 response = conn.getresponse()
                 data = b""
                 while b"Waiting for a free slot" not in data:
-                    piece = response.read(256)
+                    piece = response.fp.read1(256)
                     if not piece:
                         break
                     data += piece
@@ -518,11 +518,14 @@ class ConcurrentChat(unittest.TestCase):
 
     def test_page_shows_the_capacity_sentence(self):
         source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
-        self.assertIn(WAITING, source)
+        errors = (ROOT / "web" / "src" / "errors.ts").read_text(encoding="utf-8")
+        self.assertIn("WAITING_LINE", source)
+        self.assertIn(WAITING, errors)
         self.assertNotIn("pi4 is at capacity", source)
         bundle = (ROOT / "static" / "mesh.js").read_text(encoding="utf-8")
         self.assertIn("Waiting for a free slot", bundle)
-        self.assertNotIn("generations in flight", bundle)
+        self.assertNotIn("pi4 is at capacity", bundle)
+        self.assertNotIn("(2 generations in flight)", bundle)
 
 
 if __name__ == "__main__":
