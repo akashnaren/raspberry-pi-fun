@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="openpi" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#7cb8ff"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="27.5" fill="none" stroke="url(#openpi)" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="128 12 20 14"/>
+  <circle cx="32" cy="4.5" r="1.8" fill="#5eead4"/>
+  <circle cx="57.2" cy="42" r="1.6" fill="#7cb8ff"/>
+  <circle cx="8.4" cy="46" r="1.5" fill="#7ec8b8"/>
+  <path d="M18 23h28" fill="none" stroke="url(#openpi)" stroke-width="4.4" stroke-linecap="round"/>
+  <path d="M26.2 23c0 13-1.4 18.2-6.4 21.2" fill="none" stroke="url(#openpi)" stroke-width="4.4" stroke-linecap="round"/>
+  <path d="M38.2 23c.6 14.2 2.4 19.6 8.4 21.6" fill="none" stroke="url(#openpi)" stroke-width="4.4" stroke-linecap="round"/>
+</svg>

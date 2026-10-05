@@ -43,7 +43,7 @@ from pair.chat import (
 )
 from pair.config import STATIC_DIR
 from pair.docfit import fit_outbound
-from pair.gate import capacity_message
+from pair.errors import BUSY, WAITING, friendly_body, friendly_error
 from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
@@ -260,9 +260,8 @@ def relay_chat(
                     headers[name] = value
             return response.status, headers, raw
     except urllib.error.HTTPError as error:
-        raw = error.read()
-        kind = error.headers.get("content-type", "application/json")
-        return error.code, {"content-type": kind}, raw
+        raw = friendly_body(error.read())
+        return error.code, {"content-type": "application/json"}, raw
     except Exception:
         raise RuntimeError(PI4_MISS_DOWN) from None
 
@@ -462,6 +461,15 @@ def _service_row(peers: list, role: str, name: str) -> dict:
         "ok": bool(match.get("ok")),
         "latency_ms": match.get("latency_ms"),
     }
+
+
+def _claim_wait(slot: dict) -> bool:
+    """Turn a queue reservation into a generation slot. False means the wait ran out."""
+    slot["waiting"] = False
+    if runtime.gate.acquire_reserved():
+        slot["held"] = True
+        return True
+    return False
 
 
 def health_document() -> dict:
@@ -1007,9 +1015,16 @@ class Handler(BaseHTTPRequestHandler):
         # Flash continuation, and that continuation takes a generation slot.
         finish_list = bool(grounded) and needs_exact_n(prompt, grounded)
         use_model = grounded is None or finish_list
-        if use_model and not runtime.gate.try_acquire():
-            self._error(capacity_message(runtime.gate.limit), status=503)
-            return
+        slot = {"held": False, "waiting": False}
+        if use_model:
+            outcome = runtime.gate.reserve()
+            if outcome == "full":
+                self._error(BUSY, status=503)
+                return
+            if outcome == "ready":
+                slot["held"] = True
+            else:
+                slot["waiting"] = True
         try:
             if want_stream:
                 self._stream(
@@ -1031,8 +1046,12 @@ class Handler(BaseHTTPRequestHandler):
                     route_name=route_name,
                     resident_name=resident_name,
                     ready_answer=grounded,
+                    slot=slot,
                 )
             else:
+                if slot["waiting"] and not _claim_wait(slot):
+                    self._error(BUSY, status=503)
+                    return
                 stages = ["loading"] if route_name == "pro" else []
                 stages.append("thinking")
                 if do_search:
@@ -1059,8 +1078,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(str(error))
         finally:
-            if use_model:
+            if slot["held"]:
                 runtime.gate.release()
+            elif slot["waiting"]:
+                runtime.gate.cancel_wait()
 
     def _relay_to_brain(self, payload: bytes) -> None:
         try:
@@ -1119,11 +1140,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             response = urllib.request.urlopen(request, timeout=180)
         except urllib.error.HTTPError as error:
-            raw = error.read()
-            kind = error.headers.get("content-type", "application/json")
+            raw = friendly_body(error.read())
             self.send_response(error.code)
             self._cors()
-            self.send_header("content-type", kind)
+            self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(raw)))
             self.end_headers()
             safe_write(self, raw)
@@ -1314,7 +1334,7 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, body)
 
     def _error(self, message: str, status: int = 502) -> None:
-        body = json.dumps({"error": message}).encode()
+        body = json.dumps({"error": friendly_error(message)}).encode()
         try:
             self.send_response(status)
             self._cors()
@@ -1705,6 +1725,7 @@ class Handler(BaseHTTPRequestHandler):
         route_name: str = "",
         resident_name: str = "",
         ready_answer: str | None = None,
+        slot: dict | None = None,
     ) -> None:
         self.send_response(200)
         self._cors()
@@ -1729,6 +1750,22 @@ class Handler(BaseHTTPRequestHandler):
             if extra:
                 merged.update(extra)
             return write_event(self, status_event(stage, merged or None))
+
+        if slot and slot.get("waiting"):
+            if not emit_status("waiting", {"pi_detail": WAITING}):
+                return
+            if not _claim_wait(slot):
+                write_event(
+                    self,
+                    {
+                        "id": "pi-pair",
+                        "object": "chat.completion.chunk",
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                        "error": BUSY,
+                    },
+                )
+                safe_write(self, b"data: [DONE]\n\n", flush=True)
+                return
 
         think_extra = {"pi_think": think_name} if think_name else None
         if route_name == "pro":

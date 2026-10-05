@@ -9,6 +9,7 @@ import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
 import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
 import { modeChipText, scrubAssistant } from "./copy";
+import { friendlyError, PICTURE_LINE, WAITING_LINE } from "./errors";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
@@ -27,7 +28,7 @@ declare global {
 }
 
 type Role = "user" | "assistant";
-type StageName = "loading" | "thinking" | "searching" | "answering";
+type StageName = "loading" | "waiting" | "thinking" | "searching" | "answering";
 
 interface SourceLink {
   title: string;
@@ -274,7 +275,9 @@ function mountImageCards(row: HTMLElement, before: Node | null, raw: unknown): v
   strip.querySelectorAll("img").forEach((node) => {
     node.addEventListener("error", () => {
       node.closest(".image-card")?.remove();
-      if (!strip.querySelector(".image-card")) strip.remove();
+      if (!strip.querySelector(".image-card")) {
+        strip.replaceChildren(el("p", "image-miss", PICTURE_LINE));
+      }
     });
   });
   if (before && before.parentNode === row) row.insertBefore(strip, before);
@@ -283,6 +286,7 @@ function mountImageCards(row: HTMLElement, before: Node | null, raw: unknown): v
 
 function stageText(name: StageName, search: SearchInfo | null): string {
   if (name === "loading") return "Loading Pro";
+  if (name === "waiting") return WAITING_LINE;
   if (name === "thinking") return "Thinking";
   if (name === "searching") {
     if (search?.status === "failed") return "Search failed";
@@ -293,12 +297,7 @@ function stageText(name: StageName, search: SearchInfo | null): string {
 }
 
 function shownError(err: unknown): string {
-  const text = String((err as { message?: string })?.message || err || "");
-  if (/Load failed|Failed to fetch|NetworkError|network|abort|AbortError/i.test(text)) {
-    return "Connection dropped. Try again.";
-  }
-  if (/at capacity/i.test(text)) return text;
-  return "The reply did not come back. Try again.";
+  return friendlyError((err as { message?: string })?.message || err || "");
 }
 
 function visibleReply(text: string): boolean {
@@ -771,6 +770,7 @@ function addLiveBot(expectPro = false): LiveTurn {
   }
 
   function labelFor(name: StageName): string {
+    if (name === "waiting") return WAITING_LINE;
     if (holdPro && !visibleReply(body.textContent || "")) return "Loading Pro";
     return stageText(name, live.search);
   }
@@ -975,6 +975,23 @@ async function sendText(
     imageCards = next;
     live.showImages(imageCards);
   };
+  const showTurnError = (msg: string): void => {
+    live.setText(msg);
+    live.markErr();
+    live.finish(msg, true, "", "", null, stages);
+    live.root.appendChild(retryButton(() => {
+      live.root.remove();
+      void sendText(text, true);
+    }));
+  };
+  const missOrRetry = (): void => {
+    if (shouldSoftRetry(attempt)) {
+      live.root.remove();
+      followUp = "retry";
+      return;
+    }
+    showTurnError(shownError(""));
+  };
   void refresh();
   try {
     const body: {
@@ -1060,46 +1077,38 @@ async function sendText(
         pi_stages?: StageName[];
         choices?: { message?: { content?: string } }[];
       } = {};
+      let unreadable = false;
       try {
         payload = textBody ? JSON.parse(textBody) : {};
       } catch {
+        unreadable = true;
         payload = {};
       }
       if (!response.ok) {
-        const msg = shownError(payload.error || "HTTP " + response.status);
-        live.setText(msg);
-        live.markErr();
-        live.finish(msg, true, "", "", null, stages);
-        const retry = el("button", "retry", "Retry");
-        retry.onclick = () => {
-          live.root.remove();
-          void sendText(text, true);
-        };
-        live.root.appendChild(retry);
+        showTurnError(shownError(payload.error || "HTTP " + response.status));
         return;
       }
       const answer = payload.choices?.[0]?.message?.content || "";
       const search = searchFrom(payload, searchNow());
       const doneStages = Array.isArray(payload.pi_stages) ? payload.pi_stages : stages;
       noteImages(payload.pi_images);
-      if (!visibleReply(answer)) {
-        live.root.remove();
-        return;
+      if (unreadable || !visibleReply(answer)) {
+        missOrRetry();
+      } else {
+        turns.push({
+          role: "assistant",
+          content: answer,
+          effort: payload.pi_think || streamedEffort,
+          search,
+          stages: doneStages,
+          images: imageCards,
+          mode: payload.pi_mode || streamedMode,
+          route: payload.pi_route || streamedRoute,
+        });
+        paint();
+        if (spoken && speakText(answer)) voiced = true;
       }
-      turns.push({
-        role: "assistant",
-        content: answer,
-        effort: payload.pi_think || streamedEffort,
-        search,
-        stages: doneStages,
-        images: imageCards,
-        mode: payload.pi_mode || streamedMode,
-        route: payload.pi_route || streamedRoute,
-      });
-      paint();
-      if (spoken && speakText(answer)) voiced = true;
-      return;
-    }
+    } else {
 
     const reader = response.body?.getReader();
     if (!reader) throw new Error("no stream");
@@ -1182,33 +1191,27 @@ async function sendText(
       return;
     }
     if (streamErr || (!response.ok && !visibleReply(textAccum))) {
-      const msg = shownError(streamErr || "HTTP " + response.status);
-      live.setText(msg);
-      live.markErr();
-      live.finish(msg, true, "", "", null, stages);
-      live.root.appendChild(retryButton(() => {
-        live.root.remove();
-        void sendText(text, true);
-      }));
+      showTurnError(shownError(streamErr || "HTTP " + response.status));
       return;
     }
     if (!visibleReply(textAccum)) {
-      live.root.remove();
-      return;
+      missOrRetry();
+    } else {
+      const search = searchNow();
+      turns.push({
+        role: "assistant",
+        content: textAccum,
+        effort: streamedEffort,
+        search,
+        stages,
+        images: imageCards,
+        mode: streamedMode,
+        route: streamedRoute,
+      });
+      paint();
+      if (spoken && speakText(textAccum)) voiced = true;
     }
-    const search = searchNow();
-    turns.push({
-      role: "assistant",
-      content: textAccum,
-      effort: streamedEffort,
-      search,
-      stages,
-      images: imageCards,
-      mode: streamedMode,
-      route: streamedRoute,
-    });
-    paint();
-    if (spoken && speakText(textAccum)) voiced = true;
+    }
   } catch (err) {
     if (stopAsked) {
       keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
@@ -1224,15 +1227,13 @@ async function sendText(
     } else if (!visibleReply(textAccum) && shouldSoftRetry(attempt)) {
       live.root.remove();
       followUp = "retry";
+    } else if (visibleReply(textAccum) && attempt < 1) {
+      live.root.remove();
+      followUp = "retry";
+    } else if (visibleReply(textAccum)) {
+      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
     } else {
-      const msg = shownError(err);
-      live.setText(msg);
-      live.markErr();
-      live.finish(msg, true, "", "", null, stages);
-      live.root.appendChild(retryButton(() => {
-        live.root.remove();
-        void sendText(text, true);
-      }));
+      showTurnError(shownError(err));
     }
   } finally {
     sending = false;
@@ -1337,7 +1338,7 @@ async function loadFile(file: File | null): Promise<void> {
     }
     if (!current()) return;
     if (!response.ok) {
-      voiceNote(payload.error || "Could not read that file.");
+      voiceNote(friendlyError(payload.error || "Could not read that file."));
       return;
     }
     const text = String(payload.text || "").trim();
@@ -1359,8 +1360,8 @@ async function loadFile(file: File | null): Promise<void> {
     byId("fileName").textContent = (file.name || "attachment") + " · " + via + cut + " (" + kb + " KB)";
     byId("fileTag").classList.add("on");
     syncSend();
-  } catch {
-    if (current()) voiceNote("Could not read that file.");
+  } catch (err) {
+    if (current()) voiceNote(friendlyError(err));
   } finally {
     if (current()) releaseAttachButton();
   }
@@ -1728,6 +1729,7 @@ function setThinking(next: string): void {
 function setModelMode(next: string): void {
   modelMode = next === "flash" || next === "pro" ? next : "auto";
   paintModelMode();
+  closeInfoTips();
   const menu = document.getElementById("modePop");
   if (menu) menu.hidden = true;
   byId("modeBtn").setAttribute("aria-expanded", "false");
@@ -1750,17 +1752,80 @@ document.querySelectorAll("[data-mode]").forEach((btn) => {
     setModelMode(btn.getAttribute("data-mode") || "auto");
   };
 });
+let pinnedInfo: HTMLElement | null = null;
+
+function infoTip(btn: HTMLElement): HTMLElement | null {
+  const id = btn.getAttribute("aria-describedby") || "";
+  return id ? document.getElementById(id) : null;
+}
+
+function closeInfoTips(): void {
+  pinnedInfo = null;
+  document.querySelectorAll(".info-dot").forEach((node) => {
+    node.setAttribute("aria-expanded", "false");
+    const tip = infoTip(node as HTMLElement);
+    if (tip) tip.hidden = true;
+  });
+}
+
+function openInfo(btn: HTMLElement, pin: boolean): void {
+  document.querySelectorAll(".info-dot").forEach((node) => {
+    if (node === btn) return;
+    node.setAttribute("aria-expanded", "false");
+    const other = infoTip(node as HTMLElement);
+    if (other) other.hidden = true;
+  });
+  if (pinnedInfo && pinnedInfo !== btn) pinnedInfo = null;
+  const tip = infoTip(btn);
+  if (!tip) return;
+  btn.setAttribute("aria-expanded", "true");
+  tip.hidden = false;
+  if (pin) pinnedInfo = btn;
+}
+
+document.querySelectorAll(".info-slot").forEach((slot) => {
+  const btn = slot.querySelector(".info-dot") as HTMLButtonElement | null;
+  if (!btn) return;
+  btn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (pinnedInfo === btn) {
+      pinnedInfo = null;
+      btn.setAttribute("aria-expanded", "false");
+      const tip = infoTip(btn);
+      if (tip) tip.hidden = true;
+      return;
+    }
+    openInfo(btn, true);
+  });
+  slot.addEventListener("pointerenter", (event) => {
+    const kind = (event as PointerEvent).pointerType || "";
+    if (kind === "touch" || kind === "pen") return;
+    if (!window.matchMedia("(pointer: fine)").matches) return;
+    openInfo(btn, false);
+  });
+  slot.addEventListener("pointerleave", () => {
+    if (pinnedInfo === btn) return;
+    btn.setAttribute("aria-expanded", "false");
+    const tip = infoTip(btn);
+    if (tip) tip.hidden = true;
+  });
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeInfoTips();
+});
 document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
   (btn as HTMLButtonElement).onclick = () => setTheme(btn.getAttribute("data-theme-choice") || "dark");
 });
 byId("modeBtn").onclick = (event) => {
   event.stopPropagation();
+  closeInfoTips();
   const menu = byId("modePop");
   const open = menu.hidden;
   menu.hidden = !open;
   byId("modeBtn").setAttribute("aria-expanded", open ? "true" : "false");
 };
 document.addEventListener("click", () => {
+  closeInfoTips();
   const menu = document.getElementById("modePop");
   if (!menu || menu.hidden) return;
   menu.hidden = true;

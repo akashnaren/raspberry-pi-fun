@@ -47,21 +47,36 @@ try {
                 <svg class="mode-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               <div class="mode-pop" id="modePop" role="menu" hidden>
-                <button type="button" class="mode-opt on" data-mode="auto" role="menuitemradio" aria-checked="true" title="Routes Flash or Pro from the question." aria-label="Auto. Routes Flash or Pro from the question.">
-                  <span>Auto</span>
-                  <span class="info-dot" aria-hidden="true">ⓘ</span>
-                  <span class="mode-mark" aria-hidden="true">✓</span>
-                </button>
-                <button type="button" class="mode-opt" data-mode="flash" role="menuitemradio" aria-checked="false" title="qwen2.5:0.5b, the fast resident model." aria-label="Flash. qwen2.5:0.5b, the fast resident model.">
-                  <span>Flash</span>
-                  <span class="info-dot" aria-hidden="true">ⓘ</span>
-                  <span class="mode-mark" aria-hidden="true">✓</span>
-                </button>
-                <button type="button" class="mode-opt" data-mode="pro" role="menuitemradio" aria-checked="false" title="qwen2.5:1.5b, loaded when the question needs it." aria-label="Pro. qwen2.5:1.5b, loaded when the question needs it.">
-                  <span>Pro</span>
-                  <span class="info-dot" aria-hidden="true">ⓘ</span>
-                  <span class="mode-mark" aria-hidden="true">✓</span>
-                </button>
+                <div class="mode-opt">
+                  <button type="button" class="mode-name on" data-mode="auto" role="menuitemradio" aria-checked="true" aria-label="Auto">
+                    <span>Auto</span>
+                    <span class="mode-mark" aria-hidden="true">✓</span>
+                  </button>
+                  <span class="info-slot">
+                    <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-menu-auto" aria-label="About Auto">ⓘ</button>
+                    <span id="tip-menu-auto" class="info-pop" role="note" hidden>Routes Flash or Pro from the question.</span>
+                  </span>
+                </div>
+                <div class="mode-opt">
+                  <button type="button" class="mode-name" data-mode="flash" role="menuitemradio" aria-checked="false" aria-label="Flash">
+                    <span>Flash</span>
+                    <span class="mode-mark" aria-hidden="true">✓</span>
+                  </button>
+                  <span class="info-slot">
+                    <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-menu-flash" aria-label="About Flash">ⓘ</button>
+                    <span id="tip-menu-flash" class="info-pop" role="note" hidden>qwen2.5:0.5b, the fast resident model.</span>
+                  </span>
+                </div>
+                <div class="mode-opt">
+                  <button type="button" class="mode-name" data-mode="pro" role="menuitemradio" aria-checked="false" aria-label="Pro">
+                    <span>Pro</span>
+                    <span class="mode-mark" aria-hidden="true">✓</span>
+                  </button>
+                  <span class="info-slot">
+                    <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-menu-pro" aria-label="About Pro">ⓘ</button>
+                    <span id="tip-menu-pro" class="info-pop" role="note" hidden>qwen2.5:1.5b, loaded when the question needs it.</span>
+                  </span>
+                </div>
               </div>
             </div>
             <div class="think-set" role="group" aria-label="Thinking">
@@ -113,9 +128,27 @@ try {
     <section class="set-block">
       <h3>Model</h3>
       <div class="seg" role="group" aria-label="Model default">
-        <button type="button" class="seg-btn on" data-mode="auto" title="Routes Flash or Pro from the question.">Auto <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn" data-mode="flash" title="qwen2.5:0.5b, the fast resident model.">Flash <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn" data-mode="pro" title="qwen2.5:1.5b, loaded when the question needs it.">Pro <span class="info-dot" aria-hidden="true">ⓘ</span></button>
+        <div class="seg-choice">
+          <button type="button" class="seg-btn on" data-mode="auto">Auto</button>
+          <span class="info-slot">
+            <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-set-auto" aria-label="About Auto">ⓘ</button>
+            <span id="tip-set-auto" class="info-pop" role="note" hidden>Routes Flash or Pro from the question.</span>
+          </span>
+        </div>
+        <div class="seg-choice">
+          <button type="button" class="seg-btn" data-mode="flash">Flash</button>
+          <span class="info-slot">
+            <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-set-flash" aria-label="About Flash">ⓘ</button>
+            <span id="tip-set-flash" class="info-pop" role="note" hidden>qwen2.5:0.5b, the fast resident model.</span>
+          </span>
+        </div>
+        <div class="seg-choice">
+          <button type="button" class="seg-btn" data-mode="pro">Pro</button>
+          <span class="info-slot">
+            <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-set-pro" aria-label="About Pro">ⓘ</button>
+            <span id="tip-set-pro" class="info-pop" role="note" hidden>qwen2.5:1.5b, loaded when the question needs it.</span>
+          </span>
+        </div>
       </div>
     </section>
     <section class="set-block">

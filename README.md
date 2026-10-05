@@ -435,7 +435,7 @@ If `mode` is omitted, the model is Flash. Flash is the fleet checkpoint: `qwen2.
 
 The JSON body names the public model in `model` (`flash`) and the selected mode in `mode`. `checkpoint` is the Ollama tag. A stored sentence still has `pi_model` `canned`. A generated sentence still has the checkpoint in `pi_model`. Pins of pi2 or pi3 are still refused. A miss is still generated only on pi4.
 
-`POST /api/chat` uses the same inference cap as the page. When every slot is already decoding, the route returns HTTP 503 immediately with `pi4 is at capacity (N generations in flight). Try again in a moment.` An exact map hit does not take a slot.
+`POST /api/chat` uses the same inference cap as the page. When every slot is already decoding, the request waits in a queue of 8 for up to 60 seconds. The page shows `Waiting for a free slot…`. A full queue or a wait that runs out returns HTTP 503 with one short line and does not name the board. An exact map hit does not take a slot.
 
 ```bash
 curl -sS http://127.0.0.1:18080/api/chat \
@@ -469,7 +469,7 @@ curl -sS http://127.0.0.1:18080/api/health -H 'authorization: Bearer YOUR_KEY'
 | `PI_PAIR_MODE` | `flash` | `mesh-hello.sh` only. `pro` opts that probe into `qwen2.5:1.5b`. |
 | `PI_GPT_API_KEY` | unset | Key for `POST /api/chat` and `GET /api/health`. Unset closes those two routes. The page does not use it. |
 | `PI_PAIR_CORS_ORIGINS` | unset | Extra browser origins for `/api/*`, comma-separated. The request host is allowed without this. |
-| `PI_PAIR_SLOTS` | `ollama_num_parallel` (2) | In-flight generations on pi4. Clamped to 1–4. Unset follows `configs/runtime/inference_pi4.json`, the same number `install.sh` writes as `OLLAMA_NUM_PARALLEL`. When the cap is full the router returns HTTP 503 immediately. Flash and Pro share this cap. `POST /api/chat` uses this same cap. |
+| `PI_PAIR_SLOTS` | `ollama_num_parallel` (2) | In-flight generations on pi4. Clamped to 1–4. Unset follows `configs/runtime/inference_pi4.json`, the same number `install.sh` writes as `OLLAMA_NUM_PARALLEL`. When the cap is full, up to 8 more chats wait about 60 seconds and the page shows a waiting line. A full queue returns HTTP 503 with a short message. Flash and Pro share this cap. `POST /api/chat` uses this same cap. |
 | `PI_PAIR_HEALTH_TTL` | `2.5` | Seconds to cache peer probes |
 
 Ollama's runner log for this model shows the cache, not a second copy of the weights: 24 MiB of key/value cache at one sequence, 48 MiB at two, 96 MiB at four, each sequence still `num_ctx` 2048. A same-settings run of `qwen2.5:0.5b` kept the Ollama process tree under 1 GB at four sequences. The shipped cap is 2. Four sequences were too slow on pi4 (p95 34.9s), and `install.sh` writes that cap of 2 into the Ollama drop-in so a deploy does not put the board back on 4. Re-measure on pi4 after the drop-in is installed and the model is loaded: `python3 scripts/bench_concurrent.py --url http://127.0.0.1:18080 --n 2 --rounds 5`. That prints p50, p95, and the peak resident set of the `ollama` process tree. Direct to the model server is the same script with `--ollama http://127.0.0.1:11434`.
@@ -484,7 +484,7 @@ Ollama's runner log for this model shows the cache, not a second copy of the wei
 | Embedder down or under 0.85 on pi4 | Treated as a map miss, then the pi4 chat rule. |
 | Map miss, pi4 up | Chip `brain: pi4`. Queue row on pi3. |
 | Map miss, pi4 down | `pi4 unreachable on cache miss. Refusing to answer from pi2 or pi3.` |
-| Cap full | HTTP 503 and `pi4 is at capacity (N generations in flight).` An exact map hit, an embed paraphrase, or a page answer does not take a slot. `POST /api/chat` returns that same 503. |
+| Cap full | The chat waits for a free slot (queue of 8, about 60 seconds). The page shows `Waiting for a free slot…`. A full queue or a timed-out wait is HTTP 503 and one short line, with no board name. An exact map hit, an embed paraphrase, or a page answer does not take a slot. `POST /api/chat` uses that same queue. |
 | Pin or direct to pi2 or pi3 | `cannot be the brain` sentence. No model call, including when the map would have hit. |
 | Map file unreadable | Treated as a miss, then the pi4 rule. |
 | Train config names an unknown dataset | Job exits before the queue is moved. |
