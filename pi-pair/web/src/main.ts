@@ -3,7 +3,7 @@ import { failChart, drawChart } from "./chart";
 import { cardsFrom, renderImageCardsHtml, type ImageCard } from "./images";
 import { renderMarkdown, renderStreamingMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
-import { suppressOfflineBanner } from "./presence";
+import { HEALTH_POLL_MS, serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner, VISIBILITY_SETTLE_MS, type HealthSnapshot } from "./presence";
 import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
 import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
@@ -52,16 +52,8 @@ interface Turn {
   route?: string;
 }
 
-interface HealthBody {
+interface HealthBody extends HealthSnapshot {
   peers?: { models?: string[] }[];
-  peers_up?: number;
-  uptime_s?: number;
-  services?: {
-    brain?: { ok?: boolean; latency_ms?: number | null };
-    search?: { ok?: boolean; latency_ms?: number | null };
-    peers_up?: number;
-    peers?: number;
-  };
 }
 
 interface LiveTurn {
@@ -96,6 +88,9 @@ let listenHandle: { stop: () => void } | null = null;
 let cancelUtterance: (() => void) | null = null;
 let pendingDoc: DocCard | null = null;
 let resumedAt = 0;
+let serviceSig = "";
+let resumeSend: (() => void) | null = null;
+let graceTimer = 0;
 let bargeHandle: { stop: () => void } | null = null;
 let pendingBarge = "";
 let speakingLine = "";
@@ -372,53 +367,75 @@ function showOffline(): void {
   banner.appendChild(retry);
 }
 
-async function refresh(): Promise<void> {
-  try {
-    const response = await fetch("/health", { method: "GET", cache: "no-store" });
-    if (!response.ok) throw new Error("offline");
-    const body = await response.json() as HealthBody;
-    const banner = byId("banner");
-    banner.className = "";
-    banner.replaceChildren();
-    fillModels(body.peers || []);
-    paintServices(body);
-  } catch {
-    showOffline();
-  }
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function formatUptime(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds || 0));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  if (hours) return hours + "h " + minutes + "m";
-  if (minutes) return minutes + "m " + (total % 60) + "s";
-  return total + "s";
+function refreshAfterGrace(): void {
+  if (graceTimer) return;
+  const elapsed = resumedAt > 0 ? Date.now() - resumedAt : 0;
+  const wait = Math.max(0, 2500 - elapsed) + 40;
+  graceTimer = window.setTimeout(() => {
+    graceTimer = 0;
+    if (shouldPollHealth(document.hidden)) void refresh();
+  }, wait);
+}
+
+async function refresh(): Promise<void> {
+  if (!shouldPollHealth(document.hidden)) return;
+  for (let attempt = 0; ; attempt += 1) {
+    if (!shouldPollHealth(document.hidden)) return;
+    try {
+      const response = await fetch("/health", { method: "GET", cache: "no-store" });
+      if (!response.ok) throw new Error("offline");
+      const body = await response.json() as HealthBody;
+      const banner = byId("banner");
+      banner.className = "";
+      banner.replaceChildren();
+      fillModels(body.peers || []);
+      paintServices(body);
+      return;
+    } catch {
+      if (suppressOfflineBanner(document.hidden, resumedAt, Date.now())) {
+        refreshAfterGrace();
+        return;
+      }
+      if (shouldSoftRetry(attempt)) {
+        await delay(softRetryDelay(attempt));
+        continue;
+      }
+      showOffline();
+      return;
+    }
+  }
 }
 
 function paintServices(body: HealthBody): void {
   const now = document.getElementById("serviceNow");
   const log = document.getElementById("serviceLog");
   if (!now || !log) return;
-  const services = body.services || {};
-  const chat = services.brain?.ok ? "up" : "down";
-  const search = services.search?.ok ? "up" : "down";
-  const up = services.peers_up ?? body.peers_up ?? 0;
-  const total = services.peers ?? (body.peers || []).length;
-  const line = "Up " + formatUptime(body.uptime_s || 0) + " · Chat " + chat + " · Search " + search + " · Fleet " + up + "/" + total;
-  now.textContent = line;
-  if (serviceLines[0] !== line) {
-    serviceLines.unshift(line);
+  const view = serviceView(body);
+  now.textContent = view.now;
+  if (view.signature !== serviceSig) {
+    serviceSig = view.signature;
+    const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    serviceLines.unshift(stamp + " · " + view.event);
     if (serviceLines.length > 8) serviceLines.length = 8;
   }
   log.replaceChildren();
   serviceLines.forEach((entry) => log.appendChild(el("p", "service-line", entry)));
 }
 
-async function backgroundMiss(): Promise<boolean> {
+async function quietNetwork(): Promise<boolean> {
   if (suppressOfflineBanner(document.hidden, resumedAt, Date.now())) return true;
-  await new Promise((resolve) => window.setTimeout(resolve, 350));
+  await delay(VISIBILITY_SETTLE_MS);
   return suppressOfflineBanner(document.hidden, resumedAt, Date.now());
+}
+
+function armResumeSend(text: string, spoken: boolean): void {
+  resumeSend = () => {
+    void sendText(text, true, spoken);
+  };
 }
 
 function attachLabel(parent: HTMLElement, prompt: string, answer: string): void {
@@ -923,6 +940,7 @@ async function sendText(
   isRetry: boolean,
   spoken = false,
   extra?: { hidden?: string; attachment?: DocCard | null },
+  attempt = 0,
 ): Promise<void> {
   if (sending) return;
   const hidden = (extra?.hidden || "").trim();
@@ -941,6 +959,7 @@ async function sendText(
     paint();
   }
   let voiced = false;
+  let followUp: "retry" | "resume" | "" = "";
   const model = modeModel();
   const effort = thinking || "medium";
   const live = addLiveBot(modelMode === "pro");
@@ -985,8 +1004,8 @@ async function sendText(
 
     let response: Response | null = null;
     let lastErr: unknown = null;
-    for (let i = 0; i <= 2; i += 1) {
-      if (stopAsked) break;
+    for (let i = 0; i < 3; i += 1) {
+      if (stopAsked || !shouldPollHealth(document.hidden)) break;
       try {
         turnCtrl = new AbortController();
         const timer = window.setTimeout(() => turnCtrl?.abort(), 180000);
@@ -1008,7 +1027,8 @@ async function sendText(
       } catch (err) {
         if (stopAsked) throw err;
         lastErr = err;
-        if (i < 2) await new Promise((resolve) => window.setTimeout(resolve, 600 * (i + 1)));
+        if (!shouldPollHealth(document.hidden)) break;
+        if (shouldSoftRetry(i)) await delay(softRetryDelay(i));
       }
     }
     const searchNow = (): SearchInfo | null => (
@@ -1192,30 +1212,44 @@ async function sendText(
       keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
       return;
     }
-    if (await backgroundMiss()) {
+    if (await quietNetwork()) {
       if (visibleReply(textAccum)) {
         keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
       } else {
         live.root.remove();
+        followUp = "resume";
       }
-      return;
-    }
-    const msg = shownError(err);
-    live.setText(msg);
-    live.markErr();
-    live.finish(msg, true, "", "", null, stages);
-    live.root.appendChild(retryButton(() => {
+    } else if (!visibleReply(textAccum) && shouldSoftRetry(attempt)) {
       live.root.remove();
-      void sendText(text, true);
-    }));
+      followUp = "retry";
+    } else {
+      const msg = shownError(err);
+      live.setText(msg);
+      live.markErr();
+      live.finish(msg, true, "", "", null, stages);
+      live.root.appendChild(retryButton(() => {
+        live.root.remove();
+        void sendText(text, true);
+      }));
+    }
   } finally {
     sending = false;
     stopAsked = false;
     turnCtrl = null;
     syncSend();
-    byId<HTMLTextAreaElement>("q").focus();
-    if (voiceOn && !speechPending()) releaseVoice();
+    if (followUp !== "retry") byId<HTMLTextAreaElement>("q").focus();
+    if (followUp !== "retry" && voiceOn && !speechPending()) releaseVoice();
   }
+  if (followUp === "retry") {
+    await delay(softRetryDelay(attempt));
+    if (!shouldPollHealth(document.hidden)) {
+      armResumeSend(text, spoken);
+      return;
+    }
+    await sendText(text, true, spoken, extra, attempt + 1);
+    return;
+  }
+  if (followUp === "resume") armResumeSend(text, spoken);
 }
 
 async function send(): Promise<void> {
@@ -1842,11 +1876,18 @@ composer.addEventListener("paste", (event) => {
 });
 
 void refresh();
-window.setInterval(() => void refresh(), 8000);
+window.setInterval(() => {
+  if (!shouldPollHealth(document.hidden)) return;
+  void refresh();
+}, HEALTH_POLL_MS);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   resumedAt = Date.now();
   window.setTimeout(() => {
-    if (!document.hidden) void refresh();
-  }, 500);
+    if (!shouldPollHealth(document.hidden)) return;
+    const resume = resumeSend;
+    resumeSend = null;
+    if (resume) resume();
+    void refresh();
+  }, VISIBILITY_SETTLE_MS);
 });

@@ -1,7 +1,7 @@
 import { docExcerpt, modelUserContent } from "./src/attach.ts";
 import { flowchartSvg } from "./src/diagram.ts";
 import { renderMarkdown, renderStreamingMarkdown, stabilizeMarkdown } from "./src/markdown.ts";
-import { suppressOfflineBanner } from "./src/presence.ts";
+import { serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner } from "./src/presence.ts";
 import { tableFence } from "./src/table.ts";
 
 const partial = "1. First\n2. Second\n```chart\n{\"title\":\"y\"}";
@@ -35,5 +35,36 @@ if (docExcerpt(hidden).length > 141) throw new Error("preview dumped the documen
 if (!suppressOfflineBanner(true, 0, 1000)) throw new Error("a hidden tab showed offline");
 if (!suppressOfflineBanner(false, 1000, 1200)) throw new Error("a fresh resume showed offline");
 if (suppressOfflineBanner(false, 1000, 5000)) throw new Error("a visible outage was hidden");
+if (shouldPollHealth(true)) throw new Error("a hidden tab still polled health");
+if (!shouldPollHealth(false)) throw new Error("a visible tab skipped health");
+if (!shouldSoftRetry(0) || !shouldSoftRetry(1) || shouldSoftRetry(2)) {
+  throw new Error("soft retries did not stop before the drop message");
+}
+if (softRetryDelay(0) < 200 || softRetryDelay(1) < softRetryDelay(0)) {
+  throw new Error("soft retry did not wait");
+}
+const view = serviceView({
+  uptime_s: 3720,
+  services: {
+    brain: { ok: true, latency_ms: 18 },
+    search: { ok: false, latency_ms: null },
+    peers_up: 2,
+    peers: 3,
+  },
+});
+if (view.now !== "Up 1h 2m · Chat up 18ms · Search down · Fleet 2/3") {
+  throw new Error("uptime line was " + view.now);
+}
+const later = serviceView({
+  uptime_s: 3780,
+  services: {
+    brain: { ok: true, latency_ms: 18 },
+    search: { ok: false },
+    peers_up: 2,
+    peers: 3,
+  },
+});
+if (later.signature !== view.signature) throw new Error("uptime ticks rewrote the status log");
+if (!later.now.startsWith("Up 1h 3m")) throw new Error("live uptime did not move");
 
 console.log("ok");
