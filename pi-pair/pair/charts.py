@@ -234,14 +234,22 @@ def _series_ok(item: object) -> bool:
     return True
 
 
+def _fence_name(info: str) -> str:
+    parts = (info or "").strip().lower().split()
+    return parts[0] if parts else ""
+
+
+def _chart_fence(body: str) -> str:
+    return "```chart\n" + (body or "").strip() + "\n```"
+
+
 def _chart_attempts(text: str, prompt: str) -> list[str]:
     """Bodies of chart fences. ```json counts when the user asked for a plot."""
     raw = (text or "").replace("\r\n", "\n")
     want_json = is_chart_request(prompt)
     bodies: list[str] = []
     for match in _FENCE.finditer(raw):
-        lang = (match.group(1) or "").strip().lower().split()
-        name = lang[0] if lang else ""
+        name = _fence_name(match.group(1) or "")
         if name in {"chart", "plotly"} or (name == "json" and want_json):
             bodies.append(match.group(2) or "")
     if bodies:
@@ -254,16 +262,63 @@ def _chart_attempts(text: str, prompt: str) -> list[str]:
     return []
 
 
+def _promote_json_chart(text: str, prompt: str) -> str | None:
+    """One ```chart fence when a plot reply's JSON is salvageable.
+
+    The page draws chart and plotly only. A chart-shaped ```json block, or a
+    bare chart object that would be that same block, is rewritten with its
+    body unchanged. ```chart and ```plotly fences stay as written.
+    """
+    if not is_chart_request(prompt):
+        return None
+    raw = (text or "").replace("\r\n", "\n")
+    json_bodies: list[str] = []
+    drawn = False
+    for match in _FENCE.finditer(raw):
+        name = _fence_name(match.group(1) or "")
+        body = match.group(2) or ""
+        if name in {"chart", "plotly"}:
+            if not chart_json_ok(body):
+                return None
+            drawn = True
+        elif name == "json":
+            json_bodies.append(body)
+    if json_bodies:
+        if not all(chart_json_ok(body) for body in json_bodies):
+            return None
+        if not drawn:
+            return "\n".join(_chart_fence(body) for body in json_bodies)
+
+        def repl(match: re.Match) -> str:
+            if _fence_name(match.group(1) or "") != "json":
+                return match.group(0)
+            return _chart_fence(match.group(2) or "")
+
+        return _FENCE.sub(repl, raw)
+    stripped = raw.strip()
+    if "```" not in raw and chart_json_ok(stripped):
+        return _chart_fence(stripped)
+    return None
+
+
+def _accepted_chart(text: str, prompt: str) -> str:
+    promoted = _promote_json_chart(text, prompt)
+    if promoted is not None:
+        return promoted
+    return text or ""
+
+
 def repair_chart_reply(text: str, retry, prompt: str = "") -> str:
-    """Keep a valid chart fence. One retry, then a single sentence.
+    """Keep a chart the page can draw. One retry, then a single sentence.
+
+    A salvageable ```json fence, or a bare chart object, is rewritten to
+    one ```chart fence before it is returned.
 
     `retry` is called at most once and should return the next model reply.
     """
     attempts = _chart_attempts(text, prompt)
-    if not attempts:
-        return text or ""
-    if all(chart_json_ok(body) for body in attempts):
-        return text
+    if not attempts or all(chart_json_ok(body) for body in attempts):
+        return _accepted_chart(text, prompt)
     second = ""
     try:
         second = retry() or ""
@@ -271,7 +326,11 @@ def repair_chart_reply(text: str, retry, prompt: str = "") -> str:
         second = ""
     again = _chart_attempts(second, prompt)
     if again and all(chart_json_ok(body) for body in again):
-        return second
+        return _accepted_chart(second, prompt)
+    if not again:
+        promoted = _promote_json_chart(second, prompt)
+        if promoted is not None:
+            return promoted
     return CHART_FALLBACK
 
 
