@@ -393,8 +393,8 @@ class PairHttp(unittest.TestCase):
             html = response.read().decode()
         self.assertIn("/static/mesh.css", html)
         self.assertIn("/static/mesh.js", html)
-        self.assertIn("<title>Pi GPT 1.0</title>", html)
-        self.assertIn("Pi GPT 1.0", html)
+        self.assertIn("<title>OpenPi — MicroAstra</title>", html)
+        self.assertIn("OpenPi — MicroAstra", html)
         self.assertIn('aria-label="Voice"', html)
         self.assertNotIn("jsdelivr", html)
         self.assertNotIn("katex", html.lower())
@@ -1413,10 +1413,10 @@ class PairHttp(unittest.TestCase):
 
 
 class ProductCopy(unittest.TestCase):
-    """The page is Pi GPT 1.0. READMEs stay plain and do not say Pi PAIR."""
+    """The page title is OpenPi — MicroAstra. READMEs stay plain and do not say Pi PAIR."""
 
     def test_static_and_readmes_copy(self):
-        product = "Pi GPT 1.0"
+        product = "OpenPi — MicroAstra"
         retired = "Pi 0.2 High"
         files = [
             ROOT / "static" / "index.html",
@@ -1435,9 +1435,9 @@ class ProductCopy(unittest.TestCase):
                 problems.append(f"{rel} still says Pi PAIR")
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         if f"<title>{product}</title>" not in html:
-            problems.append("static/index.html title is not Pi GPT 1.0")
+            problems.append("static/index.html title is not OpenPi — MicroAstra")
         if f'<div class="brand">{product}</div>' not in html:
-            problems.append("static/index.html brand is not Pi GPT 1.0")
+            problems.append("static/index.html brand is not OpenPi — MicroAstra")
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
         if "Description=Pi GPT 1.0\n" not in install:
             problems.append("install.sh Description is not Pi GPT 1.0")

@@ -898,7 +898,7 @@ function autoGrow(box: HTMLTextAreaElement): void {
 }
 
 function threadAsMd(): string {
-  let out = "# Pi GPT 1.0\n\n";
+  let out = "# OpenPi — MicroAstra\n\n";
   turns.forEach((turn) => {
     out += "### " + (turn.role === "user" ? "You" : "Assistant") + "\n\n" + turn.content + "\n\n";
   });
