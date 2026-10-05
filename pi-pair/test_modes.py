@@ -16,14 +16,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pair import runtime
 from pair import server as pair_server
 from pair.modes import pull_needed, resolve_mode, tag_ready
-from pair.resident import cap_fits_three, eviction_targets, protected_tags
+from pair.resident import cap_fits_residents, eviction_targets, protected_tags
 from pair.server import make_server
 from test_pair import ROOT
 
 
 class ModeOllama(BaseHTTPRequestHandler):
-    tags = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
-    loaded = ["qwen2.5:0.5b"]
+    tags = ["qwen3:0.6b", "qwen3:1.7b"]
+    loaded = ["qwen3:0.6b"]
     calls: list = []
     sticky = False
     block_chat = None
@@ -58,9 +58,12 @@ class ModeOllama(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         type(self).calls.append(("POST", path, payload))
         if path == "/api/generate":
-            if not type(self).sticky:
-                name = payload.get("model")
+            name = payload.get("model")
+            alive = payload.get("keep_alive")
+            if alive == 0 and not type(self).sticky:
                 type(self).loaded = [item for item in type(self).loaded if item != name]
+            elif name and name not in type(self).loaded:
+                type(self).loaded = [*type(self).loaded, name]
             self._json(b"{}")
             return
         if path != "/api/chat":
@@ -96,11 +99,8 @@ class ModeOllama(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-_EMBED = "snowflake-arctic-embed:m"
-
-
 def _after_chat(loaded, model):
-    """MAX_LOADED_MODELS >= 3 keeps Flash, Arctic, and Pro together."""
+    """MAX_LOADED_MODELS >= 2 keeps Flash and Pro together."""
     kept = list(loaded)
     if model and model not in kept:
         kept.append(model)
@@ -108,8 +108,8 @@ def _after_chat(loaded, model):
 
 
 def _reset_fake() -> None:
-    ModeOllama.tags = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
-    ModeOllama.loaded = ["qwen2.5:0.5b"]
+    ModeOllama.tags = ["qwen3:0.6b", "qwen3:1.7b"]
+    ModeOllama.loaded = ["qwen3:0.6b"]
     ModeOllama.calls = []
     ModeOllama.sticky = False
     ModeOllama.block_chat = None
@@ -126,41 +126,36 @@ def _posts(path: str) -> list[dict]:
 
 class ModeRules(unittest.TestCase):
     def test_unspecified_is_flash_and_pro_is_explicit(self):
-        self.assertEqual(resolve_mode(None, None), ("flash", "qwen2.5:0.5b"))
-        self.assertEqual(resolve_mode("", ""), ("flash", "qwen2.5:0.5b"))
-        self.assertEqual(resolve_mode("   ", None), ("flash", "qwen2.5:0.5b"))
-        self.assertEqual(
-            resolve_mode("turbo", "llama3.2:1b"), ("flash", "qwen2.5:0.5b")
-        )
-        self.assertEqual(resolve_mode("pro", "qwen2.5:0.5b"), ("pro", "qwen2.5:1.5b"))
-        self.assertEqual(resolve_mode("PRO", None), ("pro", "qwen2.5:1.5b"))
-        self.assertEqual(
-            resolve_mode("flash", "qwen2.5:1.5b"), ("flash", "qwen2.5:0.5b")
-        )
-        self.assertEqual(resolve_mode(None, "qwen2.5:1.5b"), ("pro", "qwen2.5:1.5b"))
-        self.assertEqual(resolve_mode(None, "Pro"), ("pro", "qwen2.5:1.5b"))
-        self.assertFalse(tag_ready(["qwen2.5:0.5b"], "pro", "qwen2.5:1.5b"))
-        self.assertTrue(tag_ready(["qwen2.5:1.5b"], "pro", "qwen2.5:1.5b"))
-        self.assertTrue(tag_ready([], "flash", "qwen2.5:0.5b"))
-        self.assertFalse(tag_ready([], "pro", "qwen2.5:1.5b"))
-        self.assertIn("ollama pull qwen2.5:1.5b", pull_needed("qwen2.5:1.5b"))
-        self.assertIn("does not pull", pull_needed("qwen2.5:1.5b"))
-        flash, arctic = protected_tags()
-        self.assertEqual(flash, "qwen2.5:0.5b")
-        self.assertEqual(arctic, "snowflake-arctic-embed:m")
-        running = [flash, arctic]
-        self.assertEqual(eviction_targets(running, "qwen2.5:1.5b"), [])
-        self.assertEqual(eviction_targets([flash, arctic, "qwen2.5:1.5b"], flash), [])
+        self.assertEqual(resolve_mode(None, None), ("flash", "qwen3:0.6b"))
+        self.assertEqual(resolve_mode("", ""), ("flash", "qwen3:0.6b"))
+        self.assertEqual(resolve_mode("   ", None), ("flash", "qwen3:0.6b"))
+        self.assertEqual(resolve_mode("turbo", "llama3.2:1b"), ("flash", "qwen3:0.6b"))
+        self.assertEqual(resolve_mode("pro", "qwen3:0.6b"), ("pro", "qwen3:1.7b"))
+        self.assertEqual(resolve_mode("PRO", None), ("pro", "qwen3:1.7b"))
+        self.assertEqual(resolve_mode("flash", "qwen3:1.7b"), ("flash", "qwen3:0.6b"))
+        self.assertEqual(resolve_mode(None, "qwen3:1.7b"), ("pro", "qwen3:1.7b"))
+        self.assertEqual(resolve_mode(None, "Pro"), ("pro", "qwen3:1.7b"))
+        self.assertFalse(tag_ready(["qwen3:0.6b"], "pro", "qwen3:1.7b"))
+        self.assertTrue(tag_ready(["qwen3:1.7b"], "pro", "qwen3:1.7b"))
+        self.assertTrue(tag_ready([], "flash", "qwen3:0.6b"))
+        self.assertFalse(tag_ready([], "pro", "qwen3:1.7b"))
+        self.assertIn("ollama pull qwen3:1.7b", pull_needed("qwen3:1.7b"))
+        self.assertIn("does not pull", pull_needed("qwen3:1.7b"))
+        self.assertEqual(protected_tags(), ("qwen3:0.6b", "qwen3:1.7b"))
+        flash = "qwen3:0.6b"
+        running = [flash]
+        self.assertEqual(eviction_targets(running, "qwen3:1.7b"), [])
+        self.assertEqual(eviction_targets([flash, "qwen3:1.7b"], flash), [])
 
     def test_readme_and_installer_do_not_pull_pro(self):
         readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
-        self.assertIn("qwen2.5:1.5b", readme)
+        self.assertIn("qwen3:1.7b", readme)
         self.assertIn("does not pull Pro", readme)
-        self.assertIn("ollama pull qwen2.5:1.5b", readme)
+        self.assertIn("ollama pull qwen3:1.7b", readme)
         self.assertIn("X-Pi-Mode", readme)
         self.assertNotIn("Loading Pro", readme)
         self.assertIn("keep_alive", readme)
-        self.assertIn("MAX_LOADED_MODELS=3", readme)
+        self.assertIn("MAX_LOADED_MODELS=2", readme)
         script = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn("does not pull it", script)
         self.assertIn("does not run ollama pull", script)
@@ -169,15 +164,16 @@ class ModeRules(unittest.TestCase):
             for line in script.splitlines()
             if "ollama pull" in line and not line.strip().startswith("echo")
         ]
-        self.assertEqual(len(executed), 2)
+        self.assertEqual(len(executed), 1)
         self.assertIn("OLLAMA_MODEL_PRIMARY", executed[0])
-        self.assertIn("OLLAMA_EMBED_MODEL", executed[1])
+        self.assertIn('ollama rm "$REMOVED_EMBED"', script)
+        self.assertNotIn('ollama pull "$REMOVED_EMBED"', script)
         self.assertTrue(all("1.5b" not in line for line in executed))
-        self.assertTrue(cap_fits_three(script))
+        self.assertTrue(cap_fits_residents(script))
         unit = (ROOT / "configs" / "runtime" / "ollama-lan.service").read_text(
             encoding="utf-8"
         )
-        self.assertTrue(cap_fits_three(unit))
+        self.assertTrue(cap_fits_residents(unit))
 
 
 class ModeHttp(unittest.TestCase):
@@ -270,31 +266,36 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("X-Pi-Mode"), "flash")
         self.assertEqual(body["pi_mode"], "flash")
-        self.assertEqual(body["pi_model"], "qwen2.5:0.5b")
+        self.assertEqual(body["pi_model"], "qwen3:0.6b")
         chats = _posts("/api/chat")
         self.assertEqual(len(chats), 1)
-        self.assertEqual(chats[0]["model"], "qwen2.5:0.5b")
+        self.assertEqual(chats[0]["model"], "qwen3:0.6b")
         self.assertEqual(chats[0]["keep_alive"], -1)
         self.assertNotIn("mode", chats[0])
         self.assertEqual(_posts("/api/generate"), [])
-        self.assertEqual(ModeOllama.loaded, ["qwen2.5:0.5b"])
+        self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])
 
     def test_pro_keeps_flash_and_applies_thinking(self):
         port = self._boot()
-        levels = {"low": (0.6, 64), "medium": (0.7, 256), "high": (0.8, 768)}
-        for level, (temperature, num_predict) in levels.items():
+        levels = {
+            "low": (False, 0.7, 0.8, 64),
+            "medium": (False, 0.7, 0.8, 384),
+            "high": (True, 0.6, 0.95, 960),
+        }
+        for level, (think, temperature, top_p, num_predict) in levels.items():
             _reset_fake()
-            ModeOllama.loaded = [
-                "qwen2.5:0.5b",
-                "snowflake-arctic-embed:m",
-                "qwen2.5:1.5b",
-            ]
+            ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
             status, headers, body = self._post(
                 port,
                 {
                     "mode": "pro",
-                    "model": "qwen2.5:0.5b",
-                    "messages": [{"role": "user", "content": "pro " + level}],
+                    "model": "qwen3:0.6b",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "Explain why this needs Pro " + level,
+                        }
+                    ],
                     "think": level,
                     "temperature": 0.1,
                     "max_tokens": 8,
@@ -311,50 +312,52 @@ class ModeHttp(unittest.TestCase):
             chats = _posts("/api/chat")
             self.assertEqual(_posts("/api/generate"), [], level)
             self.assertEqual(len(chats), 1, level)
-            self.assertEqual(chats[0]["model"], "qwen2.5:1.5b", level)
+            self.assertEqual(chats[0]["model"], "qwen3:1.7b", level)
             self.assertEqual(chats[0]["keep_alive"], -1, level)
+            self.assertEqual(chats[0]["think"], think, level)
             self.assertEqual(chats[0]["options"]["temperature"], temperature, level)
+            self.assertEqual(chats[0]["options"]["top_p"], top_p, level)
+            self.assertEqual(chats[0]["options"]["top_k"], 20, level)
             self.assertEqual(chats[0]["options"]["num_predict"], num_predict, level)
-            self.assertNotIn("think", chats[0])
-            for name in ("qwen2.5:0.5b", "snowflake-arctic-embed:m", "qwen2.5:1.5b"):
+            for name in ("qwen3:0.6b", "qwen3:1.7b"):
                 self.assertIn(name, ModeOllama.loaded, level)
 
-    def test_pro_does_not_evict_flash_or_arctic_and_flash_does_not_name_pro(self):
+    def test_pro_does_not_evict_flash_and_flash_does_not_name_pro(self):
         port = self._boot()
-        ModeOllama.loaded = ["qwen2.5:0.5b", "snowflake-arctic-embed:m", "qwen2.5:1.5b"]
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
             {
                 "mode": "pro",
-                "messages": [{"role": "user", "content": "pro beside arctic"}],
+                "messages": [{"role": "user", "content": "pro beside flash"}],
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["pi_model"], "qwen2.5:1.5b")
+        self.assertEqual(body["pi_model"], "qwen3:1.7b")
         self.assertEqual(_posts("/api/generate"), [])
-        for name in ("qwen2.5:0.5b", "snowflake-arctic-embed:m", "qwen2.5:1.5b"):
+        for name in ("qwen3:0.6b", "qwen3:1.7b"):
             self.assertIn(name, ModeOllama.loaded)
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
-            {"messages": [{"role": "user", "content": "flash beside arctic"}]},
+            {"messages": [{"role": "user", "content": "flash beside flash"}]},
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "flash")
-        self.assertEqual(body["pi_model"], "qwen2.5:0.5b")
+        self.assertEqual(body["pi_model"], "qwen3:0.6b")
         self.assertEqual(_posts("/api/generate"), [])
         chats = _posts("/api/chat")
-        self.assertEqual(chats[0]["model"], "qwen2.5:0.5b")
-        self.assertNotIn("qwen2.5:1.5b", json.dumps(chats))
-        for name in ("qwen2.5:0.5b", "snowflake-arctic-embed:m", "qwen2.5:1.5b"):
+        self.assertEqual(chats[0]["model"], "qwen3:0.6b")
+        self.assertNotIn("qwen3:1.7b", json.dumps(chats))
+        for name in ("qwen3:0.6b", "qwen3:1.7b"):
             self.assertIn(name, ModeOllama.loaded)
 
     def test_switch_back_to_flash_unloads_nothing(self):
         port = self._boot()
-        ModeOllama.loaded = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
         headers = {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"}
         status, _headers, body = self._post(
             port,
@@ -362,25 +365,25 @@ class ModeHttp(unittest.TestCase):
             headers,
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["pi_model"], "qwen2.5:1.5b")
-        self.assertIn("qwen2.5:0.5b", ModeOllama.loaded)
-        self.assertIn("qwen2.5:1.5b", ModeOllama.loaded)
+        self.assertEqual(body["pi_model"], "qwen3:1.7b")
+        self.assertIn("qwen3:0.6b", ModeOllama.loaded)
+        self.assertIn("qwen3:1.7b", ModeOllama.loaded)
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
             {
                 "mode": "flash",
-                "model": "qwen2.5:1.5b",
+                "model": "qwen3:1.7b",
                 "messages": [{"role": "user", "content": "back"}],
             },
             headers,
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "flash")
-        self.assertEqual(body["pi_model"], "qwen2.5:0.5b")
+        self.assertEqual(body["pi_model"], "qwen3:0.6b")
         self.assertEqual(_posts("/api/generate"), [])
-        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen2.5:0.5b")
-        self.assertIn("qwen2.5:1.5b", ModeOllama.loaded)
+        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen3:0.6b")
+        self.assertIn("qwen3:1.7b", ModeOllama.loaded)
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
@@ -390,36 +393,36 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "flash")
         self.assertEqual(_posts("/api/generate"), [])
-        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen2.5:0.5b")
-        self.assertNotIn("qwen2.5:1.5b", json.dumps(_posts("/api/chat")))
+        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen3:0.6b")
+        self.assertNotIn("qwen3:1.7b", json.dumps(_posts("/api/chat")))
 
     def test_header_pro_and_model_alias(self):
         port = self._boot()
-        ModeOllama.loaded = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
         status, headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:0.5b",
+                "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "header pro"}],
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off", "X-Pi-Mode": "pro"},
         )
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("X-Pi-Mode"), "pro")
-        self.assertEqual(body["pi_model"], "qwen2.5:1.5b")
+        self.assertEqual(body["pi_model"], "qwen3:1.7b")
         _reset_fake()
-        ModeOllama.loaded = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
         status, _headers, body = self._post(
             port,
             {
-                "model": "qwen2.5:1.5b",
+                "model": "qwen3:1.7b",
                 "messages": [{"role": "user", "content": "alias pro"}],
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "pro")
-        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen2.5:1.5b")
+        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen3:1.7b")
 
     def test_cache_hit_does_not_touch_ollama_in_either_mode(self):
         port = self._boot()
@@ -440,7 +443,7 @@ class ModeHttp(unittest.TestCase):
 
     def test_missing_pro_does_not_ask_ollama_to_pull(self):
         port = self._boot()
-        ModeOllama.tags = ["qwen2.5:0.5b"]
+        ModeOllama.tags = ["qwen3:0.6b"]
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
@@ -456,13 +459,13 @@ class ModeHttp(unittest.TestCase):
         self.assertNotIn("pi4", body["error"])
         self.assertEqual(_posts("/api/chat"), [])
         self.assertEqual(_posts("/api/generate"), [])
-        self.assertEqual(ModeOllama.loaded, ["qwen2.5:0.5b"])
+        self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])
 
     def test_pro_shares_the_inference_gate_with_flash(self):
         from pair.errors import BUSY
 
         port = self._boot()
-        ModeOllama.loaded = ["qwen2.5:0.5b", "qwen2.5:1.5b"]
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
         runtime.set_infer_slots(1)
         runtime.gate.queue_limit = 0
         self.assertTrue(runtime.gate.try_acquire())
@@ -529,7 +532,7 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertEqual(body["error"], BUSY)
         self.assertEqual(len(_posts("/api/chat")), 1)
-        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen2.5:1.5b")
+        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen3:1.7b")
         release.set()
         self.assertTrue(done.wait(4), holder)
         self.assertNotIn("error", holder, holder)
@@ -608,7 +611,7 @@ class ModeHttp(unittest.TestCase):
             holder["all"].index(b"hel"),
         )
         chats = _posts("/api/chat")
-        self.assertEqual(chats[0]["model"], "qwen2.5:0.5b")
+        self.assertEqual(chats[0]["model"], "qwen3:0.6b")
         self.assertEqual(chats[0]["keep_alive"], -1)
         self.assertTrue(chats[0]["stream"])
 
@@ -616,7 +619,7 @@ class ModeHttp(unittest.TestCase):
         release = threading.Event()
         entered = threading.Event()
         port = self._boot()
-        ModeOllama.loaded = ["qwen2.5:0.5b", "snowflake-arctic-embed:m", "qwen2.5:1.5b"]
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
         ModeOllama.block_chat = {"release": release, "entered": entered, "wrote": False}
         self.addCleanup(release.set)
         conn = HTTPConnection("127.0.0.1", port, timeout=4)
@@ -687,14 +690,14 @@ class ModeHttp(unittest.TestCase):
             holder["all"].index(b'"pi_status": "thinking"'), holder["all"].index(b"hel")
         )
         chats = _posts("/api/chat")
-        self.assertEqual(chats[0]["model"], "qwen2.5:1.5b")
+        self.assertEqual(chats[0]["model"], "qwen3:1.7b")
         self.assertEqual(_posts("/api/generate"), [])
-        for name in ("qwen2.5:0.5b", "snowflake-arctic-embed:m", "qwen2.5:1.5b"):
+        for name in ("qwen3:0.6b", "qwen3:1.7b"):
             self.assertIn(name, ModeOllama.loaded)
 
     def test_cold_pro_answers_on_flash_and_warms(self):
         port = self._boot()
-        ModeOllama.loaded = ["qwen2.5:0.5b"]
+        ModeOllama.loaded = ["qwen3:0.6b"]
         ModeOllama.calls = []
         status, headers, body = self._post(
             port,
@@ -702,25 +705,60 @@ class ModeHttp(unittest.TestCase):
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["pi_model"], "qwen2.5:0.5b")
+        self.assertEqual(body["pi_model"], "qwen3:0.6b")
         self.assertEqual(body["pi_route"], "flash")
         self.assertEqual(headers.get("X-Pi-Route"), "flash")
         self.assertNotIn("loading", body.get("pi_stages") or [])
         self.assertNotIn("Loading Pro", json.dumps(body))
         chats = _posts("/api/chat")
-        self.assertEqual(chats[0]["model"], "qwen2.5:0.5b")
+        self.assertEqual(chats[0]["model"], "qwen3:0.6b")
         deadline = time.time() + 2
         while time.time() < deadline and not _posts("/api/generate"):
             time.sleep(0.02)
         warm = _posts("/api/generate")
         self.assertEqual(len(warm), 1)
-        self.assertEqual(warm[0]["model"], "qwen2.5:1.5b")
+        self.assertEqual(warm[0]["model"], "qwen3:1.7b")
         self.assertEqual(warm[0]["keep_alive"], -1)
+        self.assertIn("qwen3:0.6b", ModeOllama.loaded)
+        self.assertIn("qwen3:1.7b", ModeOllama.loaded)
+
+    def test_health_reports_pro_model(self):
+        port = self._boot()
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/health", timeout=5
+        ) as response:
+            body = json.loads(response.read().decode())
+        self.assertEqual(body["pro_model"], "qwen3:1.7b")
+        self.assertIsNotNone(body["pro_model"])
+        self.assertNotIn("Loading Pro", json.dumps(body))
+
+    def test_a_request_does_not_cold_load(self):
+        port = self._boot()
+        ModeOllama.loaded = []
+        ModeOllama.calls = []
+        status, _headers, body = self._post(
+            port,
+            {"messages": [{"role": "user", "content": "resident flash please"}]},
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(status, 502, body)
+        self.assertEqual(body["error"], "The larger model is not ready yet.")
+        self.assertNotIn("Loading Pro", json.dumps(body))
+        self.assertNotIn("loading", json.dumps(body))
+        self.assertEqual(_posts("/api/chat"), [])
+        deadline = time.time() + 2
+        while time.time() < deadline and not _posts("/api/generate"):
+            time.sleep(0.02)
+        warm = _posts("/api/generate")
+        self.assertEqual(len(warm), 1)
+        self.assertEqual(warm[0]["model"], "qwen3:0.6b")
+        self.assertEqual(warm[0]["keep_alive"], -1)
+        self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])
 
     def test_unknown_residency_does_not_drop_pro(self):
         port = self._boot()
         ModeOllama.ps_fail = True
-        ModeOllama.loaded = ["qwen2.5:0.5b"]
+        ModeOllama.loaded = ["qwen3:0.6b"]
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
@@ -728,7 +766,7 @@ class ModeHttp(unittest.TestCase):
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["pi_model"], "qwen2.5:1.5b")
+        self.assertEqual(body["pi_model"], "qwen3:1.7b")
         self.assertEqual(body["pi_route"], "pro")
         self.assertEqual(_posts("/api/generate"), [])
         self.assertNotIn("Loading Pro", json.dumps(body))

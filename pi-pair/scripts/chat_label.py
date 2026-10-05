@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 
 DEFAULT_BASE = "http://127.0.0.1:18080"
-DEFAULT_MODEL = "qwen2.5:0.5b"
+DEFAULT_MODEL = "qwen3:0.6b"
 DEFAULT_MODE = "flash"
 
 

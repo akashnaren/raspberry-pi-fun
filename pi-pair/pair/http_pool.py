@@ -1,6 +1,6 @@
 """Keep-alive HTTP for the local Ollama. Stdlib only.
 
-Chat, stream, embed, and the startup warm share one pool per host. A patched
+Chat, stream, and the startup warm share one pool per host. A patched
 `urllib.request.urlopen` (the unit tests) is called as-is so those fakes still
 see the request. Ollama speaks HTTP/1.1 and leaves the socket open; the pool
 hands that socket to the next call. A closed or failed socket is dropped.
@@ -61,7 +61,7 @@ _POOL = _Pool()
 
 
 class _Body:
-    """The slice of a urlopen result that chat and embed use."""
+    """The slice of a urlopen result that chat and the startup warm use."""
 
     def __init__(self, response: http.client.HTTPResponse, release) -> None:
         self.status = response.status

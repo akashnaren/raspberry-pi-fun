@@ -3,7 +3,7 @@
 set -euo pipefail
 PORT="${PI_PAIR_PORT:-18080}"
 BASE="http://127.0.0.1:${PORT}"
-MODEL="${MESH_MODEL:-qwen2.5:0.5b}"
+MODEL="${MESH_MODEL:-qwen3:0.6b}"
 MODE="${PI_PAIR_MODE:-flash}"
 
 echo "=== Pi GPT 1.0 hello (${BASE}) ==="

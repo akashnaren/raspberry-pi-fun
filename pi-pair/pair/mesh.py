@@ -18,7 +18,6 @@ DEFAULT_DATASET = "akashnaren/pi-mesh-labels"
 _DEFAULTS = {
     "generate": ["pi4"],
     "decode": ["pi4"],
-    "embed": ["pi4"],
     "search": ["pi2"],
     "health": ["pi2"],
     "dataset_and_train": ["pi3"],

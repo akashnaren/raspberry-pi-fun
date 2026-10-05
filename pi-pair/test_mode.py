@@ -103,10 +103,7 @@ class Resolve(unittest.TestCase):
         self.assertEqual(tag, "custom:flash")
 
     def test_auto_does_not_plan_an_eviction(self):
-        self.assertEqual(
-            eviction_targets(["qwen2.5:0.5b", "snowflake-arctic-embed:m"], PRO_MODEL),
-            [],
-        )
+        self.assertEqual(eviction_targets(["qwen3:0.6b"], PRO_MODEL), [])
         with self.assertRaises(ModuleNotFoundError):
             importlib.import_module("pair.mode")
 

@@ -7,11 +7,12 @@ import threading
 import urllib.request
 
 from pair import runtime
-from pair.embed import EMBED_MODEL, embed_texts, on_pi4
+from pair.config import on_pi4
 from pair.guard import may_generate, require_generative
 from pair.http_pool import open_json_request
 from pair.knobs import inference_knobs, keep_alive, ollama_options
 from pair.modes import FLASH, PRO, mode_table
+from pair.think import DIRECT_FALLBACK, split_ollama_message
 
 _WARM_THREAD: threading.Thread | None = None
 
@@ -32,16 +33,34 @@ def _post_json(url: str, payload: dict, timeout: float) -> dict:
 
 
 def ollama_payload(
-    model, messages, temperature, max_tokens, stream: bool, knobs=None
+    model,
+    messages,
+    temperature,
+    max_tokens,
+    stream: bool,
+    knobs=None,
+    think: bool = False,
+    top_p: float | None = None,
+    top_k: int | None = None,
 ) -> dict:
-    """The one Ollama chat body. keep_alive is the pi4 knob, not a per-call TTL."""
+    """The one Ollama chat body. keep_alive is the pi4 knob, not a per-call TTL.
+
+    `think` is Ollama's native switch. False is a direct answer. Sampling
+    fields are set only when a thinking level asked for them.
+    """
     row = inference_knobs() if knobs is None else knobs
+    options = ollama_options(temperature, max_tokens, row, model)
+    if top_p is not None:
+        options["top_p"] = float(top_p)
+    if top_k is not None:
+        options["top_k"] = int(top_k)
     return {
         "model": model,
         "messages": messages,
         "stream": stream,
         "keep_alive": keep_alive(row),
-        "options": ollama_options(temperature, max_tokens, row, model),
+        "think": bool(think),
+        "options": options,
     }
 
 
@@ -53,17 +72,55 @@ def llamacpp_model(peer, model: str) -> str:
 
 
 def chat_ollama(
-    peer, model, messages, temperature=0.7, max_tokens=256, meta: dict | None = None
+    peer,
+    model,
+    messages,
+    temperature=0.7,
+    max_tokens=256,
+    meta: dict | None = None,
+    plan=None,
 ):
     require_generative(peer)
+    think = bool(plan and plan.think)
+    if think:
+        from pair.stream import iter_ollama_channels
+
+        answer_parts: list[str] = []
+        thinking_parts: list[str] = []
+        for kind, text in iter_ollama_channels(
+            peer, model, messages, temperature, max_tokens, plan=plan
+        ):
+            if kind == "thinking" and text:
+                thinking_parts.append(text)
+            elif text:
+                answer_parts.append(text)
+        answer = "".join(answer_parts).strip() or DIRECT_FALLBACK
+        if meta is not None:
+            meta["done_reason"] = "stop"
+            meta["reasoning"] = "".join(thinking_parts).strip()
+        return answer, model
     knobs = inference_knobs()
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
-    payload = ollama_payload(model, messages, temperature, max_tokens, False, knobs)
+    top_p = plan.top_p if plan else None
+    top_k = plan.top_k if plan else None
+    predict = int(plan.ollama_predict(max_tokens)) if plan else int(max_tokens)
+    payload = ollama_payload(
+        model,
+        messages,
+        temperature,
+        predict,
+        False,
+        knobs,
+        think=False,
+        top_p=top_p,
+        top_k=top_k,
+    )
     out = _post_json(url, payload, timeout=180)
+    answer, thinking = split_ollama_message(out.get("message") or {})
     if meta is not None:
         meta["done_reason"] = str(out.get("done_reason") or "")
-    text = (out.get("message") or {}).get("content") or out.get("response") or ""
-    return text, model
+        meta["reasoning"] = thinking
+    return answer, model
 
 
 def chat_llamacpp(
@@ -108,7 +165,7 @@ def warm_chat_model(peer: dict, model: str, timeout: float = 45) -> bool:
 
 
 def warm_residents(peer: dict, timeout: float = 45) -> list[str]:
-    """Load Flash, then Pro if it is already on disk, then ping the embedder.
+    """Load Flash, then Pro if it is already on disk.
 
     Pro is not pulled. A 404 or a down socket is skipped. Off a generative
     peer this returns without a request.
@@ -120,11 +177,6 @@ def warm_residents(peer: dict, timeout: float = 45) -> list[str]:
     for name in (table[FLASH], table[PRO]):
         if name and warm_chat_model(peer, name, timeout=timeout):
             loaded.append(name)
-    try:
-        if embed_texts(["."]):
-            loaded.append(EMBED_MODEL)
-    except Exception:
-        pass
     return loaded
 
 
@@ -136,17 +188,14 @@ def warm_in_flight() -> threading.Thread | None:
     return None
 
 
-def start_model_warm(after: threading.Thread | None = None) -> threading.Thread:
-    """Load Flash, Pro, and the embedder after the canned-key batch.
+def start_model_warm() -> threading.Thread:
+    """Load Flash, then Pro if that tag is already on disk.
 
     The thread does not block accept. A failure is logged and ignored.
-    `after` is joined first so the embed batch is not racing the chat loads.
     """
     global _WARM_THREAD
 
     def run() -> None:
-        if after is not None:
-            after.join(timeout=120)
         if not on_pi4():
             return
         peer = next((item for item in runtime.PEERS if item.get("name") == "pi4"), None)

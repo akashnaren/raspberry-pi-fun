@@ -19,13 +19,13 @@ from pair.assist import (
     is_honest_miss,
     is_soft_refusal,
     may_retry_refusal,
-    refusal_for,
     scrub_reply,
     settle_reply,
     stream_release,
     visible_canned,
 )
-from pair.canned import lookup, start_canned_warm, warm_status
+from pair.moderate import moderate
+from pair.canned import lookup
 from pair.charts import (
     CHART_NUDGE,
     is_chart_request,
@@ -43,7 +43,7 @@ from pair.chat import (
 )
 from pair.config import STATIC_DIR
 from pair.docfit import fit_outbound
-from pair.errors import BUSY, WAITING, friendly_body, friendly_error
+from pair.errors import BUSY, MODEL_MISSING, WAITING, friendly_body, friendly_error
 from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
@@ -85,7 +85,8 @@ from pair.queue import append_row, apply_label, node_role, note_exchange
 from pair.mesh import lookup_for_brain
 from pair.search import lookup_web
 from pair import runtime
-from pair.stream import stream_llamacpp, stream_ollama
+from pair.stream import iter_ollama_channels, stream_llamacpp, stream_ollama
+from pair.think import peel_think
 from pair.turn import (
     asks_continuation,
     continuation_messages as plain_continuation,
@@ -219,6 +220,12 @@ def last_user_text(messages) -> str:
         if message.get("role", "user") == "user":
             return message_text(message.get("content"))
     return ""
+
+
+def _block(text: str) -> str:
+    """Replacement from `moderate`, or empty when that span is allowed."""
+    verdict = moderate(text or "")
+    return verdict.replacement if verdict.refused else ""
 
 
 def brain_chat_url() -> str:
@@ -482,17 +489,19 @@ def _claim_wait(slot: dict) -> bool:
 def health_document() -> dict:
     peers = snapshot_peers()
     up = sum(1 for peer in peers if isinstance(peer, dict) and peer.get("ok"))
+    table = mode_table()
+    pro_model = str(table.get("pro") or "").strip()
     return {
         "ok": True,
         "model": runtime.MODEL,
+        "pro_model": pro_model,
         "mode": "flash",
-        "modes": mode_table(),
+        "modes": table,
         "peers_up": up,
         "peers": peers,
         "slots": runtime.INFER_SLOTS,
         "in_flight": runtime.gate.in_flight(),
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
-        "warm": warm_status(),
         "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
         "services": {
             "brain": _service_row(peers, "brain", "pi4"),
@@ -772,7 +781,7 @@ class Handler(BaseHTTPRequestHandler):
             return ""
         return picked
 
-    def _bind_tier(self, data: dict, prompt: str) -> str:
+    def _bind_tier(self, data: dict, prompt: str, think_name: str = "") -> str:
         """LAN flash/pro/auto. The keyed API already pinned the Flash checkpoint.
 
         Empty and unknown modes clamp to the Flash or Pro tag from mode_table.
@@ -787,6 +796,9 @@ class Handler(BaseHTTPRequestHandler):
             return str(data.get("model") or runtime.MODEL)
         if picked == "auto":
             route, model, _reason = resolve_auto(prompt, listed_chat_models())
+            # High thinking is slow on Pro. Stay on Flash unless Pro was chosen.
+            if think_name == "high":
+                route, model = "flash", mode_table()["flash"]
             self.pi_mode = "auto"
             self.pi_route = route
             return model
@@ -813,9 +825,10 @@ class Handler(BaseHTTPRequestHandler):
         self.pi_route = "canned"
         return mode_name, "canned"
 
-    def _policy_refusal(self, prompt: str, want_stream: bool, started: float) -> None:
-        """Fixed refusal. No model, no search, no canned list, no list hint."""
-        answer = refusal_for(prompt)
+    def _policy_refusal(
+        self, prompt: str, want_stream: bool, started: float, answer: str
+    ) -> None:
+        """Fixed refusal from the moderation hook. No model, search, or list hint."""
         remember_completion(prompt, answer, "policy", "policy")
         elapsed = int((time.time() - started) * 1000)
         if not want_stream:
@@ -906,9 +919,14 @@ class Handler(BaseHTTPRequestHandler):
             "no",
         )
         messages = data.get("messages") or []
-        effort = decode_effort(str(data.pop("think", "") or ""))
+        prompt = last_user_text(messages)
+        effort = decode_effort(str(data.pop("think", "") or ""), prompt)
+        self._decode_plan = effort
+        self._last_reasoning = ""
         if effort:
-            think_name, temperature, max_tokens = effort
+            think_name = effort.name
+            temperature = effort.temperature
+            max_tokens = effort.num_predict
             data.pop("temperature", None)
             data.pop("max_tokens", None)
             data.pop("max_completion_tokens", None)
@@ -922,9 +940,9 @@ class Handler(BaseHTTPRequestHandler):
             )
         started = time.time()
         want_stream = bool(data.get("stream"))
-        prompt = last_user_text(messages)
-        if is_harmful(prompt):
-            self._policy_refusal(prompt, want_stream, started)
+        refused = _block(prompt)
+        if refused:
+            self._policy_refusal(prompt, want_stream, started, refused)
             return
         canned_partial = ""
         try:
@@ -970,7 +988,7 @@ class Handler(BaseHTTPRequestHandler):
         # not take a generation slot. Auto names a mode_table tag and does not
         # plan a swap.
         try:
-            model = self._bind_tier(data, prompt)
+            model = self._bind_tier(data, prompt, think_name)
             mode_name = getattr(self, "pi_mode", "") or ""
             route_name = getattr(self, "pi_route", "") or ""
             resident_name = ""
@@ -1018,8 +1036,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(str(error))
             return
-        if route_name == "pro" and kind != "llamacpp":
-            if not tag_ready(peer.get("models") or [], "pro", model):
+        if kind != "llamacpp":
+            if route_name == "pro" and not tag_ready(
+                peer.get("models") or [], "pro", model
+            ):
                 self._error(pull_needed(model))
                 return
             host = str(peer.get("host") or "127.0.0.1")
@@ -1028,12 +1048,19 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 peer_port = 0
             resident = resident_models(host, peer_port) if peer_port else None
+            # A chat against a tag /api/ps does not list would cold-load it.
+            # Warm that tag in the background. Use Flash only when it is already resident.
             if resident is not None and model not in resident:
                 schedule_pro_warm(host, peer_port, model)
-                model = mode_table().get("flash") or model
-                used = model
-                route_name = "flash"
-                self.pi_route = "flash"
+                flash_tag = str(mode_table().get("flash") or "")
+                if flash_tag and flash_tag in resident and model != flash_tag:
+                    model = flash_tag
+                    used = model
+                    route_name = "flash"
+                    self.pi_route = "flash"
+                else:
+                    self._error(MODEL_MISSING)
+                    return
         # A finished map hit already returned. A short list still needs one
         # Flash continuation, and that continuation takes a generation slot.
         finish_list = bool(grounded) and needs_exact_n(prompt, grounded)
@@ -1553,13 +1580,28 @@ class Handler(BaseHTTPRequestHandler):
                 )
             else:
                 content, used = chat_ollama(
-                    peer, model, messages, temperature, max_tokens, meta=meta
+                    peer,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    meta=meta,
+                    plan=getattr(self, "_decode_plan", None),
                 )
         except (OSError, json.JSONDecodeError) as error:
+            self._last_reasoning = ""
             return degraded_answer(search_note, error), model, False
         content = content or ""
-        if is_harmful(content):
-            return refusal_for(content), used, False
+        answer, leaked = peel_think(content)
+        reasoning = "\n".join(
+            part for part in (str(meta.get("reasoning") or "").strip(), leaked) if part
+        )
+        refused = _block(reasoning) or _block(answer)
+        if refused:
+            self._last_reasoning = ""
+            return refused, used, False
+        self._last_reasoning = reasoning
+        content = answer
         if may_retry_refusal(prompt) and is_soft_refusal(content):
             content = self._guard_reply(
                 peer, kind, model, messages, temperature, max_tokens, prompt, content
@@ -1588,12 +1630,14 @@ class Handler(BaseHTTPRequestHandler):
         content = self._repair_chart(
             peer, kind, model, messages, temperature, max_tokens, prompt, content
         )
-        if not is_harmful(prompt):
+        if not _block(prompt):
             content = self._guard_reply(
                 peer, kind, model, messages, temperature, max_tokens, prompt, content
             )
-        if is_harmful(content):
-            return refusal_for(content), used, False
+        refused = _block(content)
+        if refused:
+            self._last_reasoning = ""
+            return refused, used, False
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
@@ -1915,30 +1959,130 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         parts: list[str] = []
         try:
+            plan = getattr(self, "_decode_plan", None)
             if kind == "llamacpp":
-                gen = stream_llamacpp(peer, model, messages, temperature, max_tokens)
+                channels = (
+                    ("content", delta)
+                    for delta in stream_llamacpp(
+                        peer, model, messages, temperature, max_tokens
+                    )
+                )
+            elif plan is not None:
+                channels = iter_ollama_channels(
+                    peer, model, messages, temperature, max_tokens, plan=plan
+                )
             else:
-                gen = stream_ollama(peer, model, messages, temperature, max_tokens)
+                channels = (
+                    ("content", delta)
+                    for delta in stream_ollama(
+                        peer, model, messages, temperature, max_tokens, plan=plan
+                    )
+                )
             closed = False
             held = True
             policy = ""
             flushed = 0
-            for delta in gen:
+            thinking_parts: list[str] = []
+            thinking_flushed = 0
+            reasoning_sent = False
+
+            def write_json(payload: dict) -> bool:
+                return safe_write(
+                    self, f"data: {json.dumps(payload)}\n\n".encode(), flush=True
+                )
+
+            def clear_reasoning() -> bool:
+                nonlocal reasoning_sent
+                if not reasoning_sent:
+                    return True
+                reasoning_sent = False
+                return write_json(
+                    {
+                        "id": "pi-pair",
+                        "object": "chat.completion.chunk",
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+                        "pi_reasoning_clear": True,
+                    }
+                )
+
+            def emit_reasoning(piece: str) -> bool:
+                nonlocal reasoning_sent
+                if not piece:
+                    return True
+                ok = write_json(
+                    {
+                        "id": "pi-pair",
+                        "object": "chat.completion.chunk",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"reasoning_content": piece},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                )
+                if ok:
+                    reasoning_sent = True
+                return ok
+
+            for channel, delta in channels:
+                if not delta:
+                    continue
+                if channel == "thinking":
+                    nxt = "".join(thinking_parts) + delta
+                    release = stream_release(nxt)
+                    if release == "refuse":
+                        # The span that completes the match is not written.
+                        # A thought prefix that already went out is cleared.
+                        policy = _block(nxt)
+                        thinking_parts.clear()
+                        if not clear_reasoning():
+                            closed = True
+                        break
+                    thinking_parts.append(delta)
+                    if release == "hold":
+                        continue
+                    joined_thought = "".join(thinking_parts)
+                    piece = joined_thought[thinking_flushed:]
+                    thinking_flushed = len(joined_thought)
+                    if piece and not emit_reasoning(piece):
+                        closed = True
+                        break
+                    continue
                 parts.append(delta)
                 joined = "".join(parts)
                 release = stream_release(joined)
                 if release == "refuse":
-                    # Stop before the harmful span is written. A prefix that
-                    # already went out is replaced by the refusal below.
-                    policy = refusal_for(joined)
+                    policy = _block(joined)
                     parts.clear()
+                    thinking_parts.clear()
+                    if not clear_reasoning():
+                        closed = True
                     break
                 if release == "hold":
                     continue
-                text = joined[flushed:]
-                flushed = len(joined)
-                held = False
-                if not text:
+                old = flushed
+                if "<" in joined and "think" in joined.lower():
+                    visible, leaked = peel_think(joined)
+                    if leaked and stream_release(leaked) == "refuse":
+                        policy = _block(leaked)
+                        parts.clear()
+                        thinking_parts.clear()
+                        flushed = len(joined) if old else 0
+                        if not clear_reasoning():
+                            closed = True
+                        break
+                    prior, _prior_leak = peel_think(joined[:old])
+                    piece = visible[len(prior) :] if visible.startswith(prior) else ""
+                    flushed = len(joined)
+                    if piece:
+                        held = False
+                else:
+                    piece = joined[old:]
+                    flushed = len(joined)
+                    held = False
+                if not piece:
                     continue
                 chunk = {
                     "id": "pi-pair",
@@ -1946,16 +2090,30 @@ class Handler(BaseHTTPRequestHandler):
                     "choices": [
                         {
                             "index": 0,
-                            "delta": {"content": text},
+                            "delta": {"content": piece},
                             "finish_reason": None,
                         }
                     ],
                 }
-                if not safe_write(
-                    self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True
-                ):
+                if not write_json(chunk):
                     closed = True
                     break
+            if not closed and not policy:
+                raw_answer = "".join(parts)
+                if "<" in raw_answer and "think" in raw_answer.lower():
+                    visible, leaked = peel_think(raw_answer)
+                    if leaked and stream_release(leaked) == "refuse":
+                        policy = _block(leaked)
+                        parts.clear()
+                        thinking_parts.clear()
+                        if not clear_reasoning():
+                            closed = True
+                    else:
+                        parts[:] = [visible] if visible else []
+                rest = "".join(thinking_parts)[thinking_flushed:]
+                if rest and not emit_reasoning(rest):
+                    closed = True
+            self._last_reasoning = "" if policy else "".join(thinking_parts)
             if closed:
                 answer = "".join(parts).strip()
                 if not is_harmful(prompt):
@@ -2061,7 +2219,7 @@ class Handler(BaseHTTPRequestHandler):
                     peer, kind, model, messages, temperature, max_tokens, prompt, answer
                 )
             )
-            if not policy and is_harmful(finished):
+            if not policy and _block(finished):
                 finished = answer
             extra = _list_suffix(answer, finished)
             if extra:
@@ -2125,8 +2283,9 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 elif not held and not is_harmful(prompt):
                     answer = scrub_reply(answer) or answer
-                if is_harmful(answer):
-                    answer = refusal_for(answer)
+                refused = _block(answer)
+                if refused:
+                    answer = refused
                 note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
             remember_completion(prompt, answer, chip, peer["name"])
             apply_tier(self, final)
@@ -2263,13 +2422,17 @@ class Handler(BaseHTTPRequestHandler):
             note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
         remember_completion(prompt, content, chip, peer["name"])
         elapsed = int((time.time() - started) * 1000)
+        message = {"role": "assistant", "content": content}
+        reasoning = getattr(self, "_last_reasoning", "") or ""
+        if grounded is None and reasoning and not _block(reasoning):
+            message["reasoning_content"] = reasoning
         resp = {
             "id": "pi-pair",
             "object": "chat.completion",
             "choices": [
                 {
                     "index": 0,
-                    "message": {"role": "assistant", "content": content},
+                    "message": message,
                     "finish_reason": "stop",
                 }
             ],
@@ -2313,11 +2476,7 @@ def make_server(
     return ThreadingHTTPServer((bind_host, bind_port), Handler)
 
 
-warm_thread: threading.Thread | None = None
-
-
 def main() -> None:
-    global warm_thread
     runtime.configure()
     print(
         f"Pi GPT 1.0 on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
@@ -2326,11 +2485,7 @@ def main() -> None:
         f"brain=pi4 search=pi2 dataset=pi3",
         flush=True,
     )
-    # TCPServer.__init__ binds and listens. Accept starts below. The Arctic
-    # key batch runs after that listen so /health and chat are not refused
-    # for the duration of the preload.
     server = make_server()
-    warm_thread = start_canned_warm()
     start_pro_warm()
-    start_model_warm(warm_thread)
+    start_model_warm()
     server.serve_forever()

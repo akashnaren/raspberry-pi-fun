@@ -311,7 +311,7 @@ def post_train(
         manifest = {
             "id": run_id,
             "stage": cfg.get("stage") or "sft",
-            "base_model": cfg.get("base_model") or "qwen2.5:0.5b",
+            "base_model": cfg.get("base_model") or "qwen3:0.6b",
             "weights": "pi4-ollama",
             "canned_map": "data/canned/canned_map.json",
             "map_sha256": digest,

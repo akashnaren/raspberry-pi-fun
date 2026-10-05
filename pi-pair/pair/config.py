@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
 
-DEFAULT_MODEL = "qwen2.5:0.5b"
+DEFAULT_MODEL = "qwen3:0.6b"
 # Legacy llama.cpp probe, only if a peer is still kind llamacpp and named pi2.
 PI2_ALT_PORTS = [8080, 11434]
 WEAK_NAMES = frozenset({"pi2", "pi3"})
@@ -137,3 +137,28 @@ def load_peers(path: Path | None = None) -> list[dict]:
     if not isinstance(data, list):
         raise ValueError(f"{path} must be a list of peers")
     return [normalize_peer(peer) for peer in data]
+
+
+def on_pi4() -> bool:
+    """True only for the brain role. That role is pi4."""
+    role = os.environ.get("PI_PAIR_ROLE", "").strip().lower()
+    if role in ("brain", "health", "dataset"):
+        return role == "brain"
+    name = os.environ.get("PI_PAIR_NAME", "").strip().lower()
+    return "pi4" in name
+
+
+def ollama_base() -> str:
+    """Origin of the local Ollama used by the Pro preload. Not the chat peer."""
+    raw = os.environ.get("PI_PAIR_OLLAMA", "").strip()
+    if not raw:
+        raw = os.environ.get("OLLAMA_HOST", "").strip()
+    if not raw:
+        return "http://127.0.0.1:11434"
+    if raw.startswith("http://") or raw.startswith("https://"):
+        base = raw
+    else:
+        base = "http://" + raw
+    # 0.0.0.0 is a bind address. The client has to use the loopback.
+    base = base.replace("://0.0.0.0", "://127.0.0.1", 1)
+    return base.rstrip("/")

@@ -15,8 +15,8 @@ from pair.turn import is_plain_list, is_plot, user_question
 FLASH = "flash"
 PRO = "pro"
 AUTO = "auto"
-FLASH_MODEL = "qwen2.5:0.5b"
-PRO_MODEL = "qwen2.5:1.5b"
+FLASH_MODEL = "qwen3:0.6b"
+PRO_MODEL = "qwen3:1.7b"
 
 _CODE = re.compile(
     r"```|"

@@ -1,4 +1,4 @@
-"""pi4 keep_alive stays -1 so chat, stream, and embed do not shrink model TTL."""
+"""pi4 keep_alive stays -1 so chat and stream do not shrink model TTL."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pair.chat import chat_ollama
-from pair.embed import embed_texts
 from pair.knobs import inference_knobs, keep_alive
 from pair.stream import stream_ollama
 
@@ -67,7 +66,7 @@ class KeepAliveDefault(unittest.TestCase):
         self.assertEqual(shipped["keep_alive"], -1)
         self.assertEqual(shipped["ollama_num_parallel"], 2)
 
-    def test_chat_stream_and_embed_send_minus_one(self):
+    def test_chat_and_stream_send_minus_one(self):
         seen = []
 
         def urlopen(request, timeout=None):
@@ -75,8 +74,6 @@ class KeepAliveDefault(unittest.TestCase):
             seen.append(payload)
             if payload.get("stream"):
                 return _Body({"message": {"content": "hi"}, "done": True})
-            if "input" in payload:
-                return _Body({"embeddings": [[0.1, 0.2]]})
             return _Body({"message": {"content": "hi"}})
 
         peer = {
@@ -86,23 +83,18 @@ class KeepAliveDefault(unittest.TestCase):
             "generative": True,
             "role": "brain",
         }
-        with (
-            patch("pair.chat.urllib.request.urlopen", urlopen),
-            patch("pair.embed.urllib.request.urlopen", urlopen),
-        ):
+        with patch("pair.chat.urllib.request.urlopen", urlopen):
             text, model = chat_ollama(
-                peer, "qwen2.5:0.5b", [{"role": "user", "content": "hi"}]
+                peer, "qwen3:0.6b", [{"role": "user", "content": "hi"}]
             )
             chunks = list(
-                stream_ollama(peer, "qwen2.5:0.5b", [{"role": "user", "content": "hi"}])
+                stream_ollama(peer, "qwen3:0.6b", [{"role": "user", "content": "hi"}])
             )
-            vectors = embed_texts(["hi"])
 
         self.assertEqual(text, "hi")
-        self.assertEqual(model, "qwen2.5:0.5b")
+        self.assertEqual(model, "qwen3:0.6b")
         self.assertEqual(chunks, ["hi"])
-        self.assertEqual(vectors, [[0.1, 0.2]])
-        self.assertEqual(len(seen), 3)
+        self.assertEqual(len(seen), 2)
         for payload in seen:
             self.assertEqual(payload["keep_alive"], -1)
             self.assertIsInstance(payload["keep_alive"], int)
@@ -114,7 +106,7 @@ class KeepAliveDefault(unittest.TestCase):
             encoding="utf-8"
         )
         for text in (script, unit):
-            self.assertIn("OLLAMA_MAX_LOADED_MODELS=3", text)
+            self.assertIn("OLLAMA_MAX_LOADED_MODELS=2", text)
             self.assertIn("OLLAMA_KEEP_ALIVE=-1", text)
             self.assertNotIn("OLLAMA_MAX_LOADED_MODELS=1", text)
         self.assertIn("ollama-lan.service", script)
@@ -126,7 +118,7 @@ class KeepAliveDefault(unittest.TestCase):
         self.assertIn("Environment=OLLAMA_NUM_PARALLEL=2", unit)
         self.assertNotIn("OLLAMA_NUM_PARALLEL=1", unit)
         readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
-        self.assertIn("OLLAMA_MAX_LOADED_MODELS=3", readme)
+        self.assertIn("OLLAMA_MAX_LOADED_MODELS=2", readme)
         self.assertIn("OLLAMA_KEEP_ALIVE=-1", readme)
         self.assertIn("ollama-lan", readme)
         for path in (ROOT / "pair").glob("*.py"):

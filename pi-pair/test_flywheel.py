@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.canned import _semantic_table, lookup, normalize_key
+from pair.canned import _folded_table, lookup, normalize_key
 from pair.chat import chat_ollama
 from pair.guard import may_generate
 from pair.lifecycle import GateError, _prepare, post_train
@@ -92,9 +92,9 @@ class Flywheel(unittest.TestCase):
             self.assertNotIn(normalize_key(row["input"]), keys)
 
     def test_folded_map_keeps_the_first_answer(self):
-        folded = _semantic_table({"hello.": "dotted", "hello": "plain"})
+        folded = _folded_table({"hello.": "dotted", "hello": "plain"})
         self.assertEqual(folded, {"hello": "dotted"})
-        again = _semantic_table({"Hello.": "first", "HELLO!": "second"})
+        again = _folded_table({"Hello.": "first", "HELLO!": "second"})
         self.assertEqual(again, {"hello": "first"})
         self.assertEqual(normalize_key("hello."), "hello")
 
@@ -125,7 +125,7 @@ class Flywheel(unittest.TestCase):
                     "generative": True,
                     "role": "brain",
                 },
-                "qwen2.5:0.5b",
+                "qwen3:0.6b",
                 [{"role": "user", "content": "hi"}],
             )
 
@@ -209,7 +209,7 @@ class Flywheel(unittest.TestCase):
         queue.write_text('{"prompt":"keep me","answer":"yes"}\n', encoding="utf-8")
         cfg = self.base / "bad.yaml"
         cfg.write_text(
-            "id: bad\nstage: sft\nbase_model: qwen2.5:0.5b\ndatasets:\n  - not_a_dataset\neval: pi_flywheel_eval_heldout\n",
+            "id: bad\nstage: sft\nbase_model: qwen3:0.6b\ndatasets:\n  - not_a_dataset\neval: pi_flywheel_eval_heldout\n",
             encoding="utf-8",
         )
         with self.assertRaises(RegistryError):
@@ -366,7 +366,7 @@ class Flywheel(unittest.TestCase):
             "Unsloth",
             "nanoGPT",
             "CNN",
-            "24 layers",
+            "28 layers",
             "/v1/chat/completions",
             "/v1/flywheel/feedback",
             "vote",
@@ -379,7 +379,7 @@ class Flywheel(unittest.TestCase):
             "search failed",
             "The local model is small",
             "facts it does not know",
-            "stock Qwen 2.5 0.5B",
+            "stock Qwen3 0.6B",
             "The canned map is not a custom model",
             "only when a run updates weights",
             "which this board does not do",

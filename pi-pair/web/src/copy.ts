@@ -3,14 +3,6 @@
 const META =
   /\b(?:thinking\s+(?:level|control|effort)|(?:low|medium|high)\s+(?:thinking|effort)|effort\s+(?:level|setting)|flash\s+map|(?:flash|pro)\s+(?:mode|model|route)|auto\s+mode|model\s+routing|routing\s+label|private\s+(?:pi\s+)?mesh|pi\s+private\s+mesh|mesh\s+assistant|canned\s+map|generative\s+brain)\b/i;
 
-export function modeChipText(mode: string, route: string): string {
-  const tier = route === "pro" ? "Pro" : route === "flash" ? "Flash" : "";
-  if (mode === "auto") return tier ? "Auto · " + tier : "Auto";
-  if (mode === "flash") return "Flash";
-  if (mode === "pro") return "Pro";
-  return "";
-}
-
 function dropMeta(prose: string): string {
   if (!META.test(prose)) return prose;
   const kept: string[] = [];

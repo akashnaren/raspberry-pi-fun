@@ -1,13 +1,14 @@
 """Keep ordinary replies helpful and free of product internals.
 
-A harmful ask is one fixed short refusal. Self-harm mentions 988. The router
-sends that line before search, canned text, or generation. A reply that uses
-the same harmful wording is replaced with that refusal.
+Request refusal is optional. `safety_filter` gates it, and
+`pair.moderate.moderate` is the hook a later safety stack replaces. With the
+flag off, nothing here refuses a prompt or replaces a reply for harmful wording.
 
-A soft refusal is retried only when the user prompt is a harmless shape and
-the harmful check does not match. One nudge retry comes first. A second soft
-refusal on a list or real-world question can be grounded by the caller (search
-notes or Pro). The last resort is one honest sentence, never a canned item list.
+`is_harmful` is the lexicon. List and sequence routing still consult it so
+those paths stay off harmful asks. A soft refusal is retried only when the
+prompt is a harmless shape. One nudge retry comes first. A second soft refusal
+on a list or real-world question can be grounded by the caller (search notes
+or Pro). The last resort is one honest sentence, never a canned item list.
 """
 
 from __future__ import annotations
@@ -309,9 +310,8 @@ def _line(prompt: str) -> str:
 def is_harmful(prompt: str) -> bool:
     """True for actionable harm, not a bare bomb, stalker, child, or address.
 
-    Self-harm and malware names still match when they stand alone, so a reply
-    that uses them is replaced. The router calls this before canned text,
-    search, and generation.
+    Self-harm and malware names still match when they stand alone. This is the
+    lexicon. Request refusal goes through `pair.moderate.moderate`.
     """
     text = _fold(prompt or "")
     return any(pattern.search(text) for pattern in _HARM)
@@ -431,10 +431,12 @@ def scrub_reply(text: str) -> str:
 def stream_release(text: str) -> str:
     """`emit`, `hold`, or `refuse` for one growing reply.
 
-    A harmful buffer is refused before any of it is written. A soft-refusal
-    or infra-leak prefix is held until it resolves. Anything else can stream.
+    A buffer the moderation hook refuses is not written. A soft-refusal or
+    infra-leak prefix is held until it resolves. Anything else can stream.
     """
-    if is_harmful(text or ""):
+    from pair.moderate import moderate
+
+    if moderate(text or "").refused:
         return "refuse"
     if withhold_partial(text or ""):
         return "hold"
@@ -492,15 +494,19 @@ def _usable(prompt: str, text: str) -> str:
 def settle_reply(prompt: str, text: str, retry, ground=None) -> str:
     """Scrub a harmless reply. One nudge, then one grounded retry, then one line.
 
-    `retry` and `ground` are each called at most once. A harmful prompt, or a
-    reply that uses the harmful lexicon, becomes the fixed refusal. Any other
+    `retry` and `ground` are each called at most once. A prompt or reply the
+    moderation hook refuses becomes that verdict's replacement. Any other
     prompt that is not a harmless shape keeps a soft refusal as the model wrote it.
     """
+    from pair.moderate import moderate
+
     raw = text or ""
-    if is_harmful(prompt):
-        return refusal_for(prompt)
-    if is_harmful(raw):
-        return refusal_for(raw)
+    verdict = moderate(prompt)
+    if verdict.refused:
+        return verdict.replacement
+    verdict = moderate(raw)
+    if verdict.refused:
+        return verdict.replacement
     if not is_harmless_shape(prompt):
         if is_soft_refusal(raw):
             return raw

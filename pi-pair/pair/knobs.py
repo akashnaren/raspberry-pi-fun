@@ -7,18 +7,18 @@ import json
 from pair.config import ROOT
 
 _DEFAULTS = {
-    "model": "qwen2.5:0.5b",
-    "pro_model": "qwen2.5:1.5b",
+    "model": "qwen3:0.6b",
+    "pro_model": "qwen3:1.7b",
     "num_ctx": 2048,
     # -1 keeps the weights loaded. A short duration would reset the server TTL
-    # on every chat or embed call and drop Arctic, Flash, or Pro.
+    # on every chat call and drop Flash or Pro.
     "keep_alive": -1,
     # Sequences in flight on the chat tag being decoded. Ollama sizes that
     # model's key/value cache as num_ctx * this value. Flash is the default
     # tag. Pro is a separate resident tag and uses the same router slot gate.
-    # Arctic stays loaded beside them (Ollama runs the embedder at parallel 1).
-    # Clamped to 1..4. Default 2. Four sequences of qwen2.5:0.5b at num_ctx
-    # 2048 stayed under 1 GB RSS, but that cap was too slow on pi4 (p95 34.9s).
+    # Clamped to 1..4. Default 2. Four sequences at num_ctx 2048 stayed
+    # under 1 GB RSS on the previous Flash tag, but that cap was too slow
+    # on pi4 (p95 34.9s).
     "ollama_num_parallel": 2,
     # Pi 4 is four Cortex-A72 cores. Ollama forwards num_thread as llama.cpp -t
     # only when the request sets it; otherwise the runner auto-detects.
@@ -40,25 +40,21 @@ _DEFAULTS = {
     # Characters of one attachment kept in the prompt. The upload route may
     # return more for the composer. The model sees this cut, inside a fence.
     "attachment_chars": 1200,
+    # Local harmful-content filter. Off leaves refusal to a separate stack
+    # that replaces pair.moderate.moderate. On restores the in-process gate.
+    "safety_filter": False,
 }
 
 
-# Flash (qwen2.5:0.5b) and Pro (qwen2.5:1.5b) have no separate reasoning channel.
-# These three presets change the decode Ollama already accepts: temperature and
-# num_predict. Medium is the default on whichever mode was selected.
-EFFORT = {
-    "low": {"temperature": 0.6, "num_predict": 64},
-    "medium": {"temperature": 0.7, "num_predict": 256},
-    "high": {"temperature": 0.8, "num_predict": 768},
-}
+def decode_effort(name: str | None, prompt: str = ""):
+    """Low, Medium, or High. None when the caller did not name a level.
 
+    The plan carries Ollama's `think` flag, the Qwen3 sample, and the answer
+    budget. Only High thinks, and that cap is separate from the answer.
+    """
+    from pair.think import decode_plan
 
-def decode_effort(name: str | None) -> tuple[str, float, int] | None:
-    key = (name or "").strip().lower()
-    row = EFFORT.get(key)
-    if not row:
-        return None
-    return key, float(row["temperature"]), int(row["num_predict"])
+    return decode_plan(name, prompt)
 
 
 def _as_int(value, fallback: int) -> int:
@@ -123,9 +119,9 @@ def ollama_options(
 def keep_alive(knobs: dict | None = None):
     """The one keep_alive knob for the pi4 brain.
 
-    Chat, stream, and embed all send this value. -1 matches the Ollama JSON
-    number that leaves a model loaded until the process stops, so Arctic,
-    Flash, and an opted-in Pro can stay resident together. A missing or blank
+    Chat and stream send this value. -1 matches the Ollama JSON
+    number that leaves a model loaded until the process stops, so Flash
+    and an opted-in Pro can stay resident together. A missing or blank
     knob is that same default. 0 is left alone: Ollama unloads when the call
     returns. A Flash or Pro chat does not send 0.
     """

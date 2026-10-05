@@ -1,7 +1,7 @@
 import fs from "fs";
 import { register } from "node:module";
 import { parseHTML } from "linkedom";
-import { modeChipText, scrubAssistant } from "./src/copy.ts";
+import { scrubAssistant } from "./src/copy.ts";
 import { primaryKind, primaryLabel } from "./src/primary-action.ts";
 import { shouldPlaySplash } from "./src/splash.ts";
 
@@ -15,10 +15,6 @@ if (primaryKind(true, true) !== "stop") throw new Error("in-flight composer is n
 if (!shouldPlaySplash(null, "navigate")) throw new Error("first load skipped the splash");
 if (shouldPlaySplash("1", "navigate")) throw new Error("session replayed the splash");
 if (!shouldPlaySplash("1", "reload")) throw new Error("reload could not replay the splash");
-if (modeChipText("flash", "canned") !== "Flash" || modeChipText("auto", "canned") !== "Auto") {
-  throw new Error("a map route leaked into the mode chip");
-}
-if (modeChipText("auto", "pro") !== "Auto · Pro") throw new Error("Pro route lost its label");
 const leaked = scrubAssistant("The Civic is common. I used medium effort in Flash mode.");
 if (/effort|flash mode|can't assist/i.test(leaked) || !leaked.includes("Civic")) {
   throw new Error("reply still named the thinking control: " + leaked);
@@ -76,9 +72,10 @@ globalThis.localStorage = window.localStorage;
 globalThis.sessionStorage = window.sessionStorage;
 globalThis.confirm = window.confirm;
 Object.defineProperty(document, "compatMode", { value: "CSS1Compat" });
-window.MESH_DEFAULT_MODEL = "qwen2.5:0.5b";
+window.MESH_DEFAULT_MODEL = "qwen3:0.6b";
 
 const streams = [];
+const sentBodies = [];
 function openStream() {
   const encoder = new TextEncoder();
   let pending = null;
@@ -114,18 +111,19 @@ function openStream() {
   };
 }
 
-globalThis.fetch = async (input) => {
+globalThis.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input.url;
   if (String(url).includes("/health")) {
     return new Response(JSON.stringify({
-      peers: [{ models: ["qwen2.5:0.5b"] }],
-      modes: { flash: "lane:fast", pro: "lane:deep" },
+      peers: [{ models: ["qwen3:0.6b"] }],
+      modes: { flash: "qwen3:0.6b", pro: "qwen3:1.7b" },
     }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
   }
   if (String(url).includes("/v1/chat/completions")) {
+    if (init && init.body) sentBodies.push(String(init.body));
     const stream = openStream();
     streams.push(stream);
     return new Response(stream.readable, {
@@ -256,10 +254,10 @@ if (document.getElementById("modeLabel").textContent !== "Auto" || !menu.hidden)
 await new Promise((resolve) => setTimeout(resolve, 30));
 const flashText = document.getElementById("tip-menu-flash").textContent;
 const proText = document.getElementById("tip-menu-pro").textContent;
-if (flashText !== "lane:fast, the fast resident model.") {
+if (flashText !== "qwen3:0.6b, the fast resident model.") {
   throw new Error("flash tip was not built from health: " + flashText);
 }
-if (proText !== "lane:deep, loaded when the question needs it.") {
+if (proText !== "qwen3:1.7b, loaded when the question needs it.") {
   throw new Error("pro tip was not built from health: " + proText);
 }
 if (document.getElementById("tip-set-flash").textContent !== flashText) {
@@ -268,8 +266,12 @@ if (document.getElementById("tip-set-flash").textContent !== flashText) {
 if (document.getElementById("tip-set-pro").textContent !== proText) {
   throw new Error("settings pro tip did not follow health");
 }
-if (html.includes("qwen2.5:0.5b, the fast resident model")) {
-  throw new Error("flash tip still hardcodes a model tag");
+if (
+  html.includes("qwen2.5:0.5b, the fast resident model")
+  || html.includes("qwen3:0.6b, the fast resident model")
+  || html.includes("qwen3:1.7b, loaded when the question needs it")
+) {
+  throw new Error("source html still hardcodes a model tip");
 }
 if (autoTip.textContent !== "Routes Flash or Pro from the question.") {
   throw new Error("auto tip changed");
@@ -307,11 +309,54 @@ if (anchors.length !== 5) throw new Error("panel links " + anchors.length);
 if (!panel.textContent.includes("Thinking") || !panel.textContent.includes("Searched web")) {
   throw new Error("panel skipped the steps");
 }
-if (!document.querySelector(".mode-chip") || !document.querySelector(".mode-chip").textContent.includes("Auto · Flash")) {
-  throw new Error("mode chip missing");
+const actions = document.querySelector(".msg.bot .label-row");
+if (!actions) throw new Error("reply action row missing");
+if (actions.querySelector(".mode-chip") || actions.querySelector(".effort")) {
+  throw new Error("model or effort label is still on the action row");
+}
+const actionNames = [...actions.querySelectorAll("button")].map((node) => node.getAttribute("aria-label") || "");
+for (const needed of ["Thumbs up", "Thumbs down", "Corrected answer", "Copy", "Retry"]) {
+  if (!actionNames.includes(needed)) throw new Error("action row lost " + needed);
+}
+if (/\b(Flash|Pro|Auto|Low|Medium|High)\b/.test(actions.textContent || "")) {
+  throw new Error("action row still names the model or effort: " + actions.textContent);
 }
 document.getElementById("sourcesClose").click();
 if (panel.classList.contains("open")) throw new Error("sources panel did not close");
+if (document.querySelector("details.thought")) {
+  throw new Error("Thought for Ns appeared when the model did not think");
+}
+
+box.value = "Explain why the sky looks blue.";
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+const thoughtStream = streams[streams.length - 1];
+thoughtStream.push({ choices: [{ delta: { reasoning_content: "count the wavelengths" } }] });
+thoughtStream.push({ choices: [{ delta: { content: "Blue light scatters more." } }] });
+thoughtStream.end();
+await new Promise((resolve) => setTimeout(resolve, 80));
+const thought = document.querySelectorAll("details.thought");
+const panelThought = thought[thought.length - 1];
+if (!panelThought || panelThought.open) throw new Error("thought panel was not collapsed");
+const thoughtLabel = panelThought.querySelector("summary");
+if (!thoughtLabel || !/Thought for \d+s/.test(thoughtLabel.textContent || "")) {
+  throw new Error("thought summary was " + (thoughtLabel && thoughtLabel.textContent));
+}
+const botBodies = document.querySelectorAll(".msg.bot .body");
+const answerBody = botBodies[botBodies.length - 1];
+if (!answerBody || answerBody.textContent.includes("wavelengths") || !answerBody.textContent.includes("Blue light")) {
+  throw new Error("answer leaked the thought: " + (answerBody && answerBody.textContent));
+}
+const beforeFollow = sentBodies.length;
+box.value = "And what about sunset colors?";
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+const follow = sentBodies[sentBodies.length - 1] || "";
+if (sentBodies.length === beforeFollow) throw new Error("follow-up was not posted");
+if (follow.includes("wavelengths") || follow.includes("<think")) {
+  throw new Error("saved history included the thought");
+}
+if (!follow.includes("Blue light scatters more.")) throw new Error("follow-up dropped the answer");
 
 const css = fs.readFileSync(new URL("./src/styles.scss", import.meta.url), "utf8");
 const titleRule = css.slice(css.indexOf(".brand.brand-title .brand-name"), css.indexOf(".brand.brand-title .brand-name") + 220);
@@ -336,5 +381,20 @@ if (!html.includes('id="voiceSend"') || !page.includes('voiceCaption("Thinking")
   throw new Error("voice mode has no tap-to-send or thinking caption");
 }
 if (page.includes('speakText("Thinking")')) throw new Error("thinking is spoken aloud");
+
+const docs = document.getElementById("apiDocsLink");
+if (!docs || docs.getAttribute("href") !== "/docs" || docs.getAttribute("target") !== "_blank") {
+  throw new Error("API docs link missing from the settings drawer");
+}
+if (!docs.closest("#ioPanel .drawer-body") || !docs.closest(".set-foot")) {
+  throw new Error("API docs link is not at the bottom of the settings drawer");
+}
+if (!css.includes(".api-docs-link") || !css.includes(".set-foot")) {
+  throw new Error("API docs link has no styles");
+}
+const lightAt = css.indexOf('html[data-theme="light"]');
+if (lightAt < 0 || !css.slice(lightAt).includes(".api-docs-link")) {
+  throw new Error("API docs link has no light-theme color");
+}
 
 console.log("ok");

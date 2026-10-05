@@ -27,7 +27,6 @@ if str(ROOT) not in sys.path:
 
 from pair import runtime
 from pair import server as pair_server
-from pair.embed import set_warm_status
 from pair.guard import may_generate
 from pair.lifecycle import post_train
 from pair.mesh import lookup_for_brain, mesh_config, search_timeouts
@@ -147,7 +146,7 @@ class OllamaPage(_Quiet, BaseHTTPRequestHandler):
     last_payload = None
 
     def do_GET(self):
-        body = json.dumps({"models": [{"name": "qwen2.5:0.5b"}]}).encode()
+        body = json.dumps({"models": [{"name": "qwen3:0.6b"}]}).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
@@ -172,7 +171,7 @@ class MeshRoles(unittest.TestCase):
         cfg = mesh_config()
         self.assertEqual(cfg["generate"], ["pi4"])
         self.assertEqual(cfg["decode"], ["pi4"])
-        self.assertEqual(cfg["embed"], ["pi4"])
+        self.assertNotIn("embed", cfg)
         self.assertEqual(cfg["search"], ["pi2"])
         self.assertEqual(cfg["health"], ["pi2"])
         self.assertEqual(cfg["dataset_and_train"], ["pi3"])
@@ -475,7 +474,6 @@ class ChatOffload(unittest.TestCase):
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         os.environ.pop("HF_TOKEN", None)
         os.environ.pop("KAGGLE_API_TOKEN", None)
-        set_warm_status("warming")
         self.local_calls = []
 
         def local(query, opener=None):
@@ -497,7 +495,6 @@ class ChatOffload(unittest.TestCase):
         pair_server.lookup_images = self._images
         runtime.PEERS = self._peers
         runtime.reset_health()
-        set_warm_status("ready")
         for key, value in self._env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -539,7 +536,7 @@ class ChatOffload(unittest.TestCase):
             f"http://127.0.0.1:{port}/v1/chat/completions",
             data=json.dumps(
                 {
-                    "model": "qwen2.5:0.5b",
+                    "model": "qwen3:0.6b",
                     "messages": [
                         {"role": "user", "content": "How tall is the zinc bench today?"}
                     ],

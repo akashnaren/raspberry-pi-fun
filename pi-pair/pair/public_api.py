@@ -9,10 +9,10 @@ import os
 # Public name of the only generative checkpoint on pi4. Low, medium, and high
 # change the decode budget. They do not select another model.
 FLASH_MODE = "flash"
-FLASH_CHECKPOINT = "qwen2.5:0.5b"
+FLASH_CHECKPOINT = "qwen3:0.6b"
 API_KEY_ENV = "PI_GPT_API_KEY"
 
-# qwen2.5:0.5b has no separate reasoning channel. These match the page.
+# Levels match the page. They do not select another checkpoint.
 MODE_THINK = {
     "flash": "medium",
     "low": "low",
@@ -106,9 +106,13 @@ def openapi_document() -> dict:
         "If `mode` is omitted, the model is Flash. "
         f"Flash is the fleet checkpoint `{checkpoint}` on pi4 "
         f"(the default tag is `{FLASH_CHECKPOINT}` unless MESH_MODEL is set). "
-        "`low`, `medium`, and `high` keep that same checkpoint and only change "
-        "the decode budget: low is 64 tokens at temperature 0.6, medium is 256 "
-        "at 0.7, high is 768 at 0.8. Omitted mode uses the medium budget. "
+        "`low`, `medium`, and `high` keep that same checkpoint and set Ollama's "
+        "`think` field. Low and Medium are think=false at temperature 0.7, "
+        "top_p 0.8, top_k 20. Low allows 64 answer tokens and Medium allows 384. "
+        "High is think=true (temperature 0.6, top_p 0.95, top_k 20) with a "
+        "192-token or 25-second thinking cap, then a separate 768-token answer. "
+        "On the LAN page, High stays on Flash unless Pro was chosen. "
+        "Reasoning is `reasoning_content`, never `content`. Omitted mode uses Medium. "
         "The LAN page (`/`, `/health`, `/v1/chat/completions`) does not use this key."
     )
     error = {
@@ -313,9 +317,10 @@ def openapi_document() -> dict:
                             "type": "string",
                             "enum": ["low", "medium", "high"],
                             "description": (
-                                "Optional decode budget. When set, it replaces "
-                                "the budget implied by mode. It does not change "
-                                "the Flash checkpoint."
+                                "Optional thinking level. When set, it replaces "
+                                "the level implied by mode. It does not change "
+                                "the Flash checkpoint. Reasoning comes back on "
+                                "reasoning_content, not in content."
                             ),
                         },
                         "model": {
@@ -361,6 +366,11 @@ def openapi_document() -> dict:
                             "type": "string",
                             "description": "Fleet checkpoint tag.",
                         },
+                        "pro_model": {
+                            "type": "string",
+                            "description": "Pro tag. Both tags stay resident.",
+                            "example": "qwen3:1.7b",
+                        },
                         "public_model": {
                             "type": "string",
                             "example": "flash",
@@ -375,11 +385,6 @@ def openapi_document() -> dict:
                         "slots": {"type": "integer"},
                         "in_flight": {"type": "integer"},
                         "cache_ttl": {"type": "number"},
-                        "warm": {
-                            "type": "string",
-                            "enum": ["warming", "ready"],
-                            "description": "Canned-key embed preload. Does not block this request.",
-                        },
                         "uptime_s": {"type": "integer"},
                         "services": {"type": "object"},
                     },
