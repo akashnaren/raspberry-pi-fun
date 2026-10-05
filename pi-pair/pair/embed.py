@@ -1,10 +1,12 @@
 """Pi4 paraphrase match for the canned map. Stdlib only.
 
 Exact keys stay in canned.lookup. This client runs only on the brain role,
-which is pi4. It posts the normalized line and the map keys to Ollama
-`/api/embed` with `snowflake-arctic-embed:m`. A cosine at or above
-COSINE_MIN returns the stored answer. A down embedder, a bad payload, or a
-weaker score is a miss, and the chat path still runs.
+which is pi4. Startup embeds the map keys once. A later miss posts only the
+normalized line to Ollama `/api/embed` with `snowflake-arctic-embed:m`.
+If that preload failed, or the map keys changed, the miss embeds the keys
+and then the line. A cosine at or above COSINE_MIN returns the stored answer.
+A down embedder, a bad payload, or a weaker score is a miss, and the chat
+path still runs.
 """
 from __future__ import annotations
 
@@ -124,12 +126,20 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
     return _parse_embeddings(body, len(texts))
 
 
-def _key_vectors(keys: list[str]) -> dict[str, list[float]] | None:
+def _cached_key_vectors(keys: list[str]) -> dict[str, list[float]] | None:
     sig = tuple(keys)
     with _LOCK:
         cached = _CACHE["vectors"]
         if _CACHE["sig"] == sig and isinstance(cached, dict):
             return cached
+    return None
+
+
+def _key_vectors(keys: list[str]) -> dict[str, list[float]] | None:
+    cached = _cached_key_vectors(keys)
+    if cached is not None:
+        return cached
+    sig = tuple(keys)
     embedded = embed_texts(list(sig))
     if embedded is None:
         return None
@@ -138,6 +148,31 @@ def _key_vectors(keys: list[str]) -> dict[str, list[float]] | None:
         _CACHE["sig"] = sig
         _CACHE["vectors"] = mapped
     return mapped
+
+
+def warm_canned_embeddings(table: dict[str, str]) -> None:
+    """Embed every map key once, before the first chat.
+
+    A cold cache makes the first paraphrase embed the keys and the line.
+    On the pi4 that was several seconds. After a successful warm, a miss
+    embeds the line only. Off the brain this returns without a request.
+    A failed preload is logged and left empty so the lazy fill can retry.
+    """
+    if not on_pi4():
+        return
+    try:
+        keys = sorted(key for key in table if key)
+        if not keys or _cached_key_vectors(keys) is not None:
+            return
+        if _key_vectors(keys) is None:
+            print(
+                "canned embed warm missed; the first paraphrase will embed the keys",
+                flush=True,
+            )
+            return
+        print(f"canned embed warm: {len(keys)} keys", flush=True)
+    except Exception as exc:
+        print(f"canned embed warm skipped: {exc}", flush=True)
 
 
 def _best_answer(query_vec: list[float], vectors: dict[str, list[float]], table: dict[str, str]) -> str | None:

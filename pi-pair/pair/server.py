@@ -11,7 +11,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from pair.canned import lookup
+from pair.canned import lookup, warm_at_start
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
 from pair.config import STATIC_DIR
 from pair.ground import answer_from_search
@@ -958,4 +958,5 @@ def main() -> None:
         f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s brain=pi4",
         flush=True,
     )
+    warm_at_start()
     make_server().serve_forever()

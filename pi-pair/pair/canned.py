@@ -1,8 +1,8 @@
 """Serve path: compact input → answer map.
 
 Exact normalized keys hit on every board. On pi4, a miss can still hit when
-the line is close to a key in embedding space. Generation stays outside this
-module.
+the line is close to a key in embedding space. The brain preloads those key
+vectors when the server starts. Generation stays outside this module.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 from pair.config import data_root
-from pair.embed import on_pi4, semantic_lookup
+from pair.embed import on_pi4, semantic_lookup, warm_canned_embeddings
 
 
 def normalize_key(text: str) -> str:
@@ -41,6 +41,26 @@ def load_map(path: Path | None = None) -> dict[str, str]:
     return out
 
 
+def _semantic_table(table: dict[str, str]) -> dict[str, str]:
+    """Normalized keys the paraphrase match scores. Empty keys drop out."""
+    folded = {normalize_key(item): answer for item, answer in table.items()}
+    return {item: answer for item, answer in folded.items() if item}
+
+
+def warm_at_start(path: Path | None = None) -> None:
+    """Preload canned-key embeddings before the server accepts chats.
+
+    No-op off the brain. A failure here does not stop the process, and the
+    next paraphrase still fills the cache lazily.
+    """
+    if not on_pi4():
+        return
+    try:
+        warm_canned_embeddings(_semantic_table(load_map(path)))
+    except Exception as exc:
+        print(f"canned embed warm skipped: {exc}", flush=True)
+
+
 def lookup(text: str, path: Path | None = None) -> str | None:
     key = normalize_key(text)
     if not key:
@@ -48,7 +68,7 @@ def lookup(text: str, path: Path | None = None) -> str | None:
     table = load_map(path)
     if key in table:
         return table[key]
-    folded = {normalize_key(item): answer for item, answer in table.items()}
+    folded = _semantic_table(table)
     exact = folded.get(key)
     if exact is not None:
         return exact
@@ -56,8 +76,7 @@ def lookup(text: str, path: Path | None = None) -> str | None:
     if not on_pi4():
         return None
     try:
-        usable = {item: answer for item, answer in folded.items() if item}
-        return semantic_lookup(key, usable)
+        return semantic_lookup(key, folded)
     except Exception:
         return None
 

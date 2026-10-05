@@ -10,13 +10,23 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.canned import lookup
-from pair.embed import COSINE_MIN, EMBED_MODEL, cosine, embed_url, ollama_base, on_pi4, reset_embed_cache
+from pair.canned import lookup, warm_at_start
+from pair.embed import (
+    COSINE_MIN,
+    EMBED_MODEL,
+    cosine,
+    embed_url,
+    ollama_base,
+    on_pi4,
+    reset_embed_cache,
+    warm_canned_embeddings,
+)
 
 
 def _toward_who(score: float) -> list[float]:
@@ -259,6 +269,133 @@ class SemanticMap(unittest.TestCase):
         lookup(JUST)
         self.assertEqual(len(EmbedFake.hits), 1)
         self.assertEqual(EmbedFake.hits[0][1]["input"], [JUST])
+
+    def _fake_embed(self, calls: list):
+        def fake(texts):
+            copied = list(texts)
+            calls.append(copied)
+            return [VECTORS.get(text, UNRELATED_VEC) for text in copied]
+
+        return fake
+
+    def test_warm_then_miss_embeds_only_the_query(self):
+        calls: list = []
+        with mock.patch("pair.embed.embed_texts", side_effect=self._fake_embed(calls)):
+            warm_canned_embeddings(DEFAULT_MAP)
+            self.assertEqual(calls, [sorted(DEFAULT_MAP)])
+            calls.clear()
+            warm_at_start()
+            self.assertEqual(calls, [])
+            self.assertEqual(lookup(PARAPHRASE), ANSWERS["who generates"])
+            self.assertEqual(lookup(JUST), ANSWERS["who generates"])
+            self.assertEqual(calls, [[PARAPHRASE], [JUST]])
+
+    def test_startup_warm_uses_normalized_keys(self):
+        self._write({"Who Generates": ANSWERS["who generates"], "Hi": ANSWERS["hi"]})
+        calls: list = []
+        with mock.patch("pair.embed.embed_texts", side_effect=self._fake_embed(calls)):
+            warm_at_start()
+            self.assertEqual(calls, [["hi", "who generates"]])
+            calls.clear()
+            self.assertEqual(lookup(PARAPHRASE), ANSWERS["who generates"])
+            self.assertEqual(calls, [[PARAPHRASE]])
+
+    def test_changed_map_after_warm_reembeds_keys(self):
+        calls: list = []
+        with mock.patch("pair.embed.embed_texts", side_effect=self._fake_embed(calls)):
+            warm_at_start()
+            calls.clear()
+            self.map_path.write_text(
+                json.dumps({"brain board": ANSWERS["brain board"]}),
+                encoding="utf-8",
+            )
+            self.assertEqual(lookup(CLOSER), ANSWERS["brain board"])
+            self.assertEqual(calls, [["brain board"], [CLOSER]])
+
+    def test_warm_failure_falls_back_to_lazy_fill(self):
+        calls: list = []
+        state = {"fail": True}
+
+        def fake(texts):
+            copied = list(texts)
+            calls.append(copied)
+            if state["fail"]:
+                return None
+            return [VECTORS.get(text, UNRELATED_VEC) for text in copied]
+
+        with mock.patch("pair.embed.embed_texts", side_effect=fake):
+            warm_at_start()
+            self.assertEqual(calls, [sorted(DEFAULT_MAP)])
+            state["fail"] = False
+            calls.clear()
+            self.assertEqual(lookup(PARAPHRASE), ANSWERS["who generates"])
+            self.assertEqual(calls, [sorted(DEFAULT_MAP), [PARAPHRASE]])
+
+    def test_pi2_and_pi3_never_warm_or_embed(self):
+        calls: list = []
+        with mock.patch("pair.embed.embed_texts", side_effect=self._fake_embed(calls)):
+            for role, name in (("health", "pi2"), ("dataset", "pi3")):
+                os.environ["PI_PAIR_ROLE"] = role
+                os.environ["PI_PAIR_NAME"] = name
+                calls.clear()
+                reset_embed_cache()
+                warm_at_start()
+                warm_canned_embeddings(DEFAULT_MAP)
+                self.assertEqual(calls, [], role)
+                self.assertIsNone(lookup(PARAPHRASE), role)
+                self.assertEqual(lookup("Hi!"), ANSWERS["hi"], role)
+                self.assertEqual(calls, [], role)
+            os.environ.pop("PI_PAIR_ROLE", None)
+            for name in ("pi2", "rpi-pi3"):
+                os.environ["PI_PAIR_NAME"] = name
+                calls.clear()
+                reset_embed_cache()
+                self.assertFalse(on_pi4(), name)
+                warm_at_start()
+                warm_canned_embeddings(DEFAULT_MAP)
+                self.assertEqual(calls, [], name)
+                self.assertIsNone(lookup(PARAPHRASE), name)
+                self.assertEqual(calls, [], name)
+
+    def test_server_main_warms_before_accept_on_brain_only(self):
+        from pair.server import main
+
+        calls: list = []
+        order: list = []
+
+        def fake(texts):
+            order.append("embed")
+            calls.append(list(texts))
+            return [VECTORS.get(text, UNRELATED_VEC) for text in texts]
+
+        def serve():
+            order.append("serve")
+
+        with mock.patch("pair.embed.embed_texts", side_effect=fake), mock.patch(
+            "pair.server.make_server"
+        ) as make_server:
+            make_server.return_value.serve_forever.side_effect = serve
+            main()
+            self.assertEqual(calls, [sorted(DEFAULT_MAP)])
+            self.assertEqual(order, ["embed", "serve"])
+
+            calls.clear()
+            order.clear()
+            os.environ["PI_PAIR_ROLE"] = "dataset"
+            os.environ["PI_PAIR_NAME"] = "pi3"
+            reset_embed_cache()
+            main()
+            self.assertEqual(calls, [])
+            self.assertEqual(order, ["serve"])
+
+            calls.clear()
+            order.clear()
+            os.environ["PI_PAIR_ROLE"] = "health"
+            os.environ["PI_PAIR_NAME"] = "pi2"
+            reset_embed_cache()
+            main()
+            self.assertEqual(calls, [])
+            self.assertEqual(order, ["serve"])
 
     def test_ollama_base_defaults_and_rewrites_bind_all(self):
         os.environ.pop("PI_PAIR_OLLAMA", None)
