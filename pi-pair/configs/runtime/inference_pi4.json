@@ -1,10 +1,11 @@
 {
   "model": "qwen2.5:0.5b",
+  "pro_model": "qwen2.5:1.5b",
   "graduate_model": "llama3.2:1b",
   "temperature_min": 0.6,
   "temperature_max": 0.8,
   "num_ctx": 2048,
-  "ollama_num_parallel": 4,
+  "ollama_num_parallel": 2,
   "keep_alive": -1,
   "num_thread": 4,
   "num_batch": 128,

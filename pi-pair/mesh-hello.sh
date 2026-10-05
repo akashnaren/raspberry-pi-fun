@@ -4,6 +4,7 @@ set -euo pipefail
 PORT="${PI_PAIR_PORT:-18080}"
 BASE="http://127.0.0.1:${PORT}"
 MODEL="${MESH_MODEL:-qwen2.5:0.5b}"
+MODE="${PI_PAIR_MODE:-flash}"
 
 echo "=== Pi GPT 1.0 hello (${BASE}) ==="
 echo "--- /health ---"
@@ -37,5 +38,5 @@ curl -sS "${BASE}/v1/chat/completions" \
   -H 'content-type: application/json' \
   -H 'X-Pi-Target: auto' \
   -H 'X-Pi-Mesh: on' \
-  -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi in five words.\"}],\"stream\":false,\"max_tokens\":16,\"pi_target\":\"auto\",\"pi_mesh\":\"on\"}"
+  -d "{\"model\":\"${MODEL}\",\"mode\":\"${MODE}\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi in five words.\"}],\"stream\":false,\"max_tokens\":16,\"pi_target\":\"auto\",\"pi_mesh\":\"on\"}"
 echo

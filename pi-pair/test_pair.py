@@ -408,6 +408,10 @@ class PairHttp(unittest.TestCase):
         self.assertIn('data-think="high"', html)
         self.assertIn('aria-label="Thinking"', html)
         self.assertIn('class="think-btn on" data-think="medium"', html)
+        self.assertIn('data-mode="flash"', html)
+        self.assertIn('data-mode="pro"', html)
+        self.assertIn('aria-label="Mode"', html)
+        self.assertIn('class="mode-btn on" data-mode="flash"', html)
         self.assertIn("Ask anything.", html)
         lowered = html.lower()
         for word in ("cache", "brain", "chip", "peer", "pi2", "pi3", "pi4"):
@@ -422,6 +426,8 @@ class PairHttp(unittest.TestCase):
             "Searched",
             "Search failed",
             "X-Pi-Think",
+            "X-Pi-Mode",
+            "Loading Pro",
             "X-Pi-Search",
             "search-note",
             "Regenerate",
@@ -438,7 +444,9 @@ class PairHttp(unittest.TestCase):
         self.assertIn("event.ctrlKey || event.metaKey", source)
         self.assertNotIn("metaKey||e.ctrlKey", source)
         self.assertIn("let thinking = \"medium\";", source)
+        self.assertIn("let mode = \"flash\";", source)
         self.assertIn("think: effort", source)
+        self.assertIn("mode: picked", source)
         self.assertIn('el("span", "pending")', source)
         self.assertIn("beginEdit", source)
         handler = _composer_keydown(source)
@@ -453,8 +461,13 @@ class PairHttp(unittest.TestCase):
         self.assertIn(".flex", css)
         self.assertIn(".stage", css)
         self.assertIn(".think-btn", css)
+        self.assertIn(".mode-btn", css)
+        self.assertIn(".mode-set", css)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as response:
             health_body = json.loads(response.read().decode())
+        self.assertEqual(health_body["mode"], "flash")
+        self.assertEqual(health_body["modes"]["flash"], "qwen2.5:0.5b")
+        self.assertEqual(health_body["modes"]["pro"], "qwen2.5:1.5b")
         self.assertEqual(health_body["peers_up"], 1)
         self.assertEqual(health_body["peers"][0]["kind"], "ollama")
         status, headers, body = self._post(
@@ -1100,6 +1113,8 @@ class PairHttp(unittest.TestCase):
         self.assertTrue(planned["dry_run"])
         self.assertEqual(planned["chat"]["headers"]["X-Pi-Target"], "auto")
         self.assertEqual(planned["chat"]["headers"]["X-Pi-Mesh"], "on")
+        self.assertEqual(planned["chat"]["headers"]["X-Pi-Mode"], "flash")
+        self.assertEqual(planned["chat"]["body"]["mode"], "flash")
         self.assertEqual(planned["chat"]["body"]["messages"][0]["content"], "label from a bot")
         self.assertEqual(planned["chat"]["body"]["pi_target"], "auto")
         self.assertFalse(planned["chat"]["body"]["stream"])
@@ -1177,11 +1192,12 @@ class PairHttp(unittest.TestCase):
         relayed = []
         original = pair_server.relay_chat
 
-        def fake_relay(payload, target, mesh):
+        def fake_relay(payload, target, mesh, mode=""):
             relayed.append(
                 {
                     "target": target,
                     "mesh": mesh,
+                    "mode": mode,
                     "body": json.loads(payload.decode() or "{}"),
                 }
             )

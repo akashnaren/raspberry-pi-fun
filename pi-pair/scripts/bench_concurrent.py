@@ -8,7 +8,7 @@ up and qwen2.5:0.5b loaded:
 
 Direct to the model server, same options the router sends:
 
-  python3 scripts/bench_concurrent.py --ollama http://127.0.0.1:11434 --n 4 --rounds 3
+  python3 scripts/bench_concurrent.py --ollama http://127.0.0.1:11434 --n 2 --rounds 5
 
 RSS is the sum of VmRSS for the named process and its children, sampled while
 the requests run. p50 and p95 are nearest-rank over the successful latencies.

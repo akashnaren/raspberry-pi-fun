@@ -15,11 +15,13 @@ import urllib.request
 
 DEFAULT_BASE = "http://127.0.0.1:18080"
 DEFAULT_MODEL = "qwen2.5:0.5b"
+DEFAULT_MODE = "flash"
 
 
-def chat_body(prompt: str, think: str, model: str) -> dict:
+def chat_body(prompt: str, think: str, model: str, mode: str) -> dict:
     return {
         "model": model,
+        "mode": mode,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "think": think,
@@ -35,14 +37,14 @@ def feedback_body(prompt: str, answer: str, vote: str, correction: str) -> dict:
     return body
 
 
-def plan(base: str, prompt: str, vote: str, correction: str, think: str, model: str) -> dict:
+def plan(base: str, prompt: str, vote: str, correction: str, think: str, model: str, mode: str) -> dict:
     root = base.rstrip("/")
     return {
         "dry_run": True,
         "chat": {
             "url": root + "/v1/chat/completions",
-            "headers": {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-            "body": chat_body(prompt, think, model),
+            "headers": {"X-Pi-Target": "auto", "X-Pi-Mesh": "on", "X-Pi-Mode": mode},
+            "body": chat_body(prompt, think, model, mode),
         },
         "feedback": {
             "url": root + "/v1/flywheel/feedback",
@@ -51,7 +53,7 @@ def plan(base: str, prompt: str, vote: str, correction: str, think: str, model: 
     }
 
 
-def _post(url: str, payload: dict, timeout: float) -> dict:
+def _post(url: str, payload: dict, timeout: float, mode: str) -> dict:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
@@ -59,6 +61,7 @@ def _post(url: str, payload: dict, timeout: float) -> dict:
             "content-type": "application/json",
             "X-Pi-Target": "auto",
             "X-Pi-Mesh": "on",
+            "X-Pi-Mode": mode,
         },
     )
     try:
@@ -83,9 +86,18 @@ def answer_text(payload: dict) -> str:
     return str(message.get("content") or "").strip()
 
 
-def run(base: str, prompt: str, vote: str, correction: str, think: str, model: str, timeout: float) -> dict:
+def run(
+    base: str,
+    prompt: str,
+    vote: str,
+    correction: str,
+    think: str,
+    model: str,
+    mode: str,
+    timeout: float,
+) -> dict:
     root = base.rstrip("/")
-    chat = _post(root + "/v1/chat/completions", chat_body(prompt, think, model), timeout)
+    chat = _post(root + "/v1/chat/completions", chat_body(prompt, think, model, mode), timeout, mode)
     answer = answer_text(chat)
     if not answer:
         raise RuntimeError("chat returned no answer")
@@ -93,6 +105,7 @@ def run(base: str, prompt: str, vote: str, correction: str, think: str, model: s
         root + "/v1/flywheel/feedback",
         feedback_body(prompt, answer, vote, correction),
         min(timeout, 30),
+        mode,
     )
     return labeled
 
@@ -105,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--correction", default="")
     parser.add_argument("--think", default="medium", choices=("low", "medium", "high"))
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--mode", default=DEFAULT_MODE, choices=("flash", "pro"))
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--dry-run", action="store_true", help="Print the posts and do not connect")
     args = parser.parse_args(argv)
@@ -117,10 +131,23 @@ def main(argv: list[str] | None = None) -> int:
         print("base is empty", file=sys.stderr)
         return 2
     if args.dry_run:
-        print(json.dumps(plan(args.base, prompt, args.vote, correction, args.think, args.model)))
+        print(json.dumps(plan(args.base, prompt, args.vote, correction, args.think, args.model, args.mode)))
         return 0
     try:
-        print(json.dumps(run(args.base, prompt, args.vote, correction, args.think, args.model, args.timeout)))
+        print(
+            json.dumps(
+                run(
+                    args.base,
+                    prompt,
+                    args.vote,
+                    correction,
+                    args.think,
+                    args.model,
+                    args.mode,
+                    args.timeout,
+                )
+            )
+        )
     except Exception as error:
         print(str(error), file=sys.stderr)
         return 1

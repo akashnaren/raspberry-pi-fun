@@ -19,6 +19,7 @@ from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.knobs import decode_effort, search_note_limit
 from pair.health import snapshot_peers
+from pair.modes import mode_table, pull_needed, resolve_mode, tag_ready
 from pair.peers import pick
 from pair.public_api import (
     FLASH_MODE,
@@ -164,16 +165,19 @@ def brain_chat_url() -> str:
     return f"http://{peer['host']}:{port}/v1/chat/completions"
 
 
-def relay_chat(payload: bytes, target: str, mesh: str) -> tuple[int, dict[str, str], bytes]:
+def relay_chat(payload: bytes, target: str, mesh: str, mode: str = "") -> tuple[int, dict[str, str], bytes]:
     """Hand the chat to pi4. This process does not search and does not generate."""
+    headers = {
+        "content-type": "application/json",
+        "X-Pi-Target": target or "auto",
+        "X-Pi-Mesh": mesh or "on",
+    }
+    if mode:
+        headers["X-Pi-Mode"] = mode
     request = urllib.request.Request(
         brain_chat_url(),
         data=payload,
-        headers={
-            "content-type": "application/json",
-            "X-Pi-Target": target or "auto",
-            "X-Pi-Mesh": mesh or "on",
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(request, timeout=180) as response:
@@ -181,7 +185,7 @@ def relay_chat(payload: bytes, target: str, mesh: str) -> tuple[int, dict[str, s
             headers = {
                 "content-type": response.headers.get("content-type", "application/json"),
             }
-            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search"):
+            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search", "X-Pi-Mode"):
                 value = response.headers.get(name)
                 if value:
                     headers[name] = value
@@ -263,8 +267,18 @@ def status_event(stage: str, extra: dict | None = None) -> dict:
     return payload
 
 
+def apply_tier(handler, payload: dict) -> dict:
+    """Keyed API keeps its public mode stamp. The LAN page adds pi_mode only."""
+    public = getattr(handler, "public_mode", "") or ""
+    stamp(payload, public)
+    tier = getattr(handler, "pi_mode", "") or ""
+    if tier and not public and isinstance(payload, dict):
+        payload["pi_mode"] = tier
+    return payload
+
+
 def write_event(handler, payload: dict) -> bool:
-    stamp(payload, getattr(handler, "public_mode", "") or "")
+    apply_tier(handler, payload)
     return safe_write(handler, f"data: {json.dumps(payload)}\n\n".encode(), flush=True)
 
 
@@ -273,6 +287,8 @@ def health_document() -> dict:
     return {
         "ok": True,
         "model": runtime.MODEL,
+        "mode": "flash",
+        "modes": mode_table(),
         "peers_up": sum(1 for peer in peers if peer["ok"]),
         "peers": peers,
         "slots": runtime.INFER_SLOTS,
@@ -296,10 +312,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-        mode = getattr(self, "public_mode", "") or ""
-        if mode:
-            self.send_header("X-Pi-Mode", mode)
+        public = getattr(self, "public_mode", "") or ""
+        tier = getattr(self, "pi_mode", "") or ""
+        if public:
+            self.send_header("X-Pi-Mode", public)
             self.send_header("X-Pi-Model", FLASH_MODE)
+        elif tier:
+            self.send_header("X-Pi-Mode", tier)
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -455,6 +474,25 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         safe_write(self, body)
 
+    def _bind_tier(self, data: dict) -> str:
+        """LAN flash/pro. The keyed API already pinned the Flash checkpoint."""
+        if getattr(self, "public_mode", ""):
+            self.pi_mode = ""
+            return str(data.get("model") or runtime.MODEL)
+        chosen = (self.headers.get("X-Pi-Mode") or "").strip()
+        if not chosen:
+            body_mode = data.get("mode", None)
+            if body_mode is None:
+                body_mode = data.get("pi_mode", None)
+            chosen = "" if body_mode is None else str(body_mode)
+        if chosen.strip().lower() in {"low", "medium", "high"}:
+            chosen = ""
+        mode_name, model = resolve_mode(chosen, data.get("model") or runtime.MODEL)
+        self.pi_mode = mode_name
+        data.pop("mode", None)
+        data.pop("pi_mode", None)
+        return model
+
     def _serve_chat(self, data: dict, raw: bytes) -> None:
         if not isinstance(data, dict):
             self._error("chat body must be an object", status=400)
@@ -466,7 +504,7 @@ class Handler(BaseHTTPRequestHandler):
             "false",
             "no",
         )
-        model = data.get("model") or runtime.MODEL
+        model = self._bind_tier(data)
         messages = data.get("messages") or []
         effort = decode_effort(str(data.pop("think", "") or ""))
         if effort:
@@ -503,6 +541,8 @@ class Handler(BaseHTTPRequestHandler):
         if node_role() != "brain":
             self._relay_to_brain(raw)
             return
+        # Pro must already be on disk. A missing tag is not a pull, and it does
+        # not take a generation slot.
         try:
             peer = pick(target, mesh, model)
             outbound = [
@@ -524,8 +564,12 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(str(error))
             return
+        if getattr(self, "pi_mode", "") == "pro" and kind != "llamacpp":
+            if not tag_ready(peer.get("models") or [], "pro", model):
+                self._error(pull_needed(model))
+                return
         # Map hits already returned. A page answer never enters the model, so it
-        # does not take a generation slot either.
+        # does not take a generation slot either. Flash and Pro share this gate.
         if grounded is None and not runtime.gate.try_acquire():
             self._error(capacity_message(runtime.gate.limit), status=503)
             return
@@ -548,7 +592,8 @@ class Handler(BaseHTTPRequestHandler):
                     images=images,
                 )
             else:
-                stages = ["thinking"]
+                stages = ["loading"] if getattr(self, "pi_mode", "") == "pro" else []
+                stages.append("thinking")
                 if do_search:
                     stages.append("searching")
                 stages.append("answering")
@@ -583,7 +628,7 @@ class Handler(BaseHTTPRequestHandler):
         target = (self.headers.get("X-Pi-Target") or "auto").strip()
         mesh = (self.headers.get("X-Pi-Mesh") or "on").strip()
         try:
-            status, headers, body = relay_chat(payload, target, mesh)
+            status, headers, body = relay_chat(payload, target, mesh, getattr(self, "pi_mode", "") or "")
         except RuntimeError as error:
             self._error(str(error))
             return
@@ -595,7 +640,7 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 parsed = None
             if isinstance(parsed, dict):
-                stamp(parsed, mode)
+                apply_tier(self, parsed)
                 body = json.dumps(parsed).encode()
                 headers["content-type"] = "application/json"
                 headers.pop("content-length", None)
@@ -611,14 +656,18 @@ class Handler(BaseHTTPRequestHandler):
         """Pass pi4's event stream through. This board still does not search or generate."""
         target = (self.headers.get("X-Pi-Target") or "auto").strip()
         mesh = (self.headers.get("X-Pi-Mesh") or "on").strip()
+        forward = {
+            "content-type": "application/json",
+            "X-Pi-Target": target or "auto",
+            "X-Pi-Mesh": mesh or "on",
+        }
+        tier = getattr(self, "pi_mode", "") or ""
+        if tier:
+            forward["X-Pi-Mode"] = tier
         request = urllib.request.Request(
             brain_chat_url(),
             data=payload,
-            headers={
-                "content-type": "application/json",
-                "X-Pi-Target": target or "auto",
-                "X-Pi-Mesh": mesh or "on",
-            },
+            headers=forward,
         )
         try:
             response = urllib.request.urlopen(request, timeout=180)
@@ -644,7 +693,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             self.send_header("Cache-Control", "no-cache")
             self.send_header("X-Accel-Buffering", "no")
-            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search"):
+            for name in ("X-Pi-Peer", "X-Pi-Chip", "X-Pi-Think", "X-Pi-Search", "X-Pi-Mode"):
                 value = response.headers.get(name)
                 if value:
                     self.send_header(name, value)
@@ -808,7 +857,7 @@ class Handler(BaseHTTPRequestHandler):
             if think_name:
                 resp["pi_think"] = think_name
             resp["pi_stages"] = ["answering"]
-            stamp(resp, getattr(self, "public_mode", "") or "")
+            apply_tier(self, resp)
             body = json.dumps(resp).encode()
             self.send_response(200)
             self._cors()
@@ -847,7 +896,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         if think_name:
             first["pi_think"] = think_name
-        stamp(first, getattr(self, "public_mode", "") or "")
+        apply_tier(self, first)
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         final = {
             "id": "pi-pair",
@@ -862,7 +911,7 @@ class Handler(BaseHTTPRequestHandler):
         if think_name:
             final["pi_think"] = think_name
         final["pi_stages"] = ["answering"]
-        stamp(final, getattr(self, "public_mode", "") or "")
+        apply_tier(self, final)
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
@@ -901,6 +950,9 @@ class Handler(BaseHTTPRequestHandler):
             return write_event(self, status_event(stage, extra))
 
         think_extra = {"pi_think": think_name} if think_name else None
+        if getattr(self, "pi_mode", "") == "pro":
+            if not emit_status("loading", {"pi_loading": "Loading Pro"}):
+                return
         if not emit_status("thinking", think_extra):
             return
         images = list(images or [])
@@ -967,7 +1019,7 @@ class Handler(BaseHTTPRequestHandler):
             first["pi_search"] = search_note["status"]
             first["pi_sources"] = search_note["sources"]
         _put_images(first, images)
-        stamp(first, getattr(self, "public_mode", "") or "")
+        apply_tier(self, first)
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         parts: list[str] = []
         try:
@@ -1027,12 +1079,12 @@ class Handler(BaseHTTPRequestHandler):
             answer = "".join(parts)
             note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
             remember_completion(prompt, answer, chip, peer["name"])
-            stamp(final, getattr(self, "public_mode", "") or "")
+            apply_tier(self, final)
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
         except Exception as error:
             err = {"error": str(error)}
-            stamp(err, getattr(self, "public_mode", "") or "")
+            apply_tier(self, err)
             safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
 
@@ -1061,7 +1113,7 @@ class Handler(BaseHTTPRequestHandler):
             "pi_kind": kind,
         }
         _put_images(chunk, images or [])
-        stamp(chunk, getattr(self, "public_mode", "") or "")
+        apply_tier(self, chunk)
         if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
             return
         note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
@@ -1084,7 +1136,7 @@ class Handler(BaseHTTPRequestHandler):
             final["pi_search"] = search_note["status"]
             final["pi_sources"] = search_note["sources"]
         _put_images(final, images or [])
-        stamp(final, getattr(self, "public_mode", "") or "")
+        apply_tier(self, final)
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
@@ -1140,7 +1192,7 @@ class Handler(BaseHTTPRequestHandler):
         _put_images(resp, images or [])
         if stages:
             resp["pi_stages"] = stages
-        stamp(resp, getattr(self, "public_mode", "") or "")
+        apply_tier(self, resp)
         body = json.dumps(resp).encode()
         self.send_response(200)
         self._cors()
@@ -1170,6 +1222,7 @@ def main() -> None:
     runtime.configure()
     print(
         f"Pi GPT 1.0 on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
+        f"flash={mode_table().get('flash')} pro={mode_table().get('pro')} "
         f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s brain=pi4",
         flush=True,
     )
