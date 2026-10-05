@@ -1,5 +1,6 @@
 .env
 .env.*
+pi-gpt-api.env
 *.log
 .DS_Store
 __pycache__/

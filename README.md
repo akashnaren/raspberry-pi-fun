@@ -347,10 +347,14 @@ A pinned peer that is down returns `<name> offline`. A pinned weak peer returns 
 | --- | --- | --- |
 | GET | `/` | Chat page |
 | GET | `/health`, `/peers` | Router plus peer health. `generative` is false on pi2 and pi3. |
-| POST | `/v1/chat/completions` | OpenAI chat. `stream:true` is SSE. Same call for a person and for another agent. |
+| POST | `/v1/chat/completions` | OpenAI chat. `stream:true` is SSE. Same call for a person and for another agent. No API key. |
 | POST | `/v1/attachments` | One file, multipart or a raw body with `X-Filename`. `.txt` and `.md` are decoded. Images and JPEG-scanned PDFs are OCR'd locally, then the same text is returned for the chat. Body cap 4 MB. Text cap 4096 characters. First 5 PDF pages. |
 | POST | `/v1/flywheel/enqueue` | Miss row. Accepted only on the dataset role. |
 | POST | `/v1/flywheel/feedback` | Label a completion. `vote` is `up` or `down`. `correction` is optional. Omit `prompt` and `answer` to rate the last completion this router returned. |
+| GET | `/openapi.json`, `/swagger.json` | OpenAPI document for the keyed API. No API key. |
+| GET | `/docs`, `/swagger` | Swagger UI for that document. No API key. |
+| GET | `/api/health` | Same peer snapshot as `/health`, plus `public_model`. Requires the API key. |
+| POST | `/api/chat` | One chat turn for another app. Requires the API key. Omitted `mode` selects Flash. |
 
 Target a peer with these headers:
 
@@ -364,7 +368,7 @@ JSON fields `pi_target` and `pi_mesh` are accepted and stripped before a worker 
 
 ## Agents
 
-Other agents on this fleet use the same router. A bot is another caller of this HTTP API. There is no second page, no schedule, and no paid model. POST a chat turn to any board's port 18080. A miss is still generated only on pi4, and the row is still queued on pi3.
+Other agents on this fleet use the same router. A bot is another caller of this HTTP API. There is no second page, no schedule, and no paid model. POST a chat turn to any board's port 18080. An app that is not the page on that port uses `POST /api/chat` and `PI_GPT_API_KEY`, described under Public API. A miss is still generated only on pi4, and the row is still queued on pi3.
 
 `pi-pair/scripts/chat_label.py` does what the page does for one line. It POSTs the turn with Auto and mesh on, then POSTs a thumbs vote, and a correction when you pass one, so the row on pi3 has the label `post_train` reads. It does not pin pi2 or pi3.
 
@@ -393,6 +397,34 @@ curl -sS http://127.0.0.1:18080/v1/flywheel/feedback \
 
 `vote` is `up` or `down`. `correction` is optional. Send `prompt` and `answer` when the turn you mean might not be the last one. The dataset host writes `prompt`, `answer`, `vote`, and `correction` (when present) onto `data/train/pending/queue.jsonl`. `post_train` on pi3 reads that file. A down vote with no correction is dropped. A correction is the sentence that gets folded.
 
+## Public API
+
+Other apps call Pi GPT on the same port. The page, `GET /health`, and `POST /v1/chat/completions` stay open on the LAN and do not send a key. Setting the key does not lock that page.
+
+`PI_GPT_API_KEY` is the key. On pi4, `install.sh` creates `~/.config/pi-pair/pi-gpt-api.env` with mode 600 and points the user unit at it with `EnvironmentFile=`. Write one line, `PI_GPT_API_KEY=...`, in that file. The installer leaves the value empty and does not copy a key into git or into the unit. A drop-in that uses `Environment=PI_GPT_API_KEY=...` instead must itself be mode 600. The empty example is `pi-pair/configs/runtime/pi-gpt-api.env.example`, and the drop-in template is `pi-pair/configs/runtime/pi-pair.service.d/pi-gpt-api.conf`. If the variable is unset, `POST /api/chat` and `GET /api/health` return 503. A missing or wrong key returns 401. Send the value as `Authorization: Bearer <key>` or as `X-API-Key: <key>`. Do not put it in the query string. `GET /openapi.json` (and `/swagger.json`) and `GET /docs` (and `/swagger`) are readable without the key so a caller can see that scheme. `/docs` is the Swagger UI. It loads the OpenAPI document from this router. The same page lists the auth header and the routes when the Swagger script cannot be fetched.
+
+`POST /api/chat` takes an OpenAI `messages` list. `stream` is optional. `mode` is optional and is one of `flash`, `low`, `medium`, or `high`.
+
+If `mode` is omitted, the model is Flash. Flash is the fleet checkpoint: `qwen2.5:0.5b` on pi4, unless `MESH_MODEL` names another tag. A `model` field in the body does not pick a different checkpoint. `low`, `medium`, and `high` stay on Flash and only change the decode, the same budgets as the page: Low is 64 tokens at 0.6, Medium is 256 at 0.7, High is 768 at 0.8. Omitted mode uses the medium budget. Flash here is that model name. It is not flash attention, which stays off on this CPU.
+
+The JSON body names the public model in `model` (`flash`) and the selected mode in `mode`. `checkpoint` is the Ollama tag. A stored sentence still has `pi_model` `canned`. A generated sentence still has the checkpoint in `pi_model`. Pins of pi2 or pi3 are still refused. A miss is still generated only on pi4.
+
+`POST /api/chat` uses the same inference cap as the page. When every slot is already decoding, the route returns HTTP 503 immediately with `pi4 is at capacity (N generations in flight). Try again in a moment.` An exact map hit does not take a slot.
+
+```bash
+curl -sS http://127.0.0.1:18080/api/chat \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer YOUR_KEY' \
+  -d '{"messages":[{"role":"user","content":"status"}]}'
+```
+
+`GET /api/health` is the `/health` snapshot with `public_model` and `default_mode` set to `flash`.
+
+```bash
+curl -sS http://127.0.0.1:18080/openapi.json
+curl -sS http://127.0.0.1:18080/api/health -H 'authorization: Bearer YOUR_KEY'
+```
+
 ## Environment
 
 | Var | Default | Meaning |
@@ -407,8 +439,9 @@ curl -sS http://127.0.0.1:18080/v1/flywheel/feedback \
 | `PI_PAIR_OLLAMA` | `http://127.0.0.1:11434` | Ollama origin for `/api/embed` on the pi4 brain. `OLLAMA_HOST` is the fallback. |
 | `PI_PAIR_ADAPTERS` | `adapters/` | Manifest directory |
 | `PI_PAIR_TRAIN_CONFIG` | `configs/train/sft_canned.yaml` | Run file |
-| `MESH_MODEL` | `qwen2.5:0.5b` | Model name when the request omits one |
-| `PI_PAIR_SLOTS` | `ollama_num_parallel` (4) | In-flight generations on pi4. Clamped to 1–4. Unset follows `configs/runtime/inference_pi4.json`, the same number `install.sh` writes as `OLLAMA_NUM_PARALLEL`. When the cap is full the router returns HTTP 503 immediately. |
+| `MESH_MODEL` | `qwen2.5:0.5b` | Model name when the LAN request omits one. Flash uses this tag. |
+| `PI_GPT_API_KEY` | unset | Key for `POST /api/chat` and `GET /api/health`. Unset closes those two routes. The page does not use it. |
+| `PI_PAIR_SLOTS` | `ollama_num_parallel` (4) | In-flight generations on pi4. Clamped to 1–4. Unset follows `configs/runtime/inference_pi4.json`, the same number `install.sh` writes as `OLLAMA_NUM_PARALLEL`. When the cap is full the router returns HTTP 503 immediately. `POST /api/chat` uses this same cap. |
 | `PI_PAIR_HEALTH_TTL` | `2.5` | Seconds to cache peer probes |
 
 Ollama's runner log for this model shows the cache, not a second copy of the weights: 24 MiB of key/value cache at one sequence, 48 MiB at two, 96 MiB at four, each sequence still `num_ctx` 2048. A same-settings run of `qwen2.5:0.5b` kept the Ollama process tree under 1 GB at four sequences, which is the budget for the default on the 8GB board. Re-measure on pi4 after the drop-in is installed and the model is loaded: `python3 scripts/bench_concurrent.py --url http://127.0.0.1:18080 --n 4 --rounds 5`. That prints p50, p95, and the peak resident set of the `ollama` process tree. Direct to the model server is the same script with `--ollama http://127.0.0.1:11434`.
@@ -423,7 +456,7 @@ Ollama's runner log for this model shows the cache, not a second copy of the wei
 | Embedder down or under 0.85 on pi4 | Treated as a map miss, then the pi4 chat rule. |
 | Map miss, pi4 up | Chip `brain: pi4`. Queue row on pi3. |
 | Map miss, pi4 down | `pi4 unreachable on cache miss. Refusing to answer from pi2 or pi3.` |
-| Cap full | HTTP 503 and `pi4 is at capacity (N generations in flight).` An exact map hit, an embed paraphrase, or a page answer does not take a slot. |
+| Cap full | HTTP 503 and `pi4 is at capacity (N generations in flight).` An exact map hit, an embed paraphrase, or a page answer does not take a slot. `POST /api/chat` returns that same 503. |
 | Pin or direct to pi2 or pi3 | `cannot be the brain` sentence. No model call, including when the map would have hit. |
 | Map file unreadable | Treated as a miss, then the pi4 rule. |
 | Train config names an unknown dataset | Job exits before the queue is moved. |
@@ -436,6 +469,8 @@ Ollama's runner log for this model shows the cache, not a second copy of the wei
 | OCR binaries missing on the Pi | `OCR is not installed on this Pi` |
 | OCR still running after 20 seconds | The process group is killed. The upload is `could not read that file`. |
 | A third OCR while two are running | `OCR is busy` |
+| `/api/chat` or `/api/health` with no key or the wrong key | `missing or invalid API key` and status 401. |
+| `PI_GPT_API_KEY` unset | Those two routes return 503. The page and `/health` still answer. |
 
 ## CI/CD
 
