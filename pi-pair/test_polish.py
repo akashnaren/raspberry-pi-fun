@@ -21,7 +21,15 @@ from pair.charts import (  # noqa: E402
 )
 from pair.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
 from pair.images import cards_for_answer, item_names, visual_mode  # noqa: E402
-from pair.lists import finish_numbered, list_budget, list_complete, list_count, merge_list  # noqa: E402
+from pair.lists import (  # noqa: E402
+    category_query,
+    finish_numbered,
+    is_real_world_list,
+    list_budget,
+    list_complete,
+    list_count,
+    merge_list,
+)
 from pair.preload import pro_preload_payload  # noqa: E402
 
 
@@ -193,6 +201,37 @@ class Lists(unittest.TestCase):
         kept = finish_numbered("top 5 poisons", "1. Aconite", lambda *_args: calls.append(1))
         self.assertEqual(kept, "1. Aconite")
         self.assertEqual(calls, [])
+
+    def test_a_short_list_retries_once_for_exact_n(self):
+        self.assertEqual(category_query("Top 5 horror movies"), "horror films")
+        self.assertEqual(category_query("Top 5 electric cars"), "electric cars")
+        self.assertTrue(is_real_world_list("Top 5 horror movies"))
+        self.assertFalse(is_real_world_list("Top 5 primes"))
+        self.assertFalse(is_real_world_list("rank these 3 numbers"))
+        self.assertEqual(list_count("rank these 3 numbers"), 3)
+        calls = []
+
+        def more(text, count):
+            calls.append((count, text))
+            return "4. 7"
+
+        partial = "1. 2\n2. 3\n3. 5"
+        done = finish_numbered("Top 5 primes", partial, more)
+        self.assertEqual(calls, [(5, partial)])
+        self.assertIn("4. 7", done)
+        self.assertFalse(list_complete(done, 5))
+
+        calls.clear()
+
+        def rest(text, count):
+            calls.append(count)
+            return "3. 1"
+
+        ranked = finish_numbered("rank these 3 numbers", "1. 4\n2. 9", rest)
+        self.assertEqual(calls, [3])
+        self.assertTrue(list_complete(ranked, 3))
+        self.assertIn("1. 4", ranked)
+        self.assertIn("3. 1", ranked)
 
 
 def list_count_from(text: str) -> int:

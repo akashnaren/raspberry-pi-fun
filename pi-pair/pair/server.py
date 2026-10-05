@@ -18,6 +18,7 @@ from pair.assist import (
     is_honest_miss,
     is_soft_refusal,
     may_retry_refusal,
+    refusal_for,
     scrub_reply,
     settle_reply,
     visible_canned,
@@ -42,8 +43,10 @@ from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, search_note_limit
 from pair.lists import (
+    category_query,
     continuation_messages,
     finish_numbered,
+    is_real_world_list,
     list_budget,
     list_count,
     placeholder_only,
@@ -242,11 +245,15 @@ def relay_chat(payload: bytes, target: str, mesh: str, mode: str = "") -> tuple[
 
 
 def _with_search(messages, prompt: str):
-    """On pi4, after a miss, attach public notes. Failures stay on the local model."""
+    """On pi4, after a miss, attach public notes. Failures stay on the local model.
+
+    A real-world Top-N searches the category. Horror movies become horror films.
+    """
     if not (prompt or "").strip():
         return messages, None
+    query = category_query(prompt) if is_real_world_list(prompt) else prompt
     try:
-        found = lookup_for_brain(prompt, local=lookup_web)
+        found = lookup_for_brain(query, local=lookup_web)
     except Exception:
         found = None
     if not isinstance(found, dict):
@@ -720,6 +727,83 @@ class Handler(BaseHTTPRequestHandler):
         self.pi_route = "canned"
         return mode_name, "canned"
 
+    def _policy_refusal(self, prompt: str, want_stream: bool, started: float) -> None:
+        """Fixed refusal. No model, no search, no canned list, no list hint."""
+        answer = refusal_for(prompt)
+        remember_completion(prompt, answer, "policy", "policy")
+        elapsed = int((time.time() - started) * 1000)
+        if not want_stream:
+            resp = {
+                "id": "pi-pair",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": answer},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "pi_peer": "policy",
+                "pi_chip": "policy",
+                "pi_ms": elapsed,
+                "pi_model": "policy",
+                "pi_kind": "policy",
+                "pi_stages": ["answering"],
+            }
+            apply_tier(self, resp)
+            body = json.dumps(resp).encode()
+            self.send_response(200)
+            self._cors()
+            self.send_header("content-type", "application/json")
+            self.send_header("X-Pi-Peer", "policy")
+            self.send_header("X-Pi-Chip", "policy")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            safe_write(self, body)
+            return
+        self.send_response(200)
+        self._cors()
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("X-Pi-Peer", "policy")
+        self.send_header("X-Pi-Chip", "policy")
+        self.end_headers()
+        answering = {"pi_stages": ["answering"]}
+        write_event(self, status_event("answering", answering))
+        chunk = {
+            "id": "pi-pair",
+            "object": "chat.completion.chunk",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": answer},
+                    "finish_reason": None,
+                }
+            ],
+            "pi_peer": "policy",
+            "pi_chip": "policy",
+            "pi_model": "policy",
+            "pi_kind": "policy",
+            "pi_stages": ["answering"],
+        }
+        apply_tier(self, chunk)
+        safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
+        final = {
+            "id": "pi-pair",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "pi_peer": "policy",
+            "pi_chip": "policy",
+            "pi_ms": elapsed,
+            "pi_model": "policy",
+            "pi_kind": "policy",
+            "pi_stages": ["answering"],
+        }
+        apply_tier(self, final)
+        safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
+        safe_write(self, b"data: [DONE]\n\n", flush=True)
+
     def _serve_chat(self, data: dict, raw: bytes) -> None:
         if not isinstance(data, dict):
             self._error("chat body must be an object", status=400)
@@ -745,6 +829,9 @@ class Handler(BaseHTTPRequestHandler):
         started = time.time()
         want_stream = bool(data.get("stream"))
         prompt = last_user_text(messages)
+        if is_harmful(prompt):
+            self._policy_refusal(prompt, want_stream, started)
+            return
         try:
             if target and target != "auto":
                 named = next((peer for peer in runtime.PEERS if peer["name"] == target), None)
@@ -1243,10 +1330,19 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         text: str,
     ) -> str:
-        """Ask once or twice more when a numbered list stops before N."""
+        """Ask once more for exactly N. A real-world category is searched first."""
 
         def more(partial: str, count: int) -> str:
-            follow = continuation_messages(messages, partial, count)
+            rows = list(messages or [])
+            if is_real_world_list(prompt) and self._mesh_search_on():
+                noted = any(
+                    isinstance(row, dict)
+                    and str(row.get("content") or "").startswith("Web search notes")
+                    for row in rows
+                )
+                if not noted:
+                    rows, _note = _with_search(rows, prompt)
+            follow = continuation_messages(rows, partial, count)
             if kind == "llamacpp":
                 nxt, _used = chat_llamacpp(peer, model, follow, temperature, max_tokens)
             else:
@@ -1282,6 +1378,8 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, json.JSONDecodeError) as error:
             return degraded_answer(search_note, error), model, False
         content = content or ""
+        if is_harmful(content):
+            return refusal_for(content), used, False
         if may_retry_refusal(prompt) and is_soft_refusal(content):
             content = self._guard_reply(
                 peer, kind, model, messages, temperature, max_tokens, prompt, content
@@ -1308,6 +1406,8 @@ class Handler(BaseHTTPRequestHandler):
             content = self._guard_reply(
                 peer, kind, model, messages, temperature, max_tokens, prompt, content
             )
+        if is_harmful(content):
+            return refusal_for(content), used, False
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
@@ -1596,27 +1696,34 @@ class Handler(BaseHTTPRequestHandler):
                 gen = stream_ollama(peer, model, messages, temperature, max_tokens)
             closed = False
             held = True
+            buffered: list[str] = []
             for delta in gen:
-                parts.append(delta)
-                if held and not is_harmful(prompt) and withhold_partial("".join(parts)):
-                    continue
-                if held:
-                    delta = "".join(parts)
-                    held = False
-                chunk = {
-                    "id": "pi-pair",
-                    "object": "chat.completion.chunk",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": delta},
-                            "finish_reason": None,
-                        }
-                    ],
-                }
-                if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
-                    closed = True
-                    break
+                buffered.append(delta)
+            joined = "".join(buffered)
+            # Hold the whole decode so a harmful reply is replaced, not streamed.
+            policy = refusal_for(joined) if is_harmful(joined) else ""
+            if not policy:
+                for delta in buffered:
+                    parts.append(delta)
+                    if held and withhold_partial("".join(parts)):
+                        continue
+                    if held:
+                        delta = "".join(parts)
+                        held = False
+                    chunk = {
+                        "id": "pi-pair",
+                        "object": "chat.completion.chunk",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": delta},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
+                        closed = True
+                        break
             if closed:
                 answer = "".join(parts).strip()
                 if not is_harmful(prompt):
@@ -1626,8 +1733,26 @@ class Handler(BaseHTTPRequestHandler):
                     note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
                     remember_completion(prompt, answer, chip, peer["name"])
                 return
-            answer = "".join(parts)
-            if held and may_retry_refusal(prompt) and (
+            if policy:
+                answer = policy
+                refused = {
+                    "id": "pi-pair",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": answer},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                if not safe_write(self, f"data: {json.dumps(refused)}\n\n".encode(), flush=True):
+                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+                    remember_completion(prompt, answer, chip, peer["name"])
+                    return
+            else:
+                answer = "".join(parts)
+            if not policy and held and may_retry_refusal(prompt) and (
                 is_soft_refusal(answer) or placeholder_only(answer)
             ):
                 if placeholder_only(answer) and not is_soft_refusal(answer):
@@ -1659,14 +1784,16 @@ class Handler(BaseHTTPRequestHandler):
                     note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
                     remember_completion(prompt, answer, chip, peer["name"])
                     return
-            elif not is_harmful(prompt):
+            elif not policy and not is_harmful(prompt):
                 answer = scrub_reply(answer) or answer
-            skip_extend = (
+            skip_extend = policy or (
                 is_soft_refusal(answer) or is_honest_miss(answer) or placeholder_only(answer)
             )
             finished = answer if skip_extend else self._extend_list(
                 peer, kind, model, messages, temperature, max_tokens, prompt, answer
             )
+            if not policy and is_harmful(finished):
+                finished = answer
             extra = _list_suffix(answer, finished)
             if extra:
                 more = {
@@ -1713,10 +1840,17 @@ class Handler(BaseHTTPRequestHandler):
             final["pi_stages"] = list(stages)
             final.update(note)
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-            raw_answer = "".join(parts)
-            if not held:
-                answer = scrub_reply(raw_answer) or raw_answer if not is_harmful(prompt) else raw_answer
-            note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+            if not policy:
+                raw_answer = "".join(parts)
+                if not held:
+                    answer = (
+                        scrub_reply(raw_answer) or raw_answer
+                        if not is_harmful(prompt)
+                        else raw_answer
+                    )
+                if is_harmful(answer):
+                    answer = refusal_for(answer)
+                note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
             remember_completion(prompt, answer, chip, peer["name"])
             apply_tier(self, final)
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
