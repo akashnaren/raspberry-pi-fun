@@ -1,4 +1,5 @@
 """Plain sentences for people. The raw cause is logged, not shown."""
+
 from __future__ import annotations
 
 import json

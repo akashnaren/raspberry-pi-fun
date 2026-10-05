@@ -62,7 +62,14 @@ from pair.lists import (
     source_titles,
 )
 from pair.sequences import sequence_answer
-from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
+from pair.modes import (
+    mode_table,
+    mode_tips,
+    pull_needed,
+    resolve_auto,
+    resolve_mode,
+    tag_ready,
+)
 from pair.peers import pick
 from pair.preload import resident_models, schedule_pro_warm, start_pro_warm
 from pair.public_api import (
@@ -497,9 +504,13 @@ def health_document() -> dict:
 
 
 def index_body() -> bytes:
-    """Same substitution the single-file chat used: replace __MODEL__ in the page."""
+    """Fill the page from config: default model, plus Flash and Pro tip text."""
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    return html.replace("__MODEL__", runtime.MODEL).encode("utf-8")
+    tips = mode_tips()
+    html = html.replace("__MODEL__", runtime.MODEL)
+    html = html.replace("__FLASH_TIP__", tips["flash"])
+    html = html.replace("__PRO_TIP__", tips["pro"])
+    return html.encode("utf-8")
 
 
 def _source_url(url: str) -> str:

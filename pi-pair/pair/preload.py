@@ -42,7 +42,13 @@ def resident_models(host: str, port: int) -> list[str] | None:
     try:
         with urllib.request.urlopen(url, timeout=RESIDENT_TIMEOUT_S) as response:
             payload = json.loads(response.read().decode() or "{}")
-    except (OSError, urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError):
+    except (
+        OSError,
+        urllib.error.URLError,
+        json.JSONDecodeError,
+        TimeoutError,
+        ValueError,
+    ):
         return None
     if not isinstance(payload, dict):
         return None

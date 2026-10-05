@@ -1,4 +1,5 @@
 """User-facing failures stay one plain sentence. The raw cause is logged."""
+
 from __future__ import annotations
 
 import unittest
@@ -48,7 +49,17 @@ class FriendlyMap(unittest.TestCase):
             "attachment is empty": FILE_EMPTY,
             "HTTP 502 from upstream": GENERIC,
         }
-        banned = ("pi2", "pi3", "pi4", "ollama", "traceback", "generations in flight", "HTTP", "{", "[")
+        banned = (
+            "pi2",
+            "pi3",
+            "pi4",
+            "ollama",
+            "traceback",
+            "generations in flight",
+            "HTTP",
+            "{",
+            "[",
+        )
         with self.assertLogs("pi-pair.errors", level="WARNING") as logs:
             for raw, want in samples.items():
                 shown = friendly_error(raw)

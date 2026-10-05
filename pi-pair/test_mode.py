@@ -5,7 +5,14 @@ from __future__ import annotations
 import importlib
 import unittest
 
-from pair.modes import FLASH_MODEL, PRO_MODEL, resolve_auto, resolve_mode, task_tier
+from pair.modes import (
+    FLASH_MODEL,
+    PRO_MODEL,
+    mode_tips,
+    resolve_auto,
+    resolve_mode,
+    task_tier,
+)
 from pair.resident import eviction_targets
 
 
@@ -85,6 +92,10 @@ class Resolve(unittest.TestCase):
         self.assertEqual(resolve_mode("", "nope", knobs), ("flash", "custom:flash"))
         self.assertEqual(resolve_mode("pro", "nope", knobs), ("pro", "custom:pro"))
         self.assertEqual(resolve_mode(None, "custom:pro", knobs), ("pro", "custom:pro"))
+        tips = mode_tips(knobs)
+        self.assertEqual(tips["flash"], "custom:flash, the fast resident model.")
+        self.assertEqual(tips["pro"], "custom:pro, loaded when the question needs it.")
+        self.assertNotIn("qwen2.5", tips["flash"] + tips["pro"])
         route, tag, _reason = resolve_auto(
             "Write a python function", [FLASH_MODEL], knobs
         )

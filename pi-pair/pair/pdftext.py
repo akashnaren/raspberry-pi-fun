@@ -4,6 +4,7 @@ Page content is the text operators Tj and TJ. FlateDecode streams are
 inflated with zlib. A JPEG scan has no text operators and returns nothing,
 so the upload path can still OCR that file.
 """
+
 from __future__ import annotations
 
 import re
@@ -45,7 +46,16 @@ def _unescape(token: bytes) -> str:
             index += 1
             continue
         nxt = body[index + 1]
-        mapping = {ord("n"): 10, ord("r"): 13, ord("t"): 9, ord("b"): 8, ord("f"): 12, ord("("): 40, ord(")"): 41, ord("\\"): 92}
+        mapping = {
+            ord("n"): 10,
+            ord("r"): 13,
+            ord("t"): 9,
+            ord("b"): 8,
+            ord("f"): 12,
+            ord("("): 40,
+            ord(")"): 41,
+            ord("\\"): 92,
+        }
         if nxt in mapping:
             out.append(mapping[nxt])
             index += 2

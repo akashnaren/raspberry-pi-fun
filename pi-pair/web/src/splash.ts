@@ -20,7 +20,9 @@ export function navigationType(): string {
 
 function svgEl<T extends SVGElement>(doc: Document, name: string, attrs: Record<string, string>): T {
   const node = doc.createElementNS("http://www.w3.org/2000/svg", name) as T;
-  Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+  Object.entries(attrs).forEach(([key, value]) => {
+    node.setAttribute(key, value);
+  });
   return node;
 }
 

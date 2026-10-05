@@ -284,7 +284,11 @@ class ModeHttp(unittest.TestCase):
         levels = {"low": (0.6, 64), "medium": (0.7, 256), "high": (0.8, 768)}
         for level, (temperature, num_predict) in levels.items():
             _reset_fake()
-            ModeOllama.loaded = ["qwen2.5:0.5b", "snowflake-arctic-embed:m", "qwen2.5:1.5b"]
+            ModeOllama.loaded = [
+                "qwen2.5:0.5b",
+                "snowflake-arctic-embed:m",
+                "qwen2.5:1.5b",
+            ]
             status, headers, body = self._post(
                 port,
                 {

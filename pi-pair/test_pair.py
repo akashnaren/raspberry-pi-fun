@@ -668,6 +668,19 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(health_body["mode"], "flash")
         self.assertEqual(health_body["modes"]["flash"], "qwen2.5:0.5b")
         self.assertEqual(health_body["modes"]["pro"], "qwen2.5:1.5b")
+        flash_tip = f"{health_body['modes']['flash']}, the fast resident model."
+        pro_tip = f"{health_body['modes']['pro']}, loaded when the question needs it."
+        self.assertIn(flash_tip, html)
+        self.assertIn(pro_tip, html)
+        self.assertNotIn("__FLASH_TIP__", html)
+        self.assertNotIn("__PRO_TIP__", html)
+        source_page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("__FLASH_TIP__", source_page)
+        self.assertIn("__PRO_TIP__", source_page)
+        self.assertNotIn("qwen2.5:0.5b, the fast resident model.", source_page)
+        self.assertNotIn(
+            "qwen2.5:1.5b, loaded when the question needs it.", source_page
+        )
         self.assertEqual(health_body["peers_up"], 1)
         self.assertEqual(health_body["peers"][0]["kind"], "ollama")
         status, headers, body = self._post(

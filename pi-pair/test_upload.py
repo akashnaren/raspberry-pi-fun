@@ -55,8 +55,14 @@ def _flate_pdf(text: str) -> bytes:
         offsets.append(cursor)
         body += chunk
         cursor += len(chunk)
-    xref = "xref\n0 5\n0000000000 65535 f \n" + "".join(f"{off:010d} 00000 n \n" for off in offsets[1:])
-    trailer = f"trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{cursor}\n%%EOF\n".encode("ascii")
+    xref = "xref\n0 5\n0000000000 65535 f \n" + "".join(
+        f"{off:010d} 00000 n \n" for off in offsets[1:]
+    )
+    trailer = (
+        f"trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{cursor}\n%%EOF\n".encode(
+            "ascii"
+        )
+    )
     return header + body + xref.encode("ascii") + trailer
 
 
@@ -104,7 +110,10 @@ class MimeRouting(unittest.TestCase):
         essay = _flate_pdf("Hello")
         self.assertIn(b"xref", essay)
         self.assertEqual(upload.route_for("essay.pdf", "application/pdf", essay), "pdf")
-        self.assertEqual(upload.route_for("essay.pdf", "application/pdf", essay + b"\xff\xd8\xff"), "pdf")
+        self.assertEqual(
+            upload.route_for("essay.pdf", "application/pdf", essay + b"\xff\xd8\xff"),
+            "pdf",
+        )
         self.assertFalse(upload.is_jpeg_scanned_pdf(essay + b"\xff\xd8\xff"))
         with self.assertRaises(upload.UploadRejected) as csv_error:
             upload.route_for("rows.csv", "text/csv", b"a,b")
@@ -140,7 +149,9 @@ class MimeRouting(unittest.TestCase):
             ocr.recognize_pdf = previous_pdf
         self.assertEqual(result["route"], "text")
         self.assertEqual(result["text"], "# title\n\nbody")
-        essay = upload.ingest("application/pdf", _flate_pdf("Hello"), filename="note.pdf")
+        essay = upload.ingest(
+            "application/pdf", _flate_pdf("Hello"), filename="note.pdf"
+        )
         self.assertEqual(essay["route"], "pdf")
         self.assertEqual(essay["text"], "Hello")
         self.assertFalse(result["truncated"])
@@ -375,7 +386,9 @@ class AttachmentHttp(unittest.TestCase):
         self.assertEqual(body["text"], "from pdf")
         self.assertEqual(self.calls, {"image": 1, "pdf": 1})
 
-        status, body = self._post(*_as_post(_multipart("note.pdf", "application/pdf", _flate_pdf("Hello"))))
+        status, body = self._post(
+            *_as_post(_multipart("note.pdf", "application/pdf", _flate_pdf("Hello")))
+        )
         self.assertEqual(status, 200, body)
         self.assertEqual(body["route"], "pdf")
         self.assertEqual(body["text"], "Hello")
@@ -396,7 +409,9 @@ class AttachmentHttp(unittest.TestCase):
             *_as_post(_multipart("essay.pdf", "application/pdf", TEXT_PDF))
         )
         self.assertEqual(status, 415)
-        self.assertEqual(body["error"], "That PDF could not be read. Try a text file or a photo.")
+        self.assertEqual(
+            body["error"], "That PDF could not be read. Try a text file or a photo."
+        )
         self.assertNotIn("JPEG-scanned", body["error"])
         self.assertEqual(self.calls, {"image": 0, "pdf": 0})
 
@@ -413,7 +428,9 @@ class AttachmentHttp(unittest.TestCase):
         finally:
             upload.MAX_UPLOAD_BYTES = previous
         self.assertEqual(status, 413)
-        self.assertEqual(body["error"], "That is too big to send. Try a shorter message.")
+        self.assertEqual(
+            body["error"], "That is too big to send. Try a shorter message."
+        )
 
     def test_extra_ocr_is_rejected_while_slots_are_held(self):
         hold = threading.Event()
@@ -444,7 +461,9 @@ class AttachmentHttp(unittest.TestCase):
             )
             self.assertLess(time.monotonic() - started, 1)
             self.assertIn(status, (429, 503))
-            self.assertEqual(body["error"], "Reading a file is busy. Try again in a moment.")
+            self.assertEqual(
+                body["error"], "Reading a file is busy. Try again in a moment."
+            )
             text_status, text_body = self._post(
                 b"still text",
                 {"content-type": "text/plain", "x-filename": "note.txt"},

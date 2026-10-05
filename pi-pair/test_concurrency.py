@@ -375,7 +375,10 @@ class ConcurrentChat(unittest.TestCase):
         self.assertTrue(done.wait(4), holder)
         self.assertNotIn("error", holder, holder)
         self.assertIn(b"held", holder["all"])
-        self.assertLess(holder["all"].index(b"Waiting for a free slot"), holder["all"].index(b"held"))
+        self.assertLess(
+            holder["all"].index(b"Waiting for a free slot"),
+            holder["all"].index(b"held"),
+        )
 
     def test_wait_timeout_is_a_friendly_503(self):
         runtime.set_infer_slots(1)

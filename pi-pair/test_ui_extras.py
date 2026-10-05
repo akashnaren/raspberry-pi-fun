@@ -36,7 +36,9 @@ class SourcesAndShell(unittest.TestCase):
 
     def test_friendly_error_sentences(self):
         completed = _node("errors.test.mjs")
-        self.assertEqual(completed.returncode, 0, completed.stdout + "\n" + completed.stderr)
+        self.assertEqual(
+            completed.returncode, 0, completed.stdout + "\n" + completed.stderr
+        )
         self.assertIn("ok", completed.stdout)
 
 

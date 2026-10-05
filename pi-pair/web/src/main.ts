@@ -57,6 +57,7 @@ interface Turn {
 
 interface HealthBody extends HealthSnapshot {
   peers?: { models?: string[] }[];
+  modes?: { flash?: string; pro?: string };
 }
 
 interface LiveTurn {
@@ -390,6 +391,7 @@ async function refresh(): Promise<void> {
       banner.className = "";
       banner.replaceChildren();
       fillModels(body.peers || []);
+      paintModelTips(body.modes);
       paintServices(body);
       return;
     } catch {
@@ -405,6 +407,28 @@ async function refresh(): Promise<void> {
       return;
     }
   }
+}
+
+function modelTip(kind: "flash" | "pro", tag: string | undefined): string {
+  const name = (tag || "").trim();
+  if (!name) return "";
+  if (kind === "flash") return name + ", the fast resident model.";
+  return name + ", loaded when the question needs it.";
+}
+
+function paintModelTips(modes: HealthBody["modes"]): void {
+  if (!modes) return;
+  const flash = modelTip("flash", modes.flash);
+  const pro = modelTip("pro", modes.pro);
+  const write = (id: string, text: string) => {
+    if (!text) return;
+    const node = document.getElementById(id);
+    if (node) node.textContent = text;
+  };
+  write("tip-menu-flash", flash);
+  write("tip-set-flash", flash);
+  write("tip-menu-pro", pro);
+  write("tip-set-pro", pro);
 }
 
 function paintServices(body: HealthBody): void {

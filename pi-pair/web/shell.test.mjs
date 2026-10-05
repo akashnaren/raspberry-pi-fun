@@ -117,7 +117,10 @@ function openStream() {
 globalThis.fetch = async (input) => {
   const url = typeof input === "string" ? input : input.url;
   if (String(url).includes("/health")) {
-    return new Response(JSON.stringify({ peers: [{ models: ["qwen2.5:0.5b"] }] }), {
+    return new Response(JSON.stringify({
+      peers: [{ models: ["qwen2.5:0.5b"] }],
+      modes: { flash: "lane:fast", pro: "lane:deep" },
+    }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
@@ -249,6 +252,27 @@ if (!document.getElementById("tip-menu-flash").hidden) throw new Error("outside 
 menu.querySelector('[data-mode="auto"]').click();
 if (document.getElementById("modeLabel").textContent !== "Auto" || !menu.hidden) {
   throw new Error("menu did not return to Auto");
+}
+await new Promise((resolve) => setTimeout(resolve, 30));
+const flashText = document.getElementById("tip-menu-flash").textContent;
+const proText = document.getElementById("tip-menu-pro").textContent;
+if (flashText !== "lane:fast, the fast resident model.") {
+  throw new Error("flash tip was not built from health: " + flashText);
+}
+if (proText !== "lane:deep, loaded when the question needs it.") {
+  throw new Error("pro tip was not built from health: " + proText);
+}
+if (document.getElementById("tip-set-flash").textContent !== flashText) {
+  throw new Error("settings flash tip did not follow health");
+}
+if (document.getElementById("tip-set-pro").textContent !== proText) {
+  throw new Error("settings pro tip did not follow health");
+}
+if (html.includes("qwen2.5:0.5b, the fast resident model")) {
+  throw new Error("flash tip still hardcodes a model tag");
+}
+if (autoTip.textContent !== "Routes Flash or Pro from the question.") {
+  throw new Error("auto tip changed");
 }
 
 box.value = "Where is the bench?";
