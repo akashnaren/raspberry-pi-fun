@@ -19,7 +19,12 @@
 
 * { box-sizing: border-box; }
 
-html, body { height: 100%; margin: 0; }
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
 
 body {
   font-family: system-ui, "Segoe UI", sans-serif;
@@ -27,8 +32,9 @@ body {
   color: var(--ink);
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  min-height: 0;
   height: 100dvh;
+  max-height: 100dvh;
   font-size: 16px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -66,7 +72,10 @@ a { color: var(--accent); }
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: 100%;
+  max-height: 100%;
   width: 100%;
+  overflow: hidden;
 }
 
 header {
@@ -113,10 +122,18 @@ header {
   svg { width: 40px; height: 40px; display: block; }
 }
 
-.brand.brand-title .brand-mark { animation: mark-away 0.4s ease forwards; }
-.brand.brand-title .brand-name { animation: name-in 0.4s ease forwards; visibility: visible; }
+.brand.brand-title .brand-mark {
+  opacity: 0;
+  visibility: hidden;
+  animation: mark-away 0.4s ease;
+}
+.brand.brand-title .brand-name {
+  opacity: 1;
+  visibility: visible;
+  animation: name-in 0.4s ease;
+}
 .brand.brand-logo .brand-name { opacity: 0; visibility: hidden; }
-.brand.brand-logo .brand-mark { display: block; opacity: 1; animation: mark-back 0.35s ease; }
+.brand.brand-logo .brand-mark { display: block; opacity: 1; visibility: visible; animation: mark-back 0.35s ease; }
 .brand.brand-enter .brand-mark { animation: mark-pulse 0.7s ease; }
 
 .brand.splashing .brand-name { opacity: 0; visibility: hidden; }
@@ -158,8 +175,11 @@ header {
 }
 
 #log {
-  flex: 1;
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 8px 20px 28px;
   display: flex;
   flex-direction: column;

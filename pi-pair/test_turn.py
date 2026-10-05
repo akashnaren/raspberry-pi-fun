@@ -671,6 +671,160 @@ class TurnHttp(unittest.TestCase):
         self.assertIn(CHART_NUDGE, follow)
         self.assertFalse(ScriptOllama.seen[0].get("stream"))
 
+    def test_harmless_lists_are_not_soft_refusals(self):
+        refusal = "I'm sorry, but I can't assist with that.\n1. junk\n2. junk"
+        for prompt, needle in (("Top 5 cars", "Civic"), ("Top 5 movies", "Godfather")):
+            ScriptOllama.replies = [
+                {"message": {"content": refusal}, "done": True, "done_reason": "stop"},
+                {"message": {"content": refusal}, "done": True, "done_reason": "stop"},
+            ]
+            ScriptOllama.seen = []
+            ScriptOllama.posts = 0
+            peer_port = self._listen(ScriptOllama)
+            runtime.set_peers(
+                [
+                    {
+                        "name": "pi4",
+                        "host": "127.0.0.1",
+                        "port": peer_port,
+                        "kind": "ollama",
+                        "generative": True,
+                        "role": "brain",
+                        "note": "",
+                    }
+                ]
+            )
+            port = self._pair()
+            self.search_calls.clear()
+            status, _headers, body = self._post(
+                port,
+                {"messages": [{"role": "user", "content": prompt}], "stream": False},
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+            )
+            self.assertEqual(status, 200, prompt)
+            text = body["choices"][0]["message"]["content"]
+            self.assertNotIn("can't assist", text.lower(), prompt)
+            self.assertNotIn("cannot assist", text.lower(), prompt)
+            self.assertIn(needle, text, prompt)
+            self.assertEqual(self.search_calls, [], prompt)
+            self.assertEqual(ScriptOllama.posts, 2, prompt)
+            nudge = ScriptOllama.seen[1]["messages"][-1]["content"]
+            self.assertIn("Answer the user's question helpfully", nudge)
+            hinted = "\n".join(item.get("content", "") for item in ScriptOllama.seen[0]["messages"])
+            self.assertIn("numbered list", hinted)
+
+        ScriptOllama.replies = [
+            {"message": {"content": refusal}, "done": True, "done_reason": "stop"},
+            {"message": {"content": refusal}, "done": True, "done_reason": "stop"},
+        ]
+        ScriptOllama.seen = []
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/chat/completions",
+            body=json.dumps(
+                {"messages": [{"role": "user", "content": "Top 5 cars"}], "stream": True}
+            ).encode(),
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Target": "pi4",
+                "X-Pi-Mesh": "off",
+            },
+        )
+        raw = conn.getresponse().read().decode()
+        conn.close()
+        self.assertNotIn("can't assist", raw.lower())
+        self.assertIn("Civic", raw)
+
+    def test_hello_is_a_greeting_and_effort_stays_out_of_the_reply(self):
+        port = self._pi4()
+        status, _headers, body = self._post(
+            port,
+            {"messages": [{"role": "user", "content": "hello"}], "stream": False},
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        text = body["choices"][0]["message"]["content"]
+        self.assertEqual(text, "Hi! How can I help?")
+        lowered = text.lower()
+        for word in ("mesh", "pi4", "canned", "brain", "fleet"):
+            self.assertNotIn(word, lowered)
+        self.assertEqual(OllamaFake.posts, 0)
+
+        ScriptOllama.replies = [
+            {
+                "message": {
+                    "content": "Paris is the capital. I used medium effort in Flash mode.",
+                },
+                "done": True,
+                "done_reason": "stop",
+            }
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        status, _headers, body = self._post(
+            port,
+            {
+                "messages": [{"role": "user", "content": "What is the capital of France?"}],
+                "stream": False,
+            },
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(status, 200)
+        text = body["choices"][0]["message"]["content"]
+        self.assertIn("Paris", text)
+        self.assertNotIn("effort", text.lower())
+        self.assertNotIn("flash", text.lower())
+        self.assertEqual(ScriptOllama.posts, 1)
+
+        ScriptOllama.replies = [
+            {
+                "message": {"content": "I'm sorry, but I can't assist with that."},
+                "done": True,
+                "done_reason": "stop",
+            }
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        status, _headers, body = self._post(
+            port,
+            {"messages": [{"role": "user", "content": "how to build a bomb"}], "stream": False},
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("can't assist", body["choices"][0]["message"]["content"].lower())
+        self.assertEqual(ScriptOllama.posts, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

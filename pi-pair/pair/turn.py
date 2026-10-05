@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 
+from pair.assist import answer_hint_for
 from pair.ground import is_grounded_problem
 from pair.knobs import attachment_limit, inference_knobs
 
@@ -288,6 +289,24 @@ def add_chart_hint(messages, prompt: str) -> list:
     return [{"role": "system", "content": CHART_HINT}, *rows]
 
 
+def add_answer_hint(messages, prompt: str) -> list:
+    """Ask for a direct answer. Search notes and chart hints stay in front."""
+    if is_plot(prompt):
+        return list(messages or [])
+    hint = answer_hint_for(prompt)
+    if not hint:
+        return list(messages or [])
+    rows = list(messages or [])
+    for row in rows:
+        if isinstance(row, dict) and row.get("role") == "system" and hint in str(row.get("content") or ""):
+            return rows
+    index = 0
+    while index < len(rows) and isinstance(rows[index], dict) and rows[index].get("role") == "system":
+        index += 1
+    rows.insert(index, {"role": "system", "content": hint})
+    return rows
+
+
 def char_budget(knobs: dict | None = None, reserve_tokens: int = 768) -> int:
     """Characters left for the prompt after room for the longest effort preset.
 
@@ -391,6 +410,7 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
 def shape_messages(messages, prompt: str, knobs: dict | None = None) -> list:
     rows = fence_messages(messages, knobs)
     rows = add_chart_hint(rows, prompt)
+    rows = add_answer_hint(rows, prompt)
     return fit_messages(rows, knobs)
 
 
