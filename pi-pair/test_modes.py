@@ -281,7 +281,7 @@ class ModeHttp(unittest.TestCase):
         }
         for level, (think, temperature, top_p, num_predict) in levels.items():
             _reset_fake()
-            ModeOllama.loaded = ["qwen3:0.6b"]
+            ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
             status, headers, body = self._post(
                 port,
                 {
@@ -321,7 +321,7 @@ class ModeHttp(unittest.TestCase):
 
     def test_pro_does_not_evict_flash_and_flash_does_not_name_pro(self):
         port = self._boot()
-        ModeOllama.loaded = ["qwen3:0.6b"]
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
         ModeOllama.calls = []
         status, _headers, body = self._post(
             port,
@@ -616,7 +616,7 @@ class ModeHttp(unittest.TestCase):
         release = threading.Event()
         entered = threading.Event()
         port = self._boot()
-        ModeOllama.loaded = ["qwen3:0.6b"]
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
         ModeOllama.block_chat = {"release": release, "entered": entered, "wrote": False}
         self.addCleanup(release.set)
         conn = HTTPConnection("127.0.0.1", port, timeout=4)
