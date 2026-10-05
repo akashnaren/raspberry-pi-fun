@@ -13,3 +13,5 @@ Register a dataset in `data/dataset_info.json` before any train config names it.
 The router serves only the map. The JSONL files are the registered seeds. The miss queue is not a registered training corpus; it is an ephemeral shard under `data/train/pending/` and is deleted after a successful fold. Held-out inputs are a gate. They are not keys in the map and they are not folded in from the queue.
 
 pi2 may store a read-only copy of the map. It does not get `data/train/`. pi4 does not get the queue or `data/prepared/`.
+
+Public votes are a different dataset from these seeds. pi3 uploads SHA-256 hashes and the vote to `akashnaren/pi-mesh-labels` when `HF_TOKEN` is set. Raw prompt and answer text stay off that repo. `KAGGLE_API_TOKEN` is an optional stub that runs only after the Hugging Face upload succeeds.

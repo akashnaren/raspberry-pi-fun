@@ -106,8 +106,13 @@ class PublicApi(unittest.TestCase):
                 "PI_PAIR_DATA",
                 "PI_PAIR_CANNED",
                 "PI_PAIR_BRAIN_PORT",
+                "PI_PAIR_REMOTE_SEARCH",
+                "HF_TOKEN",
+                "KAGGLE_API_TOKEN",
             )
         }
+        os.environ.pop("HF_TOKEN", None)
+        os.environ.pop("KAGGLE_API_TOKEN", None)
         self._tmp = tempfile.TemporaryDirectory()
         self._lookup = pair_server.lookup_web
         import pair.queue as queue
@@ -116,6 +121,7 @@ class PublicApi(unittest.TestCase):
         self._forward = queue.forward_row
         os.environ[API_KEY_ENV] = "test-key"
         os.environ["PI_PAIR_ROLE"] = "brain"
+        os.environ["PI_PAIR_REMOTE_SEARCH"] = "0"
         os.environ["PI_PAIR_DATA"] = self._tmp.name
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         pair_server.lookup_web = lambda prompt: {

@@ -9,6 +9,7 @@ Locks (manifest `locks`, fail closed):
   generate == ["pi4"]
   dataset_and_train == ["pi3"]
   health == ["pi2"]
+  search == ["pi2"]
   train_then_delete is true
   weak_gen is false
 
@@ -321,6 +322,8 @@ def _check_locks(manifest: dict, errors: list[dict]) -> None:
         )
     if locks.get("health") != ["pi2"]:
         _add(errors, "lock_health", f"health must be ['pi2'], got {locks.get('health')!r}")
+    if locks.get("search") != ["pi2"]:
+        _add(errors, "lock_search", f"search must be ['pi2'], got {locks.get('search')!r}")
     if locks.get("train_then_delete") is not True:
         _add(errors, "lock_train_then_delete", "train_then_delete must be true")
     if locks.get("weak_gen") is not False:

@@ -87,7 +87,7 @@ deploy_pi3 plan
   mode: ${mode}
   source: ${PAIR_DIR}/
   dest: ${dest_user}@${dest_host}:${dest_dir}/
-  locks: generate=pi4 dataset_and_train=pi3 health=pi2 train_then_delete=yes weak_gen=no
+  locks: generate=pi4 dataset_and_train=pi3 health=pi2 search=pi2 train_then_delete=yes weak_gen=no
   includes: router code, data/canned, data/seed, dataset_info.json
   not executed: install.sh (no model pull on pi3), systemctl
 EOF

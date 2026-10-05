@@ -32,6 +32,7 @@ from pair.public_api import (
 )
 from pair.queue import append_row, apply_label, node_role, note_exchange
 from pair.images import lookup_images, sanitize_card
+from pair.mesh import lookup_for_brain
 from pair.search import lookup_web
 from pair import runtime
 from pair.stream import stream_llamacpp, stream_ollama
@@ -168,7 +169,7 @@ def brain_chat_url() -> str:
 
 
 def relay_chat(payload: bytes, target: str, mesh: str, mode: str = "") -> tuple[int, dict[str, str], bytes]:
-    """Hand the chat to pi4. This process does not search and does not generate."""
+    """Hand the chat to pi4. This relay does not search and does not generate."""
     headers = {
         "content-type": "application/json",
         "X-Pi-Target": target or "auto",
@@ -205,7 +206,7 @@ def _with_search(messages, prompt: str):
     if not (prompt or "").strip():
         return messages, None
     try:
-        found = lookup_web(prompt)
+        found = lookup_for_brain(prompt, local=lookup_web)
     except Exception:
         found = None
     if not isinstance(found, dict):
@@ -402,6 +403,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.split("?")[0]
+        if path == "/v1/search":
+            self._search()
+            return
         if path == "/v1/attachments":
             self._attachment()
             return
@@ -733,7 +737,7 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, body)
 
     def _relay_stream(self, payload: bytes) -> None:
-        """Pass pi4's event stream through. This board still does not search or generate."""
+        """Pass pi4's event stream through. This relay does not search or generate."""
         target = (self.headers.get("X-Pi-Target") or "auto").strip()
         mesh = (self.headers.get("X-Pi-Mesh") or "on").strip()
         forward = {
@@ -802,6 +806,39 @@ class Handler(BaseHTTPRequestHandler):
             self._error(str(error), status=error.status)
             return
         body = json.dumps(result).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _search(self) -> None:
+        """DuckDuckGo lookup on the health host. This route does not decode."""
+        if node_role() != "health":
+            self._error("search is served on the health host", status=403)
+            return
+        length = int(self.headers.get("content-length") or 0)
+        if length > 8192:
+            self._error("search query is too long", status=400)
+            return
+        try:
+            row = json.loads(self.rfile.read(length).decode() or "{}")
+        except json.JSONDecodeError:
+            self._error("search body must be JSON", status=400)
+            return
+        if not isinstance(row, dict):
+            self._error("search body must be an object", status=400)
+            return
+        query = str(row.get("q") or row.get("query") or "")
+        found = lookup_web(query)
+        body = json.dumps(
+            {
+                "status": found.get("status") if isinstance(found, dict) else "failed",
+                "sources": (found.get("sources") if isinstance(found, dict) else []) or [],
+                "context": (found.get("context") if isinstance(found, dict) else "") or "",
+            }
+        ).encode()
         self.send_response(200)
         self._cors()
         self.send_header("content-type", "application/json")
@@ -1348,7 +1385,8 @@ def main() -> None:
     print(
         f"Pi GPT 1.0 on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
         f"flash={mode_table().get('flash')} pro={mode_table().get('pro')} "
-        f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s brain=pi4",
+        f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s "
+        f"brain=pi4 search=pi2 dataset=pi3",
         flush=True,
     )
     # TCPServer.__init__ binds and listens. Accept starts below. The Arctic

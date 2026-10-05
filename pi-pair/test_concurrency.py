@@ -128,6 +128,7 @@ class ConcurrentChat(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         os.environ["PI_PAIR_DATA"] = self._tmp.name
         os.environ["PI_PAIR_ROLE"] = "brain"
+        os.environ["PI_PAIR_REMOTE_SEARCH"] = "0"
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         HoldOllama.inside = 0
         HoldOllama.peak = 0
@@ -153,6 +154,7 @@ class ConcurrentChat(unittest.TestCase):
         runtime.reset_health()
         os.environ.pop("PI_PAIR_DATA", None)
         os.environ.pop("PI_PAIR_ROLE", None)
+        os.environ.pop("PI_PAIR_REMOTE_SEARCH", None)
         os.environ.pop("PI_PAIR_CANNED", None)
         self._tmp.cleanup()
 

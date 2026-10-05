@@ -33,6 +33,13 @@ fi
 if [[ "$ROLE" == "brain" ]]; then
   echo "Ollama:  0.0.0.0:11434 on this board only"
   echo "Embed:   ${OLLAMA_EMBED_MODEL} for map paraphrases on this board only"
+  echo "Search:  pi2 first, then local DuckDuckGo if pi2 is down. Generation stays here."
+elif [[ "$ROLE" == "health" ]]; then
+  echo "Ollama:  not installed here. Chat and embed models run only on pi4."
+  echo "Search:  POST /v1/search on this board. No decode."
+elif [[ "$ROLE" == "dataset" ]]; then
+  echo "Ollama:  not installed here. Chat and embed models run only on pi4."
+  echo "Labels:  public hashes go to Hugging Face when HF_TOKEN is set. No decode."
 else
   echo "Ollama:  not installed here. Chat and embed models run only on pi4."
 fi
@@ -146,6 +153,8 @@ fi
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
 API_ENV_LINE=""
+REMOTE_SEARCH_LINE=""
+HF_ENV_LINE=""
 if [[ "$ROLE" == "brain" ]]; then
   # Live pi4 runs this user unit, not the system ollama.service. Refresh the
   # drop-in on every install so a reinstall cannot fall back to one loaded
@@ -182,6 +191,24 @@ EOF
   fi
   chmod 600 "$API_ENV_FILE"
   API_ENV_LINE="EnvironmentFile=$API_ENV_FILE"
+  REMOTE_SEARCH_LINE="Environment=PI_PAIR_REMOTE_SEARCH=1"
+fi
+if [[ "$ROLE" == "dataset" ]]; then
+  # Empty values skip the upload. The token stays in this mode-600 file, not in git.
+  HF_ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pi-pair"
+  HF_ENV_FILE="$HF_ENV_DIR/hf.env"
+  mkdir -p "$HF_ENV_DIR"
+  if [[ ! -f "$HF_ENV_FILE" ]]; then
+    printf '%s\n' \
+      '# Public label sync for pi3. Empty skips the upload. Do not commit this file.' \
+      'HF_TOKEN=' \
+      'KAGGLE_API_TOKEN=' > "$HF_ENV_FILE"
+    echo "Wrote $HF_ENV_FILE — set HF_TOKEN there to publish hashed votes."
+  else
+    echo "Keeping existing $HF_ENV_FILE"
+  fi
+  chmod 600 "$HF_ENV_FILE"
+  HF_ENV_LINE="EnvironmentFile=$HF_ENV_FILE"
 fi
 UNIT_FILE="$UNIT_DIR/${SERVICE_NAME}.service"
 cat > "$UNIT_FILE" << UNIT
@@ -199,7 +226,9 @@ Environment=PI_PAIR_HOST=0.0.0.0
 Environment=PI_PAIR_PORT=$PAIR_PORT
 Environment=PI_PAIR_PEERS=$INSTALL_DIR/peers.json
 Environment=MESH_MODEL=${OLLAMA_MODEL_PRIMARY}
+${REMOTE_SEARCH_LINE}
 ${API_ENV_LINE}
+${HF_ENV_LINE}
 ExecStart=$(command -v python3) $INSTALL_DIR/mini_chat.py
 Restart=on-failure
 RestartSec=3
@@ -224,6 +253,8 @@ if [[ "$ROLE" == "dataset" ]]; then
   echo
   echo "Train-then-delete (pi3 only, after the queue has misses):"
   echo "  python3 $INSTALL_DIR/scripts/lifecycle/post_train.py"
+  echo "Public hashed votes (HF_TOKEN in hf.env, never in git):"
+  echo "  python3 $INSTALL_DIR/scripts/data/sync_mesh_labels.py"
 fi
 echo
 echo "Done. Chat UI: http://<this-pi-ip>:${PAIR_PORT}/"

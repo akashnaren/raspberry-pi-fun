@@ -1,4 +1,8 @@
-"""Public lookup for a canned-map miss. Stdlib only. No API key."""
+"""Local public lookup for a canned-map miss. Stdlib only. No API key.
+
+pi4 calls this when pi2's search HTTP is down. pi2's /v1/search calls it directly.
+Neither path decodes.
+"""
 from __future__ import annotations
 
 import json

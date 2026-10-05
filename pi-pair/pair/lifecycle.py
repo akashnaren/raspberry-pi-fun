@@ -9,6 +9,7 @@ from pathlib import Path
 
 from pair.canned import load_map, normalize_key, write_map
 from pair.config import ROOT, data_root
+from pair.publish import record_public_labels, sync_public_labels
 from pair.queue import node_role
 from pair.registry import RegistryError, require_registered
 from pair.yaml_lite import load_path
@@ -225,6 +226,19 @@ def sweep_ephemeral(root: Path | None = None) -> list[str]:
     return removed
 
 
+def _public_sync(rows: list[dict], root: Path) -> dict:
+    """Hash votes, then upload if HF_TOKEN is set. A hub failure does not keep the shard."""
+    skipped = {"status": "skipped", "reason": "behind huggingface"}
+    try:
+        public_rows = record_public_labels(rows, root)
+        return sync_public_labels(public_rows, root=root)
+    except Exception:
+        return {
+            "huggingface": {"status": "error", "reason": "sync failed"},
+            "kaggle": skipped,
+        }
+
+
 def post_train(
     root: Path | None = None,
     adapters: Path | None = None,
@@ -233,7 +247,7 @@ def post_train(
     if node_role() != "dataset":
         raise RuntimeError(
             "train-then-delete runs only on the dataset host (pi3). "
-            "pi4 keeps weights. pi2 is a read-only canned mirror."
+            "pi4 keeps weights. pi2 is health and search."
         )
     base = root or data_root()
     adapter_root = adapters or adapters_root()
@@ -264,6 +278,7 @@ def post_train(
                 "rows_after": len(table),
                 "deleted": [],
                 "promoted": False,
+                "public_sync": _public_sync([], base),
             }
         prepared, rows = _prepare(active, base, run_id)
         labeled = sum(1 for row in rows if row.get("vote"))
@@ -308,6 +323,7 @@ def post_train(
             parent.rmdir()
         except OSError:
             pass
+        public_sync = _public_sync(rows, base)
         removed = _delete_consumed(active, prepared)
         active = None
         prepared = None
@@ -322,6 +338,7 @@ def post_train(
             "deleted": removed,
             "promoted": True,
             "map_sha256": digest,
+            "public_sync": public_sync,
         }
     finally:
         _unlock(fd, lock_path)

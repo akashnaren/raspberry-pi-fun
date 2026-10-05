@@ -15,6 +15,7 @@
     "generate": ["pi4"],
     "dataset_and_train": ["pi3"],
     "health": ["pi2"],
+    "search": ["pi2"],
     "train_then_delete": true,
     "weak_gen": false
   }
