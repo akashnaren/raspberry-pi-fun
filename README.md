@@ -1,6 +1,6 @@
 # pi-pair
 
-Chat router for the pi2, pi3, and pi4 fleet. Stdlib Python only (no pip). It listens on **18080**. A known line is answered from the canned map. Anything the map does not contain is generated on pi4 and only on pi4.
+Chat router for the pi2, pi3, and pi4 fleet. Stdlib Python only (no pip). It listens on **18080**. A known line is answered from the canned map. On pi4, a paraphrase of a known line is answered from that same map when its cosine is at least 0.85. Anything the map does not contain is generated on pi4 and only on pi4.
 
 The local model is small. Search and the canned map are how it answers facts it does not know.
 
@@ -22,7 +22,7 @@ A reply is local when the tokens, or the stored sentence that stands in for them
 
 The mesh exists because the three boards are not interchangeable computers that happen to share a switch. One of them can decode. One of them can hold the growing map and the short-lived training files. One of them can stay up, answer a health probe, and keep a read-only copy of the map. The router is the piece that makes that split visible on every turn: Auto, a pin, or a direct call, each with a different rule, each reported on the answer as a chip.
 
-Working memory and the dataset are different things, and mixing them up is how a small fleet fills its SD cards and then lies about what it knows. Working memory is the weights, the activations, and the key/value cache for the turn that is being decoded right now. It lives in RAM on pi4 and disappears when that turn ends, apart from whatever `keep_alive` has left resident. The dataset is the canned map: a compact `input → answer` table. It is durable, it is small, and it is allowed on pi3 and, as a mirror, on pi2. A cache hit never enters the transformer. A cache miss never becomes an excuse to treat pi2 or pi3 RAM as a second brain.
+Working memory and the dataset are different things, and mixing them up is how a small fleet fills its SD cards and then lies about what it knows. Working memory is the weights, the activations, and the key/value cache for the turn that is being decoded right now. It lives in RAM on pi4 and disappears when that turn ends, apart from whatever `keep_alive` has left resident. The dataset is the canned map: a compact `input → answer` table. It is durable, it is small, and it is allowed on pi3 and, as a mirror, on pi2. An exact map hit never enters the transformer. On pi4, a paraphrase whose cosine with a map key is at least 0.85 is still a map hit: `snowflake-arctic-embed:m` runs, and the chat model does not. A cache miss never becomes an excuse to treat pi2 or pi3 RAM as a second brain.
 
 ## Why the shape is pi4-only, then a map, then train and delete
 
@@ -42,11 +42,17 @@ Train-then-delete is our rule. The open-source trainers cited below compact data
 
 | Board | Inventory | May hold | Must not hold |
 | --- | --- | --- | --- |
-| pi2 | ~1GB, armv7, Ollama unsupported | Health probes; read-only copy of `canned_map.json` | Chat weights, a train queue, generated tokens |
-| pi3 | ~1GB, arm64; 0.5B can load and still gibberish | Canned map, seed files, bounded queue, prepared shards, adapter manifests, the train job | User-facing generation |
-| pi4 | ~8GB, the only proven generative board | Quantized chat weights in Ollama; the decode for a miss; an active adapter manifest after the gate | Raw train shards, the train corpus, a second full fine-tune beside live decode |
+| pi2 | ~1GB, armv7, Ollama unsupported | Health probes; read-only copy of `canned_map.json` | Chat weights, the map embedder, a train queue, generated tokens |
+| pi3 | ~1GB, arm64; 0.5B can load and still gibberish | Canned map, seed files, bounded queue, prepared shards, adapter manifests, the train job | User-facing generation, the map embedder |
+| pi4 | ~8GB, the only proven generative board | Quantized chat weights in Ollama; `snowflake-arctic-embed:m` for map paraphrases; the decode for a miss; an active adapter manifest after the gate | Raw train shards, the train corpus, a second full fine-tune beside live decode |
 
 The model on pi4 starts as `qwen2.5:0.5b`. The published config for Qwen2.5-0.5B-Instruct (`model_type` qwen2) is 24 layers, hidden size 896, intermediate size 4864, 14 query heads and 2 key/value heads, vocabulary 151936, rope theta 1,000,000, SiLU, tied embeddings, and a card maximum of 32768 positions. Source: the model config published at `https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct`. This fleet does not use that full context. `configs/runtime/inference_pi4.json` caps `num_ctx` at 2048 so the key/value cache stays inside the 8GB board with the weights and the operating system. `OLLAMA_NUM_PARALLEL` is 1: one sequence at a time, in the Ollama service and in spirit in the router slot cap. `keep_alive` in that same file is `5m`, an operator choice so a short run of misses does not reload the weights every turn. The same file sets `num_thread` to 4 and `num_batch` to 128. Pi 4 has four Cortex-A72 cores and a 1MB shared L2. Ollama forwards `num_thread` as llama.cpp `-t` only when the request sets it, and otherwise lets the runner auto-detect (`llm/llama_server.go`). `num_batch` is the prompt-ingest batch; Ollama's default is 512, and generation still samples one token at a time, so the smaller batch is for prefill. Search notes pasted into that prompt are capped at `search_note_chars` (640). The links on the page are not cut. Flash attention stays off: Ollama turns it on for a supported GPU, and this board decodes on the CPU. Temperature for ordinary chat sits between 0.6 and 0.8; the page defaults to 0.7, inside that band. A move up to `llama3.2:1b` waits on a health check that the process stays resident. This document does not invent a layer count for that larger model; the card is gated and was not read here.
+
+The map embedder on pi4 is `snowflake-arctic-embed:m` (about 218MB on the live board). It is not a chat model. `install.sh` pulls it only for the pi4 role. By hand, that pull is:
+
+```bash
+ollama pull snowflake-arctic-embed:m
+```
 
 pi2 and pi3 do not get a pull of those weights. `install.sh` skips `ollama pull` unless the hostname is the pi4 role. A pin of pi2 or pi3 returns:
 
@@ -66,7 +72,7 @@ pi4 is the only generative employee. pi3 is the dataset employee: it stores the 
 
 The person is on the phone, on the page served at port 18080. The router is whichever Pi answered that HTTP request.
 
-If the mode is Auto, the router normalizes the latest user turn (lowercase, collapsed whitespace, trailing punctuation removed) and looks it up in `data/canned/canned_map.json`. A hit returns that sentence with the chip `cache`. pi4 is not called. A miss is sent only to pi4. The chip on that answer is `brain: pi4`. The prompt and the answer are appended to the bounded queue on pi3 (at most 128 rows; older rows fall off the front). If this router is itself running as the dataset role, it writes the file locally. If it is running as the brain or as health, it forwards the row to pi3 and does not keep a copy.
+If the mode is Auto, the router normalizes the latest user turn (lowercase, collapsed whitespace, trailing punctuation removed) and looks it up in `data/canned/canned_map.json`. An exact hit returns that sentence with the chip `cache`. The chat model is not called. pi2 and pi3 stop at that exact key: a miss is forwarded to pi4. On pi4, an exact miss is scored against the map keys with `snowflake-arctic-embed:m` through Ollama `/api/embed`. The best cosine at or above 0.85 returns the stored sentence with the chip `cache` and does not decode. A line still under 0.85 is generated only on pi4. The chip on that answer is `brain: pi4`. The prompt and the answer are appended to the bounded queue on pi3 (at most 128 rows; older rows fall off the front). If this router is itself running as the dataset role, it writes the file locally. If it is running as the brain or as health, it forwards the row to pi3 and does not keep a copy.
 
 On a miss, pi4 looks the line up on DuckDuckGo and then generates. It keeps a few result titles, links, and short snippets. It may read one of those pages as plain text, with a size cap and a short timeout, and it does not follow links from that page. That text is added only to the prompt pi4 sees. The queue still stores the person's line and the model's answer. If the lookup fails, pi4 still answers from the local model and the page says search failed. This is not a hosted chat API and it is not a second generator. pi2 does not search and does not generate. A chat that arrives on pi2 or pi3 is forwarded to pi4's page, so the lookup and the decode stay on pi4. pi3 stores the label row. `post_train` deletes those raw rows and does not delete the canned map.
 
@@ -76,10 +82,12 @@ If the mode is a pin of pi4, the same map may still answer, and a miss still goe
 flowchart TD
   U[Person on the chat page] --> R[Router on whichever Pi served port 18080]
   R --> M{Mode}
-  M -->|Auto or pin pi4| Q{Key in canned_map.json?}
+  M -->|Auto or pin pi4| Q{Exact key in canned_map.json?}
   Q -->|yes| C[Return the stored sentence]
   C --> ChipC[Chip cache]
-  Q -->|no| B[pi4 decode only]
+  Q -->|no| S{On pi4 and cosine at least 0.85?}
+  S -->|yes| C
+  S -->|no| B[pi4 decode only]
   B --> ChipB[Chip brain: pi4]
   B --> L[Bounded queue on pi3]
   M -->|Pin pi2 or pi3| X[Named refusal]
@@ -94,7 +102,7 @@ flowchart TD
 The loop is meant to be run, not only drawn.
 
 1. **Pre-train seed.** The synthetic canned map, the SFT and preference seeds, and the held-out eval file are already in `data/`. They are the same rows published as the three dataset repos named below. No live transcript is in them.
-2. **Weights on pi4.** `install.sh` on the pi4 role pulls `qwen2.5:0.5b` and sets `OLLAMA_NUM_PARALLEL=1`. The other two roles skip the pull.
+2. **Weights on pi4.** `install.sh` on the pi4 role pulls `qwen2.5:0.5b` and `snowflake-arctic-embed:m`, and sets `OLLAMA_NUM_PARALLEL=1`. The embed model scores map paraphrases. It does not generate. The other two roles skip the pull.
 3. **Chat on port 18080.** People and agents use the page. Auto hits do not decode. Misses decode on pi4.
 4. **Collect.** Each successful generative completion is one row in `data/train/pending/queue.jsonl` on pi3. Hits increment a counter in `data/metrics.json` and are not stored as text. There is no unbounded chat archive. A thumbs vote, and a corrected sentence when someone writes one, is written onto that same row.
 5. **Analyze.** The held-out file is the gate, not a sample of the queue. A queued line whose normalized text is a held-out input is dropped, not folded.
@@ -132,7 +140,7 @@ Weekday improvement goes through this page, not through a side channel. The stan
 
 ## Neural net: what runs, and only on a miss
 
-A cache hit does not tokenize, embed, attend, or sample. The router compares a normalized string to keys in a JSON object and returns the stored string. That is the whole hot path. Calling it a network would be a description of a different system.
+An exact cache hit does not tokenize, embed, attend, or sample. The router compares a normalized string to keys in a JSON object and returns the stored string. On pi4, a line that misses the exact key can still be that map hit: Ollama `/api/embed` runs `snowflake-arctic-embed:m` on the normalized line and on the keys, and a cosine of at least 0.85 returns the stored string. That call does not sample tokens. pi2 and pi3 do not embed. A score under 0.85 is a miss, and the miss is the chat path below.
 
 A miss on pi4 runs one decoder-only transformer, the Qwen2 stack behind `qwen2.5:0.5b`, inside Ollama. The request asks for `num_ctx` 2048, `keep_alive` 5m, and the caller's temperature. One sequence is in flight. The layers below are the published block, walked in the order a token is produced. They are not a custom net written in this repo.
 
@@ -222,7 +230,7 @@ There is no separate control plane. A pin of pi2 or pi3 is still refused by the 
 pi-pair/
   mini_chat.py              start here
   start.sh                  same command
-  pair/                     router, canned lookup, queue, train cycle
+  pair/                     router, canned lookup, pi4 embed match, queue, train cycle
   static/                   built chat page (no Node at runtime)
   web/                      TypeScript, Tailwind, and SCSS sources for that page
   peers.example.json        fleet map
@@ -305,7 +313,13 @@ systemctl --user daemon-reload
 systemctl --user enable --now pi-pair.service
 ```
 
-Repeat the rsync for pi2 and pi4. The unit's role comes from the hostname: pi2 is health, pi3 is dataset, pi4 is brain. Only the brain unit is told to pull `qwen2.5:0.5b`. The other two print `Skipping model pull` and do not install a chat model. An existing `canned_map.json` on the Pi is left in place so a folded map is not replaced by the seed.
+Repeat the rsync for pi2 and pi4. The unit's role comes from the hostname: pi2 is health, pi3 is dataset, pi4 is brain. Only the brain unit is told to pull `qwen2.5:0.5b` and the map embedder. On pi4:
+
+```bash
+ollama pull snowflake-arctic-embed:m
+```
+
+The other two print `Skipping model pull` and do not install a chat model or the embedder. An existing `canned_map.json` on the Pi is left in place so a folded map is not replaced by the seed.
 
 | Name | Host | Port | Role |
 | --- | --- | --- | --- |
@@ -377,6 +391,7 @@ curl -sS http://127.0.0.1:18080/v1/flywheel/feedback \
 | `PI_PAIR_NAME` | unset | Hostname hint (`pi2`, `pi3`, `pi4`) |
 | `PI_PAIR_DATA` | `data/` | Root of the map, seeds, and queue |
 | `PI_PAIR_CANNED` | `data/canned/canned_map.json` | Override the map file |
+| `PI_PAIR_OLLAMA` | `http://127.0.0.1:11434` | Ollama origin for `/api/embed` on the pi4 brain. `OLLAMA_HOST` is the fallback. |
 | `PI_PAIR_ADAPTERS` | `adapters/` | Manifest directory |
 | `PI_PAIR_TRAIN_CONFIG` | `configs/train/sft_canned.yaml` | Run file |
 | `MESH_MODEL` | `qwen2.5:0.5b` | Model name when the request omits one |
@@ -387,7 +402,10 @@ curl -sS http://127.0.0.1:18080/v1/flywheel/feedback \
 
 | Situation | What the caller sees |
 | --- | --- |
-| Map hit | Chip `cache`. No call to pi4. |
+| Map hit | Chip `cache`. No call to pi4's chat model. |
+| Paraphrase on pi4, cosine at least 0.85 | Chip `cache`. The embedder runs. The chat model does not. |
+| Same paraphrase on pi2 or pi3 | Exact miss, forwarded to pi4, which may still hit on cosine. |
+| Embedder down or under 0.85 on pi4 | Treated as a map miss, then the pi4 chat rule. |
 | Map miss, pi4 up | Chip `brain: pi4`. Queue row on pi3. |
 | Map miss, pi4 down | `pi4 unreachable on cache miss. Refusing to answer from pi2 or pi3.` |
 | Pin or direct to pi2 or pi3 | `cannot be the brain` sentence. No model call, including when the map would have hit. |

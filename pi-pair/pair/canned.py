@@ -1,4 +1,9 @@
-"""Serve path: compact input → answer map. No model call."""
+"""Serve path: compact input → answer map.
+
+Exact normalized keys hit on every board. On pi4, a miss can still hit when
+the line is close to a key in embedding space. Generation stays outside this
+module.
+"""
 from __future__ import annotations
 
 import json
@@ -6,6 +11,7 @@ import os
 from pathlib import Path
 
 from pair.config import data_root
+from pair.embed import on_pi4, semantic_lookup
 
 
 def normalize_key(text: str) -> str:
@@ -43,7 +49,17 @@ def lookup(text: str, path: Path | None = None) -> str | None:
     if key in table:
         return table[key]
     folded = {normalize_key(item): answer for item, answer in table.items()}
-    return folded.get(key)
+    exact = folded.get(key)
+    if exact is not None:
+        return exact
+    # Semantic match is the pi4 brain only. A failure stays a miss.
+    if not on_pi4():
+        return None
+    try:
+        usable = {item: answer for item, answer in folded.items() if item}
+        return semantic_lookup(key, usable)
+    except Exception:
+        return None
 
 
 def write_map(table: dict[str, str], path: Path | None = None) -> None:
