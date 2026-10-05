@@ -62,6 +62,7 @@ class KeepAliveDefault(unittest.TestCase):
             (ROOT / "configs" / "runtime" / "inference_pi4.json").read_text(encoding="utf-8")
         )
         self.assertEqual(shipped["keep_alive"], -1)
+        self.assertEqual(shipped["ollama_num_parallel"], 2)
 
     def test_chat_stream_and_embed_send_minus_one(self):
         seen = []
@@ -116,7 +117,7 @@ class KeepAliveDefault(unittest.TestCase):
         self.assertIn('Environment="OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}"', script)
         self.assertIn("Environment=OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}", script)
         self.assertNotIn("OLLAMA_NUM_PARALLEL=1", script)
-        self.assertIn("Environment=OLLAMA_NUM_PARALLEL=4", unit)
+        self.assertIn("Environment=OLLAMA_NUM_PARALLEL=2", unit)
         self.assertNotIn("OLLAMA_NUM_PARALLEL=1", unit)
         readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
         self.assertIn("OLLAMA_MAX_LOADED_MODELS=3", readme)

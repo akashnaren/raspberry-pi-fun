@@ -16,9 +16,9 @@ _DEFAULTS = {
     # model's key/value cache as num_ctx * this value. Flash is the default
     # tag. Pro is a separate resident tag and uses the same router slot gate.
     # Arctic stays loaded beside them (Ollama runs the embedder at parallel 1).
-    # Clamped to 1..4. Default 4: four sequences of qwen2.5:0.5b at num_ctx
-    # 2048 stayed under 1 GB RSS in a same-settings measurement.
-    "ollama_num_parallel": 4,
+    # Clamped to 1..4. Default 2. Four sequences of qwen2.5:0.5b at num_ctx
+    # 2048 stayed under 1 GB RSS, but that cap was too slow on pi4 (p95 34.9s).
+    "ollama_num_parallel": 2,
     # Pi 4 is four Cortex-A72 cores. Ollama forwards num_thread as llama.cpp -t
     # only when the request sets it; otherwise the runner auto-detects.
     "num_thread": 4,

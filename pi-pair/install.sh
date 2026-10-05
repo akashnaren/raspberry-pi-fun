@@ -92,9 +92,9 @@ import sys
 path = sys.argv[1]
 try:
     row = json.load(open(path, encoding="utf-8"))
-    value = int(row.get("ollama_num_parallel", 4))
+    value = int(row.get("ollama_num_parallel", 2))
 except (OSError, ValueError, TypeError, json.JSONDecodeError):
-    value = 4
+    value = 2
 if value < 1:
     value = 1
 if value > 4:
