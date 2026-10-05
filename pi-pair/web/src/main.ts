@@ -1,5 +1,5 @@
 import { renderMarkdown } from "./markdown";
-import { isSoloStop, speakText, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
+import { isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
 declare global {
   interface Window {
@@ -804,6 +804,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
         if (delta) {
           textAccum += delta;
           live.setText(textAccum);
+          if (spoken && !voiced && noteSpokenDelta(textAccum)) voiced = true;
         }
         if (payload.pi_think) streamedEffort = payload.pi_think;
       }
@@ -856,7 +857,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
     turnCtrl = null;
     syncSend();
     byId<HTMLTextAreaElement>("q").focus();
-    if (voiceOn && !voiced) releaseVoice();
+    if (voiceOn && !speechPending()) releaseVoice();
   }
 }
 
@@ -1146,10 +1147,11 @@ function beginVoice(): void {
 }
 
 function releaseVoice(): void {
+  if (speechPending() || sending) return;
   voiceHold = false;
   setHeard(false);
   setSpeaking(false);
-  if (!voiceOn || sending || listening) return;
+  if (!voiceOn || listening) return;
   voiceCaption("Listening");
   beginVoice();
 }

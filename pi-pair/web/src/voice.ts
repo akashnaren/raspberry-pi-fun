@@ -79,6 +79,31 @@ export const ENDPOINT_MS = 450;
 let beforeSpeech: ((text: string) => void) | null = null;
 let afterSpeech: (() => void) | null = null;
 let duringSpeech: (() => void) | null = null;
+let queuedSay = "";
+let liveUtterances = 0;
+
+/** True while a reply is queued or playing, so the mic stays closed. */
+export function speechPending(): boolean {
+  return liveUtterances > 0;
+}
+
+/** The first finished sentence, so voice can start before the rest of the reply arrives. */
+export function firstSpokenSentence(text: string): string | null {
+  const say = plainSpeech(text);
+  if (!say) return null;
+  const sentence = say.match(/^[\s\S]*?[.!?…](?=\s|$)/);
+  if (!sentence) return null;
+  const line = sentence[0].trim();
+  return line.length >= 2 ? line : null;
+}
+
+/** Speak the first sentence as soon as it is in the stream. Later text is queued, not cancelled. */
+export function noteSpokenDelta(accum: string): boolean {
+  const lead = firstSpokenSentence(accum);
+  if (!lead) return false;
+  if (queuedSay && (lead === queuedSay || queuedSay.startsWith(lead))) return true;
+  return speakText(lead);
+}
 
 export function whenSpeechStarts(fn: (text: string) => void): void {
   beforeSpeech = fn;
@@ -97,11 +122,7 @@ function pickSpeaker(synth: SpeechSynthesis): SpeechSynthesisVoice | null {
   return voices.find((voice) => voice.default) || voices.find((voice) => voice.localService) || null;
 }
 
-export function speakText(text: string): boolean {
-  if (!("speechSynthesis" in window)) return false;
-  const say = spokenAnswer(text);
-  if (!say) return false;
-  const synth = window.speechSynthesis;
+function playUtterance(synth: SpeechSynthesis, say: string, replace: boolean): boolean {
   const utter = new SpeechSynthesisUtterance(say);
   utter.rate = 1;
   utter.volume = 1;
@@ -116,22 +137,30 @@ export function speakText(text: string): boolean {
   };
   utter.onstart = () => started?.(say);
   utter.onboundary = () => pulse?.();
-  utter.onend = () => finish();
-  utter.onerror = () => finish();
+  utter.onend = () => {
+    liveUtterances = Math.max(0, liveUtterances - 1);
+    finish();
+  };
+  utter.onerror = () => {
+    liveUtterances = Math.max(0, liveUtterances - 1);
+    finish();
+  };
   let played = false;
   const play = () => {
     if (played) return;
     played = true;
+    liveUtterances += 1;
     const speaker = pickSpeaker(synth);
     if (speaker) utter.voice = speaker;
     if (typeof synth.resume === "function") synth.resume();
     synth.speak(utter);
   };
   // cancel() in the same turn as speak() drops the utterance on Chrome, so the reply stays silent.
-  if (synth.speaking || synth.pending) {
+  // A later sentence is queued behind the one already playing.
+  if (replace && (synth.speaking || synth.pending)) {
     synth.cancel();
     setTimeout(play, 60);
-  } else if (!pickSpeaker(synth) && typeof synth.addEventListener === "function") {
+  } else if (replace && !pickSpeaker(synth) && typeof synth.addEventListener === "function") {
     const onVoices = () => {
       synth.removeEventListener("voiceschanged", onVoices);
       play();
@@ -144,7 +173,24 @@ export function speakText(text: string): boolean {
   return true;
 }
 
+export function speakText(text: string): boolean {
+  if (!("speechSynthesis" in window)) return false;
+  const say = spokenAnswer(text);
+  if (!say) return false;
+  const synth = window.speechSynthesis;
+  if (queuedSay && say.startsWith(queuedSay)) {
+    const rest = say.slice(queuedSay.length).trim();
+    if (!rest) return true;
+    queuedSay = say;
+    return playUtterance(synth, rest, false);
+  }
+  queuedSay = say;
+  return playUtterance(synth, say, true);
+}
+
 export function stopSpeaking(): void {
+  queuedSay = "";
+  liveUtterances = 0;
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
 }
 

@@ -1,5 +1,5 @@
 import fs from "fs";
-import { ENDPOINT_MS, isSoloStop, speakText, spokenAnswer, startListening, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
+import { ENDPOINT_MS, firstSpokenSentence, isSoloStop, noteSpokenDelta, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
 
 const assistant = "The hall bench is by the east window.";
 const labels = ["Thinking", "Searching", "Searched", "Search failed", "Answering"];
@@ -263,6 +263,45 @@ if (!scss.includes(".voice-stage.speaking") || !scss.includes(".voice-dots")) {
 const dotMarkup = html.slice(html.indexOf('class="voice-dots"'), html.indexOf('class="voice-dots"') + 120);
 if ((dotMarkup.match(/<i>/g) || []).length !== 5) {
   throw new Error("speaking state replaced the five dots");
+}
+const earlySpeak = main.indexOf("noteSpokenDelta(textAccum)");
+const fullSpeak = main.indexOf("speakText(textAccum)");
+if (earlySpeak < 0 || fullSpeak < 0 || earlySpeak > fullSpeak) {
+  throw new Error("voice waits for the whole reply before speaking");
+}
+
+// Stubbed pi4 stream: first token is slow, then a word at a time.
+// Before: speakText runs only after the last word. After: the first sentence starts audio.
+const FIRST_TOKEN_MS = 800;
+const TOKEN_MS = 35;
+const words = "The hall bench is by the east window. It sits under the tall window and the rest of this reply keeps going so the old path waits for the whole answer.".split(" ");
+let buf = "";
+let streamMs = 0;
+let firstAudioMs = null;
+stopSpeaking();
+window.speechSynthesis = {
+  speaking: false,
+  pending: false,
+  getVoices() {
+    return [{ default: true, lang: "en-US", localService: true, name: "Default" }];
+  },
+  cancel() {},
+  resume() {},
+  speak() {
+    if (firstAudioMs == null) firstAudioMs = streamMs;
+  },
+};
+words.forEach((word, index) => {
+  streamMs += index === 0 ? FIRST_TOKEN_MS : TOKEN_MS;
+  buf += (buf ? " " : "") + word;
+  if (firstAudioMs == null) noteSpokenDelta(buf);
+});
+if (!firstSpokenSentence(buf)) throw new Error("the stub reply has no spoken sentence");
+const beforeMs = ENDPOINT_MS + streamMs;
+const afterMs = ENDPOINT_MS + firstAudioMs;
+console.log("end-of-speech to first audio before " + beforeMs + "ms after " + afterMs + "ms");
+if (!(afterMs < beforeMs)) {
+  throw new Error("first audio did not move earlier: before " + beforeMs + " after " + afterMs);
 }
 
 console.log("ok");
