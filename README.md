@@ -142,6 +142,8 @@ Weekday improvement goes through this page, not through a side channel. The stan
 
 An exact cache hit does not tokenize, embed, attend, or sample. The router compares a normalized string to keys in a JSON object and returns the stored string. On pi4, a line that misses the exact key can still be that map hit: Ollama `/api/embed` runs `snowflake-arctic-embed:m` on the normalized line and on the keys, and a cosine of at least 0.85 returns the stored string. That call does not sample tokens. pi2 and pi3 do not embed. A score under 0.85 is a miss, and the miss is the chat path below.
 
+pi4 binds and accepts on port 18080 before it embeds the canned keys. That preload is a background thread. While it runs, `/health` reports `warm` as `warming`. An exact key still returns the stored sentence. A paraphrase does not wait on the key batch and does not fail the request: until those vectors are cached it is a miss, and after they are cached only the line is embedded. When the preload finishes or fails, `warm` is `ready`. A failed preload still fills the cache on a later miss.
+
 A miss on pi4 runs one decoder-only transformer, the Qwen2 stack behind `qwen2.5:0.5b`, inside Ollama. The request asks for `num_ctx` 2048, `keep_alive` -1, and the caller's temperature. Up to `ollama_num_parallel` sequences are in flight (default 4). They share that one weight load. A further generation is refused. The layers below are the published block, walked in the order a token is produced. They are not a custom net written in this repo.
 
 **Tokens.** The user text is byte-pair encoded into integer ids. The id sequence is what the stack sees. The 151936-way vocabulary is why the last projection is expensive relative to the width of the model, and why a tied embedding (the same matrix for ids-in and logits-out) is how this checkpoint spends that parameter budget.
@@ -346,7 +348,7 @@ A pinned peer that is down returns `<name> offline`. A pinned weak peer returns 
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/` | Chat page |
-| GET | `/health`, `/peers` | Router plus peer health. `generative` is false on pi2 and pi3. |
+| GET | `/health`, `/peers` | Router plus peer health. `generative` is false on pi2 and pi3. `warm` is `warming` or `ready` and does not wait on the embed preload. No API key. |
 | POST | `/v1/chat/completions` | OpenAI chat. `stream:true` is SSE. Same call for a person and for another agent. No API key. |
 | POST | `/v1/attachments` | One file, multipart or a raw body with `X-Filename`. `.txt` and `.md` are decoded. Images and JPEG-scanned PDFs are OCR'd locally, then the same text is returned for the chat. Body cap 4 MB. Text cap 4096 characters. First 5 PDF pages. |
 | POST | `/v1/flywheel/enqueue` | Miss row. Accepted only on the dataset role. |

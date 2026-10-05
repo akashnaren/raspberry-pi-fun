@@ -11,7 +11,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from pair.canned import lookup, warm_at_start
+from pair.canned import lookup, start_canned_warm, warm_status
 from pair.chat import chat_llamacpp, chat_ollama, llamacpp_model
 from pair.config import STATIC_DIR
 from pair.gate import capacity_message
@@ -278,6 +278,7 @@ def health_document() -> dict:
         "slots": runtime.INFER_SLOTS,
         "in_flight": runtime.gate.in_flight(),
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
+        "warm": warm_status(),
     }
 
 
@@ -1161,12 +1162,20 @@ def make_server(host: str | None = None, port: int | None = None) -> ThreadingHT
     return ThreadingHTTPServer((bind_host, bind_port), Handler)
 
 
+warm_thread: threading.Thread | None = None
+
+
 def main() -> None:
+    global warm_thread
     runtime.configure()
     print(
         f"Pi GPT 1.0 on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
         f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s brain=pi4",
         flush=True,
     )
-    warm_at_start()
-    make_server().serve_forever()
+    # TCPServer.__init__ binds and listens. Accept starts below. The Arctic
+    # key batch runs after that listen so /health and chat are not refused
+    # for the duration of the preload.
+    server = make_server()
+    warm_thread = start_canned_warm()
+    server.serve_forever()

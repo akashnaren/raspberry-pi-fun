@@ -2,16 +2,39 @@
 
 Exact normalized keys hit on every board. On pi4, a miss can still hit when
 the line is close to a key in embedding space. The brain preloads those key
-vectors when the server starts. Generation stays outside this module.
+vectors on a daemon thread after the socket is listening, so health and chat
+accept during the preload. A miss in that window stays on the exact map until
+the key cache is filled, then embeds the line only. Generation stays outside
+this module.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 
 from pair.config import data_root
-from pair.embed import on_pi4, semantic_lookup, warm_canned_embeddings
+from pair.embed import (
+    on_pi4,
+    reset_warm_state,
+    semantic_lookup,
+    set_warm_status,
+    warm_canned_embeddings,
+    warm_status,
+)
+
+__all__ = [
+    "load_map",
+    "lookup",
+    "map_path",
+    "normalize_key",
+    "reset_warm_state",
+    "start_canned_warm",
+    "warm_at_start",
+    "warm_status",
+    "write_map",
+]
 
 
 def normalize_key(text: str) -> str:
@@ -48,10 +71,11 @@ def _semantic_table(table: dict[str, str]) -> dict[str, str]:
 
 
 def warm_at_start(path: Path | None = None) -> None:
-    """Preload canned-key embeddings before the server accepts chats.
+    """Preload canned-key embeddings. Safe to run off the accept path.
 
     No-op off the brain. A failure here does not stop the process, and the
-    next paraphrase still fills the cache lazily.
+    next paraphrase still fills the cache lazily. The server runs this on a
+    daemon thread after listen and does not wait for the batch.
     """
     if not on_pi4():
         return
@@ -59,6 +83,27 @@ def warm_at_start(path: Path | None = None) -> None:
         warm_canned_embeddings(_semantic_table(load_map(path)))
     except Exception as exc:
         print(f"canned embed warm skipped: {exc}", flush=True)
+
+
+def start_canned_warm(path: Path | None = None) -> threading.Thread:
+    """Start the key preload without blocking the caller.
+
+    Call this after the listening socket exists. On the brain, status is
+    `warming` before the thread is scheduled, then `ready` when the batch
+    returns or fails. Other roles stay `ready` and the thread is a no-op.
+    """
+    brain = on_pi4()
+    set_warm_status("warming" if brain else "ready")
+
+    def run() -> None:
+        try:
+            warm_at_start(path)
+        finally:
+            set_warm_status("ready")
+
+    thread = threading.Thread(target=run, name="canned-embed-warm", daemon=True)
+    thread.start()
+    return thread
 
 
 def lookup(text: str, path: Path | None = None) -> str | None:
