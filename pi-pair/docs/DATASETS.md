@@ -14,4 +14,4 @@ The router serves only the map. The JSONL files are the registered seeds. The mi
 
 pi2 may store a read-only copy of the map. It does not get `data/train/`. pi4 does not get the queue or `data/prepared/`.
 
-Public votes are a different dataset from these seeds. pi3 uploads SHA-256 hashes and the vote to `akashnaren/pi-mesh-labels` when `HF_TOKEN` is set. Raw prompt and answer text stay off that repo. `KAGGLE_API_TOKEN` is an optional stub that runs only after the Hugging Face upload succeeds.
+Public votes are a different dataset from these seeds. pi3 stores HMAC-SHA256 of the prompt and answer, keyed by `PI_PAIR_LABEL_PEPPER`, plus the vote. A bare SHA-256 is not written. The upload to `akashnaren/pi-mesh-labels` runs only when `HF_TOKEN` is set. Leave that token unset, and do not create the dataset, until Akash approves a public copy. Raw prompt and answer text stay off that repo. `KAGGLE_API_TOKEN` is an optional stub that runs only after the Hugging Face upload succeeds.

@@ -18,7 +18,7 @@ Synthetic seeds, not live queues:
 - https://huggingface.co/datasets/akashnaren/pi-flywheel-canned
 - https://huggingface.co/datasets/akashnaren/pi-flywheel-sft-seed
 - https://huggingface.co/datasets/akashnaren/pi-flywheel-eval
-- https://huggingface.co/datasets/akashnaren/pi-mesh-labels (hashed votes only; raw chat stays on pi3)
+- https://huggingface.co/datasets/akashnaren/pi-mesh-labels (HMAC votes only, not created until Akash approves it; raw chat stays on pi3)
 
 Qwen2.5-0.5B-Instruct layer sizes cited in the router README come from the published config: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct
 

@@ -18,4 +18,4 @@ The YAML file `configs/train/sft_canned.yaml` must name datasets that exist in `
 
 The manifest records `weights: pi4-ollama`. No weight file is written here. The Ollama model stays on pi4.
 
-Before the raw shard is deleted, voted rows are hashed into `data/train/public/labels.jsonl`. That file is the public copy. `python3 scripts/data/sync_mesh_labels.py` uploads it when `HF_TOKEN` is set. The token is not stored in git. pi4 does not run this script.
+Before the raw shard is deleted, voted rows are written to `data/train/public/labels.jsonl` as HMAC-SHA256 under `PI_PAIR_LABEL_PEPPER`. Without that pepper the vote is not copied into the public file. `python3 scripts/data/sync_mesh_labels.py` uploads only when `HF_TOKEN` is set. Leave `HF_TOKEN` unset until Akash approves a public dataset. The token and the pepper are not stored in git. pi4 does not run this script.

@@ -39,6 +39,7 @@ from pair.stream import stream_llamacpp, stream_ollama
 from pair.upload import UploadRejected, ingest, read_limited
 
 SOURCE_CAP = 8
+SEARCH_BODY_CAP = 4096
 
 _LAST_LOCK = threading.Lock()
 _LAST = {"prompt": "", "answer": "", "chip": "", "peer": ""}
@@ -818,9 +819,13 @@ class Handler(BaseHTTPRequestHandler):
         if node_role() != "health":
             self._error("search is served on the health host", status=403)
             return
-        length = int(self.headers.get("content-length") or 0)
-        if length > 8192:
-            self._error("search query is too long", status=400)
+        try:
+            length = int(self.headers.get("content-length") or 0)
+        except ValueError:
+            self._error("search body must be JSON", status=400)
+            return
+        if length < 0 or length > SEARCH_BODY_CAP:
+            self._error("search query is too long", status=413)
             return
         try:
             row = json.loads(self.rfile.read(length).decode() or "{}")

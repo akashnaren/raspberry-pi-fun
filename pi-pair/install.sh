@@ -39,7 +39,7 @@ elif [[ "$ROLE" == "health" ]]; then
   echo "Search:  POST /v1/search on this board. No decode."
 elif [[ "$ROLE" == "dataset" ]]; then
   echo "Ollama:  not installed here. Chat and embed models run only on pi4."
-  echo "Labels:  public hashes go to Hugging Face when HF_TOKEN is set. No decode."
+  echo "Labels:  HMAC votes stay on this board. Do not set HF_TOKEN until a public dataset is approved. No decode."
 else
   echo "Ollama:  not installed here. Chat and embed models run only on pi4."
 fi
@@ -200,10 +200,13 @@ if [[ "$ROLE" == "dataset" ]]; then
   mkdir -p "$HF_ENV_DIR"
   if [[ ! -f "$HF_ENV_FILE" ]]; then
     printf '%s\n' \
-      '# Public label sync for pi3. Empty skips the upload. Do not commit this file.' \
+      '# Public label sync for pi3. Leave every value blank on rollout. Do not commit this file.' \
+      '# Do not set HF_TOKEN, and do not create akashnaren/pi-mesh-labels, until Akash approves a public dataset.' \
+      '# Mint PI_PAIR_LABEL_PEPPER locally later: 32 bytes as 64 hex digits, or raw text of at least 32 bytes.' \
       'HF_TOKEN=' \
-      'KAGGLE_API_TOKEN=' > "$HF_ENV_FILE"
-    echo "Wrote $HF_ENV_FILE — set HF_TOKEN there to publish hashed votes."
+      'KAGGLE_API_TOKEN=' \
+      'PI_PAIR_LABEL_PEPPER=' > "$HF_ENV_FILE"
+    echo "Wrote $HF_ENV_FILE — leave HF_TOKEN blank. Mint PI_PAIR_LABEL_PEPPER on this board later."
   else
     echo "Keeping existing $HF_ENV_FILE"
   fi
@@ -253,7 +256,7 @@ if [[ "$ROLE" == "dataset" ]]; then
   echo
   echo "Train-then-delete (pi3 only, after the queue has misses):"
   echo "  python3 $INSTALL_DIR/scripts/lifecycle/post_train.py"
-  echo "Public hashed votes (HF_TOKEN in hf.env, never in git):"
+  echo "Public HMAC votes stay local while HF_TOKEN is blank. Do not set HF_TOKEN during rollout."
   echo "  python3 $INSTALL_DIR/scripts/data/sync_mesh_labels.py"
 fi
 echo

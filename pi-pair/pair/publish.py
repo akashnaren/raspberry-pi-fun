@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -32,9 +33,9 @@ pretty_name: Pi mesh labels
 
 # pi-mesh-labels
 
-Public votes from the OpenPi mesh. Each row is a vote (`up` or `down`) and SHA-256 hashes of the prompt, the answer, and an optional correction.
+Public votes from the OpenPi mesh. Each row is a vote (`up` or `down`) and HMAC-SHA256 of the prompt, the answer, and an optional correction. The key is `PI_PAIR_LABEL_PEPPER` on the dataset host. It is not a bare SHA-256 of the text.
 
-Raw chat is not in this dataset. The upload token is `HF_TOKEN` on the dataset host. It is not in this repo.
+Raw chat is not in this dataset. The upload token is `HF_TOKEN` on the dataset host. Leave it unset until a public dataset is approved. Neither value is in this repo.
 """
 
 
@@ -59,8 +60,24 @@ def public_path(root: Path | None = None) -> Path:
     return (root or data_root()) / "train" / "public" / "labels.jsonl"
 
 
-def _sha256(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def label_pepper() -> bytes | None:
+    """32-byte key from PI_PAIR_LABEL_PEPPER. Hex (64 digits) or raw text of at least 32 bytes."""
+    text = os.environ.get("PI_PAIR_LABEL_PEPPER", "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"[0-9a-fA-F]{64}", text):
+        return bytes.fromhex(text)
+    raw = text.encode("utf-8")
+    if len(raw) < 32:
+        return None
+    return raw
+
+
+def _content_hmac(text: str) -> str | None:
+    pepper = label_pepper()
+    if pepper is None:
+        return None
+    return hmac.new(pepper, text.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _keep_public(row: dict) -> dict | None:
@@ -104,15 +121,22 @@ def redact_label(row: dict) -> dict | None:
     answer = str(row.get("answer") or "").strip()
     if not prompt or not answer:
         return None
+    prompt_hash = _content_hmac(prompt)
+    answer_hash = _content_hmac(answer)
+    if not prompt_hash or not answer_hash:
+        return None
     public = {
-        "prompt_sha256": _sha256(prompt),
-        "answer_sha256": _sha256(answer),
+        "prompt_sha256": prompt_hash,
+        "answer_sha256": answer_hash,
         "vote": vote,
         "redacted": True,
     }
     correction = str(row.get("correction") or "").strip()
     if correction:
-        public["correction_sha256"] = _sha256(correction)
+        correction_hash = _content_hmac(correction)
+        if not correction_hash:
+            return None
+        public["correction_sha256"] = correction_hash
     for key in ("chip", "peer"):
         value = str(row.get(key) or "").strip()
         if value and _SAFE_LABEL.fullmatch(value):
@@ -290,7 +314,7 @@ def sync_huggingface(rows: list[dict] | None, opener=None, timeout: float = HF_T
                     "key": "header",
                     "value": {
                         "summary": "Sync public mesh labels",
-                        "description": "Votes and SHA-256 hashes. No raw chat.",
+                        "description": "Votes and HMAC-SHA256. No raw chat.",
                     },
                 },
                 {

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -35,11 +36,20 @@ from pair.publish import (
     sync_kaggle,
     sync_public_labels,
 )
-from pair.server import make_server
+from pair.server import SEARCH_BODY_CAP, make_server
 
 SECRET = "zz-secret-bench-phrase email ada@example.com phone 415-555-0130"
 TOKEN = "test-hf-token"
 KAGGLE = "test-kaggle-token"
+PEPPER = "ab" * 32
+
+
+def _label_hmac(text: str, pepper: str = PEPPER) -> str:
+    if re.fullmatch(r"[0-9a-fA-F]{64}", pepper):
+        key = bytes.fromhex(pepper)
+    else:
+        key = pepper.encode()
+    return hmac.new(key, text.encode(), hashlib.sha256).hexdigest()
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:
@@ -401,6 +411,41 @@ class SearchRoute(unittest.TestCase):
             self.assertEqual(status, 403, role)
             self.assertIn("health host", body["error"])
 
+    def test_search_rejects_a_body_over_4kb(self):
+        calls = []
+
+        def fake(query, opener=None):
+            calls.append(query)
+            return {"status": "ok", "sources": [], "context": ""}
+
+        pair_server.lookup_web = fake
+        os.environ["PI_PAIR_ROLE"] = "health"
+        httpd = make_server("127.0.0.1", 0)
+        self.servers.append(httpd)
+        _start(httpd)
+        port = httpd.server_address[1]
+        self.assertEqual(SEARCH_BODY_CAP, 4096)
+        exact = b'{"q":"' + (b"a" * (SEARCH_BODY_CAP - 8)) + b'"}'
+        self.assertEqual(len(exact), SEARCH_BODY_CAP)
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/search",
+            data=exact,
+            headers={"content-type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            self.assertEqual(response.status, 200)
+        over = exact + b" "
+        self.assertGreater(len(over), SEARCH_BODY_CAP)
+        huge = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/search",
+            data=over,
+            headers={"content-type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(huge, timeout=2)
+        self.assertEqual(raised.exception.code, 413)
+        self.assertEqual(calls, ["a" * (SEARCH_BODY_CAP - 8)])
+
 
 class ChatOffload(unittest.TestCase):
     def setUp(self):
@@ -543,11 +588,19 @@ class PublicLabels(unittest.TestCase):
     def setUp(self):
         self._env = {
             key: os.environ.get(key)
-            for key in ("HF_TOKEN", "KAGGLE_API_TOKEN", "HF_DATASET_ID", "PI_PAIR_ROLE", "PI_PAIR_DATA")
+            for key in (
+                "HF_TOKEN",
+                "KAGGLE_API_TOKEN",
+                "HF_DATASET_ID",
+                "PI_PAIR_ROLE",
+                "PI_PAIR_DATA",
+                "PI_PAIR_LABEL_PEPPER",
+            )
         }
         os.environ.pop("HF_TOKEN", None)
         os.environ.pop("KAGGLE_API_TOKEN", None)
         os.environ.pop("HF_DATASET_ID", None)
+        os.environ.pop("PI_PAIR_LABEL_PEPPER", None)
 
     def tearDown(self):
         for key, value in self._env.items():
@@ -557,6 +610,7 @@ class PublicLabels(unittest.TestCase):
                 os.environ[key] = value
 
     def test_redact_keeps_the_vote_and_drops_the_chat(self):
+        os.environ["PI_PAIR_LABEL_PEPPER"] = PEPPER
         public = redact_label(
             {
                 "prompt": SECRET,
@@ -574,9 +628,56 @@ class PublicLabels(unittest.TestCase):
         self.assertNotIn("2468", blob)
         self.assertNotIn("side door", blob)
         self.assertEqual(public["vote"], "down")
-        self.assertEqual(public["prompt_sha256"], hashlib.sha256(SECRET.encode()).hexdigest())
+        plain = hashlib.sha256(SECRET.encode()).hexdigest()
+        self.assertNotEqual(public["prompt_sha256"], plain)
+        self.assertEqual(public["prompt_sha256"], _label_hmac(SECRET))
+        self.assertNotEqual(
+            public["answer_sha256"],
+            hashlib.sha256(b"the side door code is 2468").hexdigest(),
+        )
+        self.assertNotEqual(
+            public["correction_sha256"],
+            hashlib.sha256(b"use the side door").hexdigest(),
+        )
         self.assertTrue(public["redacted"])
         self.assertEqual(public["chip"], "brain: pi4")
+
+    def test_published_hash_is_hmac_not_plain_sha256(self):
+        samples = ("hi", "what is the weather today?", "How tall is the zinc bench today?")
+        os.environ["PI_PAIR_LABEL_PEPPER"] = PEPPER
+        for text in samples:
+            public = redact_label({"prompt": text, "answer": "sunny", "vote": "up"})
+            plain_prompt = hashlib.sha256(text.encode()).hexdigest()
+            plain_answer = hashlib.sha256(b"sunny").hexdigest()
+            self.assertNotEqual(public["prompt_sha256"], plain_prompt, text)
+            self.assertNotEqual(public["answer_sha256"], plain_answer, text)
+            self.assertEqual(public["prompt_sha256"], _label_hmac(text))
+            self.assertEqual(public["answer_sha256"], _label_hmac("sunny"))
+        raw_pepper = ("R" * 31) + "!"
+        self.assertGreaterEqual(len(raw_pepper.encode()), 32)
+        os.environ["PI_PAIR_LABEL_PEPPER"] = raw_pepper
+        public = redact_label(
+            {"prompt": "hi", "answer": "sunny", "correction": "clear", "vote": "down"}
+        )
+        self.assertNotEqual(public["prompt_sha256"], hashlib.sha256(b"hi").hexdigest())
+        self.assertEqual(public["prompt_sha256"], _label_hmac("hi", raw_pepper))
+        self.assertNotEqual(public["correction_sha256"], hashlib.sha256(b"clear").hexdigest())
+        self.assertEqual(public["correction_sha256"], _label_hmac("clear", raw_pepper))
+        os.environ["PI_PAIR_LABEL_PEPPER"] = "too-short"
+        self.assertIsNone(redact_label({"prompt": "hi", "answer": "sunny", "vote": "up"}))
+        os.environ.pop("PI_PAIR_LABEL_PEPPER", None)
+        self.assertIsNone(redact_label({"prompt": "hi", "answer": "sunny", "vote": "up"}))
+        os.environ["HF_TOKEN"] = TOKEN
+
+        def opener(request, timeout):
+            raise AssertionError(request.full_url)
+
+        skipped = sync_huggingface(
+            [{"prompt": "hi", "answer": "sunny", "vote": "up"}],
+            opener=opener,
+        )
+        self.assertEqual(skipped["status"], "skipped")
+        self.assertNotIn(hashlib.sha256(b"hi").hexdigest(), json.dumps(skipped))
 
     def test_missing_hf_token_does_not_reach_kaggle(self):
         os.environ["KAGGLE_API_TOKEN"] = KAGGLE
@@ -597,6 +698,7 @@ class PublicLabels(unittest.TestCase):
     def test_hf_upload_is_hashes_and_kaggle_follows(self):
         os.environ["HF_TOKEN"] = TOKEN
         os.environ["KAGGLE_API_TOKEN"] = KAGGLE
+        os.environ["PI_PAIR_LABEL_PEPPER"] = PEPPER
         seen = []
 
         class Resp:
@@ -676,13 +778,15 @@ class PublicLabels(unittest.TestCase):
         self.assertNotIn(SECRET, files["README.md"])
         row = json.loads(files["labels.jsonl"].splitlines()[0])
         self.assertEqual(row["vote"], "up")
-        self.assertEqual(row["prompt_sha256"], hashlib.sha256(SECRET.encode()).hexdigest())
+        self.assertNotEqual(row["prompt_sha256"], hashlib.sha256(SECRET.encode()).hexdigest())
+        self.assertEqual(row["prompt_sha256"], _label_hmac(SECRET))
         self.assertNotIn(TOKEN, json.dumps(result))
         self.assertNotIn(KAGGLE, json.dumps(result))
 
     def test_hf_failure_skips_kaggle(self):
         os.environ["HF_TOKEN"] = TOKEN
         os.environ["KAGGLE_API_TOKEN"] = KAGGLE
+        os.environ["PI_PAIR_LABEL_PEPPER"] = PEPPER
 
         def opener(request, timeout):
             raise urllib.error.URLError("down")
@@ -718,6 +822,7 @@ class PublicLabels(unittest.TestCase):
             data = base / "data"
             shutil.copytree(ROOT / "data", data)
             os.environ["PI_PAIR_DATA"] = str(data)
+            os.environ["PI_PAIR_LABEL_PEPPER"] = PEPPER
             queue = data / "train" / "pending" / "queue.jsonl"
             queue.parent.mkdir(parents=True, exist_ok=True)
             queue.write_text(
@@ -737,7 +842,8 @@ class PublicLabels(unittest.TestCase):
             public = (data / "train" / "public" / "labels.jsonl").read_text(encoding="utf-8")
             self.assertNotIn(SECRET, public)
             self.assertNotIn("hidden reply", public)
-            self.assertIn(hashlib.sha256(SECRET.encode()).hexdigest(), public)
+            self.assertNotIn(hashlib.sha256(SECRET.encode()).hexdigest(), public)
+            self.assertIn(_label_hmac(SECRET), public)
             self.assertFalse(queue.exists())
             self.assertEqual(list((data / "train" / "active").glob("*.jsonl")), [])
             self.assertEqual(result["public_sync"]["huggingface"]["status"], "skipped")
@@ -776,6 +882,11 @@ class PublicLabels(unittest.TestCase):
         self.assertNotIn(TOKEN, ran.stdout)
 
     def test_repo_has_no_hub_tokens(self):
+        install = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn("Do not set HF_TOKEN", install)
+        for line in ("'HF_TOKEN='", "'KAGGLE_API_TOKEN='", "'PI_PAIR_LABEL_PEPPER='"):
+            self.assertIn(line, install)
+        self.assertNotRegex(install, r"(?:HF_TOKEN|KAGGLE_API_TOKEN|PI_PAIR_LABEL_PEPPER)=[A-Za-z0-9]")
         banned = re.compile(
             r"hf_[A-Za-z0-9]{8,}|HF_TOKEN\s*=\s*['\"]?[A-Za-z0-9]|KAGGLE_API_TOKEN\s*=\s*['\"]?[A-Za-z0-9]"
         )
