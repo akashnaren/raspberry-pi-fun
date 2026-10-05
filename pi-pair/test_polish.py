@@ -74,6 +74,71 @@ class Charts(unittest.TestCase):
         self.assertEqual(calls["n"], 2)
         self.assertEqual(sentence.count("."), 1)
 
+    def test_salvageable_json_is_a_chart_fence(self):
+        prompt = "Plot the fruit stand"
+        body = '{"title":"Fruit","data":[{"type":"bar","y":[1, 2]}]}'
+        fence = "```chart\n" + body + "\n```"
+        calls = {"n": 0}
+
+        def retry():
+            calls["n"] += 1
+            return "unused"
+
+        fenced = "Here.\n```json\n" + body + "\n```\n"
+        self.assertEqual(repair_chart_reply(fenced, retry, prompt=prompt), fence)
+        self.assertEqual(repair_chart_reply("```JSON\n" + body + "\n```", retry, prompt=prompt), fence)
+        self.assertEqual(repair_chart_reply(body, retry, prompt=prompt), fence)
+        self.assertEqual(repair_chart_reply("```json\r\n" + body + "\r\n```", retry, prompt=prompt), fence)
+        self.assertEqual(calls["n"], 0)
+        self.assertTrue(chart_json_ok(body))
+
+        pie = '{"data":[{"type":"pie","values":[1,2]}]}'
+        self.assertEqual(
+            repair_chart_reply("```json\n" + pie + "\n```", retry, prompt=prompt),
+            "```chart\n" + pie + "\n```",
+        )
+        plotly = "```plotly\n" + body + "\n```"
+        self.assertEqual(repair_chart_reply(plotly, retry, prompt=prompt), plotly)
+        chart = "Apples lead.\n" + fence
+        self.assertEqual(repair_chart_reply(chart, retry, prompt=prompt), chart)
+        mixed = fence + "\n```json\n" + body + "\n```"
+        self.assertEqual(repair_chart_reply(mixed, retry, prompt=prompt), fence + "\n" + fence)
+        self.assertNotIn("```json", repair_chart_reply(mixed, retry, prompt=prompt).lower())
+        python = '```python\n{"data":[{"type":"bar","y":[1]}]}\n```'
+        self.assertEqual(repair_chart_reply(python, retry, prompt=prompt), python)
+        self.assertEqual(repair_chart_reply('{"host":"pi4"}', retry, prompt=prompt), '{"host":"pi4"}')
+        self.assertEqual(repair_chart_reply("No points were given.", retry, prompt=prompt), "No points were given.")
+        kept = repair_chart_reply(fenced, retry, prompt="what host is this")
+        self.assertEqual(kept, fenced)
+        self.assertIn("```json", kept)
+        self.assertEqual(calls["n"], 0)
+
+        bad = '```json\n{"title":"Fruit","data":[{"type":"bar","points":[1,2]}]}\n```'
+        loose = '```JSON\n{"title":"Picnic","data":[{"type":"Bar","y":[2, 4,],}]}\n```'
+
+        def salvage():
+            calls["n"] += 1
+            return "```json\n" + body + "\n```"
+
+        self.assertEqual(repair_chart_reply(bad, salvage, prompt=prompt), fence)
+        self.assertEqual(calls["n"], 1)
+
+        def bare():
+            calls["n"] += 1
+            return "  " + body + "  "
+
+        self.assertEqual(repair_chart_reply(loose, bare, prompt=prompt), fence)
+        self.assertEqual(calls["n"], 2)
+
+        def prose():
+            calls["n"] += 1
+            return "I drew it in my head."
+
+        sentence = repair_chart_reply(bad, prose, prompt=prompt)
+        self.assertEqual(sentence, CHART_FALLBACK)
+        self.assertNotIn("```json", sentence)
+        self.assertEqual(calls["n"], 3)
+
 
 class Lists(unittest.TestCase):
     def test_a_short_list_is_continued_until_n(self):
