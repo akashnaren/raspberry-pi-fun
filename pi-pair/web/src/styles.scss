@@ -152,6 +152,13 @@ header {
   }
 }
 
+.msg.bot.streaming > .body:not([data-filled]) {
+  display: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .err .body { color: var(--danger); }
 
 .stages {
