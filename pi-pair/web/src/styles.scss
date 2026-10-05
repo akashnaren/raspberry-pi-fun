@@ -717,6 +717,26 @@ body.voice-session {
   &.live { animation: pulse 1.1s ease-in-out infinite; }
 }
 
+#btnVoice {
+  &.mic-off {
+    color: #7d8187;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  &.mic-on {
+    color: #042117;
+    background: #3ddc97;
+    box-shadow: 0 0 0 1px #3ddc97;
+  }
+
+  &.mic-on:hover {
+    color: #042117;
+    background: #2ecf8a;
+    box-shadow: 0 0 0 1px #2ecf8a;
+  }
+}
+
 .send-btn {
   width: 36px;
   height: 36px;
