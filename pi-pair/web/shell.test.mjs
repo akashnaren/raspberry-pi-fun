@@ -117,7 +117,10 @@ function openStream() {
 globalThis.fetch = async (input) => {
   const url = typeof input === "string" ? input : input.url;
   if (String(url).includes("/health")) {
-    return new Response(JSON.stringify({ peers: [{ models: ["qwen2.5:0.5b"] }] }), {
+    return new Response(JSON.stringify({
+      peers: [{ models: ["qwen2.5:0.5b"] }],
+      modes: { flash: "lane:fast", pro: "lane:deep" },
+    }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
@@ -180,7 +183,7 @@ box.dispatchEvent(new window.Event("input"));
 if (!brand.classList.contains("brand-logo") || brand.classList.contains("brand-title")) {
   throw new Error("clearing the draft did not return to the logo");
 }
-if (!document.getElementById("btnIo").querySelector("svg path[d*='10.2 2.8']")) {
+if (!document.getElementById("btnIo").querySelector("svg path[d*='M12 15.5']")) {
   throw new Error("settings control is not a gear");
 }
 for (const id of ["serviceNow", "serviceLog", "voiceSilence", "modelSel", "btnMd", "btnTxt", "btnClear"]) {
@@ -225,9 +228,51 @@ enter.dispatchEvent(new window.Event("change"));
 document.getElementById("modeBtn").click();
 const menu = document.getElementById("modePop");
 if (menu.hidden) throw new Error("Auto menu did not open");
+const autoInfo = menu.querySelector('[aria-label="About Auto"]');
+const modeBefore = document.getElementById("modeLabel").textContent;
+autoInfo.click();
+if (document.getElementById("modeLabel").textContent !== modeBefore) {
+  throw new Error("info tap changed the model");
+}
+const autoTip = document.getElementById("tip-menu-auto");
+if (autoTip.hidden || autoInfo.getAttribute("aria-expanded") !== "true") {
+  throw new Error("info tap did not open the tip");
+}
+const flashInfo = menu.querySelector('[aria-label="About Flash"]');
+flashInfo.click();
+if (!autoTip.hidden || document.getElementById("tip-menu-flash").hidden) {
+  throw new Error("two info tips stayed open");
+}
+document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+if (!document.getElementById("tip-menu-flash").hidden) throw new Error("Escape left the tip open");
+flashInfo.dispatchEvent(new window.Event("pointerenter", { bubbles: true }));
+if (document.getElementById("tip-menu-flash").hidden) throw new Error("fine pointer did not show the tip");
+document.dispatchEvent(new window.Event("click", { bubbles: true }));
+if (!document.getElementById("tip-menu-flash").hidden) throw new Error("outside click left the tip open");
 menu.querySelector('[data-mode="auto"]').click();
 if (document.getElementById("modeLabel").textContent !== "Auto" || !menu.hidden) {
   throw new Error("menu did not return to Auto");
+}
+await new Promise((resolve) => setTimeout(resolve, 30));
+const flashText = document.getElementById("tip-menu-flash").textContent;
+const proText = document.getElementById("tip-menu-pro").textContent;
+if (flashText !== "lane:fast, the fast resident model.") {
+  throw new Error("flash tip was not built from health: " + flashText);
+}
+if (proText !== "lane:deep, loaded when the question needs it.") {
+  throw new Error("pro tip was not built from health: " + proText);
+}
+if (document.getElementById("tip-set-flash").textContent !== flashText) {
+  throw new Error("settings flash tip did not follow health");
+}
+if (document.getElementById("tip-set-pro").textContent !== proText) {
+  throw new Error("settings pro tip did not follow health");
+}
+if (html.includes("qwen2.5:0.5b, the fast resident model")) {
+  throw new Error("flash tip still hardcodes a model tag");
+}
+if (autoTip.textContent !== "Routes Flash or Pro from the question.") {
+  throw new Error("auto tip changed");
 }
 
 box.value = "Where is the bench?";
@@ -238,6 +283,11 @@ const sources = [0, 1, 2, 3, 4].map((i) => ({
   title: "Source " + i,
   url: "https://ex" + i + ".test/item",
 }));
+live.push({ pi_status: "waiting", pi_mode: "auto", pi_route: "flash" });
+await new Promise((resolve) => setTimeout(resolve, 20));
+if (!document.body.textContent.includes("Waiting for a free slot")) {
+  throw new Error("waiting stage was not quiet text");
+}
 live.push({ pi_status: "thinking", pi_mode: "auto", pi_route: "flash" });
 live.push({ pi_status: "searching", pi_search: "ok", pi_sources: sources });
 live.push({ pi_status: "answering" });
@@ -272,5 +322,19 @@ if (!/html,\s*body\s*\{[^}]*overflow:\s*hidden/s.test(css)) {
 if (!/#log\s*\{[^}]*overflow-y:\s*auto/s.test(css) || !css.includes("overscroll-behavior: contain")) {
   throw new Error("the message list is not the scrollport");
 }
+if (!css.includes(".info-dot") || !/\.info-dot\s*\{[^}]*min-width:\s*32px/s.test(css)) {
+  throw new Error("info hit target is under 32px");
+}
+const page = fs.readFileSync(new URL("./src/main.ts", import.meta.url), "utf8");
+if (!page.includes('setAttribute("aria-label", "Retry")') || !page.includes("retryIcon")) {
+  throw new Error("retry is still a wrapping word");
+}
+if (page.includes('"Loading Pro"') || page.includes("'Loading Pro'")) {
+  throw new Error("the page still says Loading Pro");
+}
+if (!html.includes('id="voiceSend"') || !page.includes('voiceCaption("Thinking")')) {
+  throw new Error("voice mode has no tap-to-send or thinking caption");
+}
+if (page.includes('speakText("Thinking")')) throw new Error("thinking is spoken aloud");
 
 console.log("ok");

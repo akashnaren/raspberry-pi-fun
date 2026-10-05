@@ -14,6 +14,7 @@ import json
 import re
 
 from pair.assist import answer_hint_for
+from pair.errors import friendly_error
 from pair.ground import is_grounded_problem
 from pair.knobs import attachment_limit, inference_knobs
 
@@ -21,8 +22,8 @@ ATTACH_MARK = "\n\n---\n"
 CONTINUE_NUDGE = (
     "Continue the list from the next item. Do not repeat items already written."
 )
-SLOW_ANSWER = "That took too long on this Pi. Ask again with a shorter question."
-SHORT_ANSWER = "I could not finish that on this Pi. Ask again with a shorter question."
+SLOW_ANSWER = "That took too long. Ask again with a shorter question."
+SHORT_ANSWER = "I could not finish that. Ask again with a shorter question."
 NOTES_ANSWER = "I could not finish a full answer. From the notes: "
 
 CHART_HINT = (
@@ -499,4 +500,4 @@ def public_failure(error: BaseException, search_note=None) -> str:
     text = str(error).strip().splitlines()[0] if str(error).strip() else ""
     if not text or text.startswith("Traceback") or len(text) > 240:
         return degraded_answer(search_note, error)
-    return text
+    return friendly_error(text)

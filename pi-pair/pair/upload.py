@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from pair import ocr
+from pair.pdftext import extract_pdf_text
 from pair.turn import neutralize
 
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024
@@ -82,17 +83,17 @@ def _is_pdf(ext: str, kind: str, data: bytes) -> bool:
 
 
 def is_jpeg_scanned_pdf(data: bytes) -> bool:
-    """A PDF whose pages are JPEG images (DCTDecode or an embedded JPEG)."""
+    """A PDF page that is a JPEG image (DCTDecode), not a thumbnail inside text."""
     if not data.startswith(b"%PDF-"):
         return False
-    return b"DCTDecode" in data or b"\xff\xd8\xff" in data
+    return b"DCTDecode" in data
 
 
 def route_for(name: str, mime: str, data: bytes) -> str:
-    """Return 'text' or 'ocr'.
+    """Return 'text', 'pdf', or 'ocr'.
 
     .txt and .md are text even when the browser sends a generic MIME.
-    Images and JPEG-scanned PDFs are 'ocr'. Anything else is rejected.
+    A PDF with text operators is 'pdf'. A JPEG scan with no text is 'ocr'.
     """
     ext = _ext(name)
     kind = _mime(mime)
@@ -101,9 +102,13 @@ def route_for(name: str, mime: str, data: bytes) -> str:
     if kind in TEXT_MIMES and ext not in IMAGE_EXTS and ext != ".pdf":
         return "text"
     if _is_pdf(ext, kind, data):
-        if data.startswith(b"%PDF-") and is_jpeg_scanned_pdf(data):
-            return "ocr"
-        if not data.startswith(b"%PDF-") and _looks_like_image(ext, kind, data):
+        if data.startswith(b"%PDF-"):
+            if extract_pdf_text(data):
+                return "pdf"
+            if is_jpeg_scanned_pdf(data):
+                return "ocr"
+            raise UploadRejected("only a JPEG-scanned PDF can be read", 415)
+        if _looks_like_image(ext, kind, data):
             return "ocr"
         raise UploadRejected("only a JPEG-scanned PDF can be read", 415)
     if _looks_like_image(ext, kind, data):
@@ -262,6 +267,8 @@ def ingest(content_type: str, body: bytes, filename: str = "") -> dict:
     route = route_for(name, mime, data)
     if route == "text":
         raw = decode_text(data)
+    elif route == "pdf":
+        raw = extract_pdf_text(data)
     else:
         if not ocr.try_acquire():
             raise UploadRejected("OCR is busy", 429)

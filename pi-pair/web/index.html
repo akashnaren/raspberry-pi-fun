@@ -4,7 +4,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <meta name="theme-color" content="#0a0a0a"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
-<title>OpenPi — MicroAstra</title>
+<title>OpenPi</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml"/>
+<link rel="icon" href="/static/favicon-32.png" type="image/png" sizes="32x32"/>
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" sizes="180x180"/>
 <link rel="stylesheet" href="/static/mesh.css"/>
 <script>
 try {
@@ -25,13 +28,14 @@ try {
       <span class="brand-name" id="brandName">OpenPi — MicroAstra</span>
     </div>
     <button class="head-btn" id="btnIo" type="button" aria-label="Settings">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10.2 2.8h3.6l.4 2.2a6.8 6.8 0 0 1 1.7.7l2-1.1 1.8 3.1-1.6 1.4a6.9 6.9 0 0 1 0 1.8l1.6 1.4-1.8 3.1-2-1.1a6.8 6.8 0 0 1-1.7.7l-.4 2.2h-3.6l-.4-2.2a6.8 6.8 0 0 1-1.7-.7l-2 1.1-1.8-3.1 1.6-1.4a6.9 6.9 0 0 1 0-1.8L4.3 7.7l1.8-3.1 2 1.1a6.8 6.8 0 0 1 1.7-.7l.4-2.2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.4" stroke="currentColor" stroke-width="1.5"/></svg>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" stroke="currentColor" stroke-width="1.6"/><path d="M19.6 13.1a7.8 7.8 0 0 0 .05-2.2l1.9-1.15-1.75-3.03-2.15.62a7.9 7.9 0 0 0-1.9-1.1L15.2 3.4h-6.4l-.55 2.84a7.9 7.9 0 0 0-1.9 1.1l-2.15-.62L2.45 9.75l1.9 1.15a7.8 7.8 0 0 0 .05 2.2l-1.9 1.15 1.75 3.03 2.15-.62a7.9 7.9 0 0 0 1.9 1.1l.55 2.84h6.4l.55-2.84a7.9 7.9 0 0 0 1.9-1.1l2.15.62 1.75-3.03-1.9-1.15z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>
     </button>
   </header>
   <div id="log"><div class="empty" id="empty"><p>Ask anything.</p></div></div>
   <div id="voiceStage" class="voice-stage" aria-hidden="true">
     <div class="voice-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
     <p class="voice-live" id="voiceLive"></p>
+    <button type="button" class="voice-send" id="voiceSend" hidden>Tap to send</button>
   </div>
   <footer>
     <div class="composer-wrap">
@@ -47,21 +51,36 @@ try {
                 <svg class="mode-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               <div class="mode-pop" id="modePop" role="menu" hidden>
-                <button type="button" class="mode-opt on" data-mode="auto" role="menuitemradio" aria-checked="true" title="Routes Flash or Pro from the question." aria-label="Auto. Routes Flash or Pro from the question.">
-                  <span>Auto</span>
-                  <span class="info-dot" aria-hidden="true">ⓘ</span>
-                  <span class="mode-mark" aria-hidden="true">✓</span>
-                </button>
-                <button type="button" class="mode-opt" data-mode="flash" role="menuitemradio" aria-checked="false" title="qwen2.5:0.5b, the fast resident model." aria-label="Flash. qwen2.5:0.5b, the fast resident model.">
-                  <span>Flash</span>
-                  <span class="info-dot" aria-hidden="true">ⓘ</span>
-                  <span class="mode-mark" aria-hidden="true">✓</span>
-                </button>
-                <button type="button" class="mode-opt" data-mode="pro" role="menuitemradio" aria-checked="false" title="qwen2.5:1.5b, loaded when the question needs it." aria-label="Pro. qwen2.5:1.5b, loaded when the question needs it.">
-                  <span>Pro</span>
-                  <span class="info-dot" aria-hidden="true">ⓘ</span>
-                  <span class="mode-mark" aria-hidden="true">✓</span>
-                </button>
+                <div class="mode-opt">
+                  <button type="button" class="mode-name on" data-mode="auto" role="menuitemradio" aria-checked="true" aria-label="Auto">
+                    <span>Auto</span>
+                    <span class="mode-mark" aria-hidden="true">✓</span>
+                  </button>
+                  <span class="info-slot">
+                    <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-menu-auto" aria-label="About Auto">ⓘ</button>
+                    <span id="tip-menu-auto" class="info-pop" role="note" hidden>Routes Flash or Pro from the question.</span>
+                  </span>
+                </div>
+                <div class="mode-opt">
+                  <button type="button" class="mode-name" data-mode="flash" role="menuitemradio" aria-checked="false" aria-label="Flash">
+                    <span>Flash</span>
+                    <span class="mode-mark" aria-hidden="true">✓</span>
+                  </button>
+                  <span class="info-slot">
+                    <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-menu-flash" aria-label="About Flash">ⓘ</button>
+                    <span id="tip-menu-flash" class="info-pop" role="note" hidden>__FLASH_TIP__</span>
+                  </span>
+                </div>
+                <div class="mode-opt">
+                  <button type="button" class="mode-name" data-mode="pro" role="menuitemradio" aria-checked="false" aria-label="Pro">
+                    <span>Pro</span>
+                    <span class="mode-mark" aria-hidden="true">✓</span>
+                  </button>
+                  <span class="info-slot">
+                    <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-menu-pro" aria-label="About Pro">ⓘ</button>
+                    <span id="tip-menu-pro" class="info-pop" role="note" hidden>__PRO_TIP__</span>
+                  </span>
+                </div>
               </div>
             </div>
             <div class="think-set" role="group" aria-label="Thinking">
@@ -113,9 +132,27 @@ try {
     <section class="set-block">
       <h3>Model</h3>
       <div class="seg" role="group" aria-label="Model default">
-        <button type="button" class="seg-btn on" data-mode="auto" title="Routes Flash or Pro from the question.">Auto <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn" data-mode="flash" title="qwen2.5:0.5b, the fast resident model.">Flash <span class="info-dot" aria-hidden="true">ⓘ</span></button>
-        <button type="button" class="seg-btn" data-mode="pro" title="qwen2.5:1.5b, loaded when the question needs it.">Pro <span class="info-dot" aria-hidden="true">ⓘ</span></button>
+        <div class="seg-choice">
+          <button type="button" class="seg-btn on" data-mode="auto">Auto</button>
+          <span class="info-slot">
+            <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-set-auto" aria-label="About Auto">ⓘ</button>
+            <span id="tip-set-auto" class="info-pop" role="note" hidden>Routes Flash or Pro from the question.</span>
+          </span>
+        </div>
+        <div class="seg-choice">
+          <button type="button" class="seg-btn" data-mode="flash">Flash</button>
+          <span class="info-slot">
+            <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-set-flash" aria-label="About Flash">ⓘ</button>
+            <span id="tip-set-flash" class="info-pop" role="note" hidden>__FLASH_TIP__</span>
+          </span>
+        </div>
+        <div class="seg-choice">
+          <button type="button" class="seg-btn" data-mode="pro">Pro</button>
+          <span class="info-slot">
+            <button type="button" class="info-dot" aria-expanded="false" aria-describedby="tip-set-pro" aria-label="About Pro">ⓘ</button>
+            <span id="tip-set-pro" class="info-pop" role="note" hidden>__PRO_TIP__</span>
+          </span>
+        </div>
       </div>
     </section>
     <section class="set-block">

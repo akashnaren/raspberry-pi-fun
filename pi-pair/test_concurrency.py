@@ -11,6 +11,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -21,7 +22,8 @@ if str(ROOT) not in sys.path:
 from pair import runtime
 from pair import server as pair_server
 from pair.config import infer_slots
-from pair.gate import InferenceGate, capacity_message
+from pair.errors import BUSY, WAITING
+from pair.gate import QUEUE_LIMIT, InferenceGate
 from pair.knobs import parallel_limit
 from pair.server import make_server
 
@@ -80,7 +82,7 @@ class GateUnit(unittest.TestCase):
         started = time.perf_counter()
         self.assertFalse(gate.try_acquire())
         self.assertLess(time.perf_counter() - started, 0.2)
-        self.assertIn("at capacity", capacity_message(gate.limit))
+        self.assertEqual(gate.queue_limit, QUEUE_LIMIT)
         gate.release()
         self.assertEqual(gate.in_flight(), 1)
         self.assertTrue(gate.try_acquire())
@@ -94,6 +96,33 @@ class GateUnit(unittest.TestCase):
         gate.release()
         self.assertTrue(gate.try_acquire())
         self.assertFalse(gate.try_acquire())
+
+    def test_wait_queue_grants_the_next_slot(self):
+        gate = InferenceGate(1, queue_limit=1, wait_timeout=2)
+        self.assertTrue(gate.try_acquire())
+        self.assertEqual(gate.reserve(), "wait")
+        self.assertEqual(gate.waiting(), 1)
+        self.assertEqual(gate.reserve(), "full")
+
+        def finish() -> None:
+            gate.release()
+
+        threading.Timer(0.05, finish).start()
+        self.assertTrue(gate.acquire_reserved(1))
+        self.assertEqual(gate.in_flight(), 1)
+        self.assertEqual(gate.waiting(), 0)
+        gate.release()
+
+    def test_wait_queue_times_out(self):
+        gate = InferenceGate(1, queue_limit=1, wait_timeout=0.2)
+        self.assertTrue(gate.try_acquire())
+        self.assertEqual(gate.reserve(), "wait")
+        started = time.perf_counter()
+        self.assertFalse(gate.acquire_reserved())
+        self.assertGreaterEqual(time.perf_counter() - started, 0.15)
+        self.assertEqual(gate.waiting(), 0)
+        self.assertEqual(gate.in_flight(), 1)
+        gate.release()
 
     def test_default_cap_matches_the_runtime_file(self):
         previous = os.environ.pop("PI_PAIR_SLOTS", None)
@@ -235,6 +264,7 @@ class ConcurrentChat(unittest.TestCase):
         self.assertTrue(HoldOllama.entered.wait(timeout=5))
         self.assertGreaterEqual(HoldOllama.peak, 2)
         self.assertEqual(runtime.gate.in_flight(), 2)
+        runtime.gate.queue_limit = 0
         started = time.perf_counter()
         status, headers, body = self._post(
             port,
@@ -244,7 +274,9 @@ class ConcurrentChat(unittest.TestCase):
         elapsed = time.perf_counter() - started
         self.assertEqual(status, 503)
         self.assertLess(elapsed, 0.5)
-        self.assertEqual(body["error"], capacity_message(2))
+        self.assertEqual(body["error"], BUSY)
+        self.assertNotIn("pi4", body["error"].lower())
+        self.assertNotIn("generations", body["error"].lower())
         self.assertIn("application/json", headers.get("content-type", ""))
         runtime.reset_health()
         with urllib.request.urlopen(
@@ -262,6 +294,7 @@ class ConcurrentChat(unittest.TestCase):
     def test_stream_over_cap_is_json_503(self):
         runtime.set_infer_slots(1)
         self.assertTrue(runtime.gate.try_acquire())
+        runtime.gate.queue_limit = 0
         port = self._pi4()
         started = time.perf_counter()
         status, headers, body = self._post(
@@ -273,7 +306,98 @@ class ConcurrentChat(unittest.TestCase):
         self.assertLess(time.perf_counter() - started, 0.5)
         self.assertEqual(status, 503)
         self.assertNotIn("event-stream", headers.get("content-type", ""))
-        self.assertIn("at capacity", body["error"])
+        self.assertEqual(body["error"], BUSY)
+        self.assertNotIn("generations", body["error"].lower())
+        self.assertEqual(HoldOllama.posts, 0)
+        runtime.gate.release()
+
+    def test_stream_waits_then_answers(self):
+        runtime.set_infer_slots(1)
+        self.assertTrue(runtime.gate.try_acquire())
+        runtime.gate.wait_timeout = 5
+        port = self._pi4()
+        HoldOllama.release.set()
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        holder: dict = {}
+        got = threading.Event()
+        done = threading.Event()
+
+        def reader() -> None:
+            try:
+                payload = json.dumps(
+                    {
+                        "model": "qwen2.5:0.5b",
+                        "messages": [{"role": "user", "content": "novel stream waits"}],
+                        "stream": True,
+                    }
+                ).encode()
+                conn.request(
+                    "POST",
+                    "/v1/chat/completions",
+                    body=payload,
+                    headers={
+                        "content-type": "application/json",
+                        "X-Pi-Target": "pi4",
+                        "X-Pi-Mesh": "off",
+                    },
+                )
+                response = conn.getresponse()
+                data = b""
+                while b"Waiting for a free slot" not in data:
+                    piece = response.fp.read1(256)
+                    if not piece:
+                        break
+                    data += piece
+                holder["early"] = data
+                holder["status"] = response.status
+                got.set()
+                while True:
+                    piece = response.read(4096)
+                    if not piece:
+                        break
+                    data += piece
+                holder["all"] = data
+            except Exception as exc:
+                holder["error"] = repr(exc)
+            finally:
+                got.set()
+                done.set()
+                conn.close()
+
+        threading.Thread(target=reader, daemon=True).start()
+        self.assertTrue(got.wait(4), holder)
+        self.assertNotIn("error", holder, holder)
+        self.assertEqual(holder.get("status"), 200)
+        self.assertIn(b"Waiting for a free slot", holder["early"])
+        self.assertNotIn(b"generations in flight", holder["early"])
+        self.assertEqual(HoldOllama.posts, 0)
+        runtime.gate.release()
+        self.assertTrue(done.wait(4), holder)
+        self.assertNotIn("error", holder, holder)
+        self.assertIn(b"held", holder["all"])
+        self.assertLess(
+            holder["all"].index(b"Waiting for a free slot"),
+            holder["all"].index(b"held"),
+        )
+
+    def test_wait_timeout_is_a_friendly_503(self):
+        runtime.set_infer_slots(1)
+        self.assertTrue(runtime.gate.try_acquire())
+        runtime.gate.wait_timeout = 0.3
+        port = self._pi4()
+        started = time.perf_counter()
+        status, _headers, body = self._post(
+            port,
+            "novel wait times out",
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+            timeout=3,
+        )
+        elapsed = time.perf_counter() - started
+        self.assertGreaterEqual(elapsed, 0.2)
+        self.assertLess(elapsed, 2)
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"], BUSY)
+        self.assertNotIn("pi4", body["error"].lower())
         self.assertEqual(HoldOllama.posts, 0)
         runtime.gate.release()
 
@@ -391,14 +515,20 @@ class ConcurrentChat(unittest.TestCase):
                 {"X-Pi-Target": name, "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 502)
-            self.assertIn(f"{name} cannot be the brain", body["error"])
+            self.assertEqual(body["error"], "That machine cannot answer chats.")
+            self.assertNotIn(name, body["error"])
         self.assertEqual(HoldOllama.posts, 0)
 
     def test_page_shows_the_capacity_sentence(self):
         source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
-        self.assertIn("at capacity", source)
+        errors = (ROOT / "web" / "src" / "errors.ts").read_text(encoding="utf-8")
+        self.assertIn("WAITING_LINE", source)
+        self.assertIn(WAITING, errors)
+        self.assertNotIn("pi4 is at capacity", source)
         bundle = (ROOT / "static" / "mesh.js").read_text(encoding="utf-8")
-        self.assertIn("at capacity", bundle)
+        self.assertIn("Waiting for a free slot", bundle)
+        self.assertNotIn("pi4 is at capacity", bundle)
+        self.assertNotIn("(2 generations in flight)", bundle)
 
 
 if __name__ == "__main__":

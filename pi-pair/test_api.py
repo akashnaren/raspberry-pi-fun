@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
 
 from pair import runtime
 from pair import server as pair_server
-from pair.gate import capacity_message
+from pair.errors import BAD_MESSAGE, BUSY
 from pair.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
 from pair.server import make_server
 
@@ -316,7 +316,8 @@ class PublicApi(unittest.TestCase):
             self._auth(),
         )
         self.assertEqual(bad, 400)
-        self.assertIn("turbo", body["error"])
+        self.assertEqual(body["error"], BAD_MESSAGE)
+        self.assertNotIn("turbo", body["error"])
         self.assertEqual(OllamaFake.posts, 0)
 
     def test_harmful_api_chat_does_not_generate_or_relay(self):
@@ -457,8 +458,8 @@ class PublicApi(unittest.TestCase):
         )
         self.assertIn("same inference cap", spec["info"]["description"])
         busy = chat["responses"]["503"]["description"]
-        self.assertIn("at capacity", busy)
-        self.assertIn("503 immediately", busy)
+        self.assertIn("queue of 8", busy)
+        self.assertIn("Waiting for a free slot", busy)
 
         alias, _headers, alias_raw = self._open("GET", "/swagger.json")
         self.assertEqual(alias, 200)
@@ -487,7 +488,7 @@ class PublicApi(unittest.TestCase):
             "X-API-Key",
             "mode 600",
             "EnvironmentFile=",
-            "pi4 is at capacity",
+            "Waiting for a free slot",
         ):
             self.assertIn(phrase, readme, phrase)
 
@@ -495,6 +496,7 @@ class PublicApi(unittest.TestCase):
         previous = runtime.INFER_SLOTS
         runtime.set_infer_slots(1)
         self.assertTrue(runtime.gate.try_acquire())
+        runtime.gate.queue_limit = 0
         try:
             started = time.perf_counter()
             status, _headers, body = self._json(
@@ -505,7 +507,8 @@ class PublicApi(unittest.TestCase):
             )
             self.assertLess(time.perf_counter() - started, 0.5)
             self.assertEqual(status, 503)
-            self.assertEqual(body["error"], capacity_message(1))
+            self.assertEqual(body["error"], BUSY)
+            self.assertNotIn("generations", body["error"].lower())
             self.assertEqual(OllamaFake.posts, 0)
 
             lan, _headers, lan_body = self._json(

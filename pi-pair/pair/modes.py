@@ -39,6 +39,15 @@ def mode_table(knobs: dict | None = None) -> dict[str, str]:
     return {FLASH: flash, PRO: pro}
 
 
+def mode_tips(knobs: dict | None = None) -> dict[str, str]:
+    """Info-icon sentences. The tags come from mode_table, not from the page."""
+    table = mode_table(knobs)
+    return {
+        FLASH: f"{table[FLASH]}, the fast resident model.",
+        PRO: f"{table[PRO]}, loaded when the question needs it.",
+    }
+
+
 def resolve_mode(
     mode: str | None, model: object | None = None, knobs: dict | None = None
 ) -> tuple[str, str]:
