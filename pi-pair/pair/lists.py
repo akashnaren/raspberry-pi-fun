@@ -1,4 +1,8 @@
-"""Numbered asks get enough tokens and a continuation when the list stops early."""
+"""Numbered asks get enough tokens and a continuation when the list stops early.
+
+A real-world Top-N prefers titles that already appear in the search notes.
+One continuation still fills a short list. Items the notes contradict are dropped.
+"""
 
 from __future__ import annotations
 
@@ -163,6 +167,150 @@ def continuation_messages(messages: list, partial: str, count: int) -> list:
         {"role": "assistant", "content": partial},
         {"role": "user", "content": note},
     ]
+
+
+_TITLE_LINE = re.compile(r"(?m)^\s*\d{1,3}[\.\)]\s+(\S.*)$")
+_BULLET = re.compile(r"(?m)^\s*[-*]\s+(\S.*)$")
+_QUOTED = re.compile(r"[\"“]([^\"”\n]{2,80})[\"”]")
+_YEAR_TITLE = re.compile(
+    r"\b([A-Z][A-Za-z0-9'’:.-]*(?:\s+[A-Z][A-Za-z0-9'’:.-]*){0,6})\s+\((?:19|20)\d{2}\)"
+)
+_SKIP_TITLE = re.compile(
+    r"\b(?:best|top|list|ranking|ranked|review|reviews|guide|why|how|what)\b",
+    re.I,
+)
+_GENERIC_TITLE = frozenset(
+    {
+        "movie",
+        "movies",
+        "film",
+        "films",
+        "horror",
+        "book",
+        "books",
+        "song",
+        "songs",
+        "show",
+        "shows",
+        "car",
+        "cars",
+    }
+)
+
+
+def _clean_title(raw: str) -> str:
+    text = (raw or "").strip()
+    text = re.split(r"\s+[—–]\s+|\s+-\s+|:\s+|\s+\(", text, maxsplit=1)[0]
+    text = " ".join(text.strip(" .*\"'").split())
+    if not text or len(text) < 2 or len(text) > 80:
+        return ""
+    if len(text.split()) > 8:
+        return ""
+    lowered = text.casefold()
+    if "http" in lowered or "www." in lowered or lowered in _GENERIC_TITLE:
+        return ""
+    if _SKIP_TITLE.search(text) and len(text.split()) > 3:
+        return ""
+    return text
+
+
+def _remember_title(found: list[str], seen: set[str], raw: str) -> None:
+    title = _clean_title(raw)
+    key = title.casefold()
+    if not title or key in seen:
+        return
+    seen.add(key)
+    found.append(title)
+
+
+def source_titles(context: str) -> list[str]:
+    """Short titles already written in search notes, in the order they appear."""
+    found: list[str] = []
+    seen: set[str] = set()
+    blob = context or ""
+    for match in _TITLE_LINE.finditer(blob):
+        _remember_title(found, seen, match.group(1))
+    for match in _QUOTED.finditer(blob):
+        _remember_title(found, seen, match.group(1))
+    for match in _YEAR_TITLE.finditer(blob):
+        _remember_title(found, seen, match.group(1))
+    for match in _BULLET.finditer(blob):
+        body = match.group(1).strip()
+        head, sep, _rest = body.partition(" (http")
+        if sep:
+            if _SKIP_TITLE.search(head):
+                continue
+            _remember_title(found, seen, head)
+            continue
+        if re.search(r"[.!?]", body):
+            continue
+        _remember_title(found, seen, body)
+    return found
+
+
+def _numbered(items: list[str]) -> str:
+    return "\n".join(f"{index}. {item}" for index, item in enumerate(items, 1))
+
+
+def _item_name(line: str) -> str:
+    body = re.sub(r"^\s*\d{1,3}[\.\)]\s*", "", line or "").strip()
+    body = re.split(r"\s+[—–]\s+|\s+-\s+|:\s+", body, maxsplit=1)[0]
+    return body.strip(" .\"'")
+
+
+def _in_sources(name: str, blob: str, titles: list[str]) -> bool:
+    key = " ".join(name.casefold().split())
+    if not key:
+        return False
+    if key in blob:
+        return True
+    for title in titles:
+        other = title.casefold()
+        if key == other or key in other or other in key:
+            return True
+    return False
+
+
+def ground_category_list(prompt: str, text: str, context: str) -> str:
+    """Exactly N source titles when the notes list them.
+
+    A shorter note keeps model lines that appear in it, then fills from those
+    titles. A line the notes do not contain is dropped. With no titles, the
+    model text stays as written.
+    """
+    count = list_count(prompt)
+    if not count or not is_real_world_list(prompt):
+        return text or ""
+    titles = source_titles(context or "")
+    if not titles:
+        return text or ""
+    if len(titles) >= count:
+        return _numbered(titles[:count])
+    kept: list[str] = []
+    seen: set[str] = set()
+    blob = (context or "").casefold()
+    for _num, line in numbered_lines(text or ""):
+        name = _item_name(line)
+        if not _in_sources(name, blob, titles):
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(name)
+        if len(kept) >= count:
+            break
+    for title in titles:
+        if len(kept) >= count:
+            break
+        key = title.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(title)
+    if not kept:
+        return text or ""
+    return _numbered(kept)
 
 
 def finish_numbered(prompt: str, text: str, more) -> str:

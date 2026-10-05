@@ -70,6 +70,40 @@ _EQ = re.compile(
     r"(?:\s*([+-])\s*(\d+\.?\d*))?",
     re.I,
 )
+_RANGE = re.compile(
+    r"\b(?:from|between)\s*(-?\d+(?:\.\d+)?)\s*(?:to|and)\s*(-?\d+(?:\.\d+)?)",
+    re.I,
+)
+_LABELED = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9'’-]{0,30})\s+(?:at|is|=|:)\s*(-?\d+(?:\.\d+)?)",
+    re.I,
+)
+_LABEL_SKIP = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "of",
+        "and",
+        "with",
+        "at",
+        "is",
+        "plot",
+        "graph",
+        "chart",
+        "bar",
+        "pie",
+        "line",
+        "scatter",
+        "from",
+        "to",
+        "between",
+        "x",
+        "y",
+        "me",
+        "for",
+    }
+)
 
 
 def is_chart_request(prompt: str) -> bool:
@@ -90,8 +124,8 @@ def is_structured_request(prompt: str) -> bool:
 
 
 def structure_hint(prompt: str) -> str | None:
-    """One short system hint. A parabola that we can draw needs none."""
-    if parabola_chart(prompt):
+    """One short system hint. A chart we can draw needs none."""
+    if ready_chart(prompt):
         return None
     if is_chart_request(prompt):
         return CHART_HINT
@@ -308,16 +342,65 @@ def _accepted_chart(text: str, prompt: str) -> str:
     return text or ""
 
 
+def _lower_types(data: object) -> None:
+    if not isinstance(data, dict):
+        return
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return
+    for item in rows:
+        if isinstance(item, dict) and isinstance(item.get("type"), str):
+            item["type"] = item["type"].strip().lower()
+
+
+def _normalize_chart_body(body: str) -> str | None:
+    cleaned = re.sub(r",(\s*[}\]])", r"\1", body or "")
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return None
+    _lower_types(data)
+    rendered = json.dumps(data, separators=(",", ":"))
+    if not chart_json_ok(rendered):
+        return None
+    return rendered
+
+
+def _salvage_loose(text: str, prompt: str) -> str | None:
+    """A chart fence from almost-JSON: trailing commas and type case."""
+    bodies = []
+    for body in _chart_attempts(text, prompt):
+        rendered = _normalize_chart_body(body)
+        if not rendered:
+            return None
+        bodies.append(rendered)
+    if not bodies:
+        stripped = (text or "").strip()
+        rendered = _normalize_chart_body(stripped)
+        if rendered and is_chart_request(prompt):
+            return _chart_fence(rendered)
+        return None
+    return "\n".join(_chart_fence(body) for body in bodies)
+
+
 def repair_chart_reply(text: str, retry, prompt: str = "") -> str:
-    """Keep a chart the page can draw. One retry, then a single sentence.
+    """Keep a chart the page can draw. One retry, then a computed fence.
 
     A salvageable ```json fence, or a bare chart object, is rewritten to
-    one ```chart fence before it is returned.
+    one ```chart fence before it is returned. A math curve or labeled
+    numbers in the question are drawn here when the reply still is not a
+    chart. Loose JSON is normalized after that retry, before the fallback
+    sentence.
 
     `retry` is called at most once and should return the next model reply.
     """
     attempts = _chart_attempts(text, prompt)
-    if not attempts or all(chart_json_ok(body) for body in attempts):
+    if not attempts:
+        built = ready_chart(prompt)
+        if built:
+            return built
+        return _accepted_chart(text, prompt)
+    if all(chart_json_ok(body) for body in attempts):
         return _accepted_chart(text, prompt)
     second = ""
     try:
@@ -331,7 +414,84 @@ def repair_chart_reply(text: str, retry, prompt: str = "") -> str:
         promoted = _promote_json_chart(second, prompt)
         if promoted is not None:
             return promoted
+    built = ready_chart(prompt)
+    if built:
+        return built
+    salvaged = _salvage_loose(text, prompt) or _salvage_loose(second, prompt)
+    if salvaged:
+        return salvaged
     return CHART_FALLBACK
+
+
+def _sample_domain(start: float, end: float) -> list[int | float]:
+    steps = 20
+    if end == start:
+        return [_point(start)]
+    width = (end - start) / steps
+    return [_point(start + width * index) for index in range(steps + 1)]
+
+
+def _domain(prompt: str) -> list[int | float] | None:
+    """Inclusive x values from 'from 0 to 5', or None for the default window."""
+    match = _RANGE.search(prompt or "")
+    if not match:
+        return None
+    start = float(match.group(1))
+    end = float(match.group(2))
+    if end < start:
+        start, end = end, start
+    if start != int(start) or end != int(end):
+        return _sample_domain(start, end)
+    span = int(end) - int(start)
+    if span > 60:
+        return _sample_domain(float(int(start)), float(int(end)))
+    return list(range(int(start), int(end) + 1))
+
+
+def _chart_kind(prompt: str) -> str:
+    text = (prompt or "").lower()
+    if "pie" in text:
+        return "pie"
+    if "scatter" in text:
+        return "scatter"
+    if re.search(r"\bline\b", text):
+        return "line"
+    return "bar"
+
+
+def _fence_spec(spec: dict) -> str:
+    return "```chart\n" + json.dumps(spec, separators=(",", ":")) + "\n```"
+
+
+def labeled_chart(prompt: str) -> str | None:
+    """A bar (or pie) fence for 'apples at 2 and bread at 4', else None."""
+    if not is_chart_request(prompt) or _parabola_coeffs(prompt):
+        return None
+    labels: list[str] = []
+    values: list[int | float] = []
+    seen: set[str] = set()
+    for raw_label, raw_value in _LABELED.findall(prompt or ""):
+        label = " ".join(raw_label.split())
+        if label.casefold() in _LABEL_SKIP or label.casefold() in seen:
+            continue
+        seen.add(label.casefold())
+        number = float(raw_value)
+        labels.append(label)
+        values.append(_point(number))
+    if len(labels) < 2:
+        return None
+    kind = _chart_kind(prompt)
+    title = ", ".join(labels)[:80]
+    if kind == "pie":
+        series: dict = {"type": "pie", "labels": labels, "values": values}
+    else:
+        series = {"type": kind, "name": title, "x": labels, "y": values}
+    return _fence_spec({"title": title, "data": [series]})
+
+
+def ready_chart(prompt: str) -> str | None:
+    """A chart fence computed from the question, or None when the model should try."""
+    return parabola_chart(prompt) or labeled_chart(prompt)
 
 
 def parabola_chart(prompt: str) -> str | None:
@@ -342,7 +502,9 @@ def parabola_chart(prompt: str) -> str | None:
     if coeffs is None:
         return None
     a, b, c = coeffs
-    xs = list(range(-5, 6))
+    xs = _domain(prompt)
+    if xs is None:
+        xs = list(range(-5, 6))
     ys = [_point(a * x * x + b * x + c) for x in xs]
     title = _parabola_title(a, b, c)
     spec = {
