@@ -26,3 +26,25 @@ export function modelUserContent(visible: string, hidden: string): string {
 export function docKind(route: string): string {
   return route === "ocr" ? "PDF" : "DOC";
 }
+
+export interface UserPiece {
+  kind: "card" | "text";
+  card?: DocCard;
+  text: string;
+}
+
+/** Card first, then the question. The card holds a short preview, never the OCR body. */
+export function userMessagePieces(question: string, card: DocCard | null): UserPiece[] {
+  const pieces: UserPiece[] = [];
+  if (card) {
+    const preview = docExcerpt(card.excerpt);
+    pieces.push({
+      kind: "card",
+      card: { ...card, excerpt: preview },
+      text: preview,
+    });
+  }
+  const visible = (question || "").trim();
+  if (visible) pieces.push({ kind: "text", text: visible });
+  return pieces;
+}

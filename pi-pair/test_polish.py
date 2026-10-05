@@ -16,7 +16,7 @@ from pair.charts import (  # noqa: E402
     parabola_chart,
     structure_hint,
 )
-from pair.docfit import DOC_FIT_CHARS, fit_document, fit_outbound  # noqa: E402
+from pair.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
 from pair.images import cards_for_answer, item_names, visual_mode  # noqa: E402
 from pair.lists import finish_numbered, list_budget, list_complete, list_count, merge_list  # noqa: E402
 from pair.preload import pro_preload_payload  # noqa: E402
@@ -92,6 +92,34 @@ class Documents(unittest.TestCase):
         self.assertEqual(outbound[0]["role"], "system")
         self.assertIn("400 degrees", outbound[1]["content"])
         self.assertNotIn(body, outbound[1]["content"])
+
+    def test_excerpt_budget_follows_num_ctx(self):
+        question = "What temperature does the catalyst reach?"
+        wide = excerpt_limit(2048, question, 256)
+        tight = excerpt_limit(512, question, 256)
+        self.assertEqual(DOC_FIT_CHARS, excerpt_limit(2048))
+        self.assertLessEqual(wide, 4096)
+        self.assertLess(tight, wide)
+        self.assertLess(excerpt_limit(2048, "note " * 900, 768), wide)
+        filler = "padding " * 800
+        body = filler + " The catalyst heats the chamber to 400 degrees. " + filler
+        fitted = fit_document(body, question, wide)
+        self.assertLessEqual(len(fitted), wide)
+        self.assertIn("400 degrees", fitted)
+        small = fit_document(body, question, tight)
+        self.assertLessEqual(len(small), tight)
+        self.assertLess(len(small), len(fitted))
+        self.assertIn("400 degrees", small)
+        outbound = fit_outbound(
+            [{"role": "user", "content": question + "\n\n---\n" + body}],
+            num_ctx=512,
+            reply_tokens=256,
+        )
+        sent = outbound[1]["content"]
+        _question, excerpt = sent.split("\n---\n", 1)
+        self.assertLessEqual(len(excerpt.strip()), tight)
+        self.assertIn("400 degrees", excerpt)
+        self.assertNotIn(body, sent)
 
 
 class Preload(unittest.TestCase):

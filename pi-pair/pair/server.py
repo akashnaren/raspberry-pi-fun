@@ -21,7 +21,7 @@ from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
-from pair.knobs import decode_effort, search_note_limit
+from pair.knobs import decode_effort, inference_knobs, search_note_limit
 from pair.lists import continuation_messages, finish_numbered, list_budget
 from pair.modes import mode_table, pull_needed, resolve_auto, resolve_mode, tag_ready
 from pair.peers import pick
@@ -692,8 +692,9 @@ class Handler(BaseHTTPRequestHandler):
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             structured = is_structured_request(prompt)
             do_search = bool(mesh and node_role() == "brain") and not structured
-            outbound = fit_outbound(outbound)
             max_tokens = list_budget(prompt, max_tokens)
+            ctx = int(inference_knobs().get("num_ctx") or 2048)
+            outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
             ready = parabola_chart(prompt)
             hint = None if ready else structure_hint(prompt)
             if hint:

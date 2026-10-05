@@ -1,5 +1,6 @@
-import { docExcerpt, modelUserContent } from "./src/attach.ts";
-import { flowchartSvg } from "./src/diagram.ts";
+import { parseHTML } from "linkedom";
+import { docExcerpt, modelUserContent, userMessagePieces } from "./src/attach.ts";
+import { flowchartSvg, mountDiagrams } from "./src/diagram.ts";
 import { renderMarkdown, renderStreamingMarkdown, stabilizeMarkdown } from "./src/markdown.ts";
 import { serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner } from "./src/presence.ts";
 import { tableFence } from "./src/table.ts";
@@ -31,6 +32,46 @@ const hidden = "The catalyst section is very long. ".repeat(80);
 const packed = modelUserContent(shown, hidden);
 if (!packed.startsWith(shown) || !packed.includes("\n\n---\n")) throw new Error("document was not separated");
 if (docExcerpt(hidden).length > 141) throw new Error("preview dumped the document");
+const pieces = userMessagePieces(shown, {
+  name: "notes.pdf",
+  route: "ocr",
+  bytes: 12000,
+  excerpt: hidden,
+});
+if (pieces[0]?.kind !== "card" || pieces[1]?.text !== shown) {
+  throw new Error("doc card was not above the question");
+}
+if (pieces[0].text.length > 141 || pieces.some((piece) => piece.text.includes(hidden))) {
+  throw new Error("the bubble dumped the document");
+}
+
+const gfm = renderMarkdown("| Name | Year |\n| --- | ---: |\n| Dune | 2021 |");
+if (!gfm.includes("<table>") || !gfm.includes("<th>Name</th>") || !gfm.includes("<td>2021</td>")) {
+  throw new Error("GFM table stayed prose: " + gfm);
+}
+const bare = renderMarkdown("Name | Year\n--- | ---\nDune | 2021");
+if (!bare.includes("<th>Year</th>") || !bare.includes("<td>Dune</td>")) {
+  throw new Error("bare GFM table stayed prose: " + bare);
+}
+
+const chart = renderMarkdown(
+  '```chart\n{"title":"y = x^2","data":[{"type":"scatter","mode":"lines","y":[0,1,4]}]}\n```',
+);
+if (!chart.includes('class="pi-chart"') || chart.includes("<svg") || chart.includes("plotly")) {
+  throw new Error("chart was not a Plotly placeholder: " + chart);
+}
+
+const pending = renderMarkdown("```mermaid\nflowchart TD\nA[Start] --> B[Done]\n```");
+if (pending.includes("<svg")) throw new Error("flow was drawn before mount");
+if (!pending.includes("pi-diagram")) throw new Error("flow placeholder missing");
+const host = parseHTML(`<div id="host">${pending}</div>`).document.getElementById("host");
+mountDiagrams(host);
+if (!host.innerHTML.includes("<svg") || !host.innerHTML.includes("Start")) {
+  throw new Error("lazy flow did not mount: " + host.innerHTML);
+}
+if (renderMarkdown("No diagram here.").includes("pi-diagram")) {
+  throw new Error("plain text grew a diagram");
+}
 
 if (!suppressOfflineBanner(true, 0, 1000)) throw new Error("a hidden tab showed offline");
 if (!suppressOfflineBanner(false, 1000, 1200)) throw new Error("a fresh resume showed offline");

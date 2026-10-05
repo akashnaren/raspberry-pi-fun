@@ -1,14 +1,23 @@
 """Fit an attached document into the pi4 context window.
 
 The upload may hold up to MAX_TEXT_CHARS. The model sees one window scored
-against the question, not the whole OCR dump.
+against the question. That window is sized from num_ctx after the question,
+the document hint, earlier turns, and the reply have a reserved share.
 """
 
 from __future__ import annotations
 
 import re
 
-DOC_FIT_CHARS = 1400
+from pair.upload import MAX_TEXT_CHARS
+
+# Four characters per token keeps typical OCR inside this model's window.
+CHARS_PER_TOKEN = 4
+# Role tags and the chat template around the excerpt.
+TEMPLATE_TOKENS = 32
+# A crowded thread still keeps a short paragraph of the document.
+MIN_EXCERPT_CHARS = 240
+
 DOC_MARK = "\n---\n"
 
 DOC_HINT = (
@@ -39,6 +48,39 @@ _STOP = {
     "document",
     "attached",
 }
+
+
+def _tokens(text: str) -> int:
+    size = len(text or "")
+    if size <= 0:
+        return 0
+    return (size + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
+
+
+def excerpt_limit(num_ctx: int = 2048, reserved: str = "", reply_tokens: int = 256) -> int:
+    """Characters of document text that still leave the thread and reply in num_ctx."""
+    try:
+        ctx = int(num_ctx)
+    except (TypeError, ValueError):
+        ctx = 2048
+    if ctx < 256:
+        ctx = 256
+    try:
+        reply = int(reply_tokens)
+    except (TypeError, ValueError):
+        reply = 256
+    if reply < 64:
+        reply = 64
+    held = _tokens(reserved) + _tokens(DOC_HINT) + reply + TEMPLATE_TOKENS
+    room = ctx - held
+    floor = MIN_EXCERPT_CHARS // CHARS_PER_TOKEN
+    if room < floor:
+        room = floor
+    return min(MAX_TEXT_CHARS, room * CHARS_PER_TOKEN)
+
+
+# Default window: num_ctx 2048, no earlier turns, a medium reply.
+DOC_FIT_CHARS = excerpt_limit(2048)
 
 
 def _terms(text: str) -> list[str]:
@@ -86,8 +128,32 @@ def fit_user_text(content: str, limit: int = DOC_FIT_CHARS) -> tuple[str, bool]:
     return fitted, True
 
 
-def fit_outbound(messages: list) -> list:
+def _thread_reserve(messages: list) -> tuple[str, int]:
+    """Non-document text already in the thread, and how many documents it holds."""
+    parts: list[str] = []
+    docs = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        if message.get("role") == "user" and DOC_MARK in content:
+            question, _document = content.split(DOC_MARK, 1)
+            docs += 1
+            if question.strip():
+                parts.append(question)
+            continue
+        parts.append(content)
+    return "\n".join(parts), docs
+
+
+def fit_outbound(messages: list, num_ctx: int = 2048, reply_tokens: int = 256) -> list:
     """Trim document blocks and add one system hint when a document was attached."""
+    reserved, docs = _thread_reserve(messages)
+    limit = excerpt_limit(num_ctx, reserved, reply_tokens)
+    if docs > 1:
+        limit = max(MIN_EXCERPT_CHARS, limit // docs)
     changed = False
     outbound = []
     for message in messages:
@@ -96,7 +162,7 @@ def fit_outbound(messages: list) -> list:
             continue
         content = message.get("content")
         if message.get("role") == "user" and isinstance(content, str):
-            fitted, did = fit_user_text(content)
+            fitted, did = fit_user_text(content, limit)
             if did:
                 changed = True
                 outbound.append({**message, "content": fitted})

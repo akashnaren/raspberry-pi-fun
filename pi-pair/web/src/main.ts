@@ -1,5 +1,6 @@
-import { docExcerpt, modelUserContent, type DocCard } from "./attach";
+import { docExcerpt, modelUserContent, userMessagePieces, type DocCard } from "./attach";
 import { failChart, drawChart } from "./chart";
+import { mountDiagrams } from "./diagram";
 import { cardsFrom, renderImageCardsHtml, type ImageCard } from "./images";
 import { renderMarkdown, renderStreamingMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
@@ -186,6 +187,7 @@ function setBodyContent(node: HTMLElement, text: string, asMd: boolean, streamin
     node.classList.add("md");
     node.innerHTML = streaming ? renderStreamingMarkdown(text) : renderMarkdown(text);
     mountCharts(node);
+    mountDiagrams(node);
   } else {
     node.classList.remove("md");
     node.textContent = text;
@@ -579,12 +581,15 @@ function addUser(text: string, index: number): HTMLElement {
   const item = turns[index];
   const row = el("div", "msg user");
   row.dataset.index = String(index);
-  if (item?.attachment) row.appendChild(docCardNode(item.attachment));
-  if (text.trim()) {
+  userMessagePieces(text, item?.attachment || null).forEach((piece) => {
+    if (piece.kind === "card" && piece.card) {
+      row.appendChild(docCardNode(piece.card));
+      return;
+    }
     const body = el("div", "body");
-    body.textContent = text;
+    body.textContent = piece.text;
     row.appendChild(body);
-  }
+  });
   const acts = el("div", "msg-actions");
   acts.appendChild(copyButton(text || item?.attachment?.name || ""));
   const edit = el("button", "text-btn", "Edit");

@@ -98,10 +98,37 @@ export function flowchartSvg(source: string): string | null {
   return `<svg class="flow-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Flowchart">${edges}${boxes}</svg>`;
 }
 
+function diagramPlaceholder(source: string): string {
+  const payload = JSON.stringify({ source: source.replace(/\n$/, "") }).replace(/</g, "\\u003c");
+  return `<div class="pi-diagram" role="img" aria-label="Flowchart"><script type="application/json">${payload}</script></div>`;
+}
+
+function diagramSource(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as { source?: unknown };
+    return typeof parsed.source === "string" ? parsed.source : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Leave a placeholder. The SVG is drawn later, and only when a flow node exists. */
 export function mermaidFence(lang: string, code: string): string | null {
   if (lang.trim().toLowerCase() !== "mermaid") return null;
-  const svg = flowchartSvg(code);
-  if (svg) return `<div class="pi-diagram">${svg}</div>`;
+  if (parseFlow(code)) return diagramPlaceholder(code);
   const source = escapeHtml(code.replace(/\n$/, ""));
   return `<pre class="diagram-source"><code>${source}</code></pre>`;
+}
+
+export function mountDiagrams(root: ParentNode): void {
+  const nodes = root.querySelectorAll(".pi-diagram");
+  if (!nodes.length) return;
+  nodes.forEach((node) => {
+    const host = node as Element;
+    if (host.querySelector("svg")) return;
+    const script = host.querySelector('script[type="application/json"]');
+    const svg = flowchartSvg(diagramSource(script?.textContent || ""));
+    if (!svg || typeof host.insertAdjacentHTML !== "function") return;
+    host.insertAdjacentHTML("beforeend", svg);
+  });
 }
