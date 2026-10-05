@@ -53,6 +53,15 @@ class GroundedMath(unittest.TestCase):
         self.assertIsNone(answer_from_search("Hi!", NOTES))
         self.assertIsNone(answer_from_search("How tall is the bench in the hall?", NOTES))
 
+    def test_a_later_snippet_still_grounds_math(self):
+        noise = "\n".join(
+            f"- Note {i} (https://example.com/{i}): ladders and cones only." for i in range(1, 8)
+        )
+        last = "- Rate (https://example.com/rate): " + PAGE
+        answer = answer_from_search(BALLOON, "Web search notes.\n" + noise + "\n" + last)
+        self.assertIn("dr/dt = 1/(3 pi)", answer)
+        self.assertNotEqual(answer, MISS)
+
 
 if __name__ == "__main__":
     unittest.main()
