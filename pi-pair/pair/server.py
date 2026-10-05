@@ -20,6 +20,7 @@ from pair.knobs import decode_effort, search_note_limit
 from pair.health import snapshot_peers
 from pair.peers import pick
 from pair.queue import append_row, apply_label, node_role, note_exchange
+from pair.images import lookup_images, sanitize_card
 from pair.search import lookup_web
 from pair import runtime
 from pair.stream import stream_llamacpp, stream_ollama
@@ -215,6 +216,30 @@ def _with_search(messages, prompt: str):
     return messages, {"status": status, "sources": sources, "context": full}
 
 
+def _image_cards(prompt: str) -> list[dict]:
+    """Public cards for this turn. Empty when the line is not visual or the lookup fails."""
+    try:
+        found = lookup_images(prompt)
+    except Exception:
+        return []
+    if not isinstance(found, list):
+        return []
+    cards = []
+    for item in found:
+        clean = sanitize_card(item)
+        if not clean:
+            continue
+        cards.append(clean)
+        if len(cards) >= 3:
+            break
+    return cards
+
+
+def _put_images(payload: dict, images: list[dict]) -> None:
+    if images:
+        payload["pi_images"] = images
+
+
 def status_event(stage: str, extra: dict | None = None) -> dict:
     """One SSE object for a stage the server has actually entered."""
     payload = {
@@ -402,9 +427,11 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 stages = ["thinking"]
                 search_note = None
+                images: list[dict] = []
                 if do_search:
                     stages.append("searching")
                     outbound, search_note = _with_search(outbound, prompt)
+                    images = _image_cards(prompt)
                 stages.append("answering")
                 self._complete(
                     peer,
@@ -418,6 +445,7 @@ class Handler(BaseHTTPRequestHandler):
                     think_name,
                     search_note,
                     stages,
+                    images,
                 )
         except Exception as error:
             self._error(str(error))
@@ -738,14 +766,17 @@ class Handler(BaseHTTPRequestHandler):
         think_extra = {"pi_think": think_name} if think_name else None
         if not emit_status("thinking", think_extra):
             return
+        images: list[dict] = []
         if do_search:
             if not emit_status("searching", {"pi_tool": "search"}):
                 return
             messages, search_note = _with_search(messages, prompt)
+            images = _image_cards(prompt)
             found = {"pi_tool": "search"}
             if search_note:
                 found["pi_search"] = search_note["status"]
                 found["pi_sources"] = search_note["sources"]
+            _put_images(found, images)
             if not emit_status("searching", found):
                 return
         grounded = None
@@ -755,6 +786,7 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             answer_extra["pi_search"] = search_note["status"]
             answer_extra["pi_sources"] = search_note["sources"]
+        _put_images(answer_extra, images)
         if not emit_status("answering", answer_extra or None):
             return
         if grounded is not None:
@@ -768,6 +800,7 @@ class Handler(BaseHTTPRequestHandler):
                 think_name,
                 search_note,
                 stages,
+                images,
             )
             return
         safe_write(
@@ -795,6 +828,7 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             first["pi_search"] = search_note["status"]
             first["pi_sources"] = search_note["sources"]
+        _put_images(first, images)
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
         parts: list[str] = []
         try:
@@ -848,6 +882,7 @@ class Handler(BaseHTTPRequestHandler):
             if search_note:
                 final["pi_search"] = search_note["status"]
                 final["pi_sources"] = search_note["sources"]
+            _put_images(final, images)
             final["pi_stages"] = list(stages)
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
             answer = "".join(parts)
@@ -871,6 +906,7 @@ class Handler(BaseHTTPRequestHandler):
         think_name: str,
         search_note: dict | None,
         stages: list[str],
+        images: list[dict] | None = None,
     ) -> None:
         """Send a finished answer that was taken from the pages, not the model."""
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
@@ -883,6 +919,7 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
+        _put_images(chunk, images or [])
         if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
             return
         note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
@@ -904,6 +941,7 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             final["pi_search"] = search_note["status"]
             final["pi_sources"] = search_note["sources"]
+        _put_images(final, images or [])
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
@@ -920,6 +958,7 @@ class Handler(BaseHTTPRequestHandler):
         think_name: str = "",
         search_note: dict | None = None,
         stages: list[str] | None = None,
+        images: list[dict] | None = None,
     ) -> None:
         grounded = None
         if search_note is not None:
@@ -955,6 +994,7 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             resp["pi_search"] = search_note["status"]
             resp["pi_sources"] = search_note["sources"]
+        _put_images(resp, images or [])
         if stages:
             resp["pi_stages"] = stages
         body = json.dumps(resp).encode()

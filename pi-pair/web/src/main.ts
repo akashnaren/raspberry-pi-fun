@@ -1,4 +1,5 @@
 import { failChart, drawChart } from "./chart";
+import { cardsFrom, renderImageCardsHtml, type ImageCard } from "./images";
 import { renderMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
@@ -36,6 +37,7 @@ interface Turn {
   effort?: string;
   search?: SearchInfo | null;
   stages?: StageName[];
+  images?: ImageCard[];
 }
 
 interface LiveTurn {
@@ -46,6 +48,7 @@ interface LiveTurn {
   search: SearchInfo | null;
   pushStatus: (name: StageName, search: SearchInfo | null) => void;
   setText: (text: string) => void;
+  showImages: (cards: ImageCard[]) => void;
   finish: (text: string, failed: boolean, prompt: string, effort: string, search: SearchInfo | null, stages: StageName[]) => void;
   markErr: () => void;
 }
@@ -182,6 +185,24 @@ function showSearch(parent: HTMLElement, status: string, sources: SourceLink[]):
     });
   }
   parent.appendChild(note);
+}
+
+function mountImageCards(row: HTMLElement, before: Node | null, raw: unknown): void {
+  row.querySelector(".image-cards")?.remove();
+  const html = renderImageCardsHtml(raw);
+  if (!html) return;
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  const strip = holder.firstElementChild as HTMLElement | null;
+  if (!strip) return;
+  strip.querySelectorAll("img").forEach((node) => {
+    node.addEventListener("error", () => {
+      node.closest(".image-card")?.remove();
+      if (!strip.querySelector(".image-card")) strip.remove();
+    });
+  });
+  if (before && before.parentNode === row) row.insertBefore(strip, before);
+  else row.appendChild(strip);
 }
 
 function stageText(name: StageName, search: SearchInfo | null): string {
@@ -451,11 +472,13 @@ function addFinishedBot(item: Turn, index: number): HTMLElement {
   row.dataset.index = String(index);
   const done = trail(item.stages, item.search || null);
   if (done) row.appendChild(done);
+  let body: HTMLElement | null = null;
   if (visibleReply(item.content)) {
-    const body = el("div", "body");
+    body = el("div", "body");
     setBodyContent(body, item.content, true);
     row.appendChild(body);
   }
+  if (item.images?.length) mountImageCards(row, body, item.images);
   if (item.search) showSearch(row, item.search.status, item.search.sources);
   const asked = promptBefore(index);
   if (asked) attachLabel(row, asked, item.content);
@@ -649,6 +672,9 @@ function addLiveBot(): LiveTurn {
       yieldIfAnswer();
       row.scrollIntoView({ block: "end" });
     },
+    showImages(cards) {
+      mountImageCards(row, body, cards);
+    },
     finish(text, failed, prompt, effort, search, stages) {
       row.classList.remove("streaming");
       if (visibleReply(text)) {
@@ -666,14 +692,23 @@ function addLiveBot(): LiveTurn {
     markErr() {
       row.classList.add("err");
       row.classList.remove("streaming");
+      row.querySelector(".image-cards")?.remove();
     },
   };
   return live;
 }
 
-function keepPartial(live: LiveTurn | null, text: string, prompt: string, effort: string, search: SearchInfo | null, stages: StageName[]): void {
+function keepPartial(
+  live: LiveTurn | null,
+  text: string,
+  prompt: string,
+  effort: string,
+  search: SearchInfo | null,
+  stages: StageName[],
+  images: ImageCard[],
+): void {
   if (visibleReply(text)) {
-    turns.push({ role: "assistant", content: text, effort, search, stages });
+    turns.push({ role: "assistant", content: text, effort, search, stages, images });
     paint();
     return;
   }
@@ -705,7 +740,14 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
   let textAccum = "";
   let searchStatus = "";
   let searchSources: SourceLink[] = [];
+  let imageCards: ImageCard[] = [];
   const stages: StageName[] = [];
+  const noteImages = (raw: unknown) => {
+    const next = cardsFrom(raw);
+    if (!next.length) return;
+    imageCards = next;
+    live.showImages(imageCards);
+  };
   void refresh();
   try {
     const body: {
@@ -762,7 +804,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       searchStatus ? { status: searchStatus, sources: searchSources } : null
     );
     if (stopAsked) {
-      keepPartial(live, textAccum, text, effort, searchNow(), stages);
+      keepPartial(live, textAccum, text, effort, searchNow(), stages, imageCards);
       return;
     }
     if (lastErr || !response) throw lastErr || new Error("no response");
@@ -777,6 +819,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
         pi_think?: string;
         pi_search?: string;
         pi_sources?: SourceLink[];
+        pi_images?: unknown;
         pi_stages?: StageName[];
         choices?: { message?: { content?: string } }[];
       } = {};
@@ -801,6 +844,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       const answer = payload.choices?.[0]?.message?.content || "";
       const search = searchFrom(payload, searchNow());
       const doneStages = Array.isArray(payload.pi_stages) ? payload.pi_stages : stages;
+      noteImages(payload.pi_images);
       if (!visibleReply(answer)) {
         live.root.remove();
         return;
@@ -811,6 +855,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
         effort: payload.pi_think || streamedEffort,
         search,
         stages: doneStages,
+        images: imageCards,
       });
       paint();
       if (spoken && speakText(answer)) voiced = true;
@@ -848,6 +893,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
           pi_think?: string;
           pi_search?: string;
           pi_sources?: SourceLink[];
+          pi_images?: unknown;
           pi_stages?: StageName[];
           choices?: { delta?: { content?: string } }[];
         };
@@ -860,6 +906,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
           searchStatus = payload.pi_search;
           if (Array.isArray(payload.pi_sources)) searchSources = payload.pi_sources;
         }
+        if (Array.isArray(payload.pi_images)) noteImages(payload.pi_images);
         if (payload.pi_status) {
           live.pushStatus(payload.pi_status, searchNow());
           if (!stages.includes(payload.pi_status)) stages.push(payload.pi_status);
@@ -884,7 +931,7 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       }
     }
     if (stopAsked) {
-      keepPartial(live, textAccum, text, streamedEffort || effort, searchNow(), stages);
+      keepPartial(live, textAccum, text, streamedEffort || effort, searchNow(), stages, imageCards);
       return;
     }
     if (streamErr || (!response.ok && !visibleReply(textAccum))) {
@@ -911,12 +958,13 @@ async function sendText(text: string, isRetry: boolean, spoken = false): Promise
       effort: streamedEffort,
       search,
       stages,
+      images: imageCards,
     });
     paint();
     if (spoken && speakText(textAccum)) voiced = true;
   } catch (err) {
     if (stopAsked) {
-      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages);
+      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards);
       return;
     }
     const msg = shownError(err);
