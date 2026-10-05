@@ -150,6 +150,12 @@ header {
     color: var(--ink);
     line-height: 1.65;
   }
+
+  &:has(.pi-chart) {
+    width: 100%;
+
+    .body { width: 100%; }
+  }
 }
 
 .msg.bot.streaming > .body:not([data-filled]) {
@@ -351,6 +357,18 @@ header {
     code { background: none; padding: 0; font-size: 13px; color: var(--ink); }
   }
   hr { border: none; border-top: 1px solid var(--line); margin: 1em 0; }
+}
+
+.pi-chart {
+  width: 100%;
+  min-height: 280px;
+  margin: 0.75em 0;
+}
+
+.pi-chart-failed {
+  min-height: 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .effort {

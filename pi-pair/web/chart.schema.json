@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/pi-gpt/chart.schema.json",
+  "title": "PiChart",
+  "description": "Structured chart JSON for one reply. Render a plot only when data contains at least one series with a non-empty array of finite numbers in y or values. If that array is missing or empty, do not draw a chart and do not invent points. Properties that are not listed are ignored and are not plotted.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["data"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "data": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["type"],
+        "properties": {
+          "type": { "enum": ["bar", "scatter", "line", "pie"] },
+          "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "mode": { "enum": ["lines", "markers", "lines+markers"] },
+          "x": {
+            "type": "array",
+            "maxItems": 240,
+            "items": {
+              "anyOf": [
+                { "type": "string", "minLength": 1, "maxLength": 80 },
+                { "type": "number" }
+              ]
+            }
+          },
+          "labels": {
+            "type": "array",
+            "maxItems": 240,
+            "items": {
+              "anyOf": [
+                { "type": "string", "minLength": 1, "maxLength": 80 },
+                { "type": "number" }
+              ]
+            }
+          },
+          "y": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 240,
+            "items": { "type": "number" }
+          },
+          "values": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 240,
+            "items": { "type": "number" }
+          }
+        }
+      }
+    },
+    "layout": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "title": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 120 },
+            {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "text": { "type": "string", "minLength": 1, "maxLength": 120 }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
