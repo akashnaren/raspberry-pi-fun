@@ -802,7 +802,7 @@ footer {
     right: 0;
     top: -36px;
     height: 36px;
-    background: linear-gradient(to bottom, rgba(10, 10, 10, 0), #0a0a0a);
+    background: linear-gradient(to bottom, transparent, var(--bg));
     pointer-events: none;
   }
 }
@@ -1444,6 +1444,12 @@ html[data-theme="light"] {
     color: var(--ink);
   }
   .user .body, .bot .body, .edit-box { border-color: rgba(0, 0, 0, 0.08); }
+  .image-card {
+    background: #fff;
+    border-color: rgba(0, 0, 0, 0.1);
+
+    img { background: #f3f1eb; }
+  }
   .sources-fav, .sources-links a .sources-fav {
     border-color: #fff;
     background: #dedcd4;
