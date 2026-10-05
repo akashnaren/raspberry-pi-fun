@@ -73,8 +73,148 @@ export function isSoloStop(transcript: string): boolean {
   return transcript.trim().toLowerCase().replace(/[^a-z]/g, "") === "stop";
 }
 
-/** Quiet gap after the last heard word before a turn is sent. Chrome's own silence is much longer. */
+/** Quiet gap that commits an interim phrase for wake-to-listen. Not the auto-send pause. */
 export const ENDPOINT_MS = 450;
+
+/**
+ * Silence after the last new words before voice mode auto-sends the turn.
+ *
+ * ENDPOINT_MS (450) only closes a phrase, so wake-to-listen does not sit on
+ * Chrome's longer recognizer pause. Auto-send used to follow that same ~450ms
+ * cut and interrupted a breath. ChatGPT-like voice waits about 1.0–1.5s.
+ * This default is 1200ms, inside that window, measured from the last words
+ * that changed the phrase. The same finalized text does not restart it.
+ * More speech does. Set another wait with setEndOfUtteranceSilence: 0 sends
+ * on the next commit, and values outside 0–10000 are ignored. Dictation does
+ * not auto-send and does not use this pause.
+ */
+export const END_OF_UTTERANCE_SILENCE_MS = 1200;
+
+const END_OF_UTTERANCE_SILENCE_MAX_MS = 10000;
+let utteranceSilenceMs = END_OF_UTTERANCE_SILENCE_MS;
+
+export function endOfUtteranceSilence(): number {
+  return utteranceSilenceMs;
+}
+
+export function setEndOfUtteranceSilence(ms: number): void {
+  if (!Number.isFinite(ms)) return;
+  const next = Math.round(ms);
+  if (next < 0 || next > END_OF_UTTERANCE_SILENCE_MAX_MS) return;
+  utteranceSilenceMs = next;
+}
+
+export interface SilenceClock {
+  set(fn: () => void, ms: number): number;
+  clear(id: number): void;
+}
+
+export interface UtteranceHold {
+  interim(text: string): string;
+  final(text: string): string;
+  cancel(): void;
+  text(): string;
+}
+
+function joinPhrase(head: string, tail: string): string {
+  const left = head.trim();
+  const right = tail.trim();
+  if (left && right) return left + " " + right;
+  return left || right;
+}
+
+function phraseKey(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function commitPiece(stable: string, live: string, piece: string): { stable: string; live: string } {
+  const liveKey = phraseKey(live);
+  const pieceKey = phraseKey(piece);
+  const stableKey = phraseKey(stable);
+  if (liveKey && (pieceKey === liveKey || pieceKey.startsWith(liveKey) || liveKey.startsWith(pieceKey))) {
+    return { stable: joinPhrase(stable, piece), live: "" };
+  }
+  if (pieceKey && pieceKey === stableKey) return { stable, live: "" };
+  if (stableKey && pieceKey.startsWith(stableKey)) return { stable: piece, live: "" };
+  return { stable: joinPhrase(stable, piece), live: "" };
+}
+
+/** Hold a spoken phrase until endOfUtteranceSilence, then hand it off once. */
+export function createUtteranceHold(
+  deliver: (text: string) => void,
+  silenceMs: number = endOfUtteranceSilence(),
+  clock: SilenceClock = {
+    set: (fn, ms) => window.setTimeout(fn, ms),
+    clear: (id) => window.clearTimeout(id),
+  },
+): UtteranceHold {
+  let stable = "";
+  let live = "";
+  let timer: number | null = null;
+  let open = true;
+
+  const preview = () => joinPhrase(stable, live);
+
+  const clearTimer = () => {
+    if (timer == null) return;
+    clock.clear(timer);
+    timer = null;
+  };
+
+  const arm = () => {
+    clearTimer();
+    if (!open || !preview()) return;
+    if (silenceMs <= 0) {
+      const said = preview();
+      stable = "";
+      live = "";
+      open = false;
+      if (said) deliver(said);
+      return;
+    }
+    const id = clock.set(() => {
+      if (!open || timer !== id) return;
+      timer = null;
+      open = false;
+      const said = preview();
+      stable = "";
+      live = "";
+      if (said) deliver(said);
+    }, silenceMs);
+    timer = id;
+  };
+
+  return {
+    interim(text: string) {
+      if (!open) return preview();
+      const before = preview();
+      live = text.trim();
+      const after = preview();
+      if (silenceMs > 0 && after && phraseKey(after) !== phraseKey(before)) arm();
+      return after;
+    },
+    final(text: string) {
+      if (!open) return preview();
+      const piece = text.trim();
+      if (!piece) return preview();
+      const before = preview();
+      const next = commitPiece(stable, live, piece);
+      stable = next.stable;
+      live = next.live;
+      const after = preview();
+      const grew = phraseKey(after) !== phraseKey(before);
+      if (after && (grew || timer == null)) arm();
+      return after;
+    },
+    cancel() {
+      open = false;
+      clearTimer();
+      stable = "";
+      live = "";
+    },
+    text: preview,
+  };
+}
 
 let beforeSpeech: ((text: string) => void) | null = null;
 let afterSpeech: (() => void) | null = null;
