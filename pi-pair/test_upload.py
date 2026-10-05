@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -195,6 +198,9 @@ class MimeRouting(unittest.TestCase):
         self.assertIn("-l", pdf)
         self.assertIn(str(ocr.MAX_PDF_PAGES), pdf)
         self.assertEqual(ocr.MAX_PDF_PAGES, 5)
+        self.assertEqual(ocr.OCR_TIMEOUT, 20)
+        self.assertGreaterEqual(ocr.OCR_SLOTS, 1)
+        self.assertLessEqual(ocr.OCR_SLOTS, 2)
         blob = " ".join(image + pdf)
         self.assertNotIn("http", blob)
         self.assertNotIn("://", blob)
@@ -202,6 +208,56 @@ class MimeRouting(unittest.TestCase):
             ocr.run_local(["__pi_pair_no_such_ocr_bin__"], b"")
         with self.assertRaises(ocr.OcrFailed):
             ocr.run_local([sys.executable, "-c", "import sys; sys.exit(2)"])
+
+    def test_timeout_kills_the_process_group(self):
+        script = (
+            "import os, signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "path, child = sys.argv[1], os.fork()\n"
+            "if child == 0:\n"
+            "    time.sleep(30)\n"
+            "    os._exit(0)\n"
+            "open(path, 'w', encoding='ascii').write('%s %s\\n' % (os.getpid(), child))\n"
+            "time.sleep(30)\n"
+        )
+        fd, name = tempfile.mkstemp(prefix="ocr-pids-")
+        os.close(fd)
+        started = time.monotonic()
+        try:
+            with self.assertRaises(ocr.OcrFailed) as caught:
+                ocr.run_local([sys.executable, "-c", script, name], timeout=0.4)
+            self.assertLess(time.monotonic() - started, 3)
+            self.assertEqual(str(caught.exception), "timed out")
+            text = Path(name).read_text(encoding="ascii").split()
+            self.assertEqual(len(text), 2)
+            for pid in (int(text[0]), int(text[1])):
+                self.assertTrue(_stopped(pid), pid)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+    def test_full_ocr_cap_returns_429_without_waiting(self):
+        def boom(_data):
+            raise AssertionError("ocr ran while the cap was full")
+
+        previous = ocr.recognize_image
+        ocr.recognize_image = boom
+        held = 0
+        try:
+            for _ in range(ocr.OCR_SLOTS):
+                self.assertTrue(ocr.try_acquire())
+                held += 1
+            started = time.monotonic()
+            with self.assertRaises(upload.UploadRejected) as busy:
+                upload.ingest("image/png", b"\x89PNG\r\n\x1a\n", filename="a.png")
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertEqual(busy.exception.status, 429)
+            self.assertEqual(str(busy.exception), "OCR is busy")
+            text = upload.ingest("text/plain", b"hello", filename="a.txt")
+            self.assertEqual(text["route"], "text")
+        finally:
+            ocr.recognize_image = previous
+            for _ in range(held):
+                ocr.release()
 
 
 class AttachmentHttp(unittest.TestCase):
@@ -298,6 +354,60 @@ class AttachmentHttp(unittest.TestCase):
             upload.MAX_UPLOAD_BYTES = previous
         self.assertEqual(status, 413)
         self.assertEqual(body["error"], "attachment is over 4 MB")
+
+    def test_extra_ocr_is_rejected_while_slots_are_held(self):
+        hold = threading.Event()
+        arrived = threading.Semaphore(0)
+
+        def image(_data):
+            arrived.release()
+            if not hold.wait(5):
+                raise ocr.OcrFailed("held too long")
+            return "from image"
+
+        ocr.recognize_image = image
+        threads = []
+        try:
+            for _ in range(ocr.OCR_SLOTS):
+                thread = threading.Thread(
+                    target=lambda: self._post(*_as_post(_multipart("pic.jpg", "image/jpeg", JPEG)))
+                )
+                thread.start()
+                threads.append(thread)
+            for _ in range(ocr.OCR_SLOTS):
+                self.assertTrue(arrived.acquire(timeout=2))
+            started = time.monotonic()
+            status, body = self._post(*_as_post(_multipart("again.jpg", "image/jpeg", JPEG)))
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertIn(status, (429, 503))
+            self.assertEqual(body["error"], "OCR is busy")
+            text_status, text_body = self._post(
+                b"still text",
+                {"content-type": "text/plain", "x-filename": "note.txt"},
+            )
+            self.assertEqual(text_status, 200)
+            self.assertEqual(text_body["route"], "text")
+        finally:
+            hold.set()
+            for thread in threads:
+                thread.join(timeout=3)
+
+
+def _stopped(pid: int) -> bool:
+    """True once the pid is gone or only a zombie. A sleeping OCR child is neither."""
+    for _ in range(50):
+        status = Path(f"/proc/{pid}/status")
+        if not status.exists():
+            return True
+        state = ""
+        for line in status.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("State:"):
+                state = line.split()[1]
+                break
+        if state in {"Z", "X"}:
+            return True
+        time.sleep(0.02)
+    return False
 
 
 def _as_post(part: tuple[str, bytes]) -> tuple[bytes, dict[str, str]]:

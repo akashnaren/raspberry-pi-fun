@@ -255,15 +255,20 @@ def ingest(content_type: str, body: bytes, filename: str = "") -> dict:
     if route == "text":
         raw = decode_text(data)
     else:
+        if not ocr.try_acquire():
+            raise UploadRejected("OCR is busy", 429)
         try:
-            if ocr_kind(name, mime, data) == "pdf":
-                raw = ocr.recognize_pdf(data)
-            else:
-                raw = ocr.recognize_image(data)
-        except ocr.OcrNotInstalled:
-            raise UploadRejected("OCR is not installed on this Pi", 503) from None
-        except ocr.OcrFailed:
-            raise UploadRejected("could not read that file", 422) from None
+            try:
+                if ocr_kind(name, mime, data) == "pdf":
+                    raw = ocr.recognize_pdf(data)
+                else:
+                    raw = ocr.recognize_image(data)
+            except ocr.OcrNotInstalled:
+                raise UploadRejected("OCR is not installed on this Pi", 503) from None
+            except ocr.OcrFailed:
+                raise UploadRejected("could not read that file", 422) from None
+        finally:
+            ocr.release()
     text, truncated = cap_text(str(raw or ""))
     if not text:
         raise UploadRejected("no text in that file", 422)

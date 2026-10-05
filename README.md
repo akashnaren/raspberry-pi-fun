@@ -210,7 +210,7 @@ While a reply is still running, the page shows the stages the server actually en
 
 Voice is the browser's own speech recognition and speech synthesis (Chrome's webkit speech APIs). Speak a line and the reply is read back. There is no paid speech service and no second model loaded beside the generator.
 
-The paperclip attaches one file. The page posts it to `POST /v1/attachments` on this Pi. A `.txt` or `.md` file is decoded as text. A JPEG, PNG, GIF, WebP, TIFF, or BMP, and a PDF whose pages are JPEG scans, is read with local OCR and then uses that same text. The extracted text stays on the composer and is sent with the next line on `/v1/chat/completions`, so pi4 embeds those tokens with the prompt. OCR is the `tesseract` binary on the Pi. A scanned PDF is rasterized with `pdftoppm` first. There is no cloud OCR API.
+The paperclip attaches one file. The page posts it to `POST /v1/attachments` on this Pi. A `.txt` or `.md` file is decoded as text. A JPEG, PNG, GIF, WebP, TIFF, or BMP, and a PDF whose pages are JPEG scans, is read with local OCR and then uses that same text. The extracted text stays on the composer and is sent with the next line on `/v1/chat/completions`, so pi4 embeds those tokens with the prompt. OCR is the `tesseract` binary on the Pi. A scanned PDF is rasterized with `pdftoppm` first. Each of those runs is limited to 20 seconds, and the process group is killed if it expires. At most 2 OCR jobs run at once; the next upload gets `OCR is busy`. There is no cloud OCR API.
 
 The composer keeps the whole session. Each new line is sent with the earlier turns, and a follow-up is not answered from the canned map. Enter sends the line. Shift+Enter, or Ctrl+Enter, inserts a newline. Stop ends the reply that is still arriving. Regenerate asks the same line again. Edit changes an earlier line and sends from there, dropping the turns after it. Copy is on each message.
 
@@ -429,6 +429,8 @@ curl -sS http://127.0.0.1:18080/v1/flywheel/feedback \
 | Attachment over 4 MB | `attachment is over 4 MB` |
 | Attachment is not txt, md, an image, or a JPEG-scanned PDF | `unsupported file type`, or `only a JPEG-scanned PDF can be read` |
 | OCR binaries missing on the Pi | `OCR is not installed on this Pi` |
+| OCR still running after 20 seconds | The process group is killed. The upload is `could not read that file`. |
+| A third OCR while two are running | `OCR is busy` |
 
 ## CI/CD
 
