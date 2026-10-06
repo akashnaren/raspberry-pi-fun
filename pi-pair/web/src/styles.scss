@@ -560,6 +560,78 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
 
 .search-kicker { color: var(--dim); }
 
+.image-cards {
+  display: flex;
+  gap: 10px;
+  margin: 8px 0 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scroll-snap-type: x proximity;
+}
+
+.image-card {
+  flex: 0 0 auto;
+  width: 148px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  color: inherit;
+  background: #1c1c1c;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 196px;
+    object-fit: contain;
+    background: #111;
+    display: block;
+  }
+
+  .image-card-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px 10px;
+  }
+
+  .image-card-title {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--ink);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .image-card-caption {
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--muted);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  &:hover { border-color: rgba(124, 184, 255, 0.45); }
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  &:only-child {
+    width: min(100%, 220px);
+
+    img { height: 280px; }
+  }
+}
+
 .search-failed {
   color: #ffb0aa;
   font-size: 13px;
@@ -1765,6 +1837,12 @@ html[data-theme="light"] {
     color: var(--ink);
   }
   .user .body, .bot .body, .edit-box { border-color: rgba(0, 0, 0, 0.08); }
+  .image-card {
+    background: #fff;
+    border-color: rgba(0, 0, 0, 0.1);
+
+    img { background: #f3f1eb; }
+  }
   .sources-fav, .sources-links a .sources-fav {
     border-color: #fff;
     background: #dedcd4;

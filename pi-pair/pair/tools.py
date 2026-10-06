@@ -52,6 +52,7 @@ def registry() -> dict[str, Tool]:
     return {
         "extract": Tool("extract", "/tools/extract", ("pi3", "pi2"), 20.0, True),
         "search": Tool("search", "/tools/search", ("pi2", "pi3"), 3.0, True),
+        "images": Tool("images", "/tools/images", ("pi2", "pi3"), 5.0, True),
         "render_doc": Tool(
             "render_doc", "/tools/render_doc", ("pi3", "pi2"), 15.0, True
         ),

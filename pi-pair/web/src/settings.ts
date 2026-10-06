@@ -14,6 +14,7 @@ export interface PageSettings {
   thinking: ThinkLevel;
   voiceSilenceMs: number;
   enterToSend: boolean;
+  pictures: boolean;
 }
 
 export function defaultSettings(): PageSettings {
@@ -23,6 +24,7 @@ export function defaultSettings(): PageSettings {
     thinking: "medium",
     voiceSilenceMs: END_OF_UTTERANCE_SILENCE_MS,
     enterToSend: true,
+    pictures: true,
   };
 }
 
@@ -59,6 +61,7 @@ export function loadSettings(storage: Storage | null): PageSettings {
       thinking: asThink(parsed.thinking),
       voiceSilenceMs: asSilence(parsed.voiceSilenceMs),
       enterToSend: parsed.enterToSend !== false,
+      pictures: parsed.pictures !== false,
     };
   } catch {
     return base;

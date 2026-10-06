@@ -40,6 +40,20 @@ class Dispatch(unittest.TestCase):
         for tool in registry().values():
             self.assertNotIn("pi4", tool.nodes)
             self.assertTrue(tool.path.startswith("/tools/"))
+        images = registry()["images"]
+        self.assertEqual(images.nodes, ("pi2", "pi3"))
+        self.assertEqual(images.path, "/tools/images")
+        self.assertEqual(images.timeout, 5.0)
+        self.assertTrue(images.retry_safe)
+        self.assertNotIn(
+            images.path, ("/api/chat", "/api/generate", "/v1/chat/completions")
+        )
+        with self.assertRaises(ValueError):
+            Tool("images", "/api/chat", ("pi2",), 5.0, True)
+        with self.assertRaises(ValueError):
+            Tool("images", "/v1/chat/completions", ("pi2",), 5.0, True)
+        with self.assertRaises(ValueError):
+            Tool("images", "/tools/images", ("pi4",), 5.0, True)
 
     def test_least_loaded_node_is_first_and_a_fast_success_skips_the_hedge(self):
         calls = []
@@ -309,6 +323,24 @@ class WorkerHttp(unittest.TestCase):
             runtime.gate.release()
             runtime.set_peers(previous)
         self.assertFalse(may_generate({"name": "pi2", "role": "health"}))
+
+    def test_images_handler_calls_cards_and_the_brain_refuses_the_route(self):
+        with patch(
+            "pair.images.cards", return_value={"ok": True, "cards": []}
+        ) as mocked:
+            status, body = handle(
+                "/tools/images", {"question": "hi there", "answer": "hello there"}
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["cards"], [])
+        mocked.assert_called_once()
+        os.environ["PI_PAIR_ROLE"] = "brain"
+        port = self._serve()
+        status, body = self._post(
+            port, "/tools/images", {"question": "hi there", "answer": "hello there"}
+        )
+        self.assertEqual(status, 403)
 
     def test_worker_handle_rejects_a_generation_path(self):
         status, body = handle("/api/chat", {})
