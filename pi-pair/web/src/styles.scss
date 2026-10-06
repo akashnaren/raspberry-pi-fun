@@ -307,9 +307,21 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
   align-items: center;
   height: 1.8em;
   overflow: hidden;
+  position: relative;
 
   > .stage,
   > .pending { grid-area: 1 / 1; justify-self: start; }
+
+  > .stage.leave {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    opacity: 0;
+    animation: none;
+    pointer-events: none;
+  }
 }
 
 .stage {
@@ -329,9 +341,19 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
 }
 
 .stage-label {
-  display: grid;
+  display: block;
+  position: relative;
 
-  > span { grid-area: 1 / 1; white-space: nowrap; }
+  > span { white-space: nowrap; }
+
+  > .label-out {
+    position: absolute;
+    left: 0;
+    top: 0;
+    opacity: 0;
+    animation: none;
+    pointer-events: none;
+  }
 }
 
 .stages.pro-load .stage-label {

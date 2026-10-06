@@ -696,7 +696,7 @@ class PairHttp(unittest.TestCase):
             port,
             {
                 "model": "qwen3:0.6b",
-                "messages": [{"role": "user", "content": "Say hi in five words."}],
+                "messages": [{"role": "user", "content": "What is the latest news?"}],
                 "stream": False,
                 "pi_target": "auto",
                 "pi_mesh": "on",
@@ -711,7 +711,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_chip"], "brain: pi4")
         self.assertEqual(body["pi_search"], "failed")
         self.assertIn("searching", body["pi_stages"])
-        self.assertEqual(self.search_calls, ["Say hi in five words."])
+        self.assertEqual(self.search_calls, ["What is the latest news?"])
         self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 2048)
         self.assertEqual(OllamaFake.last_payload["keep_alive"], -1)
         self.assertIsInstance(OllamaFake.last_payload["keep_alive"], int)
@@ -723,7 +723,9 @@ class PairHttp(unittest.TestCase):
             data=json.dumps(
                 {
                     "model": "qwen3:0.6b",
-                    "messages": [{"role": "user", "content": "Say hi in five words."}],
+                    "messages": [
+                        {"role": "user", "content": "What is the latest news?"}
+                    ],
                     "stream": True,
                     "pi_target": "pi4",
                     "pi_mesh": "on",
@@ -1165,7 +1167,7 @@ class PairHttp(unittest.TestCase):
 
     def test_miss_puts_search_snippets_in_the_prompt(self):
         self._pi3_accepts_forwarded_rows()
-        prompt = "Search for how tall the bench in the hall is"
+        prompt = "What is the latest height of the bench in the hall?"
 
         def fake(query, opener=None):
             self.search_calls.append(query)
@@ -1482,7 +1484,7 @@ class PairHttp(unittest.TestCase):
         port = self._pi4()
         headers, raw = self._stream_raw(
             port,
-            "Search for where the hall bench is",
+            "What is the latest place of the hall bench?",
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
@@ -1545,7 +1547,10 @@ class PairHttp(unittest.TestCase):
             {
                 "model": "qwen3:0.6b",
                 "messages": [
-                    {"role": "user", "content": "Search for how tall the hall bench is"}
+                    {
+                        "role": "user",
+                        "content": "What is the latest height of the hall bench?",
+                    }
                 ],
                 "stream": False,
             },
@@ -1576,7 +1581,7 @@ class PairHttp(unittest.TestCase):
 
         limit = search_note_limit()
         self.assertEqual(limit, 720)
-        prompt = "Search for how wide the east window is."
+        prompt = "What is the latest width of the east window?"
         page = "snippet " * 400
 
         def fake(query, opener=None):
@@ -1649,10 +1654,10 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertGreaterEqual(OllamaFake.posts, 1)
-        self.assertEqual(self.search_calls, [prompt])
-        self.assertIn("searching", body["pi_stages"])
+        self.assertEqual(self.search_calls, [])
+        self.assertNotIn("searching", body["pi_stages"])
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
-        self.assertEqual(headers.get("X-Pi-Search"), "ok")
+        self.assertIsNone(headers.get("X-Pi-Search"))
 
         OllamaFake.posts = 0
         self.search_calls.clear()
@@ -1689,13 +1694,11 @@ class PairHttp(unittest.TestCase):
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
-        self.assertEqual(
-            _statuses(raw), ["thinking", "searching", "searching", "answering"]
-        )
+        self.assertEqual(_statuses(raw), ["thinking", "answering"])
         self.assertIn("hel", raw)
         self.assertIn("lo from peer", raw)
         self.assertEqual(OllamaFake.posts, 1)
-        self.assertEqual(self.search_calls, [prompt])
+        self.assertEqual(self.search_calls, [])
 
     def _brain(self):
         peer_port = self._listen(OllamaFake)

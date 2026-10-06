@@ -38,11 +38,23 @@ def plan(turns: list[dict], num_ctx: int) -> dict:
 
 
 def _clip_summary(text: str) -> str:
-    raw = " ".join((text or "").split())
+    """Drop the oldest lines first so the latest facts stay intact."""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    raw = "\n".join(lines)
     if estimate_tokens(raw) <= SUMMARY_CAP:
         return raw
-    room = int(SUMMARY_CAP * 3.2)
-    return raw[:room].rstrip()
+    while len(lines) > 1 and estimate_tokens("\n".join(lines)) > SUMMARY_CAP:
+        lines.pop(0)
+    words = lines[-1].split()
+    while words and estimate_tokens(" ".join(words)) > SUMMARY_CAP:
+        words.pop(0)
+    if words:
+        lines[-1] = " ".join(words)
+    else:
+        lines.pop()
+    return "\n".join(lines).strip()
 
 
 def run_compact(
@@ -59,6 +71,8 @@ def run_compact(
         return {"ok": False, "reason": "busy", "summary": "", "facts": []}
     planned = plan(turns, num_ctx)
     draft = planned["draft"]
+    from pair.nodes.compact_plan import preserve_draft
+
     summary = draft
     if generate is not None and idle():
         try:
@@ -69,7 +83,7 @@ def run_compact(
             written = ""
         if not idle():
             written = ""
-        summary = _clip_summary(written or draft)
+        summary = _clip_summary(preserve_draft(draft, written))
     else:
         summary = _clip_summary(draft)
     elapsed = int((time.perf_counter() - started) * 1000)
@@ -113,7 +127,13 @@ def _flash_summary(cancel):
         payload = ollama_payload(
             model,
             [
-                {"role": "system", "content": "Summarize the notes in fewer words."},
+                {
+                    "role": "system",
+                    "content": (
+                        "Shorten the notes. Repeat every name, number, "
+                        "code, and decision exactly."
+                    ),
+                },
                 {"role": "user", "content": draft},
             ],
             0.0,
@@ -136,7 +156,9 @@ def _flash_summary(cancel):
     return write
 
 
-def schedule(turns: list[dict], num_ctx: int, idle, generate=None) -> bool:
+def schedule(
+    turns: list[dict], num_ctx: int, idle, generate=None, scope: str | None = None
+) -> bool:
     """Enqueue a summary. False when the caller says a decode is already running.
 
     The scheduler waits until the slot is free, holds it for this job, and
@@ -144,6 +166,9 @@ def schedule(turns: list[dict], num_ctx: int, idle, generate=None) -> bool:
     is what gets stored if Flash is interrupted or absent.
     """
     if not idle():
+        return False
+    key = "default" if scope is None else str(scope or "")
+    if not key:
         return False
     from pair import runtime
 
@@ -167,9 +192,11 @@ def schedule(turns: list[dict], num_ctx: int, idle, generate=None) -> bool:
         )
         if not result.get("ok"):
             return
-        memory.remember_user(result.get("facts") or [])
+        memory.remember_user(result.get("facts") or [], scope=key)
         memory.save_summary(
-            result.get("summary") or "", int(result.get("elapsed_ms") or 0)
+            result.get("summary") or "",
+            int(result.get("elapsed_ms") or 0),
+            scope=key,
         )
 
     return bool(runtime.gate.enqueue_background(job))

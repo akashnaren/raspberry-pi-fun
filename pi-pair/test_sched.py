@@ -33,11 +33,13 @@ class SchedulerReports(unittest.TestCase):
         self.assertLessEqual(report["ahead_error"], 0.30, report)
         self.assertTrue(report["ok"], report)
 
-    def test_a_full_line_and_a_long_wait_are_rejected(self):
+    def test_a_long_eta_waits_until_eight_people_are_queued(self):
         report = admission_report()
         self.assertEqual(report["queued"], 8)
         self.assertEqual(report["ninth"], "full")
-        self.assertEqual(report["long_wait"], "full")
+        self.assertEqual(report["long_wait"], "wait")
+        self.assertGreaterEqual(report["long_position"], 2)
+        self.assertGreater(report["long_eta_s"], 180)
         self.assertGreater(report["long_retry_after_s"], 180)
         self.assertTrue(report["ok"], report)
 

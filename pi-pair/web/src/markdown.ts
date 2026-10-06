@@ -64,29 +64,54 @@ function inline(text: string): string {
   return html;
 }
 
+const FILE_LANG = new Set(["doc", "pdf", "docx", "xlsx", "txt", "csv"]);
+
+function docSource(lang: string, code: string): string {
+  const kind = lang.toLowerCase();
+  if (kind !== "doc" && FILE_LANG.has(kind) && !/^kind\s*:/im.test(code)) {
+    return `kind: ${kind}\n${code}`;
+  }
+  return code;
+}
+
 /** A reply that is only a ```markdown or ```md fence. Inner GFM should render. */
-function unwrapSoleMarkdownFence(text: string): string {
+function soleMarkdown(text: string): { body: string } | null {
   const match = /^```(?:markdown|md)[ \t]*\n([\s\S]*?)\n?```$/.exec(text.trim());
-  if (!match) return text;
-  return match[1];
+  if (!match) return null;
+  return { body: match[1] };
 }
 
 export function renderMarkdown(source: string): string {
-  const text = unwrapSoleMarkdownFence(String(source ?? "").replace(/\r\n/g, "\n"));
+  const original = String(source ?? "").replace(/\r\n/g, "\n");
+  const sole = soleMarkdown(original);
+  const text = sole ? sole.body : original;
   const blocks: string[] = [];
+  const seenDocs = new Set<string>();
   const stash = (html: string) => {
     const token = `@@BLOCK${blocks.length}@@`;
     blocks.push(html);
     return token;
   };
+  const stashDoc = (code: string) => {
+    const card = docCard(code);
+    const key = card.replace(/\s+/g, " ");
+    if (seenDocs.has(key)) return stash("");
+    seenDocs.add(key);
+    return stash(card);
+  };
   const fenced = text.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_all, lang: string, code: string) => {
-    const flow = mermaidFence(lang, code);
+    const label = String(lang || "").toLowerCase();
+    const body = String(code || "");
+    if (!body.trim()) return "";
+    const flow = mermaidFence(label, body);
     if (flow) return stash(flow);
-    if (lang === "plot") return stash(plotBlock(code));
-    if (lang === "doc") return stash(docCard(code));
-    const token = /^[A-Za-z0-9_+-]{1,16}$/.test(lang) ? lang : "";
+    if (label === "plot" || (label === "chart" && body.includes("|") && /-{3,}/.test(body))) {
+      return stash(plotBlock(body));
+    }
+    if (FILE_LANG.has(label)) return stashDoc(docSource(label, body));
+    const token = /^[A-Za-z0-9_+-]{1,16}$/.test(label) ? label : "";
     const klass = token ? ` class="language-${token}"` : "";
-    return stash(`<pre><code${klass}>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);
+    return stash(`<pre><code${klass}>${escapeHtml(body.replace(/\n$/, ""))}</code></pre>`);
   });
   const withDisplay = fenced
     .replace(/\\\[([\s\S]*?)\\\]/g, (_all, tex: string) => stash(renderTex(tex, true)))
@@ -175,9 +200,16 @@ export function renderMarkdown(source: string): string {
   }
   flushParagraph(paragraph);
   closeList();
-  return out
+  let html = out
     .join("\n")
     .replace(/@@BLOCK(\d+)@@/g, (_all, index: string) => blocks[Number(index)] ?? "");
+  if (sole && sole.body.trim()) {
+    html = `${stashDoc(`kind: md\ntitle: note\n${sole.body}`)}\n${html}`.replace(
+      /@@BLOCK(\d+)@@/g,
+      (_all, index: string) => blocks[Number(index)] ?? "",
+    );
+  }
+  return html;
 }
 
 function oddMarker(text: string, marker: string): boolean {

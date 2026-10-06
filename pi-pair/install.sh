@@ -45,7 +45,7 @@ else
 fi
 echo
 
-mkdir -p "$INSTALL_DIR/pair" "$INSTALL_DIR/static" \
+mkdir -p "$INSTALL_DIR/pair/nodes" "$INSTALL_DIR/static" \
   "$INSTALL_DIR/scripts/lifecycle" "$INSTALL_DIR/scripts/data" "$INSTALL_DIR/scripts/train" "$INSTALL_DIR/scripts/eval" \
   "$INSTALL_DIR/configs/train" "$INSTALL_DIR/configs/runtime" \
   "$INSTALL_DIR/docs" \
@@ -63,6 +63,7 @@ if [[ -f "$readme_src" ]]; then
   cp -f "$readme_src" "$INSTALL_DIR/README.md"
 fi
 cp -f "$ROOT/pair/"*.py "$INSTALL_DIR/pair/"
+cp -f "$ROOT/pair/nodes/"*.py "$INSTALL_DIR/pair/nodes/"
 cp -f "$ROOT/static/"* "$INSTALL_DIR/static/"
 cp -a "$ROOT/scripts/." "$INSTALL_DIR/scripts/"
 cp -a "$ROOT/configs/." "$INSTALL_DIR/configs/"

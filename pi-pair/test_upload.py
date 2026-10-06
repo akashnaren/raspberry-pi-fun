@@ -596,6 +596,8 @@ class AttachmentWire(unittest.TestCase):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn("tesseract-ocr", install)
         self.assertIn("poppler-utils", install)
+        self.assertIn('"$INSTALL_DIR/pair/nodes"', install)
+        self.assertIn('"$ROOT/pair/nodes/"*.py', install)
 
     def test_composer_posts_then_sends_the_text(self):
         source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")

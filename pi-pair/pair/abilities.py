@@ -13,9 +13,13 @@ import re
 from pair.calc import evaluate_expr, notes_for
 from pair.turn import ATTACH_MARK
 
-_FENCE = re.compile(r"```(search|calc|plot|doc)\n(.*?)```", re.S)
+_TOOL_LANG = "search|calc|plot|chart|doc|pdf|docx|xlsx|md|markdown|txt|csv"
+_FENCE = re.compile(rf"```({_TOOL_LANG})[ \t]*\n(.*?)```", re.S | re.I)
+_ANY_FENCE = re.compile(r"```([^\n`]*)\n?([\s\S]*?)```")
 _JSON_FENCE = re.compile(r"```json\n(.*?)```", re.S)
-_CITE = re.compile(r"\[(\d+)\]")
+_CITE = re.compile(r"\[(n(?:=\d+)?|\d+)\]", re.I)
+_LANG_TOKEN = re.compile(r"^[A-Za-z0-9_+-]{1,32}$")
+_FILE_LANG = {"pdf", "docx", "xlsx", "md", "markdown", "txt", "csv"}
 _TASK = re.compile(r"^\s*(summarize|rewrite|translate)\b", re.I)
 _LANG = re.compile(r"^[A-Za-z0-9_+-]{1,16}$")
 TOOL_LIMIT = 2
@@ -50,26 +54,121 @@ def tail_hints(prompt: str, hint: str = "") -> str:
     return "\n\n".join(parts)
 
 
+def _as_tool(name: str, body: str) -> tuple[str, str]:
+    """Fence language to a tool name. pdf/docx/xlsx/md are documents."""
+    label = (name or "").strip().lower()
+    text = (body or "").strip()
+    if label == "chart":
+        label = "plot"
+    if label in _FILE_LANG:
+        kind = "md" if label == "markdown" else label
+        if not re.search(r"(?m)^kind\s*:", text):
+            text = f"kind: {kind}\n{text}"
+        label = "doc"
+    return label, text
+
+
 def parse_fences(text: str, limit: int = TOOL_LIMIT) -> list[dict]:
     """The first `limit` tool fences, in order. Other fences are left alone."""
     found = []
     for match in _FENCE.finditer(text or ""):
-        found.append({"name": match.group(1), "body": match.group(2).strip()})
+        name, body = _as_tool(match.group(1), match.group(2))
+        if not body:
+            continue
+        found.append({"name": name, "body": body})
         if len(found) >= limit:
             break
     return found
 
 
 def ground_citations(text: str, source_count: int) -> str:
-    """Drop a [n] citation that is not one of the numbered snippets."""
+    """Drop a citation that is not one of the numbered snippets.
+
+    Literal [n] and [n=1] markers never match a source. Fenced blocks stay.
+    """
 
     def repl(match: re.Match) -> str:
-        number = int(match.group(1))
-        if 1 <= number <= int(source_count):
-            return match.group(0)
+        token = match.group(1)
+        if token.isdigit():
+            number = int(token)
+            if 1 <= number <= int(source_count):
+                return match.group(0)
         return ""
 
-    return _CITE.sub(repl, text or "")
+    parts = re.split(r"(```[\s\S]*?```)", text or "")
+    cleaned = [
+        part if index % 2 else _CITE.sub(repl, part) for index, part in enumerate(parts)
+    ]
+    return "".join(cleaned)
+
+
+def strip_fences(text: str) -> str:
+    """Drop an empty fence, and a fence whose label is not a language token."""
+
+    def repl(match: re.Match) -> str:
+        label = (match.group(1) or "").strip()
+        body = (match.group(2) or "").strip()
+        if not body:
+            return ""
+        if label and not _LANG_TOKEN.fullmatch(label):
+            return ""
+        return match.group(0)
+
+    return _ANY_FENCE.sub(repl, text or "")
+
+
+def dedupe_fences(text: str) -> str:
+    """One copy of each tool fence. A repeated doc block renders once."""
+    seen: set[tuple[str, str]] = set()
+
+    def repl(match: re.Match) -> str:
+        label = (match.group(1) or "").strip().lower()
+        body = " ".join((match.group(2) or "").split())
+        if not body:
+            return match.group(0)
+        key = (label, body)
+        if key in seen:
+            return ""
+        seen.add(key)
+        return match.group(0)
+
+    return _ANY_FENCE.sub(repl, text or "")
+
+
+def _persona_lines(persona: str) -> set[str]:
+    rows: set[str] = set()
+    for line in (persona or "").splitlines():
+        stripped = " ".join(line.split())
+        if not stripped or stripped.startswith("```") or stripped.startswith("|"):
+            continue
+        rows.add(stripped)
+        for piece in re.split(r"(?<=[.!?])\s+", stripped):
+            piece = piece.strip()
+            if len(piece) >= 24:
+                rows.add(piece)
+    return rows
+
+
+def clean_reply(
+    text: str, prompt: str = "", source_count: int = 0, persona: str = ""
+) -> str:
+    """Drop empty fences, repeated fences, echoed prompt lines, and stray [n]."""
+    from pair.turn import PERSONA, user_question
+
+    cleaned = dedupe_fences(strip_fences(text or ""))
+    question = " ".join(user_question(prompt or "").split())
+    banned = _persona_lines(persona or PERSONA)
+    lines = []
+    for line in cleaned.splitlines():
+        flat = " ".join(line.split())
+        if question and len(question) >= 8 and flat == question:
+            continue
+        if flat in banned:
+            continue
+        lines.append(line)
+    cleaned = "\n".join(lines)
+    cleaned = ground_citations(cleaned, source_count)
+    return "\n".join(line for line in cleaned.splitlines() if line.strip()).strip()
 
 
 def user_schema(prompt: str) -> dict | None:
@@ -319,7 +418,13 @@ def _passes(row: dict) -> bool:
     category = row["category"]
     if category == "persona":
         tokens = estimate_tokens(PERSONA)
-        return 160 <= tokens <= 200
+        lowered = PERSONA.lower()
+        stock = ("you do not know", "clarifying question", "calc plot doc")
+        return (
+            40 <= tokens <= 220
+            and "```doc" in PERSONA
+            and not any(phrase in lowered for phrase in stock)
+        )
     if category == "calc":
         note = tool_notes(f"```calc\n{row['expr']}\n```", search=lambda _q: {})
         return str(evaluate_expr(row["expr"])) in note
@@ -351,7 +456,8 @@ def _passes(row: dict) -> bool:
         hint = EFFORT_HINT["high"]
         return "step-by-step" in hint and "Thinking mode stays off" in hint
     if category == "honest":
-        return "do not know" in PERSONA and "clarifying question" in PERSONA
+        lowered = PERSONA.lower()
+        return "do not know" not in lowered and "clarifying question" not in lowered
     return False
 
 

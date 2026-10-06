@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import unittest
 
-from pair.abilities import CATEGORIES, category_rates, tool_notes
+from pair.abilities import (
+    CATEGORIES,
+    category_rates,
+    clean_reply,
+    parse_fences,
+    tool_notes,
+)
+from pair.charts import render_chart
+from pair.docs import render_document
 from pair.server import Handler
+from pair.turn import PERSONA
 
 
 class Abilities(unittest.TestCase):
@@ -53,6 +62,77 @@ class Abilities(unittest.TestCase):
             Dummy(), None, "ollama", "m", [], 0.3, 96, "hi", None, "hello"
         )
         self.assertEqual(out, "hello")
+
+    def test_clean_reply_drops_echoes_empty_fences_and_stray_markers(self):
+        echoed = next(
+            line
+            for line in PERSONA.splitlines()
+            if line and not line.startswith("```") and not line.startswith("|")
+        )
+        question = "What is the capital of Australia?"
+        raw = "\n".join(
+            [
+                "Canberra.",
+                echoed,
+                question,
+                "```calc",
+                "```",
+                "```not a language",
+                "junk",
+                "```",
+                "```doc",
+                "kind: txt",
+                "Hi",
+                "```",
+                "```doc",
+                "kind: txt",
+                "Hi",
+                "```",
+                "See [n] and [n=1] and [3].",
+            ]
+        )
+        cleaned = clean_reply(raw, question, source_count=0)
+        self.assertIn("Canberra.", cleaned)
+        self.assertNotIn(echoed, cleaned)
+        self.assertNotIn(question, cleaned)
+        self.assertNotIn("```calc", cleaned)
+        self.assertNotIn("not a language", cleaned)
+        self.assertEqual(cleaned.count("```doc"), 1)
+        self.assertNotIn("[n]", cleaned)
+        self.assertNotIn("[3]", cleaned)
+        self.assertNotIn("[1]", cleaned)
+
+    def test_pdf_xlsx_and_md_fences_become_files(self):
+        def rendered(body: str):
+            kind = "txt"
+            lines = []
+            for line in body.splitlines():
+                if not lines and line.lower().startswith("kind:"):
+                    kind = line.split(":", 1)[1].strip().lower()
+                    continue
+                lines.append(line)
+            return render_document("\n".join(lines).strip(), kind)
+
+        pdf = parse_fences("```pdf\nQuarter notes\n```")
+        xlsx = parse_fences("```xlsx\n| a | b |\n| --- | --- |\n| 1 | 2 |\n```")
+        md = parse_fences("```md\n# Note\nHello\n```")
+        chart = parse_fences("```chart\n| item | n |\n| --- | --- |\n| a | 1 |\n```")
+        self.assertEqual([item["name"] for item in pdf], ["doc"])
+        self.assertEqual(xlsx[0]["name"], "doc")
+        self.assertEqual(md[0]["name"], "doc")
+        self.assertEqual(chart[0]["name"], "plot")
+        pdf_bytes, pdf_ext = rendered(pdf[0]["body"])
+        xlsx_bytes, xlsx_ext = rendered(xlsx[0]["body"])
+        md_bytes, md_ext = rendered(md[0]["body"])
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        self.assertEqual(pdf_ext, "pdf")
+        self.assertIn(b"Quarter notes", pdf_bytes)
+        self.assertTrue(xlsx_bytes.startswith(b"PK"))
+        self.assertEqual(xlsx_ext, "xlsx")
+        self.assertIn(b"Hello", md_bytes)
+        self.assertEqual(md_ext, "md")
+        drawn = render_chart(table=chart[0]["body"])
+        self.assertTrue(drawn["ok"], drawn)
 
 
 if __name__ == "__main__":
