@@ -1,7 +1,6 @@
 import { docExcerpt, modelUserContent, userMessagePieces, type DocCard } from "./attach";
 import { failChart, drawChart } from "./chart";
 import { mountDiagrams } from "./diagram";
-import { cardsFrom, renderImageCardsHtml, type ImageCard } from "./images";
 import { renderMarkdown, renderStreamingMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
 import { HEALTH_POLL_MS, serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner, VISIBILITY_SETTLE_MS, type HealthSnapshot } from "./presence";
@@ -9,7 +8,7 @@ import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
 import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
 import { scrubAssistant } from "./copy";
-import { BIG_LINE, friendlyError, PICTURE_LINE, WAITING_LINE } from "./errors";
+import { BIG_LINE, friendlyError, WAITING_LINE } from "./errors";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
@@ -50,7 +49,6 @@ interface Turn {
   effort?: string;
   search?: SearchInfo | null;
   stages?: StageName[];
-  images?: ImageCard[];
   mode?: string;
   route?: string;
   thought?: string;
@@ -76,7 +74,6 @@ interface LiveTurn {
   setText: (text: string) => void;
   setThought: (text: string, live: boolean, seconds: number) => void;
   clearThought: () => void;
-  showImages: (cards: ImageCard[]) => void;
   finish: (text: string, failed: boolean, prompt: string, search: SearchInfo | null, stages: StageName[]) => void;
   markErr: () => void;
   armPro: () => void;
@@ -278,26 +275,6 @@ function showSearch(parent: HTMLElement, status: string, sources: SourceLink[], 
     pill.setAttribute("aria-expanded", "true");
   };
   parent.appendChild(pill);
-}
-
-function mountImageCards(row: HTMLElement, before: Node | null, raw: unknown): void {
-  row.querySelector(".image-cards")?.remove();
-  const html = renderImageCardsHtml(raw);
-  if (!html) return;
-  const holder = document.createElement("div");
-  holder.innerHTML = html;
-  const strip = holder.firstElementChild as HTMLElement | null;
-  if (!strip) return;
-  strip.querySelectorAll("img").forEach((node) => {
-    node.addEventListener("error", () => {
-      node.closest(".image-card")?.remove();
-      if (!strip.querySelector(".image-card")) {
-        strip.replaceChildren(el("p", "image-miss", PICTURE_LINE));
-      }
-    });
-  });
-  if (before && before.parentNode === row) row.insertBefore(strip, before);
-  else row.appendChild(strip);
 }
 
 function waitingCopy(queue: { position?: number; eta_s?: number } | null): string {
@@ -680,7 +657,6 @@ function addFinishedBot(item: Turn, index: number): HTMLElement {
     setBodyContent(body, item.content, true);
     row.appendChild(body);
   }
-  if (item.images?.length) mountImageCards(row, body, item.images);
   const asked = promptBefore(index);
   if (item.search) showSearch(row, item.search.status, item.search.sources, item.stages || [], asked);
   if (asked) attachLabel(row, asked, item.content);
@@ -936,9 +912,6 @@ function addLiveBot(expectPro = false): LiveTurn {
     clearThought() {
       row.querySelector("details.thought")?.remove();
     },
-    showImages(cards) {
-      mountImageCards(row, body, cards);
-    },
     finish(text, failed, prompt, search, stages) {
       row.classList.remove("streaming");
       if (visibleReply(text)) {
@@ -956,7 +929,6 @@ function addLiveBot(expectPro = false): LiveTurn {
       row.classList.add("err");
       row.classList.remove("streaming");
       stagesEl.removeAttribute("aria-busy");
-      row.querySelector(".image-cards")?.remove();
     },
     armPro() {
       holdPro = true;
@@ -972,7 +944,6 @@ function keepPartial(
   effort: string,
   search: SearchInfo | null,
   stages: StageName[],
-  images: ImageCard[],
   mode = "",
   route = "",
   thought = "",
@@ -986,7 +957,6 @@ function keepPartial(
       effort,
       search,
       stages,
-      images,
       mode,
       route,
       thought,
@@ -1063,14 +1033,7 @@ async function sendText(
   };
   let searchStatus = "";
   let searchSources: SourceLink[] = [];
-  let imageCards: ImageCard[] = [];
   const stages: StageName[] = [];
-  const noteImages = (raw: unknown) => {
-    const next = cardsFrom(raw);
-    if (!next.length) return;
-    imageCards = next;
-    live.showImages(imageCards);
-  };
   const showTurnError = (msg: string): void => {
     live.setText(msg);
     live.markErr();
@@ -1156,7 +1119,7 @@ async function sendText(
     );
     if (!mine()) return;
     if (stopAsked) {
-      keepPartial(live, textAccum, text, effort, searchNow(), stages, imageCards, modelMode, "");
+      keepPartial(live, textAccum, text, effort, searchNow(), stages, modelMode, "");
       return;
     }
     if (lastErr || !response) throw lastErr || new Error("no response");
@@ -1176,7 +1139,6 @@ async function sendText(
         pi_route?: string;
         pi_search?: string;
         pi_sources?: SourceLink[];
-        pi_images?: unknown;
         pi_stages?: StageName[];
         choices?: { message?: { content?: string } }[];
       } = {};
@@ -1194,7 +1156,6 @@ async function sendText(
       const answer = payload.choices?.[0]?.message?.content || "";
       const search = searchFrom(payload, searchNow());
       const doneStages = Array.isArray(payload.pi_stages) ? payload.pi_stages : stages;
-      noteImages(payload.pi_images);
       if (!mine()) return;
       if (unreadable || !visibleReply(answer)) {
         missOrRetry();
@@ -1208,7 +1169,6 @@ async function sendText(
           effort: payload.pi_think || streamedEffort,
           search,
           stages: doneStages,
-          images: imageCards,
           mode: payload.pi_mode || streamedMode,
           route: payload.pi_route || streamedRoute,
           thought: nonStreamThought,
@@ -1254,7 +1214,6 @@ async function sendText(
           pi_route?: string;
           pi_search?: string;
           pi_sources?: SourceLink[];
-          pi_images?: unknown;
           pi_stages?: StageName[];
           pi_replace?: boolean;
           pi_reasoning_clear?: boolean;
@@ -1270,7 +1229,6 @@ async function sendText(
           searchStatus = payload.pi_search;
           if (Array.isArray(payload.pi_sources)) searchSources = payload.pi_sources;
         }
-        if (Array.isArray(payload.pi_images)) noteImages(payload.pi_images);
         if (payload.pi_status) {
           live.pushStatus(payload.pi_status, searchNow(), payload.pi_queue || null);
           if (!stages.includes(payload.pi_status)) stages.push(payload.pi_status);
@@ -1323,7 +1281,6 @@ async function sendText(
         streamedEffort || effort,
         searchNow(),
         stages,
-        imageCards,
         streamedMode,
         streamedRoute,
         thoughtAccum,
@@ -1347,7 +1304,6 @@ async function sendText(
         effort: streamedEffort,
         search,
         stages,
-        images: imageCards,
         mode: streamedMode,
         route: streamedRoute,
         thought: thoughtAccum.trim(),
@@ -1360,13 +1316,13 @@ async function sendText(
   } catch (err) {
     if (!mine()) return;
     if (stopAsked) {
-      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
+      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, modelMode, "");
       return;
     }
     if (await quietNetwork()) {
       if (!mine()) return;
       if (visibleReply(textAccum)) {
-        keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
+        keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, modelMode, "");
       } else {
         live.root.remove();
         followUp = "resume";
@@ -1375,7 +1331,7 @@ async function sendText(
       live.root.remove();
       followUp = "retry";
     } else if (visibleReply(textAccum)) {
-      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
+      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, modelMode, "");
     } else {
       showTurnError(shownError(err));
     }

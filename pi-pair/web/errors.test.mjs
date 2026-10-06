@@ -1,4 +1,4 @@
-import { friendlyError, PICTURE_LINE, WAITING_LINE } from "./src/errors.ts";
+import { friendlyError, WAITING_LINE } from "./src/errors.ts";
 
 const cases = [
   ["", "The reply did not come back. Try again."],
@@ -23,7 +23,7 @@ for (const [raw, want] of cases) {
   if (shown !== want) throw new Error(JSON.stringify(raw) + " -> " + shown);
   if (!shown.trim()) throw new Error("empty failure");
 }
-if (!WAITING_LINE.includes("Waiting for a free slot") || !PICTURE_LINE.includes("Pictures could not be loaded")) {
+if (!WAITING_LINE.includes("Waiting for a free slot")) {
   throw new Error("status lines drifted");
 }
 console.log("ok");

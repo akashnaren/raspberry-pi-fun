@@ -394,7 +394,6 @@ class TurnHttp(unittest.TestCase):
         OllamaFake.catalog = [FLASH_MODEL]
         self.search_calls = []
         self._lookup_web = pair_server.lookup_web
-        self._lookup_images = pair_server.lookup_images
         self._note_exchange = pair_server.note_exchange
 
         def _stub_search(query, opener=None):
@@ -402,14 +401,12 @@ class TurnHttp(unittest.TestCase):
             return {"status": "failed", "sources": [], "context": ""}
 
         pair_server.lookup_web = _stub_search
-        pair_server.lookup_images = lambda query, opener=None: []
 
     def tearDown(self):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
         pair_server.lookup_web = self._lookup_web
-        pair_server.lookup_images = self._lookup_images
         pair_server.note_exchange = self._note_exchange
         runtime.PEERS = self._peers
         runtime.reset_health()

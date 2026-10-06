@@ -54,7 +54,6 @@ from pair.errors import (
 )
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import COOLING_NOTE, board_thermal, snapshot_peers
-from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
 from pair.modes import (
     mode_table,
@@ -357,29 +356,17 @@ def _begin_lookup(prompt: str, model: str) -> dict:
 def _with_search(
     messages,
     prompt: str,
-    images: list | None = None,
     model: str = "",
     cancel=None,
     job: dict | None = None,
 ):
     """On pi4, attach public notes when a lookup already ran. Failures stay local.
 
-    The lookup is capped so a slow search cannot hold the first token. Image
-    cards and an in-flight model warm run beside the join.
+    The lookup is capped so a slow search cannot hold the first token. An
+    in-flight model warm runs beside the join.
     """
     warm = warm_in_flight()
-    worker = None
-    if images is not None:
-
-        def _load_images() -> None:
-            images.extend(_image_cards(prompt))
-
-        worker = threading.Thread(
-            target=_load_images, name="search-images", daemon=True
-        )
-        worker.start()
     if not (prompt or "").strip():
-        _join_cancel(worker, None, cancel)
         _join_cancel(warm, 40, cancel)
         return messages, None
     if job is None:
@@ -411,7 +398,6 @@ def _with_search(
     note = {"status": status, "sources": sources, "context": full}
     if status == "ok" and shown:
         note["prompt_note"] = shown
-    _join_cancel(worker, None, cancel)
     _join_cancel(warm, 40, cancel)
     return messages, note
 
@@ -437,47 +423,6 @@ def _apply_model_sample(handler, model: str, temperature: float, max_tokens: int
         return temperature, max_tokens
     handler._decode_plan = tuned
     return tuned.temperature, tuned.num_predict
-
-
-def _image_cards(prompt: str, answer: str = "") -> list[dict]:
-    """Public cards for this turn. A list of visual items waits for the answer."""
-    mode = visual_mode(prompt)
-    if mode == "none":
-        return []
-    try:
-        if mode == "each":
-            if not (answer or "").strip():
-                return []
-            found = cards_for_answer(prompt, answer)
-        else:
-            found = lookup_images(prompt)
-    except Exception:
-        return []
-    if not isinstance(found, list):
-        return []
-    cap = 8 if mode == "each" else 3
-    cards = []
-    for item in found:
-        clean = sanitize_card(item)
-        if not clean:
-            continue
-        cards.append(clean)
-        if len(cards) >= cap:
-            break
-    return cards
-
-
-def _cards_after(prompt: str, answer: str, images: list[dict]) -> list[dict]:
-    """One card per listed car, movie, product, or place. Other turns keep theirs."""
-    if visual_mode(prompt) != "each":
-        return images
-    fresh = _image_cards(prompt, answer)
-    return fresh or images
-
-
-def _put_images(payload: dict, images: list[dict]) -> None:
-    if images:
-        payload["pi_images"] = images
 
 
 def listed_chat_models() -> list[str] | None:
@@ -1322,10 +1267,7 @@ class Handler(BaseHTTPRequestHandler):
             if hint:
                 outbound = [{"role": "system", "content": hint}, *outbound]
             search_note = None
-            images: list[dict] = []
             search_job = _begin_lookup(prompt, model) if do_search else None
-            if not do_search and not want_stream:
-                images = _image_cards(prompt)
             grounded = ready
         except ClientGone:
             raise
@@ -1394,7 +1336,6 @@ class Handler(BaseHTTPRequestHandler):
                     do_search,
                     searched=False,
                     search_note=None,
-                    images=[],
                     mode_name=mode_name,
                     route_name=route_name,
                     resident_name=resident_name,
@@ -1415,7 +1356,6 @@ class Handler(BaseHTTPRequestHandler):
                     outbound, search_note = self._timed_search(
                         outbound,
                         prompt,
-                        images,
                         model,
                         getattr(self, "_cancel", None),
                         job=search_job,
@@ -1439,7 +1379,6 @@ class Handler(BaseHTTPRequestHandler):
                     think_name,
                     search_note,
                     stages,
-                    images,
                     mode_name,
                     route_name,
                     resident_name,
@@ -1982,7 +1921,6 @@ class Handler(BaseHTTPRequestHandler):
         do_search: bool = False,
         searched: bool = False,
         search_note: dict | None = None,
-        images: list[dict] | None = None,
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
@@ -2053,29 +1991,22 @@ class Handler(BaseHTTPRequestHandler):
         think_extra = {"pi_think": think_name} if think_name else None
         if not emit_status("thinking", think_extra):
             return
-        images = list(images or [])
-        if not do_search:
-            images = _image_cards(prompt)
         if do_search:
             self._searched = True
             if not emit_status("searching", {"pi_tool": "search"}):
                 return
             if not searched:
-                fresh: list[dict] = []
                 messages, search_note = self._timed_search(
                     messages,
                     prompt,
-                    fresh,
                     model,
                     getattr(self, "_cancel", None),
                     job=search_job,
                 )
-                images = fresh
             found = {"pi_tool": "search"}
             if search_note:
                 found["pi_search"] = search_note["status"]
                 found["pi_sources"] = search_note["sources"]
-            _put_images(found, images)
             if not emit_status("searching", found):
                 return
         grounded = ready_answer
@@ -2083,7 +2014,6 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             answer_extra["pi_search"] = search_note["status"]
             answer_extra["pi_sources"] = search_note["sources"]
-        _put_images(answer_extra, images)
         if not emit_status("answering", answer_extra or None):
             return
         messages = shape_messages(
@@ -2100,7 +2030,6 @@ class Handler(BaseHTTPRequestHandler):
                 think_name,
                 search_note,
                 stages,
-                images,
                 mode_name,
                 route_name,
                 resident_name,
@@ -2128,7 +2057,6 @@ class Handler(BaseHTTPRequestHandler):
                     think_name,
                     search_note,
                     stages,
-                    images,
                     mode_name,
                     route_name,
                     resident_name,
@@ -2170,7 +2098,6 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             first["pi_search"] = search_note["status"]
             first["pi_sources"] = search_note["sources"]
-        _put_images(first, images)
         first.update(note)
         apply_tier(self, first)
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
@@ -2403,7 +2330,6 @@ class Handler(BaseHTTPRequestHandler):
                     chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
                     remember_completion(prompt, answer, chip, peer["name"])
                     return
-            images = _cards_after(prompt, answer, images)
             elapsed = int((time.time() - started) * 1000)
             final = {
                 "id": "pi-pair",
@@ -2426,7 +2352,6 @@ class Handler(BaseHTTPRequestHandler):
             if search_note:
                 final["pi_search"] = search_note["status"]
                 final["pi_sources"] = search_note["sources"]
-            _put_images(final, images)
             final["pi_stages"] = list(stages)
             self._attach_timing(final, started)
             final.update(note)
@@ -2481,7 +2406,6 @@ class Handler(BaseHTTPRequestHandler):
         think_name: str,
         search_note: dict | None,
         stages: list[str],
-        images: list[dict] | None = None,
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
@@ -2499,7 +2423,6 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
-        _put_images(chunk, images or [])
         chunk.update(mode_fields(mode_name, route_name, resident_name))
         apply_tier(self, chunk)
         if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
@@ -2523,7 +2446,6 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             final["pi_search"] = search_note["status"]
             final["pi_sources"] = search_note["sources"]
-        _put_images(final, images or [])
         self._attach_timing(final, started)
         final.update(mode_fields(mode_name, route_name, resident_name))
         apply_tier(self, final)
@@ -2543,7 +2465,6 @@ class Handler(BaseHTTPRequestHandler):
         think_name: str = "",
         search_note: dict | None = None,
         stages: list[str] | None = None,
-        images: list[dict] | None = None,
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
@@ -2565,7 +2486,6 @@ class Handler(BaseHTTPRequestHandler):
                 prompt,
                 search_note,
             )
-            images = _cards_after(prompt, content, list(images or []))
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
         if train:
             note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
@@ -2597,7 +2517,6 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             resp["pi_search"] = search_note["status"]
             resp["pi_sources"] = search_note["sources"]
-        _put_images(resp, images or [])
         if stages:
             resp["pi_stages"] = stages
         resp.update(mode_fields(mode_name, route_name, resident_name))

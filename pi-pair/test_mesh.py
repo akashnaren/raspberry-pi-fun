@@ -489,7 +489,6 @@ class ChatOffload(unittest.TestCase):
         }
         self._tmp = tempfile.TemporaryDirectory()
         self._lookup = pair_server.lookup_web
-        self._images = pair_server.lookup_images
         os.environ["PI_PAIR_ROLE"] = "brain"
         os.environ["PI_PAIR_REMOTE_SEARCH"] = "1"
         os.environ["PI_PAIR_DATA"] = self._tmp.name
@@ -503,7 +502,6 @@ class ChatOffload(unittest.TestCase):
             return {"status": "failed", "sources": [], "context": ""}
 
         pair_server.lookup_web = local
-        pair_server.lookup_images = lambda query, opener=None: []
         runtime.reset_health()
         SearchPage.seen = []
         OllamaPage.posts = 0
@@ -514,7 +512,6 @@ class ChatOffload(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
         pair_server.lookup_web = self._lookup
-        pair_server.lookup_images = self._images
         runtime.PEERS = self._peers
         runtime.reset_health()
         for key, value in self._env.items():

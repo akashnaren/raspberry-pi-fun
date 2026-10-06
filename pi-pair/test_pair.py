@@ -485,21 +485,18 @@ class PairHttp(unittest.TestCase):
         OllamaFake.catalog = ["qwen3:0.6b"]
         self.search_calls = []
         self._lookup_web = pair_server.lookup_web
-        self._lookup_images = pair_server.lookup_images
 
         def _stub_search(query, opener=None):
             self.search_calls.append(query)
             return {"status": "failed", "sources": [], "context": ""}
 
         pair_server.lookup_web = _stub_search
-        pair_server.lookup_images = lambda query, opener=None: []
 
     def tearDown(self):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
         pair_server.lookup_web = self._lookup_web
-        pair_server.lookup_images = self._lookup_images
         runtime.PEERS = self._peers
         runtime.reset_health()
         os.environ.pop("PI_PAIR_DATA", None)
@@ -1260,86 +1257,6 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn(
             "Web search notes", json.dumps(OllamaFake.last_payload["messages"])
         )
-
-    def test_visual_miss_adds_public_image_cards_and_a_lookup_failure_does_not(self):
-        poster = {
-            "url": "https://upload.wikimedia.org/wikipedia/en/2/2e/Inception_%282010%29_theatrical_poster.jpg",
-            "alt": "Inception. 2010 film by Christopher Nolan",
-            "title": "Inception",
-            "caption": "2010 film by Christopher Nolan",
-            "source": "https://en.wikipedia.org/wiki/Inception",
-            "width": 220,
-            "height": 326,
-        }
-        prompt = "Tell me about the movie Inception"
-        calls = []
-
-        def fake(query, opener=None):
-            calls.append(query)
-            return [
-                {
-                    "url": "http://127.0.0.1/secret.jpg",
-                    "alt": "secret",
-                    "title": "secret",
-                },
-                dict(poster),
-                {
-                    "url": "https://evil.example/poster.jpg",
-                    "alt": "nope",
-                    "title": "nope",
-                },
-            ]
-
-        pair_server.lookup_images = fake
-        port = self._pi4()
-        status, _headers, body = self._post(
-            port,
-            {
-                "model": "qwen3:0.6b",
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-            },
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(calls, [prompt])
-        self.assertEqual(body["pi_images"], [poster])
-        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
-        self.assertNotIn(poster["url"], json.dumps(OllamaFake.last_payload))
-
-        def boom(query, opener=None):
-            raise RuntimeError("wiki down")
-
-        pair_server.lookup_images = boom
-        status, _headers, body = self._post(
-            port,
-            {
-                "model": "qwen3:0.6b",
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-            },
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200)
-        self.assertNotIn("pi_images", body)
-        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
-
-        pair_server.lookup_images = fake
-        calls.clear()
-        _headers, raw = self._stream_raw(
-            port,
-            prompt,
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(
-            _statuses(raw), ["thinking", "searching", "searching", "answering"]
-        )
-        pictured = [item for item in _sse_payloads(raw) if item.get("pi_images")]
-        self.assertGreaterEqual(len(pictured), 2)
-        self.assertEqual(pictured[0]["pi_images"], [poster])
-        self.assertEqual(pictured[-1]["pi_images"], [poster])
-        self.assertNotIn("127.0.0.1", raw)
-        self.assertNotIn("evil.example", raw)
 
     def test_followup_keeps_earlier_turns_on_pi4(self):
         port = self._pi4()

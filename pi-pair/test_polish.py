@@ -23,7 +23,6 @@ from pair.charts import (  # noqa: E402
     structure_hint,
 )
 from pair.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
-from pair.images import cards_for_answer, item_names, visual_mode  # noqa: E402
 from pair.preload import (  # noqa: E402
     PRELOAD_TIMEOUT_S,
     pro_preload_payload,
@@ -273,59 +272,6 @@ class Preload(unittest.TestCase):
                     rewarm_pro_if_evicted()
         self.assertEqual([item["model"] for item in seen], ["qwen3:1.7b"])
         self.assertEqual(seen[0]["keep_alive"], -1)
-
-
-class VisualLists(unittest.TestCase):
-    def test_each_item_gets_a_card_and_math_does_not(self):
-        self.assertEqual(visual_mode("top 5 cars"), "each")
-        self.assertEqual(visual_mode("Tell me about the movie Inception"), "one")
-        self.assertEqual(visual_mode("what is the derivative of x squared"), "none")
-        self.assertEqual(visual_mode("top 10 prime numbers"), "none")
-        answer = "1. Dune — desert\n2. Arrival — language"
-        self.assertEqual(item_names(answer, 5), ["Dune", "Arrival"])
-
-        def opener(request, timeout=None):
-            url = request.full_url
-            title = "Dune" if "Dune" in url else "Arrival"
-            if "list=search" in url:
-                return _Resp(
-                    json.dumps({"query": {"search": [{"title": title + " (film)"}]}})
-                )
-            return _Resp(
-                json.dumps(
-                    {
-                        "type": "standard",
-                        "title": title,
-                        "description": "film",
-                        "thumbnail": {
-                            "source": f"https://upload.wikimedia.org/wikipedia/en/{title}.jpg",
-                            "width": 100,
-                            "height": 140,
-                        },
-                        "content_urls": {
-                            "desktop": {
-                                "page": f"https://en.wikipedia.org/wiki/{title}"
-                            }
-                        },
-                    }
-                )
-            )
-
-        cards = cards_for_answer("top 2 movies", answer, opener=opener)
-        self.assertEqual([card["title"] for card in cards], ["Dune", "Arrival"])
-        self.assertEqual(cards_for_answer("top 10 prime numbers", "1. 2\n2. 3"), [])
-
-
-class _Resp:
-    def __init__(self, body: str):
-        self._body = body.encode()
-
-    def read(self, _n=-1):
-        data, self._body = self._body, b""
-        return data
-
-    def close(self):
-        return None
 
 
 class WebPolish(unittest.TestCase):
