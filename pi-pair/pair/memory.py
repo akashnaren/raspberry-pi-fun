@@ -7,7 +7,6 @@ never share a summary, and clearing one does not touch the other.
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 import time
@@ -19,7 +18,9 @@ from pair.turn import estimate_tokens
 
 FACT_TOKEN_CAP = 150
 MEMORY_TTL_S = 30 * 24 * 60 * 60
+PURGE_INTERVAL_S = 60 * 60
 _LOCK = threading.Lock()
+_last_purge = 0.0
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 _NUMBER = re.compile(r"\b\d{3,}(?:[.,]\d+)?\b")
 _CODE = re.compile(r"\b(?=[A-Za-z0-9-]*\d)(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9-]{3,}\b")
@@ -80,8 +81,18 @@ def _empty() -> dict:
     return {"facts": [], "summary": "", "compactions": 0, "last_compact_ms": 0}
 
 
+def _maybe_purge() -> None:
+    """Scan the memory folder at most once an hour."""
+    global _last_purge
+    now = time.time()
+    if now - _last_purge < PURGE_INTERVAL_S:
+        return
+    _last_purge = now
+    purge_memory(now=now)
+
+
 def purge_memory(max_age: float = MEMORY_TTL_S, now: float | None = None) -> int:
-    """Drop idle chat files and the old global facts.json. Active chats stay."""
+    """Drop chats whose last write is older than `max_age`, and facts.json."""
     folder = data_root() / "memory"
     if not folder.is_dir():
         return 0
@@ -107,10 +118,6 @@ def _read(scope: str) -> dict:
     if not path.exists():
         return _empty()
     try:
-        os.utime(path, None)
-    except OSError:
-        pass
-    try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         data = {}
@@ -131,7 +138,7 @@ def list_facts(scope: str | None = None) -> list[dict]:
     key = _bucket(scope)
     if not key:
         return []
-    purge_memory()
+    _maybe_purge()
     with _LOCK:
         rows = _read(key).get("facts") or []
     return [dict(row) for row in rows if isinstance(row, dict)]
@@ -237,7 +244,7 @@ def remember_user(statements: list[str], scope: str | None = None) -> list[dict]
     key = _bucket(scope)
     if not key:
         return []
-    purge_memory()
+    _maybe_purge()
     kept = []
     with _LOCK:
         data = _read(key)
@@ -295,7 +302,7 @@ def save_summary(text: str, elapsed_ms: int, scope: str | None = None) -> None:
     key = _bucket(scope)
     if not key:
         return
-    purge_memory()
+    _maybe_purge()
     with _LOCK:
         data = _read(key)
         data["summary"] = str(text or "").strip()

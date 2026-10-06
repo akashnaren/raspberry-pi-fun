@@ -291,14 +291,16 @@ class TurnShape(unittest.TestCase):
                 [{"role": "user", "content": prompt}], prompt, effort=name
             )
             self.assertEqual(rows[0]["content"], PERSONA, name)
-            self.assertEqual(rows[1]["content"], sentence, name)
+            self.assertEqual(rows[-2]["content"], sentence, name)
+            self.assertEqual(rows[-1]["role"], "user")
         chart = shape_messages(
             [{"role": "user", "content": "plot a bar chart of the picnic"}],
             "plot a bar chart of the picnic",
             effort="high",
         )
         self.assertEqual(chart[0]["content"], PERSONA)
-        self.assertEqual(chart[1]["content"], EFFORT_HINT["high"])
+        self.assertEqual(chart[-2]["content"], EFFORT_HINT["high"])
+        self.assertIn("```plot", "\n".join(row["content"] for row in chart))
 
 
 class ModelWarm(unittest.TestCase):

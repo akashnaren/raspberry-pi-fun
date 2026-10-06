@@ -211,152 +211,65 @@ def figure_from_plot(text: str, title: str = "") -> dict | None:
     )
 
 
-def is_placeholder_table(text: str) -> bool:
-    """A stand-in table whose row labels are single letters, such as a = 1."""
-    parsed = parse_markdown_table(text)
-    if not parsed:
-        return False
-    _headers, rows = parsed
-    labels = [row[0].strip() for row in rows if row and row[0].strip()]
-    if not labels:
-        return False
-    return all(len(label) == 1 and label.isalpha() for label in labels)
+def _pipe_row(line: str) -> bool:
+    text = (line or "").strip()
+    return bool(text) and "|" in text and not _RULE.match(text)
 
 
-def without_placeholders(text: str) -> str:
-    """Drop stand-in tables and keep the surrounding prose."""
+def _header_names(width: int) -> list[str]:
+    if width <= 2:
+        return ["label", "value"][:width]
+    return ["label", "value", *[f"value {index}" for index in range(2, width)]]
+
+
+def with_headers(text: str) -> str:
+    """Keep a table's own headers. Rows with no header line use label/value."""
     lines = (text or "").splitlines()
-    kept: list[str] = []
+    if not lines:
+        return text or ""
+    out: list[str] = []
     index = 0
+    changed = False
     while index < len(lines):
-        if (
-            index + 1 < len(lines)
-            and "|" in lines[index]
-            and _RULE.match(lines[index + 1])
-        ):
-            end = index + 2
-            while end < len(lines) and lines[end].strip() and "|" in lines[end]:
-                end += 1
-            chunk = "\n".join(lines[index:end])
-            if not is_placeholder_table(chunk):
-                kept.extend(lines[index:end])
-            index = end
+        if not _pipe_row(lines[index]):
+            out.append(lines[index])
+            index += 1
             continue
-        kept.append(lines[index])
-        index += 1
-    return "\n".join(kept)
-
-
-_PAIR = re.compile(r"\b([A-Za-z][A-Za-z0-9]{0,20})\s*:?\s*([+-]?\d+(?:\.\d+)?)\b")
-_HEADER = re.compile(
-    r"\bcolumns?\s+([A-Za-z][\w-]*)\s+and\s+([A-Za-z][\w-]*)",
-    re.I,
-)
-_SERIES_STOP = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "bar",
-    "be",
-    "by",
-    "chart",
-    "charts",
-    "column",
-    "columns",
-    "csv",
-    "data",
-    "do",
-    "docx",
-    "download",
-    "downloadable",
-    "downloads",
-    "each",
-    "file",
-    "files",
-    "for",
-    "from",
-    "give",
-    "graph",
-    "graphs",
-    "if",
-    "in",
-    "into",
-    "is",
-    "it",
-    "item",
-    "items",
-    "label",
-    "line",
-    "list",
-    "make",
-    "markdown",
-    "me",
-    "monthly",
-    "my",
-    "need",
-    "note",
-    "of",
-    "on",
-    "or",
-    "over",
-    "page",
-    "pdf",
-    "per",
-    "please",
-    "plot",
-    "plots",
-    "scatter",
-    "show",
-    "spreadsheet",
-    "table",
-    "that",
-    "the",
-    "their",
-    "them",
-    "then",
-    "they",
-    "this",
-    "titled",
-    "to",
-    "txt",
-    "us",
-    "using",
-    "value",
-    "values",
-    "want",
-    "we",
-    "what",
-    "when",
-    "where",
-    "which",
-    "with",
-    "xlsx",
-    "your",
-}
-
-
-def series_markdown(text: str) -> str:
-    """A markdown table of the word/number pairs in `text`, or empty."""
-    header = _HEADER.search(text or "")
-    left, right = ("label", "value")
-    if header:
-        left, right = header.group(1), header.group(2)
-    pairs: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for match in _PAIR.finditer(text or ""):
-        word, number = match.group(1), match.group(2)
-        if word.lower() in _SERIES_STOP or word.lower() in seen:
+        nxt = index + 1
+        if nxt < len(lines) and _RULE.match(lines[nxt]):
+            out.append(lines[index])
+            out.append(lines[nxt])
+            index = nxt + 1
+            while index < len(lines) and _pipe_row(lines[index]):
+                out.append(lines[index])
+                index += 1
             continue
-        seen.add(word.lower())
-        pairs.append((word, number))
-    if len(pairs) < 2:
-        return ""
-    rows = [f"| {left} | {right} |", "| --- | --- |"]
-    rows.extend(f"| {word} | {number} |" for word, number in pairs[:12])
-    return "\n".join(rows)
+        rows: list[list[str]] = []
+        while index < len(lines) and _pipe_row(lines[index]):
+            cells = _split(lines[index])
+            if len(cells) < 2:
+                break
+            rows.append(cells)
+            index += 1
+        if len(rows) < 2:
+            if not rows:
+                out.append(lines[index])
+                index += 1
+            else:
+                for row in rows:
+                    out.append("| " + " | ".join(row) + " |")
+            continue
+        width = max(len(row) for row in rows)
+        header = _header_names(width)
+        out.append("| " + " | ".join(header) + " |")
+        out.append("| " + " | ".join("---" for _ in header) + " |")
+        for row in rows:
+            padded = row + [""] * (width - len(row))
+            out.append("| " + " | ".join(padded[:width]) + " |")
+        changed = True
+    if not changed:
+        return text or ""
+    return "\n".join(out)
 
 
 def chart_samples(n: int = 50) -> list[dict]:

@@ -23,7 +23,6 @@ MAX_FILES = 32
 _KINDS = {"md", "txt", "csv", "docx", "xlsx", "pdf"}
 _ID = re.compile(r"[0-9a-f]{32}")
 _RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
-_KIND_ASK = re.compile(r"\b(pdf|docx|xlsx|csv|markdown|txt)\b|\.md\b", re.I)
 
 
 def _xml(text: str) -> str:
@@ -437,19 +436,6 @@ def purge_documents(max_age: float = MAX_AGE_S, now: float | None = None) -> int
         _unlink_doc(root, meta_path, meta)
         removed += 1
     return removed
-
-
-def kind_from_request(prompt: str) -> str:
-    """The file type the user named, or empty. Never guesses docx."""
-    from pair.turn import user_question
-
-    match = _KIND_ASK.search(user_question(prompt or ""))
-    if not match:
-        return ""
-    token = (match.group(1) or "md").lower()
-    if token == "markdown":
-        return "md"
-    return token
 
 
 def save_document(data: bytes, ext: str, name: str = "") -> dict:

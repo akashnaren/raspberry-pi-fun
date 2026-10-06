@@ -10,10 +10,10 @@ import json
 import os
 import re
 
-from pair.calc import evaluate_expr, notes_for
+from pair.calc import evaluate_expr
 from pair.turn import ATTACH_MARK
 
-_TOOL_LANG = "search|calc|plot|chart|doc|pdf|docx|xlsx|md|markdown|txt|csv"
+_TOOL_LANG = "search|calc|plot|chart|bar|doc|pdf|docx|xlsx|md|markdown|txt|csv"
 _FENCE = re.compile(rf"```({_TOOL_LANG})[ \t]*\n(.*?)```", re.S | re.I)
 _ANY_FENCE = re.compile(r"```([^\n`]*)\n?([\s\S]*?)```")
 _JSON_FENCE = re.compile(r"```json\n(.*?)```", re.S)
@@ -58,7 +58,7 @@ def _as_tool(name: str, body: str) -> tuple[str, str]:
     """Fence language to a tool name. pdf/docx/xlsx/md are documents."""
     label = (name or "").strip().lower()
     text = (body or "").strip()
-    if label == "chart":
+    if label in {"chart", "bar"}:
         label = "plot"
     if label in _FILE_LANG:
         kind = "md" if label == "markdown" else label
@@ -149,240 +149,149 @@ def _persona_lines(persona: str) -> set[str]:
     return rows
 
 
-_CHART_ASK = re.compile(r"\b(?:charts?|plots?|graphs?)\b", re.I)
-_FILE_ASK = re.compile(
-    r"\b(?:pdf|docx|xlsx|csv|markdown|txt|spreadsheets?|downloads?|files?)\b|\.md\b",
-    re.I,
-)
-_DOC_KINDS = {"pdf", "docx", "xlsx", "md", "txt", "csv"}
 _META_LINE = re.compile(r"^(kind|title|type)\s*:", re.I)
 
 
-def _leading_meta(body: str) -> dict[str, str]:
-    found: dict[str, str] = {}
+def _split_meta(body: str) -> tuple[str, str]:
+    """Leading kind, title, and type lines, then the rest of the fence."""
+    meta: list[str] = []
+    rest: list[str] = []
+    started = False
     for line in (body or "").splitlines():
-        stripped = line.strip()
-        if not stripped:
+        if not started and (not line.strip() or _META_LINE.match(line.strip())):
+            if line.strip():
+                meta.append(line.strip())
             continue
-        match = _META_LINE.match(stripped)
-        if not match:
-            break
-        value = stripped.split(":", 1)[1].strip()
-        found[match.group(1).lower()] = value
-    return found
+        started = True
+        rest.append(line)
+    return "\n".join(meta), "\n".join(rest).strip()
 
 
-def _kind_token(value: str) -> str:
-    token = (value or "").strip().lower()
-    if token == "markdown":
-        return "md"
-    if token in _DOC_KINDS:
-        return token
+def _copied_from_prompt(text: str, persona: str) -> bool:
+    """True when the block is a byte-for-byte span of the system prompt."""
+    payload = (text or "").strip()
+    source = (persona or "").strip()
+    if len(payload) < 24 or not source:
+        return False
+    return payload in source
+
+
+def _calc_line(body: str) -> str:
+    """The expression in a calc fence, or empty when it does not evaluate."""
+    _meta, payload = _split_meta(body)
+    text = payload or (body or "").strip()
+    if text and "\n" not in text and evaluate_expr(text) is not None:
+        return text
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and evaluate_expr(stripped) is not None:
+            return stripped
     return ""
 
 
-def _format_echo(payload: str, persona_words: set[str]) -> bool:
-    """True when the payload only repeats the prompt's format wording."""
-    from pair.nodes.compact_plan import concrete_tokens
-    from pair.turn import _content_words
-
-    words = _content_words(payload)
-    if not words or not words <= persona_words:
+def _real_block(name: str, body: str, persona: str) -> bool:
+    """A fence the model wrote, with content, that is not prompt text."""
+    meta, payload = _split_meta(body)
+    if _copied_from_prompt(body, persona) or _copied_from_prompt(payload, persona):
         return False
-    return not concrete_tokens(payload)
-
-
-def _prepare_payload(body: str, persona: str, question: str) -> str:
-    """Drop format lines and stand-in tables. Real prose stays."""
-    from pair.charts import without_placeholders
-    from pair.turn import PERSONA, _content_words
-
-    banned = _persona_lines(persona or PERSONA)
-    raw_lines = (body or "").splitlines()
-    index = 0
-    while index < len(raw_lines):
-        stripped = raw_lines[index].strip()
-        if not stripped or _META_LINE.match(stripped):
-            index += 1
-            continue
-        break
-    kept = []
-    for line in raw_lines[index:]:
-        flat = " ".join(line.split())
-        if flat in banned:
-            continue
-        kept.append(line)
-    rest = "\n".join(kept).strip()
-    cleaned = without_placeholders(rest).strip()
-    had_placeholder = cleaned != rest
-    payload = cleaned
-    if _format_echo(payload, _content_words(persona or PERSONA)):
-        payload = ""
-    user_words = _content_words(question)
-    if had_placeholder and payload and not (_content_words(payload) & user_words):
-        payload = ""
-    return payload.strip()
-
-
-def _doc_fence(kind: str, title: str, payload: str) -> str:
-    lines = [f"kind: {kind}"]
-    if title:
-        lines.append(f"title: {title}")
-    body = payload.strip()
-    if body:
-        lines.append(body)
-    return "```doc\n" + "\n".join(lines) + "\n```"
-
-
-def _plot_fence(payload: str) -> str:
-    label = "chart" if "|" in payload and "---" in payload else "plot"
-    return f"```{label}\n{payload.strip()}\n```"
-
-
-def _markdown_prose(original: str, body: str, persona: str, question: str) -> str:
-    """A markdown fence with no kind line is an answer, not a download."""
-    head = original.lstrip()[:12].lower()
-    if not head.startswith("```md"):
-        return ""
-    if re.search(r"(?mi)^kind\s*:", original):
-        return ""
-    return _prepare_payload(body, persona, question)
-
-
-def _series_numbers(table: str) -> list[str]:
-    from pair.charts import parse_markdown_table
-
-    parsed = parse_markdown_table(table)
-    if not parsed:
-        return re.findall(r"\b\d+(?:\.\d+)?\b", table or "")
-    _headers, rows = parsed
-    found = []
-    for row in rows:
-        for cell in row[1:]:
-            if re.fullmatch(r"\d+(?:\.\d+)?", cell.strip()):
-                found.append(cell.strip())
-    return found
-
-
-def _doc_fence_present(text: str) -> bool:
-    for match in _FENCE.finditer(text or ""):
-        name, _body = _as_tool(match.group(1), match.group(2))
-        if name == "doc":
-            return True
-    return False
-
-
-def _covers(text: str, numbers: list[str], kind: str) -> bool:
-    if not numbers:
+    if _copied_from_prompt(
+        "\n".join(part for part in (meta, payload) if part), persona
+    ):
         return False
-    found: set[str] = set()
-    for match in _FENCE.finditer(text or ""):
-        name, body = _as_tool(match.group(1), match.group(2))
-        if name != kind:
-            continue
-        found.update(re.findall(r"\b\d+(?:\.\d+)?\b", body))
-    need = set(numbers)
-    return len(need & found) * 2 >= len(need)
+    if name == "calc":
+        return bool(_calc_line(body))
+    if name == "search":
+        return bool((body or "").strip())
+    return bool(payload)
+
+
+def _kept_fence(original: str, label: str, name: str, body: str) -> str:
+    """The model's fence. A headerless table gains label/value headers."""
+    if name not in {"plot", "doc"}:
+        return original
+    from pair.charts import with_headers
+
+    meta, payload = _split_meta(body)
+    table = with_headers(payload)
+    if table == payload:
+        return original
+    parts = [part for part in (meta, table) if part]
+    return f"```{label}\n" + "\n".join(parts) + "\n```"
+
+
+def _close_trailing_fence(text: str) -> str:
+    """Keep a tool fence the model left open at the end of the reply."""
+    source = text or ""
+    closed = list(_FENCE.finditer(source))
+    cursor = closed[-1].end() if closed else 0
+    tail = source[cursor:]
+    opener = None
+    for match in re.finditer(rf"```({_TOOL_LANG})[ \t]*\n", tail, re.I):
+        opener = match
+    if opener is None:
+        return source
+    rest = tail[opener.end() :]
+    if "```" in rest or not rest.strip():
+        return source
+    return source.rstrip() + "\n```"
 
 
 def settle_blocks(
-    text: str, prompt: str = "", persona: str = "", context: str = ""
+    text: str,
+    prompt: str = "",
+    persona: str = "",
+    context: str = "",
+    have_tools: bool = False,
 ) -> str:
-    """Drop copied format blocks. Chart and file fences need a real ask.
+    """Keep a chart or file only when the model wrote a block with content.
 
-    A stand-in table is replaced with numbers from the user's turn when they
-    asked for a chart or a spreadsheet. Anything rejected here is not a tool
-    call: it does not search, draw, or write a file.
+    Nothing here wraps a plain reply as a download, and nothing here builds
+    a table from the user's wording. A search fence runs at most once, and
+    not when this turn already has a tool result. A block copied from the
+    system prompt is dropped. A rejected block is not a tool call.
     """
-    from pair.charts import series_markdown
-    from pair.docs import kind_from_request
-    from pair.turn import PERSONA, notes_for, user_question
+    from pair.turn import PERSONA, notes_for, sample_turns, user_question
 
+    del context
     question = user_question(prompt or "")
-    asked_chart = bool(_CHART_ASK.search(question))
-    asked_file = bool(_FILE_ASK.search(question))
-    wanted = kind_from_request(prompt or "")
-    series = ""
-    if asked_chart or wanted in {"xlsx", "csv"}:
-        series = series_markdown(question)
+    samples = "\n".join(row["content"] for row in sample_turns())
+    source_persona = "\n".join(part for part in ((persona or PERSONA), samples) if part)
+    source = _close_trailing_fence(text or "")
+    found = []
+    for match in _FENCE.finditer(source):
+        raw = match.group(2)
+        name, _body = _as_tool(match.group(1), raw)
+        found.append((match, name, raw))
+    other = any(
+        name != "search" and _real_block(name, raw, source_persona)
+        for _match, name, raw in found
+    )
+    block_search = bool(have_tools or other or notes_for(question))
     pieces: list[str] = []
     last = 0
-    source = text or ""
-    for match in _FENCE.finditer(source):
+    saw_search = False
+    for match, name, raw in found:
         pieces.append(source[last : match.start()])
-        name, body = _as_tool(match.group(1), match.group(2))
-        pieces.append(
-            _settle_fence(
-                match.group(0),
-                name,
-                body,
-                prompt,
-                persona or PERSONA,
-                context,
-                question,
-                asked_chart,
-                asked_file,
-                wanted,
-                series,
-            )
-        )
+        keep = ""
+        if name == "search":
+            if (
+                not saw_search
+                and not block_search
+                and _real_block(name, raw, source_persona)
+            ):
+                keep = match.group(0)
+                saw_search = True
+        elif _real_block(name, raw, source_persona):
+            keep = _kept_fence(match.group(0), match.group(1), name, raw)
+        pieces.append(keep)
         last = match.end()
     pieces.append(source[last:])
     out = "".join(pieces)
-    numbers = _series_numbers(series)
-    if asked_chart and series and not _covers(out, numbers, "plot"):
-        block = _plot_fence(series)
-        out = f"{out.rstrip()}\n\n{block}" if out.strip() else block
-    if wanted in {"xlsx", "csv"} and series and not _covers(out, numbers, "doc"):
-        block = _doc_fence(wanted, "", series)
-        out = f"{out.rstrip()}\n\n{block}" if out.strip() else block
-    if wanted and not _doc_fence_present(out):
-        prose = _prepare_payload(out, persona or PERSONA, question)
-        if prose:
-            out = _doc_fence(wanted, "", prose)
     if not out.strip():
         note = notes_for(question)
         if note:
             return note
     return out
-
-
-def _settle_fence(
-    original: str,
-    name: str,
-    body: str,
-    prompt: str,
-    persona: str,
-    context: str,
-    question: str,
-    asked_chart: bool,
-    asked_file: bool,
-    wanted: str,
-    series: str,
-) -> str:
-    from pair.turn import answered_locally
-
-    if name == "search":
-        if answered_locally(prompt or "", context):
-            return ""
-        return original
-    if name == "calc":
-        return original if body.strip() else ""
-    if name == "plot" and not asked_chart:
-        return ""
-    if name == "doc" and not asked_file:
-        return _markdown_prose(original, body, persona, question)
-    payload = _prepare_payload(body, persona, question)
-    if not payload:
-        if series and (name == "plot" or wanted in {"xlsx", "csv"}):
-            payload = series
-        else:
-            return ""
-    if name == "plot":
-        return _plot_fence(payload)
-    meta = _leading_meta(body)
-    kind = wanted or _kind_token(meta.get("kind", "")) or "md"
-    return _doc_fence(kind, meta.get("title", ""), payload)
 
 
 def clean_reply(
@@ -391,11 +300,12 @@ def clean_reply(
     source_count: int = 0,
     persona: str = "",
     context: str = "",
+    have_tools: bool = False,
 ) -> str:
     """Drop empty fences, repeated fences, echoed prompt lines, and stray [n]."""
     from pair.turn import PERSONA, user_question
 
-    cleaned = settle_blocks(text or "", prompt, persona, context)
+    cleaned = settle_blocks(text or "", prompt, persona, context, have_tools=have_tools)
     cleaned = dedupe_fences(strip_fences(cleaned))
     question = " ".join(user_question(prompt or "").split())
     banned = _persona_lines(persona or PERSONA)
@@ -463,17 +373,10 @@ def language_class(lang: str) -> str:
 
 
 def _calc_note(body: str) -> str:
-    line = ""
-    for raw in (body or "").splitlines():
-        if raw.strip():
-            line = raw.strip()
-            break
+    line = _calc_line(body)
     shown = evaluate_expr(line) if line else None
     if shown is not None:
         return f"Calculator: {line} = {shown}."
-    fallback = notes_for(body)
-    if fallback:
-        return fallback
     return "Calculator: no result."
 
 
@@ -522,9 +425,16 @@ def _doc_note(body: str) -> str:
     return f"Document: {meta['name']}."
 
 
-def tool_notes(text: str, search=None, *, prompt: str = "", context: str = "") -> str:
+def tool_notes(
+    text: str,
+    search=None,
+    *,
+    prompt: str = "",
+    context: str = "",
+    have_tools: bool = False,
+) -> str:
     """Run at most two fences. A rejected block is not a tool call."""
-    text = settle_blocks(text, prompt=prompt, context=context)
+    text = settle_blocks(text, prompt=prompt, context=context, have_tools=have_tools)
     fences = parse_fences(text)
     if not fences:
         return ""
@@ -534,16 +444,16 @@ def tool_notes(text: str, search=None, *, prompt: str = "", context: str = "") -
         search = web_search
 
     lines = []
+    saw_search = False
     for fence in fences:
         name = fence["name"]
         body = fence["body"]
         if name == "calc":
             lines.append(_calc_note(body))
         elif name == "search":
-            from pair.turn import answered_locally
-
-            if answered_locally(prompt, context):
+            if saw_search:
                 continue
+            saw_search = True
             lines.append(_search_note(body, search))
         elif name == "plot":
             lines.append(_plot_note(body))

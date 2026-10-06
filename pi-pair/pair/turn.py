@@ -25,16 +25,58 @@ ATTACH_MARK = "\n\n---\n"
 CHARS_PER_TOKEN = 3.2
 
 PERSONA = (
-    "You are OpenPi, the assistant on a Raspberry Pi. You are not the user. "
+    "You are OpenPi on a Raspberry Pi. You are not the user. "
     "Answer in the user's language with the useful part only. "
-    "Use attached notes when they are present.\n"
-    "A chart is a markdown table in a plot fence. "
-    "A downloadable file is a doc fence whose first lines are its kind "
-    "(pdf, docx, xlsx, or md) and a title, then the file text. "
-    "Arithmetic is a calc fence. A lookup is a search fence. "
-    "Write a fence only when the user asked for that. "
-    "Keep the language tag on a code sample."
+    "Use attached notes when they are present. "
+    "A chart is a plot fence and arithmetic is a calc fence. "
+    "Sample replies show the fence shape only. They are not the user's files. "
+    "Never quote them. A question is plain text."
 )
+
+
+def sample_turns() -> list[dict[str, str]]:
+    """Fence shapes a small model can copy. The words are not facts.
+
+    A block that repeats one of these replies byte for byte is dropped later.
+    """
+    return [
+        {"role": "user", "content": "Make a chart of north 2 and south 4."},
+        {
+            "role": "assistant",
+            "content": (
+                "```plot\n| label | value |\n| --- | --- |\n"
+                "| north | 2 |\n| south | 4 |\n```"
+            ),
+        },
+        {
+            "role": "user",
+            "content": "Make a pdf file I can download with two lines.",
+        },
+        {"role": "assistant", "content": "```pdf\nzz\nqq\n```"},
+        {
+            "role": "user",
+            "content": "Make a docx file I can download with two chores.",
+        },
+        {"role": "assistant", "content": "```docx\n- sweep\n- water\n```"},
+        {
+            "role": "user",
+            "content": "Make an xlsx with columns left and right: aa 1, bb 2.",
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "```xlsx\n| left | right |\n| --- | --- |\n| aa | 1 |\n| bb | 2 |\n```"
+            ),
+        },
+        {
+            "role": "user",
+            "content": "Make a markdown file I can download with one step.",
+        },
+        {"role": "assistant", "content": "```md\nstep\n```"},
+        {"role": "user", "content": "What is the capital of France?"},
+        {"role": "assistant", "content": "Paris."},
+    ]
+
 
 # Length lives in the prompt. None of these turn Qwen3 thinking on.
 EFFORT_HINT = {
@@ -193,78 +235,14 @@ def _time_sensitive(question: str) -> bool:
     return False
 
 
-_CONTENT = re.compile(r"[a-z]{4,}")
-_CONTENT_SKIP = {
-    "this",
-    "that",
-    "with",
-    "from",
-    "your",
-    "have",
-    "what",
-    "when",
-    "where",
-    "which",
-    "about",
-    "would",
-    "could",
-    "should",
-    "there",
-    "their",
-    "them",
-    "they",
-    "then",
-    "than",
-    "into",
-    "more",
-    "most",
-    "some",
-    "just",
-    "please",
-    "make",
-    "file",
-    "files",
-    "down",
-    "user",
-    "said",
-    "assistant",
-}
-
-
-def _content_words(text: str) -> set[str]:
-    return {
-        word
-        for word in _CONTENT.findall((text or "").lower())
-        if word not in _CONTENT_SKIP
-    }
-
-
-def _context_answers(question: str, context: str) -> bool:
-    """True when earlier text already contains what this question is asking."""
-    from pair.nodes.compact_plan import concrete_tokens
-
-    asked = _content_words(question)
-    remembered = _content_words(context)
-    if len(asked) < 2 or len(asked & remembered) < min(2, len(asked)):
-        return False
-    extra = concrete_tokens(context) - concrete_tokens(question)
-    if extra:
-        return True
-    return len(remembered - asked) >= 3
-
-
 def answered_locally(prompt: str, context: str = "") -> bool:
-    """Calculator or earlier text already covers the question.
+    """True when the calculator can finish the question from its expression.
 
-    A time cue still needs a lookup. Arithmetic wins over that, because a
-    long number inside an expression is not a date.
+    Earlier notes are not scanned with a word list. A model search fence is
+    limited separately: once per turn, and only if no tool result exists yet.
     """
-    question = user_question(prompt)
-    if notes_for(question):
-        return True
-    if not (context or "").strip() or _time_sensitive(question):
-        return False
-    return _context_answers(question, context)
+    del context
+    return notes_for(user_question(prompt)) is not None
 
 
 @functools.lru_cache(maxsize=256)
@@ -288,16 +266,15 @@ def needs_web(prompt: str, follow_up: bool = False, context: str = "") -> bool:
 
     `ground_all` searches every question except an attachment, a message the
     calculator can finish, fewer than three words, or a short follow-up with
-    no question mark. When the knob is off, search is a time cue. Earlier
-    notes that already answer a question that is not time-sensitive skip the
-    lookup. A search fence is how the model asks for any other fact.
+    no question mark. When the knob is off, search is a time cue. A search
+    fence is how the model asks for any other fact. That fence runs once per
+    turn, and only when this turn does not already have a tool result.
     """
+    del context
     if notes_for(user_question(prompt or "")):
         return False
     ground_all = bool(inference_knobs().get("ground_all", False))
-    if not _needs_web(prompt or "", bool(follow_up), ground_all):
-        return False
-    return not answered_locally(prompt or "", context)
+    return _needs_web(prompt or "", bool(follow_up), ground_all)
 
 
 def fence_user_text(content: str, limit: int) -> str:
@@ -605,8 +582,7 @@ def shape_messages(
         stable.append({"role": "system", "content": fact_text})
     if summary_text:
         stable.append({"role": "system", "content": "Summary:\n" + summary_text})
-    if stable:
-        rows = [rows[0], *stable, *rows[1:]]
+    rows = [rows[0], *stable, *sample_turns(), *rows[1:]]
     calc = notes_for(user_question(prompt)) or ""
     combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
     rows = add_notes(rows, tail_note(effort, combined, hints))

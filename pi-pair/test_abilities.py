@@ -97,7 +97,7 @@ class Abilities(unittest.TestCase):
         self.assertNotIn(question, cleaned)
         self.assertNotIn("```calc", cleaned)
         self.assertNotIn("not a language", cleaned)
-        self.assertNotIn("```doc", cleaned)
+        self.assertEqual(cleaned.count("```doc"), 1)
         self.assertNotIn("[n]", cleaned)
         self.assertNotIn("[3]", cleaned)
         self.assertNotIn("[1]", cleaned)
