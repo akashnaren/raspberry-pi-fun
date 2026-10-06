@@ -76,7 +76,7 @@ def _map(text: str) -> str:
         return TIMEOUT
     if "too long" in low or "too large" in low or "over 4 mb" in low or "413" in low:
         return TOO_BIG
-    if "jpeg-scanned" in low:
+    if "jpeg-scanned" in low or "no readable text" in low:
         return PDF_SCAN
     if "not installed" in low or "this pi" in low:
         return OCR_MISSING

@@ -39,6 +39,7 @@ class FriendlyMap(unittest.TestCase):
             "pi2 does not run a chat model": NO_CHAT,
             "qwen2.5:1.5b is not on pi4. This router does not pull it. On pi4, when you mean to: ollama pull qwen2.5:1.5b": MODEL_MISSING,
             "only a JPEG-scanned PDF can be read": PDF_SCAN,
+            "that PDF has no readable text": PDF_SCAN,
             "OCR is not installed on this Pi": OCR_MISSING,
             "OCR is busy": OCR_BUSY,
             "unsupported file type": FILE_TYPE,
