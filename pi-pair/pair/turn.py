@@ -12,6 +12,7 @@ import functools
 import json
 import re
 
+from pair.calc import notes_for
 from pair.errors import friendly_error
 from pair.knobs import attachment_limit, inference_knobs
 
@@ -461,7 +462,9 @@ def shape_messages(
     rows = fence_messages(messages, knobs)
     rows = add_chart_hint(rows, prompt)
     rows = add_persona(rows, prompt, effort, knobs)
-    rows = add_notes(rows, notes)
+    calc = notes_for(user_question(prompt)) or ""
+    combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
+    rows = add_notes(rows, combined)
     return fit_messages(rows, knobs)
 
 
