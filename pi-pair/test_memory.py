@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import threading
 import unittest
+import urllib.request
 
 from pair import memory
 from pair.compact import plan, run_compact, schedule, should_compact
 from pair.context import Ledger, ledger_for, reset, verbatim_budget
+from pair.memory import scope_key
+from pair.server import make_server
 from pair.turn import estimate_tokens, shape_messages
 
 
@@ -145,6 +149,132 @@ class CompactTests(unittest.TestCase):
         book.observe(10)
         self.assertEqual(memory.stats()["used"], 10)
         self.assertGreaterEqual(memory.stats()["compactions"], 0)
+
+    def test_filler_summary_keeps_the_locker_code(self):
+        turns = []
+        for index in range(12):
+            turns.append(
+                {"role": "user", "content": f"day {index} talks about the weather"}
+            )
+            turns.append({"role": "assistant", "content": "Noted."})
+        turns.append({"role": "user", "content": "My locker code is 4417."})
+        turns.append({"role": "assistant", "content": "Noted."})
+        for index in range(12):
+            turns.append(
+                {
+                    "role": "user",
+                    "content": f"later day {index} talks about the weather",
+                }
+            )
+            turns.append({"role": "assistant", "content": "Noted."})
+        result = run_compact(
+            turns,
+            256,
+            idle=lambda: True,
+            generate=lambda _draft: "The user talked about the weather for many days.",
+        )
+        self.assertTrue(result["ok"])
+        self.assertIn("4417", result["summary"])
+        self.assertIn("My locker code is 4417.", result["facts"])
+        memory.remember_user(result["facts"], scope="chat-a")
+        memory.save_summary(result["summary"], result["elapsed_ms"], scope="chat-a")
+        asked = "What is my locker code?"
+        shaped = shape_messages(
+            [{"role": "user", "content": asked}],
+            asked,
+            facts=memory.facts_block("chat-a"),
+            summary=memory.summary_text("chat-a"),
+        )
+        blob = "\n".join(str(row["content"]) for row in shaped)
+        self.assertIn("4417", blob)
+        other = shape_messages(
+            [{"role": "user", "content": asked}],
+            asked,
+            facts=memory.facts_block("chat-b"),
+            summary=memory.summary_text("chat-b"),
+        )
+        other_blob = "\n".join(str(row["content"]) for row in other)
+        self.assertNotIn("4417", other_blob)
+
+    def test_a_later_number_replaces_the_earlier_line(self):
+        folded = plan(
+            [
+                {"role": "user", "content": "The locker code is 1111."},
+                {"role": "user", "content": "The locker code is 4417."},
+                {"role": "user", "content": "thanks for the weather update today"},
+                {"role": "assistant", "content": "Glad to help with that."},
+            ],
+            64,
+        )
+        joined = "\n".join(folded["facts"])
+        self.assertIn("4417", joined)
+        self.assertNotIn("1111", joined)
+        memory.remember_user(
+            ["the locker code is 1111", "the locker code is 4417"],
+            scope="codes",
+        )
+        stored = " ".join(row["text"] for row in memory.list_facts("codes"))
+        self.assertIn("4417", stored)
+        self.assertNotIn("1111", stored)
+
+    def test_two_sessions_cannot_read_or_clear_each_other(self):
+        alice = scope_key("chat-a", "client-a")
+        bob = scope_key("chat-b", "client-b")
+        memory.remember_user(["the locker code is 4182"], scope=alice)
+        memory.save_summary("code 4182", 12, scope=alice)
+        memory.remember_user(["the dog is named Biscuit"], scope=bob)
+        memory.remember_user(["the default secret is 9991"])
+        self.assertTrue(any("4182" in row["text"] for row in memory.list_facts(alice)))
+        self.assertFalse(any("4182" in row["text"] for row in memory.list_facts(bob)))
+        memory.clear_facts(bob)
+        memory.clear_facts("")
+        self.assertTrue(any("4182" in row["text"] for row in memory.list_facts(alice)))
+        self.assertIn("4182", memory.summary_text(alice))
+        self.assertEqual(memory.list_facts(""), [])
+        self.assertEqual(memory.summary_text(""), "")
+        httpd = make_server("127.0.0.1", 0)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = httpd.server_address
+            base = f"http://{host}:{port}/v1/memory"
+
+            def fetch(headers=None, method="GET"):
+                req = urllib.request.Request(base, headers=headers or {}, method=method)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    return json.loads(resp.read().decode())
+
+            seen = fetch({"X-Pi-Chat": "chat-a", "X-Pi-Client": "client-a"})
+            self.assertTrue(any("4182" in row["text"] for row in seen["facts"]))
+            self.assertIn("4182", seen["summary"])
+            other = fetch({"X-Pi-Chat": "chat-b", "X-Pi-Client": "client-b"})
+            self.assertEqual(other["facts"], [])
+            self.assertNotIn("4182", other["summary"])
+            public = fetch()
+            self.assertEqual(public["facts"], [])
+            self.assertEqual(public["summary"], "")
+            self.assertNotIn("9991", json.dumps(public))
+            self.assertNotIn("4182", json.dumps(public))
+            fetch(
+                {"X-Pi-Chat": "chat-b", "X-Pi-Client": "client-b"},
+                method="DELETE",
+            )
+            fetch(method="DELETE")
+            still = fetch({"X-Pi-Chat": "chat-a", "X-Pi-Client": "client-a"})
+            self.assertTrue(any("4182" in row["text"] for row in still["facts"]))
+            self.assertIn("4182", still["summary"])
+            shaped = shape_messages(
+                [{"role": "user", "content": "hello"}],
+                "hello",
+                facts=memory.facts_block(bob),
+                summary=memory.summary_text(bob),
+            )
+            blob = "\n".join(str(row["content"]) for row in shaped)
+            self.assertNotIn("4182", blob)
+            self.assertNotIn("9991", blob)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
 
 
 if __name__ == "__main__":

@@ -43,8 +43,9 @@ _DEFAULTS = {
     # that replaces pair.moderate.moderate. On restores the in-process gate.
     "safety_filter": False,
     # Search every question except attachments, bare arithmetic, very short
-    # lines, and short follow-ups. Off keeps search to time cues only.
-    "ground_all": True,
+    # lines, and short follow-ups. Off keeps automatic search to time cues.
+    # The model asks for any other fact with a search fence.
+    "ground_all": False,
 }
 
 

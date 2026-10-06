@@ -16,7 +16,7 @@ from pathlib import Path
 
 from pair.abilities import (
     JSON_RETRY,
-    ground_citations,
+    clean_reply,
     needs_json_retry,
     tail_hints,
     tool_notes,
@@ -608,18 +608,27 @@ def _memory_stats() -> dict:
     try:
         from pair import memory
 
-        return memory.stats()
+        return memory.stats("")
     except Exception:
         return {"used": 0, "num_ctx": 0, "compactions": 0, "last_compact_ms": 0}
 
 
-def _memory_prompt() -> tuple[str, str]:
+def _memory_prompt(scope: str) -> tuple[str, str]:
+    if not scope:
+        return "", ""
     try:
         from pair import memory
 
-        return memory.facts_block(), memory.summary_text()
+        return memory.facts_block(scope), memory.summary_text(scope)
     except Exception:
         return "", ""
+
+
+def _source_count(search_note) -> int:
+    if not isinstance(search_note, dict):
+        return 0
+    sources = search_note.get("sources")
+    return len(sources) if isinstance(sources, list) else 0
 
 
 def public_health(doc: dict) -> dict:
@@ -1434,7 +1443,7 @@ class Handler(BaseHTTPRequestHandler):
                         getattr(self, "_cancel", None),
                         job=search_job,
                     )
-                fact_text, summary_text = _memory_prompt()
+                fact_text, summary_text = _memory_prompt(self._memory_scope())
                 outbound = shape_messages(
                     outbound,
                     prompt,
@@ -1607,8 +1616,8 @@ class Handler(BaseHTTPRequestHandler):
             ctx = int((_tuned_knobs("") or {}).get("num_ctx") or 2048)
         except Exception:
             ctx = 2048
-        chat_id = (self.headers.get("X-Pi-Chat") or "").strip() or "default"
-        book = ledger_for(chat_id, ctx)
+        scope = self._memory_scope()
+        book = ledger_for(scope or "anon", ctx)
         count = int((getattr(self, "_usage", {}) or {}).get("prompt_eval_count") or 0)
         if count:
             book.observe(count)
@@ -1619,19 +1628,26 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(row, dict)
             )
             book.note_estimate(text)
-        if not should_compact(book.used(), book.num_ctx, runtime.gate.waiting() > 0):
+        if not scope or not should_compact(
+            book.used(), book.num_ctx, runtime.gate.waiting() > 0
+        ):
             return
         schedule(
             [row for row in messages or [] if isinstance(row, dict)],
             book.num_ctx,
             idle=lambda: True,
+            scope=scope,
         )
 
     def _memory_get(self) -> None:
         from pair import memory
 
+        scope = self._memory_scope()
         body = json.dumps(
-            {"facts": memory.list_facts(), "summary": memory.summary_text()}
+            {
+                "facts": memory.list_facts(scope) if scope else [],
+                "summary": memory.summary_text(scope) if scope else "",
+            }
         ).encode()
         self.send_response(200)
         self._cors()
@@ -1643,11 +1659,14 @@ class Handler(BaseHTTPRequestHandler):
     def _memory_delete(self, fact_id: str) -> None:
         from pair import memory
 
-        if fact_id:
-            memory.delete_fact(fact_id)
-        else:
-            memory.clear_facts()
-        body = json.dumps({"ok": True, "facts": memory.list_facts()}).encode()
+        scope = self._memory_scope()
+        if scope and fact_id:
+            memory.delete_fact(fact_id, scope=scope)
+        elif scope:
+            memory.clear_facts(scope)
+        body = json.dumps(
+            {"ok": True, "facts": memory.list_facts(scope) if scope else []}
+        ).encode()
         self.send_response(200)
         self._cors()
         self.send_header("content-type", "application/json")
@@ -1888,6 +1907,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         safe_write(self, body)
 
+    def _memory_scope(self) -> str:
+        """Chat plus client. Missing both reads and writes nothing."""
+        from pair.memory import scope_key
+
+        headers = getattr(self, "headers", None)
+        chat = client = ""
+        if headers is not None:
+            chat = str(headers.get("X-Pi-Chat") or "")
+            client = str(headers.get("X-Pi-Client") or "")
+        return scope_key(chat, client)
+
     def _client_key(self) -> str:
         """Header id when the caller set one, otherwise the socket address."""
         header = ""
@@ -2105,12 +2135,7 @@ class Handler(BaseHTTPRequestHandler):
             search_note,
             content,
         )
-        if search_note is not None:
-            sources = (
-                search_note.get("sources") if isinstance(search_note, dict) else []
-            )
-            count = len(sources) if isinstance(sources, list) else 0
-            content = ground_citations(content, count)
+        content = clean_reply(content, prompt, _source_count(search_note))
         if not str(content).strip():
             raise DecodeFailed(friendly_error(""))
         return content, used, True
@@ -2274,7 +2299,7 @@ class Handler(BaseHTTPRequestHandler):
             answer_extra["pi_sources"] = search_note["sources"]
         if not emit_status("answering", answer_extra or None):
             return
-        fact_text, summary_text = _memory_prompt()
+        fact_text, summary_text = _memory_prompt(self._memory_scope())
         messages = shape_messages(
             messages,
             prompt,
@@ -2542,6 +2567,7 @@ class Handler(BaseHTTPRequestHandler):
                 answer = "".join(parts)
             if not policy and not is_harmful(prompt):
                 answer = scrub_reply(answer) or answer
+                streamed = answer
                 more = self._one_more_round(
                     peer,
                     kind,
@@ -2553,27 +2579,27 @@ class Handler(BaseHTTPRequestHandler):
                     search_note,
                     answer,
                 )
-                if more != answer:
-                    replaced = not more.startswith(answer)
-                    piece = more if replaced else more[len(answer) :]
-                    if piece.strip():
-                        extra = {
-                            "id": "pi-pair",
-                            "object": "chat.completion.chunk",
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {"content": piece},
-                                    "finish_reason": None,
-                                }
-                            ],
-                        }
-                        if replaced:
-                            extra["pi_replace"] = True
-                        safe_write(
-                            self, f"data: {json.dumps(extra)}\n\n".encode(), flush=True
-                        )
-                    answer = more
+                shown = clean_reply(more, prompt, _source_count(search_note))
+                visible = "\n".join(
+                    line for line in streamed.splitlines() if line.strip()
+                ).strip()
+                if shown != visible:
+                    extra = {
+                        "id": "pi-pair",
+                        "object": "chat.completion.chunk",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": shown},
+                                "finish_reason": None,
+                            }
+                        ],
+                        "pi_replace": True,
+                    }
+                    safe_write(
+                        self, f"data: {json.dumps(extra)}\n\n".encode(), flush=True
+                    )
+                answer = shown
             trainable = not policy
             if not policy and not str(answer).strip():
                 err = {"error": friendly_error("")}

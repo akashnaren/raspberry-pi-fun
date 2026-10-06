@@ -41,6 +41,24 @@ function httpSource(value: string): string {
   return text;
 }
 
+/** Drop [n], [n=1], and a number that is not in the source list. Fences stay. */
+export function dropStrayMarkers(text: string, sourceCount: number, final: boolean): string {
+  const limit = Math.max(0, Math.floor(sourceCount));
+  const parts = String(text || "").split(/(```[\s\S]*?```)/);
+  return parts
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      return part.replace(/\[(n(?:=\d+)?|\d+)\]/gi, (all, inner: string) => {
+        if (/^n/i.test(inner)) return "";
+        if (!final) return all;
+        const n = Number(inner);
+        if (n >= 1 && n <= limit) return all;
+        return "";
+      });
+    })
+    .join("");
+}
+
 /** Link [n] only when that snippet is in the source list. Other numbers stay text. */
 export function linkCitations(html: string, count: number): string {
   const limit = Math.max(0, Math.floor(count));
@@ -137,11 +155,6 @@ function faviconNode(doc: Document, src: SourceLink): HTMLElement {
     if (img.naturalWidth > 0) img.style.opacity = "1";
   });
   img.addEventListener("error", () => {
-    if (img.dataset.step !== "local" && plan.local) {
-      img.dataset.step = "local";
-      img.src = plan.local;
-      return;
-    }
     img.remove();
   });
   wrap.appendChild(img);

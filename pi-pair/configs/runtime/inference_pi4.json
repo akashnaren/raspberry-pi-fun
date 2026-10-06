@@ -15,7 +15,7 @@
   "flash_num_batch": 128,
   "pro_num_batch": 128,
   "search_note_chars": 720,
-  "ground_all": true,
+  "ground_all": false,
   "safety_filter": false,
   "role": "pi4",
   "rollback": {

@@ -6,9 +6,10 @@ line are empty, and an interactive arrival cancels it. Tool jobs go to pi2 and
 pi3 through the tool registry and never take the slot.
 
 Each client may keep two requests queued behind the one that is running. A
-full line, or a wait past three minutes, is a 503. Tools for the next request
-start while the current decode still holds the slot. A hot board delays the
-next decode. This never starts a second model call.
+full line of eight is a 503. The ETA stays visible and does not refuse a
+waiter. Tools for the next request start while the current decode still holds
+the slot. A hot board delays the next decode. This never starts a second
+model call.
 """
 
 from __future__ import annotations
@@ -25,8 +26,6 @@ from pair.errors import BUSY
 QUEUE_LIMIT = 8
 # Answers often run for minutes. A waiter keeps its place for 15 minutes.
 WAIT_TIMEOUT_S = 900.0
-# Past this estimated wait the line answers 503 instead of growing.
-WAIT_LIMIT_S = 180
 # One running request is the slot itself. Two more may wait per client.
 PER_CLIENT_QUEUED = 2
 HEAT_C = 80.0
@@ -207,8 +206,6 @@ class InferenceGate:
             if self._queued_locked(client) >= PER_CLIENT_QUEUED:
                 return "full", None
             if len(self._queue) >= self.queue_limit:
-                return "full", None
-            if self._wait_too_long_locked():
                 return "full", None
             ticket = Ticket(client)
             self._place_locked(ticket)
@@ -396,12 +393,6 @@ class InferenceGate:
                 self._queue.insert(index, ticket)
                 return
         self._queue.append(ticket)
-
-    def _wait_too_long_locked(self) -> bool:
-        if not self._rates.ready():
-            return False
-        pos = self._in_flight + len(self._queue) + 1
-        return self.eta_s(pos) > WAIT_LIMIT_S
 
     def _stop_background(self) -> None:
         """Ask the idle summary to stop. Safe to call while holding the lock."""
@@ -608,7 +599,7 @@ def estimate_report() -> dict:
 
 
 def admission_report() -> dict:
-    """503 when eight are waiting, and when the estimate passes 180 s."""
+    """503 when eight are waiting. A long ETA still gets a place and a number."""
     gate = InferenceGate(1, queue_limit=8)
     gate.note_rates(1000, 1000, 1, 1)
     gate.try_acquire()
@@ -621,14 +612,23 @@ def admission_report() -> dict:
     slow = InferenceGate(1, queue_limit=8)
     slow.note_rates(1, 1, 200, 200)
     slow.try_acquire()
-    late, _ticket = slow.reserve_ticket("late")
+    late, ticket = slow.reserve_ticket("late")
+    pos = slow.position(ticket) if ticket is not None else 0
+    eta = slow.eta_s(pos) if ticket is not None else 0
     retry = slow.retry_after_s()
     return {
         "queued": queued,
         "ninth": overflow,
         "long_wait": late,
+        "long_position": pos,
+        "long_eta_s": eta,
         "long_retry_after_s": retry,
-        "ok": queued == 8 and overflow == "full" and late == "full" and retry > 180,
+        "ok": queued == 8
+        and overflow == "full"
+        and late == "wait"
+        and pos >= 2
+        and eta > 180
+        and retry > 180,
     }
 
 

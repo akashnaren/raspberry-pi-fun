@@ -1,5 +1,6 @@
 import { parseHTML } from "linkedom";
 import {
+  dropStrayMarkers,
   faviconPlan,
   faviconStack,
   renderFailedSearch,
@@ -50,6 +51,18 @@ if (pill.querySelectorAll(".sources-fallback").length !== 3) {
 }
 if (!icons[0].src.includes("google.com/s2/favicons") || icons[0].dataset.local !== plan.local) {
   throw new Error("pill favicon " + icons[0].src);
+}
+const stray = dropStrayMarkers("See [n] and [n=1] and [53] and [1].", 1, true);
+if (stray.includes("[n]") || stray.includes("[53]") || !stray.includes("[1]")) {
+  throw new Error("stray markers stayed: " + stray);
+}
+const live = dropStrayMarkers("See [1] and [n].", 1, false);
+if (!live.includes("[1]") || live.includes("[n]")) {
+  throw new Error("a live marker was handled wrong: " + live);
+}
+icons[0].dispatchEvent(new icons[0].ownerDocument.defaultView.Event("error"));
+if (pill.querySelectorAll(".sources-fav img").length !== 2) {
+  throw new Error("a failed favicon requested another url");
 }
 
 const failed = renderFailedSearch(document);

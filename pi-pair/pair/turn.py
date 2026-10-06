@@ -2,10 +2,11 @@
 
 With ground_all, search runs unless the turn is an attachment, only
 arithmetic, shorter than three words, or a short follow-up with no question
-mark. With the knob off, search is a time cue. Attachment text and search
-notes are untrusted data: control tokens and role labels are stripped, the
-file and the notes are fenced, and the whole prompt is cut so a 2048-token
-context still has room to answer.
+mark. With the knob off, search is a time cue and the model asks for a
+lookup with a search fence. Attachment text and search notes are untrusted
+data: control tokens and role labels are stripped, the file and the notes
+are fenced, and the whole prompt is cut so a 2048-token context still has
+room to answer.
 """
 
 from __future__ import annotations
@@ -24,15 +25,17 @@ ATTACH_MARK = "\n\n---\n"
 CHARS_PER_TOKEN = 3.2
 
 PERSONA = (
-    "You are OpenPi, a helpful assistant on a Raspberry Pi, made by Akash. "
-    "Answer directly in the user's language. Use a list only for several items. "
-    "Rely on notes and do not add unsupported facts. "
-    "Cite [n] only when that number is in the notes. "
-    "If unsure, say you do not know. Ask one short clarifying question when a request is ambiguous. "
-    "Never say you lack internet access. "
-    "For summarize, rewrite, or translate, do only that; a summary is much shorter. "
-    "Keep a code fence's language tag. Image text is OCR, so say so. "
-    "Use one ```calc, ```plot, or ```doc fence. A data table is markdown."
+    "You are OpenPi, a helpful assistant on a Raspberry Pi. "
+    "Answer in the user's language with the useful part only. "
+    "Use attached notes when they are present. "
+    "For arithmetic, a chart, a downloadable file, or a lookup, "
+    "include one block of this shape and then the answer:\n"
+    "```doc\nkind: pdf\ntitle: Note\n"
+    "| item | n |\n| --- | --- |\n| a | 1 |\n"
+    "A short paragraph.\n```\n"
+    "The label can be calc, plot, doc, or search, and kind can be pdf, docx, xlsx, or md. "
+    "A markdown table is a chart. "
+    "Keep the language tag on a code sample."
 )
 
 # Length lives in the prompt. None of these turn Qwen3 thinking on.
@@ -209,9 +212,10 @@ def needs_web(prompt: str, follow_up: bool = False) -> bool:
 
     `ground_all` searches every question except an attachment, a message that
     is only arithmetic, fewer than three words, or a short follow-up with no
-    question mark. When the knob is off, search is a time cue.
+    question mark. When the knob is off, search is a time cue. A search fence
+    is how the model asks for any other fact.
     """
-    ground_all = bool(inference_knobs().get("ground_all", True))
+    ground_all = bool(inference_knobs().get("ground_all", False))
     return _needs_web(prompt or "", bool(follow_up), ground_all)
 
 

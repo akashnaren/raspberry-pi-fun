@@ -44,38 +44,39 @@ from test_pair import OllamaFake, _start
 
 class TurnShape(unittest.TestCase):
     def test_ground_all_searches_unless_the_turn_is_local(self):
-        self.assertTrue(needs_web("who won the most recent super bowl"))
-        self.assertTrue(needs_web("capital of australia"))
-        self.assertTrue(needs_web("top 10 sci-fi movies"))
-        self.assertTrue(needs_web("make a list of picnic foods"))
-        self.assertTrue(needs_web("checklist for the trip"))
-        self.assertTrue(needs_web("Top 5 fruits"))
-        self.assertTrue(needs_web("5 best picnic snacks"))
-        self.assertTrue(needs_web("rank the orchard fruit"))
-        self.assertTrue(needs_web("best comedy movies to watch"))
-        self.assertTrue(needs_web("Say hi in five words."))
-        self.assertTrue(needs_web("what is 847*23?"))
-        self.assertTrue(needs_web("Top 5 latest news about the orchard"))
-        self.assertTrue(needs_web("what is the current score"))
-        self.assertTrue(needs_web("list the latest news about the bench"))
-        self.assertTrue(needs_web("Search for sources for the east window"))
-        self.assertTrue(
-            needs_web(
-                "Find the exact rate at which the radius grows "
-                "when the surface area is 36 pi square centimeters."
+        with patch("pair.turn.inference_knobs", return_value={"ground_all": True}):
+            self.assertTrue(needs_web("who won the most recent super bowl"))
+            self.assertTrue(needs_web("capital of australia"))
+            self.assertTrue(needs_web("top 10 sci-fi movies"))
+            self.assertTrue(needs_web("make a list of picnic foods"))
+            self.assertTrue(needs_web("checklist for the trip"))
+            self.assertTrue(needs_web("Top 5 fruits"))
+            self.assertTrue(needs_web("5 best picnic snacks"))
+            self.assertTrue(needs_web("rank the orchard fruit"))
+            self.assertTrue(needs_web("best comedy movies to watch"))
+            self.assertTrue(needs_web("Say hi in five words."))
+            self.assertTrue(needs_web("what is 847*23?"))
+            self.assertTrue(needs_web("Top 5 latest news about the orchard"))
+            self.assertTrue(needs_web("what is the current score"))
+            self.assertTrue(needs_web("list the latest news about the bench"))
+            self.assertTrue(needs_web("Search for sources for the east window"))
+            self.assertTrue(
+                needs_web(
+                    "Find the exact rate at which the radius grows "
+                    "when the surface area is 36 pi square centimeters."
+                )
             )
-        )
-        self.assertFalse(needs_web("hi"))
-        self.assertFalse(needs_web("847*23"))
-        tail = "A" * 90
-        self.assertFalse(needs_web(f"what does this say{ATTACH_MARK}{tail}"))
-        self.assertFalse(needs_web("more about that", follow_up=True))
-        self.assertTrue(needs_web("more about that?", follow_up=True))
-        long_follow = (
-            "please explain the history of this topic in much more detail thanks"
-        )
-        self.assertGreater(len(long_follow), 60)
-        self.assertTrue(needs_web(long_follow, follow_up=True))
+            self.assertFalse(needs_web("hi"))
+            self.assertFalse(needs_web("847*23"))
+            tail = "A" * 90
+            self.assertFalse(needs_web(f"what does this say{ATTACH_MARK}{tail}"))
+            self.assertFalse(needs_web("more about that", follow_up=True))
+            self.assertTrue(needs_web("more about that?", follow_up=True))
+            long_follow = (
+                "please explain the history of this topic in much more detail thanks"
+            )
+            self.assertGreater(len(long_follow), 60)
+            self.assertTrue(needs_web(long_follow, follow_up=True))
 
     def test_time_cues_are_the_only_search_when_ground_all_is_off(self):
         from datetime import date
@@ -87,6 +88,8 @@ class TurnShape(unittest.TestCase):
             self.assertTrue(needs_web("is the shop still open today"))
             self.assertFalse(needs_web("capital of australia"))
             self.assertFalse(needs_web("top 10 sci-fi movies"))
+            self.assertFalse(needs_web("My dog Biscuit likes the park"))
+            self.assertFalse(needs_web("what is the boiling point of water"))
             self.assertFalse(needs_web("hi"))
             self.assertFalse(needs_web("847*23"))
             year = date.today().year
@@ -507,7 +510,7 @@ class TurnHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_route"], "flash")
-        self.assertEqual(self.search_calls, [prompt])
+        self.assertEqual(self.search_calls, [])
         content = body["choices"][0]["message"]["content"]
         self.assertEqual(content, "hello from peer")
         self.assertGreater(OllamaFake.posts, posts)
@@ -520,50 +523,17 @@ class TurnHttp(unittest.TestCase):
         self.assertNotIn("```chart", blob)
         self.assertNotIn("```table", blob)
 
-    def test_facts_search_and_structured_turns_do_not(self):
+    def test_only_a_fresh_question_searches(self):
         port = self._pi4()
-        self.search_calls.clear()
-        picnic = "make a list of picnic foods"
-        status, _headers, _body = self._post(
-            port,
-            {
-                "messages": [{"role": "user", "content": picnic}],
-                "stream": False,
-            },
-            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(self.search_calls, [picnic])
-        self.search_calls.clear()
-        status, _headers, body = self._post(
-            port,
-            {
-                "messages": [
-                    {"role": "user", "content": "list the latest news about the bench"}
-                ],
-                "stream": False,
-            },
-            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(self.search_calls, ["list the latest news about the bench"])
-        self.assertIn("searching", body["pi_stages"])
         for prompt in (
+            "make a list of picnic foods",
             "Top 5 fruits",
             "5 best picnic snacks",
             "rank the orchard fruit",
-        ):
-            self.search_calls.clear()
-            status, _headers, _body = self._post(
-                port,
-                {"messages": [{"role": "user", "content": prompt}], "stream": False},
-                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
-            )
-            self.assertEqual(status, 200, prompt)
-            self.assertEqual(self.search_calls, [prompt], prompt)
-        for prompt in (
             "make a table of name and year",
             "plot a bar chart of the picnic",
+            "draw a diagram of the login steps",
+            "My dog Biscuit likes the park",
         ):
             self.search_calls.clear()
             status, _headers, _body = self._post(
@@ -572,18 +542,9 @@ class TurnHttp(unittest.TestCase):
                 {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, prompt)
-            self.assertEqual(self.search_calls, [prompt], prompt)
+            self.assertEqual(self.search_calls, [], prompt)
         self.search_calls.clear()
-        diagram = "draw a diagram of the login steps"
-        status, _headers, _body = self._post(
-            port,
-            {"messages": [{"role": "user", "content": diagram}], "stream": False},
-            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(self.search_calls, [])
-        self.search_calls.clear()
-        news = "Top 5 latest news about the orchard"
+        news = "list the latest news about the bench"
         status, _headers, body = self._post(
             port,
             {"messages": [{"role": "user", "content": news}], "stream": False},
@@ -591,6 +552,7 @@ class TurnHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(self.search_calls, [news])
+        self.assertIn("searching", body["pi_stages"])
 
     def test_attachment_is_fenced_in_the_prompt(self):
         port = self._pi4()
@@ -651,7 +613,7 @@ class TurnHttp(unittest.TestCase):
             item.get("content", "") for item in ScriptOllama.seen[0]["messages"]
         )
         self.assertIn(PERSONA, hinted)
-        self.assertEqual(self.search_calls, ["make a list of picnic foods"])
+        self.assertEqual(self.search_calls, [])
 
     def test_empty_and_timeout_are_sentences(self):
         trained = []
@@ -735,7 +697,7 @@ class TurnHttp(unittest.TestCase):
                         "messages": [
                             {
                                 "role": "user",
-                                "content": "Search for where the spare kettle is",
+                                "content": "What is the latest place of the spare kettle?",
                             }
                         ],
                         "stream": True,
@@ -902,7 +864,7 @@ class TurnHttp(unittest.TestCase):
             text = body["choices"][0]["message"]["content"]
             self.assertIn("can't assist", text.lower(), prompt)
             self.assertNotIn("civic", text.lower(), prompt)
-            self.assertEqual(self.search_calls, [prompt], prompt)
+            self.assertEqual(self.search_calls, [], prompt)
             self.assertEqual(ScriptOllama.posts, 1, prompt)
             hinted = "\n".join(
                 item.get("content", "") for item in ScriptOllama.seen[0]["messages"]
@@ -979,7 +941,7 @@ class TurnHttp(unittest.TestCase):
         self.assertIn("can't assist", text.lower())
         self.assertNotIn("Nissan", text)
         self.assertEqual(ScriptOllama.posts, 1)
-        self.assertEqual(self.search_calls, ["Top 5 electric cars"])
+        self.assertEqual(self.search_calls, [])
         self.assertTrue(
             all(item.get("model") == FLASH_MODEL for item in ScriptOllama.seen)
         )
@@ -1019,7 +981,7 @@ class TurnHttp(unittest.TestCase):
         self.assertIn("can't assist", body["choices"][0]["message"]["content"].lower())
         self.assertEqual(ScriptOllama.posts, 1)
         self.assertEqual(len(ScriptOllama.seen), 1)
-        self.assertEqual(self.search_calls, ["how to bake a cake"])
+        self.assertEqual(self.search_calls, [])
 
     def test_hello_is_a_greeting_and_effort_stays_out_of_the_reply(self):
         port = self._pi4()
@@ -1224,7 +1186,7 @@ class TurnHttp(unittest.TestCase):
             text = body["choices"][0]["message"]["content"]
             self.assertEqual(text, full, prompt)
             self.assertEqual(ScriptOllama.posts, 1, prompt)
-            self.assertEqual(self.search_calls, [prompt], prompt)
+            self.assertEqual(self.search_calls, [], prompt)
 
     def test_a_harmful_reply_is_replaced_on_both_streams(self):
         from pair.assist import HARM_REFUSAL
@@ -1465,7 +1427,7 @@ class TurnHttp(unittest.TestCase):
         self.assertIn("The Shapen", shown)
         self.assertIn("The Exorcist", shown)
         self.assertEqual(ScriptOllama.posts, 1)
-        self.assertEqual(self.search_calls, ["Top 5 horror movies"])
+        self.assertEqual(self.search_calls, [])
 
     def test_the_model_list_is_not_rewritten(self):
         invented = "1. The Shapen\n2. The Exorcist\n3. Halloween"
@@ -1503,7 +1465,7 @@ class TurnHttp(unittest.TestCase):
         status, _headers, body = self._post(
             port,
             {
-                "messages": [{"role": "user", "content": "Top 5 horror movies"}],
+                "messages": [{"role": "user", "content": "latest horror movies"}],
                 "stream": False,
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
@@ -1511,7 +1473,7 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], invented)
         self.assertEqual(ScriptOllama.posts, 1)
-        self.assertEqual(self.search_calls, ["Top 5 horror movies"])
+        self.assertEqual(self.search_calls, ["latest horror movies"])
         hinted = "\n".join(
             item.get("content", "") for item in ScriptOllama.seen[0]["messages"]
         )
@@ -1553,7 +1515,7 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], short)
         self.assertEqual(ScriptOllama.posts, 1)
-        self.assertEqual(self.search_calls, [prompt])
+        self.assertEqual(self.search_calls, [])
 
         stored = "stored primes that must not be served"
         canned = Path(self._tmp.name) / "short_primes.json"
@@ -1612,7 +1574,7 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         text = body["choices"][0]["message"]["content"]
         self.assertEqual(text.count("The Pursuit of Happo"), 4)
-        self.assertEqual(self.search_calls, ["best comedy movies to watch"])
+        self.assertEqual(self.search_calls, [])
         self.assertEqual(ScriptOllama.posts, 1)
         self.assertEqual(ScriptOllama.seen[0]["model"], FLASH_MODEL)
         self.assertEqual(ScriptOllama.seen[0]["options"]["presence_penalty"], 0)

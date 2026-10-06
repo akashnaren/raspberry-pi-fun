@@ -81,6 +81,28 @@ const docCard = renderMarkdown("```doc\nkind: txt\ntitle: Note\nHello\n```");
 if (!docCard.includes("pi-doc") || !docCard.includes("Download")) {
   throw new Error("a doc fence had no download card: " + docCard);
 }
+const twice = renderMarkdown(
+  "```doc\nkind: docx\ntitle: Note\nHello\n```\n```doc\nkind: docx\ntitle: Note\nHello\n```",
+);
+if (twice.split("pi-doc").length - 1 !== 1) {
+  throw new Error("a repeated doc fence rendered twice: " + twice);
+}
+const pdfCard = renderMarkdown("```pdf\nQuarter notes\n```");
+if (!pdfCard.includes("pi-doc") || !pdfCard.includes(".pdf")) {
+  throw new Error("a pdf fence had no download: " + pdfCard);
+}
+const sheet = renderMarkdown("```xlsx\n| a | b |\n| --- | --- |\n| 1 | 2 |\n```");
+if (!sheet.includes("pi-doc") || !sheet.includes(".xlsx")) {
+  throw new Error("an xlsx fence had no download: " + sheet);
+}
+const emptyFence = renderMarkdown("Hello\n```calc\n```\nthere");
+if (emptyFence.includes("<pre>") || emptyFence.includes("```")) {
+  throw new Error("an empty fence stayed in the reply: " + emptyFence);
+}
+const tablePlot = renderMarkdown("```chart\n| item | n |\n| --- | --- |\n| a | 1 |\n```");
+if (!tablePlot.includes('class="pi-chart"')) {
+  throw new Error("a chart table was not drawn: " + tablePlot);
+}
 const chart = renderMarkdown(
   '```chart\n{"title":"y = x^2","data":[{"type":"scatter","mode":"lines","y":[0,1,4]}]}\n```',
 );

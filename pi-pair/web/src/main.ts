@@ -7,7 +7,7 @@ import { paintMicButton } from "./mic-button";
 import { HEALTH_POLL_MS, serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner, VISIBILITY_SETTLE_MS, type HealthSnapshot } from "./presence";
 import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
-import { linkCitations, renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
+import { dropStrayMarkers, linkCitations, renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
 import { scrubAssistant } from "./copy";
 import { BIG_LINE, friendlyError, WAITING_LINE } from "./errors";
 import { dropFollow, enqueueFollow, renderFollowQueue, takeFollow, type FollowItem } from "./follow-queue";
@@ -105,6 +105,33 @@ const followExtra = new Map<number, { text: string; hidden: string; attachment: 
 let voiceUtterance: ReturnType<typeof createUtteranceHold> | null = null;
 
 const ATTACH_BYTES = 4 * 1024 * 1024;
+const CLIENT_KEY = "pi-client";
+const CHAT_KEY = "pi-chat";
+
+function freshId(): string {
+  const raw = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `c${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  return raw.replace(/[^A-Za-z0-9._-]/g, "").slice(0, 80);
+}
+
+function storedId(kind: "local" | "session", key: string): string {
+  const store = browserStorage(kind);
+  const existing = store?.getItem(key) || "";
+  if (/^[A-Za-z0-9._-]{8,80}$/.test(existing)) return existing;
+  const made = freshId();
+  store?.setItem(key, made);
+  return made;
+}
+
+let chatId = storedId("session", CHAT_KEY);
+
+function sessionHeaders(): Record<string, string> {
+  return {
+    "X-Pi-Client": storedId("local", CLIENT_KEY),
+    "X-Pi-Chat": chatId,
+  };
+}
 
 interface AttachmentResult {
   text?: string;
@@ -183,7 +210,7 @@ function setBodyContent(
   streaming = false,
   sourceCount = 0,
 ): void {
-  const shown = scrubAssistant(withoutThinkTags(text));
+  const shown = dropStrayMarkers(scrubAssistant(withoutThinkTags(text)), sourceCount, !streaming);
   if (asMd) {
     node.classList.add("md");
     const html = streaming ? renderStreamingMarkdown(shown) : renderMarkdown(shown);
@@ -1058,6 +1085,7 @@ async function sendText(
             "X-Pi-Mesh": "on",
             "X-Pi-Mode": modelMode,
             "X-Pi-Request-Id": requestId,
+            ...sessionHeaders(),
           },
           body: JSON.stringify(body),
           signal: attemptCtrl.signal,
@@ -2020,6 +2048,8 @@ function dismissPopovers(event?: Event): void {
 
 function newChat(): void {
   clearFollowQueue();
+  chatId = freshId();
+  browserStorage("session")?.setItem(CHAT_KEY, chatId);
   chatEpoch += 1;
   stopAsked = true;
   turnCtrl?.abort();
@@ -2099,16 +2129,17 @@ function paintMemory(facts: { id: string; text: string }[]) {
     drop.textContent = "×";
     drop.setAttribute("aria-label", "Delete fact");
     drop.onclick = () => {
-      fetch(`/v1/memory/${encodeURIComponent(fact.id)}`, { method: "DELETE" }).then(
-        () => loadMemory(),
-      );
+      fetch(`/v1/memory/${encodeURIComponent(fact.id)}`, {
+        method: "DELETE",
+        headers: sessionHeaders(),
+      }).then(() => loadMemory());
     };
     item.append(label, drop);
     list.append(item);
   }
 }
 function loadMemory() {
-  fetch("/v1/memory")
+  fetch("/v1/memory", { headers: sessionHeaders() })
     .then((response) => response.json())
     .then((body) => paintMemory(Array.isArray(body.facts) ? body.facts : []))
     .catch(() => undefined);
@@ -2119,7 +2150,7 @@ byId("btnMemory").onclick = () => {
   if (!panel.hidden) loadMemory();
 };
 byId("memoryClear").onclick = () => {
-  fetch("/v1/memory", { method: "DELETE" }).then(() => loadMemory());
+  fetch("/v1/memory", { method: "DELETE", headers: sessionHeaders() }).then(() => loadMemory());
 };
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
