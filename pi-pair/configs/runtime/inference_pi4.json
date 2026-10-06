@@ -2,8 +2,6 @@
   "model": "qwen3:0.6b",
   "pro_model": "qwen3:1.7b",
   "graduate_model": "llama3.2:1b",
-  "temperature_min": 0.6,
-  "temperature_max": 0.8,
   "num_ctx": 2048,
   "flash_num_ctx": 1536,
   "pro_num_ctx": 2048,

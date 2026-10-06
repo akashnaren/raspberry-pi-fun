@@ -249,7 +249,7 @@ class PublicApi(unittest.TestCase):
         self.assertNotEqual(OllamaFake.last_payload["model"], "llama3.2:1b")
         self.assertFalse(OllamaFake.last_payload["think"])
         self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 384)
-        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.7)
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
 
         status, _headers, body = self._json(
             "POST",
@@ -267,10 +267,10 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
         self.assertFalse(OllamaFake.last_payload["think"])
         self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
-        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.7)
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
         self.assertEqual(OllamaFake.last_payload["options"]["top_p"], 0.8)
         self.assertEqual(OllamaFake.last_payload["options"]["top_k"], 20)
-        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 1.5)
+        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 0)
 
     def test_chat_requires_the_api_key(self):
         missing, headers, body = self._json(

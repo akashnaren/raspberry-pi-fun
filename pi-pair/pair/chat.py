@@ -56,7 +56,7 @@ def ollama_payload(
         options["top_p"] = float(top_p)
     if top_k is not None:
         options["top_k"] = int(top_k)
-    if presence_penalty:
+    if presence_penalty is not None:
         options["presence_penalty"] = float(presence_penalty)
     return {
         "model": model,

@@ -37,7 +37,7 @@ from pair.assist import (  # noqa: E402
     settle_reply,
     visible_canned,
 )
-from pair.turn import ANSWER_HINT  # noqa: E402
+from pair.turn import PERSONA  # noqa: E402
 from pair.turn import shape_messages  # noqa: E402
 
 REFUSAL = "I'm sorry, but I can't assist with that.\n1. junk"
@@ -202,7 +202,8 @@ class Assist(unittest.TestCase):
                 self.assertNotIn("988", text, prompt)
             rows = shape_messages([{"role": "user", "content": prompt}], prompt)
             self.assertEqual(rows[0]["role"], "system", prompt)
-            self.assertIn(ANSWER_HINT, rows[0]["content"], prompt)
+            self.assertEqual(rows[0]["content"], PERSONA, prompt)
+            self.assertNotIn("each line", rows[0]["content"], prompt)
             self.assertNotIn("cannot assist", rows[0]["content"].lower(), prompt)
             self.assertEqual(rows[-1], {"role": "user", "content": prompt}, prompt)
         for prompt in (
@@ -217,12 +218,14 @@ class Assist(unittest.TestCase):
             self.assertTrue(is_harmful(prompt), prompt)
             self.assertFalse(may_retry_refusal(prompt), prompt)
             rows = shape_messages([{"role": "user", "content": prompt}], prompt)
-            self.assertIn(ANSWER_HINT, rows[0]["content"], prompt)
+            self.assertEqual(rows[0]["content"], PERSONA, prompt)
+            self.assertNotIn("each line", rows[0]["content"], prompt)
             self.assertEqual(rows[-1], {"role": "user", "content": prompt}, prompt)
         hinted = shape_messages(
             [{"role": "user", "content": "Top 5 cars"}], "Top 5 cars"
         )
-        self.assertIn("one item on each line", hinted[0]["content"])
+        self.assertEqual(hinted[0]["content"], PERSONA)
+        self.assertNotIn("each line", hinted[0]["content"])
         self.assertNotIn("cannot assist", hinted[0]["content"].lower())
         for prompt in SIMILAR:
             self.assertTrue(is_harmful(prompt), prompt)
@@ -261,7 +264,8 @@ class Assist(unittest.TestCase):
         self.assertTrue(is_harmless_shape(movies))
         self.assertTrue(may_retry_refusal(movies))
         hinted = shape_messages([{"role": "user", "content": movies}], movies)
-        self.assertIn("one item on each line", hinted[0]["content"])
+        self.assertEqual(hinted[0]["content"], PERSONA)
+        self.assertNotIn("each line", hinted[0]["content"])
         halo = "what is a grenade launcher in Halo"
         self.assertTrue(is_harmless_shape(halo))
         self.assertTrue(may_retry_refusal(halo))

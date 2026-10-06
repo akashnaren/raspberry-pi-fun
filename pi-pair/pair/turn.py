@@ -20,12 +20,14 @@ SLOW_ANSWER = "That took too long. Ask again in a moment."
 SHORT_ANSWER = "I could not finish that. Ask again with a shorter question."
 NOTES_ANSWER = "I could not finish a full answer. From the notes: "
 
-ANSWER_HINT = (
-    "Answer the user's question directly. "
-    "When a list is wanted, put one item on each line. "
-    "Web notes, when they are included, are context: use them, and do not "
-    "invent fresh prices, scores, or news they do not support. "
-    "Do not mention model choice, routing, or the mesh."
+PERSONA = (
+    "You are OpenPi, a helpful assistant that runs on a Raspberry Pi. "
+    "OpenPi was made by Akash. Answer accurately and directly, in plain sentences. "
+    "Use a list only when the user asks for several items. Reply in the user's language. "
+    "When notes are provided, rely on them and do not add facts they do not support. "
+    "If you are not sure of a fact, say so instead of guessing. "
+    "Never say you lack internet or real-time access. "
+    "When asked to summarize, give only the main points, in far fewer words than the original."
 )
 
 # Length lives in the prompt. None of these turn Qwen3 thinking on.
@@ -269,7 +271,8 @@ def _chart_row(row: dict) -> bool:
 
 
 def _search_row(row: dict) -> bool:
-    return str(row.get("content") or "").startswith("Web search notes")
+    content = str(row.get("content") or "")
+    return content.startswith("Web search notes") or content.startswith("Notes:")
 
 
 def add_chart_hint(messages, prompt: str) -> list:
@@ -281,32 +284,67 @@ def add_chart_hint(messages, prompt: str) -> list:
     return [{"role": "system", "content": CHART_HINT}, *rows]
 
 
-def add_answer_hint(messages, prompt: str, effort: str = "") -> list:
-    """One system note for every non-chart turn. Search notes stay in front.
+def persona_text(knobs: dict | None = None) -> str:
+    """Identity prompt. A `persona` knob replaces the built-in sentence."""
+    row = inference_knobs() if knobs is None else knobs
+    custom = ""
+    if isinstance(row, dict):
+        custom = str(row.get("persona") or "").strip()
+    return custom or PERSONA
 
-    `effort` adds one sentence about length. It does not enable thinking.
+
+def _persona_row(row: dict, text: str) -> bool:
+    return row.get("role") == "system" and str(row.get("content") or "") == text
+
+
+def add_persona(
+    messages, prompt: str, effort: str = "", knobs: dict | None = None
+) -> list:
+    """Persona is always message 0 so the prefix cache can reuse it.
+
+    The effort sentence is the next system message. It does not enable thinking.
     """
-    if is_plot(prompt):
+    text = persona_text(knobs)
+    rows = [
+        row
+        for row in list(messages or [])
+        if not (isinstance(row, dict) and _persona_row(row, text))
+    ]
+    head = [{"role": "system", "content": text}]
+    if not is_plot(prompt):
+        extra = EFFORT_HINT.get((effort or "").strip().lower(), "")
+        if extra:
+            head.append({"role": "system", "content": extra})
+    return [*head, *rows]
+
+
+def add_notes(messages, note: str) -> list:
+    """One Notes message immediately before the last user turn."""
+    text = (note or "").strip()
+    if not text:
         return list(messages or [])
-    extra = EFFORT_HINT.get((effort or "").strip().lower(), "")
-    hint = f"{ANSWER_HINT} {extra}" if extra else ANSWER_HINT
+    if not text.startswith("Notes:"):
+        text = "Notes:\n" + text
     rows = list(messages or [])
-    for row in rows:
-        if (
-            isinstance(row, dict)
-            and row.get("role") == "system"
-            and hint in str(row.get("content") or "")
-        ):
-            return rows
-    index = 0
-    while (
-        index < len(rows)
-        and isinstance(rows[index], dict)
-        and rows[index].get("role") == "system"
-    ):
-        index += 1
-    rows.insert(index, {"role": "system", "content": hint})
+    index = len(rows)
+    for cursor in range(len(rows) - 1, -1, -1):
+        row = rows[cursor]
+        if isinstance(row, dict) and row.get("role") == "user":
+            index = cursor
+            break
+    rows.insert(index, {"role": "system", "content": text})
     return rows
+
+
+def _num_ctx(knobs: dict | None = None) -> int:
+    row = inference_knobs() if knobs is None else knobs
+    try:
+        ctx = int(row.get("num_ctx") or 2048)
+    except (TypeError, ValueError):
+        ctx = 2048
+    if ctx < 256:
+        ctx = 256
+    return ctx
 
 
 def char_budget(knobs: dict | None = None, reserve_tokens: int = 768) -> int:
@@ -315,13 +353,7 @@ def char_budget(knobs: dict | None = None, reserve_tokens: int = 768) -> int:
     Two characters per token is the cautious side for OCR. High effort asks
     for 768 new tokens, so that many stay out of the prompt budget.
     """
-    row = inference_knobs() if knobs is None else knobs
-    try:
-        ctx = int(row.get("num_ctx") or 2048)
-    except (TypeError, ValueError):
-        ctx = 2048
-    if ctx < 256:
-        ctx = 256
+    ctx = _num_ctx(knobs)
     reserve = max(128, min(int(reserve_tokens), ctx // 2))
     return max(600, (ctx - reserve) * 2)
 
@@ -352,7 +384,7 @@ def _clip_text(text: str, keep: int) -> str:
             clipped = (prefix + suffix)[: keep - len(mark)].rstrip() + mark
         if len(clipped) <= keep:
             return clipped
-    if text.startswith("Web search notes"):
+    if text.startswith("Web search notes") or text.startswith("Notes:"):
         return clip_words(text, keep)
     room = keep - len(mark)
     if room < 1:
@@ -368,6 +400,10 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
             rows.append(dict(item))
     if not rows:
         return []
+    # Two characters per token. An input that fits num_ctx stays whole.
+    if (_size(rows) + 1) // 2 <= _num_ctx(knobs):
+        return rows
+    persona = persona_text(knobs)
     budget = char_budget(knobs)
     guard = 0
     while _size(rows) > budget and guard < 16:
@@ -387,7 +423,11 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
             continue
         if len(rows) > 1:
             drop_at = next(
-                (index for index, row in enumerate(rows[:-1]) if not _chart_row(row)),
+                (
+                    index
+                    for index, row in enumerate(rows[:-1])
+                    if not _chart_row(row) and not _persona_row(row, persona)
+                ),
                 None,
             )
             if drop_at is not None:
@@ -396,7 +436,9 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
         plain = [
             row
             for row in rows
-            if not _chart_row(row) and len(str(row.get("content") or "")) > 80
+            if not _chart_row(row)
+            and not _persona_row(row, persona)
+            and len(str(row.get("content") or "")) > 80
         ]
         pool = plain or rows
         target = max(pool, key=lambda row: len(str(row.get("content") or "")))
@@ -410,11 +452,16 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
 
 
 def shape_messages(
-    messages, prompt: str, knobs: dict | None = None, effort: str = ""
+    messages,
+    prompt: str,
+    knobs: dict | None = None,
+    effort: str = "",
+    notes: str = "",
 ) -> list:
     rows = fence_messages(messages, knobs)
     rows = add_chart_hint(rows, prompt)
-    rows = add_answer_hint(rows, prompt, effort)
+    rows = add_persona(rows, prompt, effort, knobs)
+    rows = add_notes(rows, notes)
     return fit_messages(rows, knobs)
 
 

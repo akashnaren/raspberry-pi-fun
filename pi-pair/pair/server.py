@@ -88,7 +88,7 @@ from pair.mesh import lookup_for_brain
 from pair.search import lookup_web
 from pair import runtime
 from pair.stream import iter_ollama_channels, stream_llamacpp, stream_ollama
-from pair.think import peel_think
+from pair.think import decode_plan, peel_think
 from pair.timing import assemble, present
 from pair.turn import (
     degraded_answer,
@@ -386,11 +386,35 @@ def _with_search(
         sources.append({"title": title[:120], "url": url})
     full = str(found.get("context") or "").strip()
     shown = prepare_search_note(full, search_note_limit())
+    note = {"status": status, "sources": sources, "context": full}
     if status == "ok" and shown:
-        messages = [{"role": "system", "content": shown}, *messages]
+        note["prompt_note"] = shown
     _join_cancel(worker, None, cancel)
     _join_cancel(warm, 40, cancel)
-    return messages, {"status": status, "sources": sources, "context": full}
+    return messages, note
+
+
+def _prompt_note(search_note) -> str:
+    if not isinstance(search_note, dict):
+        return ""
+    return str(search_note.get("prompt_note") or "")
+
+
+def _apply_model_sample(handler, model: str, temperature: float, max_tokens: int):
+    """Flash and Pro use different temperatures once the tag is final."""
+    plan = getattr(handler, "_decode_plan", None)
+    if plan is None:
+        return temperature, max_tokens
+    table = mode_table()
+    pro_tag = str(table.get("pro") or "")
+    flash_tag = str(table.get("flash") or "")
+    name = str(model or "")
+    pro = bool(pro_tag) and name == pro_tag and name != flash_tag
+    tuned = decode_plan(getattr(plan, "name", ""), pro=pro)
+    if tuned is None:
+        return temperature, max_tokens
+    handler._decode_plan = tuned
+    return tuned.temperature, tuned.num_predict
 
 
 def _image_cards(prompt: str, answer: str = "") -> list[dict]:
@@ -1286,7 +1310,9 @@ class Handler(BaseHTTPRequestHandler):
             elif not want_stream:
                 images = _image_cards(prompt)
             if not want_stream:
-                outbound = shape_messages(outbound, prompt, tuned, think_name)
+                outbound = shape_messages(
+                    outbound, prompt, tuned, think_name, _prompt_note(search_note)
+                )
             grounded = ready
         except ClientGone:
             raise
@@ -1322,6 +1348,9 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._error(MODEL_MISSING)
                     return
+        temperature, max_tokens = _apply_model_sample(
+            self, model, temperature, max_tokens
+        )
         use_model = grounded is None
         slot = {"held": False, "waiting": False}
         if use_model:
@@ -2067,7 +2096,9 @@ class Handler(BaseHTTPRequestHandler):
         _put_images(answer_extra, images)
         if not emit_status("answering", answer_extra or None):
             return
-        messages = shape_messages(messages, prompt, _tuned_knobs(model), think_name)
+        messages = shape_messages(
+            messages, prompt, _tuned_knobs(model), think_name, _prompt_note(search_note)
+        )
         if grounded is not None:
             self._emit_ready_answer(
                 peer,

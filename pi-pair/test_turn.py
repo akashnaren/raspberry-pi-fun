@@ -27,7 +27,7 @@ from pair.chat import start_model_warm, warm_residents
 from pair.modes import FLASH_MODEL, PRO_MODEL
 from pair.errors import UNREACHABLE
 from pair.turn import (
-    ANSWER_HINT,
+    PERSONA,
     EFFORT_HINT,
     ATTACH_MARK,
     CHART_HINT,
@@ -182,14 +182,52 @@ class TurnShape(unittest.TestCase):
             "Say hi in five words.",
         ):
             rows = shape_messages([{"role": "user", "content": prompt}], prompt)
-            self.assertEqual(rows[0]["content"], ANSWER_HINT, prompt)
+            self.assertEqual(rows[0]["content"], PERSONA, prompt)
+            self.assertNotIn("each line", rows[0]["content"], prompt)
         chart = shape_messages(
             [{"role": "user", "content": "plot a bar chart of the picnic"}],
             "plot a bar chart of the picnic",
         )
         blob = "\n".join(row["content"] for row in chart)
+        self.assertEqual(chart[0]["content"], PERSONA)
         self.assertIn("```chart", blob)
-        self.assertNotIn(ANSWER_HINT, blob)
+
+    def test_persona_stays_byte_identical_across_turns(self):
+        first = shape_messages(
+            [{"role": "user", "content": "capital of australia"}],
+            "capital of australia",
+        )
+        second = shape_messages(
+            [{"role": "user", "content": "who wrote pride and prejudice"}],
+            "who wrote pride and prejudice",
+            effort="high",
+        )
+        self.assertEqual(first[0]["content"], PERSONA)
+        self.assertEqual(second[0]["content"], PERSONA)
+        self.assertEqual(first[0]["content"], second[0]["content"])
+        self.assertEqual(second[1]["content"], EFFORT_HINT["high"])
+
+    def test_notes_sit_just_before_the_last_user_message(self):
+        prompt = "capital of australia"
+        rows = shape_messages(
+            [
+                {"role": "user", "content": "earlier"},
+                {"role": "assistant", "content": "ok"},
+                {"role": "user", "content": prompt},
+            ],
+            prompt,
+            notes="Web search notes.\n- Canberra",
+        )
+        self.assertEqual(rows[0]["content"], PERSONA)
+        self.assertEqual(rows[-1], {"role": "user", "content": prompt})
+        self.assertTrue(rows[-2]["content"].startswith("Notes:"))
+        self.assertIn("Canberra", rows[-2]["content"])
+
+    def test_a_1200_token_input_is_kept_at_1536(self):
+        body = "ab" * 1200
+        knobs = {"num_ctx": 1536}
+        rows = fit_messages([{"role": "user", "content": body}], knobs)
+        self.assertEqual(rows[0]["content"], body)
 
     def test_levels_ask_for_length_in_the_hint(self):
         prompt = "Why does rain fall?"
@@ -197,7 +235,8 @@ class TurnShape(unittest.TestCase):
             rows = shape_messages(
                 [{"role": "user", "content": prompt}], prompt, effort=name
             )
-            self.assertEqual(rows[0]["content"], f"{ANSWER_HINT} {sentence}", name)
+            self.assertEqual(rows[0]["content"], PERSONA, name)
+            self.assertEqual(rows[1]["content"], sentence, name)
         chart = shape_messages(
             [{"role": "user", "content": "plot a bar chart of the picnic"}],
             "plot a bar chart of the picnic",
@@ -533,7 +572,7 @@ class TurnHttp(unittest.TestCase):
         hinted = "\n".join(
             item.get("content", "") for item in ScriptOllama.seen[0]["messages"]
         )
-        self.assertIn(ANSWER_HINT, hinted)
+        self.assertIn(PERSONA, hinted)
         self.assertEqual(self.search_calls, [])
 
     def test_empty_and_timeout_are_sentences(self):
@@ -811,7 +850,7 @@ class TurnHttp(unittest.TestCase):
             hinted = "\n".join(
                 item.get("content", "") for item in ScriptOllama.seen[0]["messages"]
             )
-            self.assertIn(ANSWER_HINT, hinted)
+            self.assertIn(PERSONA, hinted)
 
         ScriptOllama.replies = [
             {"message": {"content": refusal}, "done": True, "done_reason": "stop"},
@@ -1418,7 +1457,7 @@ class TurnHttp(unittest.TestCase):
         hinted = "\n".join(
             item.get("content", "") for item in ScriptOllama.seen[0]["messages"]
         )
-        self.assertIn(ANSWER_HINT, hinted)
+        self.assertIn(PERSONA, hinted)
         self.assertNotIn("Web search notes", hinted)
 
     def test_canned_text_is_returned_as_stored(self):
@@ -1513,7 +1552,9 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(self.search_calls, [])
         self.assertEqual(ScriptOllama.posts, 1)
         self.assertEqual(ScriptOllama.seen[0]["model"], FLASH_MODEL)
-        self.assertEqual(ScriptOllama.seen[0]["options"]["presence_penalty"], 1.5)
+        self.assertEqual(ScriptOllama.seen[0]["options"]["presence_penalty"], 0)
+        self.assertEqual(ScriptOllama.seen[0]["options"]["temperature"], 0.3)
+        self.assertEqual(ScriptOllama.seen[0]["options"]["num_predict"], 160)
         self.assertEqual(ScriptOllama.seen[0]["options"]["top_p"], 0.8)
         self.assertEqual(ScriptOllama.seen[0]["options"]["top_k"], 20)
 
