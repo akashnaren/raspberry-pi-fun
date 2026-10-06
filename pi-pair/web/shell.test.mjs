@@ -76,6 +76,7 @@ window.MESH_DEFAULT_MODEL = "qwen3:0.6b";
 
 const streams = [];
 const sentBodies = [];
+const sentHeaders = [];
 function openStream() {
   const encoder = new TextEncoder();
   let pending = null;
@@ -124,6 +125,7 @@ globalThis.fetch = async (input, init) => {
   }
   if (String(url).includes("/v1/chat/completions")) {
     if (init && init.body) sentBodies.push(String(init.body));
+    if (init && init.headers) sentHeaders.push(init.headers);
     const stream = openStream();
     streams.push(stream);
     return new Response(stream.readable, {
@@ -254,11 +256,11 @@ if (document.getElementById("modeLabel").textContent !== "Auto" || !menu.hidden)
 await new Promise((resolve) => setTimeout(resolve, 30));
 const flashText = document.getElementById("tip-menu-flash").textContent;
 const proText = document.getElementById("tip-menu-pro").textContent;
-if (flashText !== "qwen3:0.6b, the fast resident model.") {
-  throw new Error("flash tip was not built from health: " + flashText);
+if (flashText !== "Fast answers for everyday questions.") {
+  throw new Error("flash tip was not the general sentence: " + flashText);
 }
-if (proText !== "qwen3:1.7b, loaded when the question needs it.") {
-  throw new Error("pro tip was not built from health: " + proText);
+if (proText !== "Slower, more careful answers for harder questions.") {
+  throw new Error("pro tip was not the general sentence: " + proText);
 }
 if (document.getElementById("tip-set-flash").textContent !== flashText) {
   throw new Error("settings flash tip did not follow health");
@@ -289,6 +291,11 @@ live.push({ pi_status: "waiting", pi_mode: "auto", pi_route: "flash" });
 await new Promise((resolve) => setTimeout(resolve, 20));
 if (!document.body.textContent.includes("Waiting for a free slot")) {
   throw new Error("waiting stage was not quiet text");
+}
+live.push({ pi_status: "waiting", pi_queue: { position: 2, eta_s: 120 } });
+await new Promise((resolve) => setTimeout(resolve, 20));
+if (!document.body.textContent.includes("Waiting · 2 ahead · about 2 min")) {
+  throw new Error("queue line missing: " + document.body.textContent);
 }
 live.push({ pi_status: "thinking", pi_mode: "auto", pi_route: "flash" });
 live.push({ pi_status: "searching", pi_search: "ok", pi_sources: sources });
@@ -406,5 +413,101 @@ const lightAt = css.indexOf('html[data-theme="light"]');
 if (lightAt < 0 || !css.slice(lightAt).includes(".api-docs-link")) {
   throw new Error("API docs link has no light-theme color");
 }
+const fileRule = css.slice(css.indexOf(".file-tag {"), css.indexOf(".file-tag {") + 500);
+if (!fileRule.includes("&.err")) throw new Error("a failed file chip has no error style");
+const newer = document.getElementById("btnNew");
+if (!newer || newer.getAttribute("aria-label") !== "New chat") {
+  throw new Error("new chat control is missing");
+}
+if (!page.includes("X-Pi-Request-Id") || !page.includes("couldn't read it")) {
+  throw new Error("the page lost the request id or the file chip");
+}
+if (page.includes("the fast resident model")) {
+  throw new Error("tips still name the resident model");
+}
+
+document.getElementById("btnIo").click();
+document.getElementById("modeBtn").click();
+if (document.getElementById("modePop").hidden) throw new Error("menu did not open for dismiss");
+document.getElementById("modeBtn").dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+if (document.getElementById("modePop").hidden) {
+  throw new Error("pointerdown on the mode button closed the menu");
+}
+document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+if (!document.getElementById("modePop").hidden) {
+  throw new Error("outside pointerdown left the menu open");
+}
+document.getElementById("modeBtn").click();
+document.getElementById("btnIo").click();
+const sourcesPill = document.querySelector(".sources-pill");
+if (!sourcesPill) throw new Error("sources pill missing before Escape");
+sourcesPill.click();
+if (!document.getElementById("sourcesPanel").classList.contains("open")) {
+  throw new Error("sources did not open before Escape");
+}
+let composerFocused = false;
+box.focus = () => {
+  composerFocused = true;
+};
+document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+if (!document.getElementById("modePop").hidden) throw new Error("Escape left the menu open");
+if (document.getElementById("modeBtn").getAttribute("aria-expanded") !== "false") {
+  throw new Error("Escape left the menu expanded");
+}
+if (document.getElementById("ioPanel").classList.contains("open")) {
+  throw new Error("Escape left settings open");
+}
+if (document.getElementById("sourcesPanel").classList.contains("open")) {
+  throw new Error("Escape left sources open");
+}
+if (!composerFocused) throw new Error("Escape did not focus the composer");
+
+const beforeNew = document.body.textContent;
+if (!beforeNew.includes("Blue light")) throw new Error("new chat had nothing to clear");
+document.getElementById("btnNew").click();
+if (document.body.textContent.includes("Blue light")) {
+  throw new Error("new chat left the old reply");
+}
+if (!document.getElementById("empty")) throw new Error("new chat did not restore the empty state");
+if (document.getElementById("brand").classList.contains("brand-title")) {
+  throw new Error("new chat left the title up");
+}
+
+const idsBefore = sentHeaders.length;
+box.value = "one more";
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+const posted = sentHeaders[sentHeaders.length - 1] || {};
+const requestHeader = posted["X-Pi-Request-Id"] || "";
+if (!requestHeader) throw new Error("chat did not send a request id");
+if (sentHeaders.length !== idsBefore + 1) throw new Error("chat posted more than once");
+const finished = streams[streams.length - 1];
+finished.push({ choices: [{ delta: { content: "ok" } }] });
+finished.end();
+await new Promise((resolve) => setTimeout(resolve, 80));
+const realFetch = globalThis.fetch;
+let blown = false;
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === "string" ? input : input.url;
+  if (!blown && String(url).includes("/v1/chat/completions")) {
+    blown = true;
+    if (init && init.headers) sentHeaders.push(init.headers);
+    throw new TypeError("Failed to fetch");
+  }
+  return realFetch(input, init);
+};
+const retryBefore = sentHeaders.length;
+box.value = "retry once";
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 700));
+globalThis.fetch = realFetch;
+const retryHeaders = sentHeaders.slice(retryBefore);
+if (retryHeaders.length !== 2) {
+  throw new Error("a network miss did not retry once: " + retryHeaders.length);
+}
+const firstId = retryHeaders[0]["X-Pi-Request-Id"];
+const secondId = retryHeaders[1]["X-Pi-Request-Id"];
+if (!firstId || firstId !== secondId) throw new Error("retry did not reuse the request id");
+if (firstId === requestHeader) throw new Error("a new turn reused the previous request id");
 
 console.log("ok");
