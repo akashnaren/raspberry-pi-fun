@@ -20,9 +20,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pair.abilities import clean_reply, parse_fences, settle_blocks  # noqa: E402
-from pair.charts import render_chart  # noqa: E402
+from pair.charts import parse_markdown_table, render_chart  # noqa: E402
 from pair.docs import render_document  # noqa: E402
-from pair.turn import PERSONA, needs_web, persona_text  # noqa: E402
+from pair.turn import PERSONA, needs_web, persona_text, sample_turns, shape_messages  # noqa: E402
 
 PROMPTS = (
     "My dog Biscuit likes the park.",
@@ -81,6 +81,12 @@ DOCX = (
     "Make a DOCX file I can download: a packing list for a beach trip with five items."
 )
 MD = "Make a Markdown .md file I can download with a short recipe for pancakes."
+MENTION = (
+    "What is the difference between docx and pdf?",
+    "Summarize this PDF in two lines.",
+    "How do I delete files in Linux?",
+)
+GRADES = "Make an xlsx of grades: A 90, B 80, C 70."
 
 
 def _rendered(body: str) -> tuple[bytes, str]:
@@ -98,7 +104,15 @@ def _echo(text: str) -> bool:
     cleaned = text or ""
     if _EXAMPLE_ROW.search(cleaned):
         return True
-    return "title: Note" in cleaned and "A short paragraph." in cleaned
+    if "title: Note" in cleaned and "A short paragraph." in cleaned:
+        return True
+    for row in sample_turns():
+        if row["role"] != "assistant":
+            continue
+        body = row["content"]
+        if len(body) >= 24 and body in cleaned:
+            return True
+    return False
 
 
 def _ask(prompt: str) -> str:
@@ -106,11 +120,8 @@ def _ask(prompt: str) -> str:
         "model": "qwen3:0.6b",
         "stream": False,
         "think": False,
-        "messages": [
-            {"role": "system", "content": PERSONA},
-            {"role": "user", "content": prompt},
-        ],
-        "options": {"temperature": 0.2, "num_predict": 256},
+        "messages": shape_messages([{"role": "user", "content": prompt}], prompt),
+        "options": {"temperature": 0, "num_predict": 256},
     }
     request = urllib.request.Request(
         "http://127.0.0.1:11434/api/chat",
@@ -136,10 +147,77 @@ def _fence_body(text: str, name: str) -> str:
     return ""
 
 
+def _table_values(body: str) -> list[float]:
+    parsed = parse_markdown_table(body)
+    if not parsed:
+        return []
+    _headers, rows = parsed
+    values = []
+    for row in rows:
+        for cell in row[1:]:
+            if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", cell.strip()):
+                values.append(float(cell.strip()))
+                break
+    return values
+
+
+def _download(text: str) -> bool:
+    return any(fence["name"] == "doc" for fence in parse_fences(text))
+
+
+def _kind_of(text: str) -> str:
+    for fence in parse_fences(text):
+        if fence["name"] != "doc":
+            continue
+        for line in fence["body"].splitlines():
+            if line.lower().startswith("kind:"):
+                return line.split(":", 1)[1].strip().lower()
+    return ""
+
+
+def _file_report(prompt: str, kind: str) -> dict:
+    cleaned = settle_blocks(_ask(prompt), prompt)
+    body = _fence_body(cleaned, "doc")
+    found = _kind_of(cleaned)
+    rendered = b""
+    ext = ""
+    if body:
+        rendered, ext = _rendered(fence_body_with_kind(cleaned))
+    preview = body[:180]
+    return {
+        "kind": found,
+        "ext": ext,
+        "echo": _echo(cleaned),
+        "download": _download(cleaned),
+        "bytes": len(rendered),
+        "pdf": rendered.startswith(b"%PDF"),
+        "zip": rendered.startswith(b"PK"),
+        "preview": preview,
+        "ok": (
+            found == kind
+            and ext == kind
+            and not _echo(cleaned)
+            and bool(body)
+            and body.lower().count("| a | 1 |") == 0
+            and (kind != "pdf" or rendered.startswith(b"%PDF"))
+            and (kind not in {"docx", "xlsx"} or rendered.startswith(b"PK"))
+            and (kind != "md" or ext == "md")
+        ),
+    }
+
+
+def fence_body_with_kind(text: str) -> str:
+    for fence in parse_fences(text):
+        if fence["name"] == "doc":
+            return fence["body"]
+    return ""
+
+
 def live() -> bool:
-    """Cleaned qwen3:0.6b replies: no example rows, and the repro files match."""
-    if len(PLAIN) < 30:
-        print(json.dumps({"live": False, "reason": "fewer than 30 plain prompts"}))
+    """Cleaned qwen3:0.6b replies. Files and charts come from the model."""
+    asked = (*PLAIN, *MENTION)
+    if len(asked) < 32:
+        print(json.dumps({"live": False, "reason": "fewer than 32 prompts"}))
         return False
     try:
         urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=3).read()
@@ -147,7 +225,8 @@ def live() -> bool:
         print(json.dumps({"live": False, "reason": f"ollama unavailable: {error}"}))
         return False
     echoes = []
-    for prompt in PLAIN:
+    downloads = []
+    for prompt in asked:
         try:
             raw = _ask(prompt)
         except (
@@ -161,11 +240,25 @@ def live() -> bool:
         cleaned = clean_reply(raw, prompt)
         if _echo(cleaned):
             echoes.append(prompt)
-    chart = settle_blocks(_ask(CHART), CHART)
-    sheet = settle_blocks(_ask(XLSX), XLSX)
-    pdf = settle_blocks(_ask(PDF), PDF)
-    docx = settle_blocks(_ask(DOCX), DOCX)
-    markdown = settle_blocks(_ask(MD), MD)
+        if _download(cleaned):
+            downloads.append(prompt)
+    try:
+        chart = settle_blocks(_ask(CHART), CHART)
+        grades = settle_blocks(_ask(GRADES), GRADES)
+        files = {
+            "pdf": _file_report(PDF, "pdf"),
+            "docx": _file_report(DOCX, "docx"),
+            "xlsx": _file_report(XLSX, "xlsx"),
+            "md": _file_report(MD, "md"),
+        }
+    except (
+        OSError,
+        urllib.error.URLError,
+        json.JSONDecodeError,
+        TimeoutError,
+    ) as error:
+        print(json.dumps({"live": False, "reason": str(error)}))
+        return False
     chart_body = _fence_body(chart, "plot")
     drawn = (
         render_chart(table=chart_body) if chart_body else {"ok": False, "figure": None}
@@ -174,28 +267,32 @@ def live() -> bool:
     figure = drawn.get("figure") or {}
     data = figure.get("data") or []
     if data:
-        series = list(data[0].get("y") or [])
-    sheet_body = _fence_body(sheet, "doc")
+        series = [float(value) for value in (data[0].get("y") or [])]
+    table_values = _table_values(chart_body)
+    grades_body = _fence_body(grades, "doc") or _fence_body(grades, "plot")
     report = {
         "live": True,
-        "plain_prompts": len(PLAIN),
+        "prompts": len(asked),
         "example_echoes": echoes,
+        "mention_downloads": downloads,
         "chart_y": series,
-        "xlsx_has_months": "Month" in sheet
-        and "Jan" in sheet
-        and "| a | 1 |" not in sheet,
-        "pdf_kind": "kind: pdf" in pdf and "kind: docx" not in pdf,
-        "docx_kept": "kind: docx" in docx and "| a | 1 |" not in docx,
-        "md_kind": "kind: md" in markdown and "kind: docx" not in markdown,
-        "sheet_preview": sheet_body[:180],
+        "chart_table": table_values,
+        "chart_matches_model": bool(series) and series == table_values,
+        "grades_keep_letters": all(
+            token in grades for token in ("A", "B", "C", "90", "80", "70")
+        )
+        and "| a | 1 |" not in grades,
+        "grades_preview": grades_body[:180],
+        "files": files,
     }
     print(json.dumps(report, indent=2))
+    files_ok = all(item["ok"] for item in files.values())
     return (
         not echoes
-        and series == [12, 18, 9, 15]
-        and report["xlsx_has_months"]
-        and report["pdf_kind"]
-        and report["md_kind"]
+        and not downloads
+        and report["chart_matches_model"]
+        and report["grades_keep_letters"]
+        and files_ok
     )
 
 

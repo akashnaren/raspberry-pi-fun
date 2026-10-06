@@ -641,6 +641,11 @@ def _recall_context(handler, messages, prompt: str) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _searched(search_note) -> bool:
+    """True when this turn already received a search result."""
+    return isinstance(search_note, dict) and search_note.get("status") == "ok"
+
+
 def _source_count(search_note) -> int:
     if not isinstance(search_note, dict):
         return 0
@@ -2165,6 +2170,7 @@ class Handler(BaseHTTPRequestHandler):
             prompt,
             _source_count(search_note),
             context=getattr(self, "_local_context", ""),
+            have_tools=_searched(search_note),
         )
         if not str(content).strip():
             raise DecodeFailed(friendly_error(""))
@@ -2186,8 +2192,9 @@ class Handler(BaseHTTPRequestHandler):
         if getattr(self, "_extra_call", False):
             return content
         context = getattr(self, "_local_context", "")
-        settled = settle_blocks(content, prompt, context=context)
-        notes = tool_notes(settled, prompt=prompt, context=context)
+        have = _searched(search_note)
+        settled = settle_blocks(content, prompt, context=context, have_tools=have)
+        notes = tool_notes(settled, prompt=prompt, context=context, have_tools=have)
         retry = needs_json_retry(prompt, settled) and not notes
         if not notes and not retry:
             return settled
@@ -2618,6 +2625,7 @@ class Handler(BaseHTTPRequestHandler):
                     prompt,
                     _source_count(search_note),
                     context=getattr(self, "_local_context", ""),
+                    have_tools=_searched(search_note),
                 )
                 visible = "\n".join(
                     line for line in streamed.splitlines() if line.strip()

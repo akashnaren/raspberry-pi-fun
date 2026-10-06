@@ -237,6 +237,33 @@ class CompactTests(unittest.TestCase):
         self.assertIn("4417", kept)
         self.assertIn("The user said:", kept)
 
+    def test_a_read_does_not_extend_expiry_and_the_sweep_is_hourly(self):
+        import time
+        from pathlib import Path
+
+        memory._last_purge = 0
+        try:
+            memory.remember_user(["the locker code is 4417"], scope="fresh-chat")
+            folder = Path(self._tmp.name) / "memory"
+            path = folder / "fresh-chat.json"
+            written = time.time() - 100
+            os.utime(path, (written, written))
+            memory.list_facts("fresh-chat")
+            memory.summary_text("fresh-chat")
+            memory.facts_block("fresh-chat")
+            memory.stats()
+            self.assertEqual(path.stat().st_mtime, written)
+            self.assertIn("4417", memory.list_facts("fresh-chat")[0]["text"])
+            expired = time.time() - memory.MEMORY_TTL_S - 10
+            os.utime(path, (expired, expired))
+            self.assertIn("4417", memory.list_facts("fresh-chat")[0]["text"])
+            self.assertTrue(path.exists())
+            memory._last_purge = time.time() - memory.PURGE_INTERVAL_S - 1
+            self.assertEqual(memory.list_facts("fresh-chat"), [])
+            self.assertFalse(path.exists())
+        finally:
+            memory._last_purge = 0
+
     def test_two_sessions_cannot_read_or_clear_each_other(self):
         alice = scope_key("chat-a", "client-a")
         bob = scope_key("chat-b", "client-b")

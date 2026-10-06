@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import unittest
 
-from pair.calc import fully_answers, notes_for
-from pair.turn import shape_messages
+from pair.abilities import settle_blocks, tool_notes
+from pair.calc import evaluate_expr, fully_answers, notes_for
+from pair.turn import needs_web, shape_messages
 
 
 class CalculatorNotes(unittest.TestCase):
@@ -28,6 +29,24 @@ class CalculatorNotes(unittest.TestCase):
         self.assertIsNone(notes_for("__import__('os')"))
         self.assertIsNone(notes_for("555-1234"))
         self.assertIsNone(notes_for("meet on 2024-05-01"))
+
+    def test_percent_then_add_is_the_model_expression(self):
+        prompt = "What is 15% of 240, then add 12?"
+        self.assertIsNone(notes_for(prompt))
+        self.assertEqual(evaluate_expr("0.15*240+12"), "48")
+        self.assertEqual(evaluate_expr("15%*240+12"), "48")
+        calls = []
+
+        def search(query):
+            calls.append(query)
+            return {"context": "web"}
+
+        reply = "```calc\n0.15*240+12\n```\n```search\n15 percent of 240\n```"
+        self.assertNotIn("```search", settle_blocks(reply, prompt))
+        notes = tool_notes(reply, search=search, prompt=prompt)
+        self.assertIn("Calculator: 0.15*240+12 = 48", notes)
+        self.assertEqual(calls, [])
+        self.assertFalse(needs_web(prompt))
 
     def test_the_note_is_placed_before_the_question(self):
         prompt = "what is 847*23?"

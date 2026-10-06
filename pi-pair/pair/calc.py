@@ -120,12 +120,23 @@ def _walk(node: ast.AST, names: dict | None = None) -> float | int:
     raise ValueError("unsupported")
 
 
+_POSTFIX_PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%(?=\s*(?:[+\-*/)]|$))")
+
+
+def _arith(expr: str) -> str:
+    """Normalize an expression the model wrote. Words stay out of this."""
+    raw = (expr or "").strip().replace("×", "*").replace("÷", "/").replace("−", "-")
+    raw = re.sub(r"(?<=\d),(?=\d)", "", raw).rstrip(".,;?")
+    raw = _POSTFIX_PERCENT.sub(lambda match: f"({match.group(1)}/100)", raw)
+    return raw.replace("^", "**")
+
+
 def evaluate_expr(expr: str, variables: dict | None = None) -> str | None:
     """One expression, same whitelist as the calculator, plus `x` and basic calls."""
     raw = (expr or "").strip()
     if not raw or len(raw) > 240 or "\n" in raw:
         return None
-    return _evaluate(raw.replace("^", "**"), variables or {})
+    return _evaluate(_arith(raw), variables or {})
 
 
 def _evaluate(expr: str, names: dict | None = None) -> str | None:
