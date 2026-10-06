@@ -182,10 +182,15 @@ def warm_chat_model(peer: dict, model: str, timeout: float = 45) -> bool:
     """Load one tag with keep_alive -1. A missing tag returns False and is not pulled."""
     if not may_generate(peer) or not model:
         return False
+    from pair.turn import persona_text
+
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
     payload = ollama_payload(
         model,
-        [{"role": "user", "content": "ok"}],
+        [
+            {"role": "system", "content": persona_text()},
+            {"role": "user", "content": "ok"},
+        ],
         0.0,
         1,
         False,

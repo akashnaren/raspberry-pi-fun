@@ -672,6 +672,9 @@ function addLiveBot(expectPro = false): LiveTurn {
   }
 
   let shown: StageName | null = null;
+  let mdDue = 0;
+  let mdTimer = 0;
+  let mdLatest = "";
   const queued: StageName[] = [];
   let holding = false;
   let queueNote: { position?: number; eta_s?: number } | null = null;
@@ -807,12 +810,30 @@ function addLiveBot(expectPro = false): LiveTurn {
     },
     setText(text) {
       if (!visibleReply(text)) return;
-      setBodyContent(body, text, true, true);
-      revealReply(text);
-      const current = viewport.querySelector(".stage:not(.leave)") as HTMLElement | null;
-      if (current && shown) stageLabel(current, labelFor(shown));
-      yieldIfAnswer();
-      row.scrollIntoView({ block: "end" });
+      mdLatest = text;
+      const paint = () => {
+        const shownText = mdLatest;
+        setBodyContent(body, shownText, true, true);
+        revealReply(shownText);
+        const current = viewport.querySelector(".stage:not(.leave)") as HTMLElement | null;
+        if (current && shown) stageLabel(current, labelFor(shown));
+        yieldIfAnswer();
+        row.scrollIntoView({ block: "end" });
+      };
+      const now = performance.now();
+      if (now < mdDue) {
+        window.clearTimeout(mdTimer);
+        mdTimer = window.setTimeout(() => {
+          mdTimer = 0;
+          window.requestAnimationFrame(() => {
+            mdDue = performance.now() + 50;
+            paint();
+          });
+        }, Math.max(0, mdDue - now));
+        return;
+      }
+      mdDue = now + 50;
+      paint();
     },
     setThought(text, liveThought, seconds) {
       const shownThought = String(text || "");
@@ -838,6 +859,8 @@ function addLiveBot(expectPro = false): LiveTurn {
       row.querySelector("details.thought")?.remove();
     },
     finish(text, failed, prompt, search, stages) {
+      window.clearTimeout(mdTimer);
+      mdTimer = 0;
       row.classList.remove("streaming");
       if (visibleReply(text)) {
         setBodyContent(body, text, !failed);

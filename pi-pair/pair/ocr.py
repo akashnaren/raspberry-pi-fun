@@ -93,15 +93,23 @@ def kill_process_group(proc: subprocess.Popen[bytes]) -> None:
     _close_pipes(proc)
 
 
+def _launch_argv(argv: list[str]) -> list[str]:
+    """OCR binaries yield the CPU. Other commands stay as the caller wrote them."""
+    if argv and argv[0] in {"tesseract", "pdftoppm"}:
+        return ["nice", "-n", "10", *argv]
+    return list(argv)
+
+
 def run_local(
     argv: list[str],
     stdin: bytes | None = None,
     timeout: float = OCR_TIMEOUT,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run one local binary. A timeout kills its process group."""
+    launched = _launch_argv(argv)
     try:
         proc = subprocess.Popen(
-            argv,
+            launched,
             stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

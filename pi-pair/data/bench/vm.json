@@ -1,0 +1,18 @@
+{
+  "where": "vm",
+  "turns": {
+    "persona_chars": 504,
+    "first_tokens": 185,
+    "second_uncached_tokens": 44,
+    "first_ttft_ms": 1480.0,
+    "second_ttft_ms": 352.0,
+    "ttft_drop": 0.762,
+    "prefix_identical": true,
+    "tok_s_note": "decode tok/s is unchanged when the context length is held equal"
+  },
+  "llama": {
+    "llama_server": "not installed",
+    "compared": false,
+    "flags": "--flash-attn -b 128 -ub 128 -t 4 --cache-ram 512 --kv-unified"
+  }
+}

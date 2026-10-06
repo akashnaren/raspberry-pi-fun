@@ -712,7 +712,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_search"], "failed")
         self.assertIn("searching", body["pi_stages"])
         self.assertEqual(self.search_calls, ["Say hi in five words."])
-        self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 1536)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 2048)
         self.assertEqual(OllamaFake.last_payload["keep_alive"], -1)
         self.assertIsInstance(OllamaFake.last_payload["keep_alive"], int)
         self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 256)
@@ -814,21 +814,16 @@ class PairHttp(unittest.TestCase):
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get("X-Pi-Chip"), "cache")
-        self.assertEqual(headers.get("X-Pi-Peer"), "cache")
-        self.assertEqual(body["pi_chip"], "cache")
-        self.assertEqual(
-            body["choices"][0]["message"]["content"], "Hi. What can I help you with?"
-        )
-        lowered_hit = body["choices"][0]["message"]["content"].lower()
-        for word in ("mesh", "board", "cache", "brain", "chip", "peer"):
-            self.assertNotIn(word, lowered_hit)
-        self.assertEqual(OllamaFake.posts, 0)
+        self.assertEqual(headers.get("X-Pi-Chip"), "brain: pi4")
+        self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
+        self.assertEqual(body["pi_chip"], "brain: pi4")
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertNotEqual(body.get("pi_model"), "canned")
+        self.assertNotIn("Hi. What can I help you with?", json.dumps(body))
+        self.assertGreaterEqual(OllamaFake.posts, 1)
         self.assertEqual(self.search_calls, [])
         self.assertIsNone(headers.get("X-Pi-Search"))
         self.assertNotIn("pi_search", body)
-        queue = Path(os.environ["PI_PAIR_DATA"]) / "train" / "pending" / "queue.jsonl"
-        self.assertFalse(queue.exists())
 
     def test_pin_weak_peer_rejects(self):
         peer_port = self._listen(OllamaFake)
@@ -970,7 +965,7 @@ class PairHttp(unittest.TestCase):
         )
         port = self._pair()
         expected = {
-            "low": (False, 0.3, 0.8, 160),
+            "low": (False, 0.3, 0.8, 96),
             "medium": (False, 0.3, 0.8, 256),
             "high": (False, 0.3, 0.8, 512),
         }
@@ -1431,8 +1426,10 @@ class PairHttp(unittest.TestCase):
                 {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, role)
-            self.assertEqual(headers.get("X-Pi-Chip"), "cache", role)
-            self.assertEqual(relayed, [], role)
+            self.assertEqual(body["choices"][0]["message"]["content"], "from pi4", role)
+            self.assertEqual(len(relayed), 1, role)
+            self.assertEqual(relayed[0]["body"]["messages"][0]["content"], "Hi!", role)
+            relayed.clear()
             status, headers, body = self._post(
                 port,
                 {
@@ -1522,15 +1519,17 @@ class PairHttp(unittest.TestCase):
             "Hi!",
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
-        self.assertEqual(_statuses(hit), ["answering"])
+        self.assertEqual(_statuses(hit), ["thinking", "answering"])
         self.assertNotIn("searching", _statuses(hit))
         self.assertNotIn("pi_search", hit)
         self.assertEqual(self.search_calls, [])
-        self.assertEqual(OllamaFake.posts, 0)
-        self.assertIn("Hi. What can I help you with?", hit)
-        self.assertNotIn("mesh", hit.lower())
+        self.assertEqual(OllamaFake.posts, 1)
+        self.assertIn("hel", hit)
+        self.assertIn("lo from peer", hit)
+        self.assertNotIn("Hi. What can I help you with?", hit)
 
         self.search_calls.clear()
+        OllamaFake.posts = 0
         _headers, direct = self._stream_raw(
             port,
             "a direct line",
@@ -1567,7 +1566,8 @@ class PairHttp(unittest.TestCase):
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["pi_stages"], ["answering"])
+        self.assertEqual(body["pi_stages"], ["thinking", "answering"])
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertNotIn("pi_search", body)
         self.assertIsNone(response_headers.get("X-Pi-Search"))
 
@@ -1727,12 +1727,11 @@ class PairHttp(unittest.TestCase):
             },
         )
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get("X-Pi-Chip"), "cache")
-        self.assertEqual(body["pi_model"], "canned")
-        self.assertEqual(body["pi_mode"], "auto")
-        self.assertEqual(body["pi_route"], "canned")
-        self.assertNotIn("pi_resident", body)
-        self.assertEqual(OllamaFake.posts, 0)
+        self.assertEqual(headers.get("X-Pi-Chip"), "brain: pi4")
+        self.assertNotEqual(body["pi_model"], "canned")
+        self.assertNotEqual(body.get("pi_route"), "canned")
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertGreaterEqual(OllamaFake.posts, 1)
 
     def test_auto_easy_uses_flash_and_explicit_pro_overrides(self):
         port = self._brain()

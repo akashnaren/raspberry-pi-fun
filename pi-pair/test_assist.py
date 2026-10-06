@@ -133,15 +133,10 @@ class Assist(unittest.TestCase):
             lowered = text.lower()
             for canned in CANNED:
                 self.assertNotIn(canned, lowered, prompt)
-            if prompt == "hi":
-                self.assertEqual(text, "Hi! How can I help?")
-                self.assertEqual(calls["retry"], 0, prompt)
-                self.assertEqual(calls["ground"], 0, prompt)
-            else:
-                self.assertTrue(is_soft_refusal(text), prompt)
-                self.assertIn("can't assist", lowered, prompt)
-                self.assertEqual(calls["retry"], 1, prompt)
-                self.assertEqual(calls["ground"], 0, prompt)
+            self.assertTrue(is_soft_refusal(text), prompt)
+            self.assertIn("can't assist", lowered, prompt)
+            self.assertEqual(calls["retry"], 1, prompt)
+            self.assertEqual(calls["ground"], 0, prompt)
 
     def test_a_real_list_is_kept_and_a_refusal_is_not_rewritten(self):
         electric = "1. Nissan Leaf\n2. Chevy Bolt\n3. Hyundai Ioniq 5\n4. Kia EV6\n5. Ford Mustang Mach-E"

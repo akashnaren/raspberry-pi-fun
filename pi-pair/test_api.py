@@ -218,15 +218,13 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("X-Pi-Mode"), FLASH_MODE)
         self.assertEqual(headers.get("X-Pi-Model"), FLASH_MODE)
-        self.assertEqual(headers.get("X-Pi-Chip"), "cache")
+        self.assertEqual(headers.get("X-Pi-Chip"), "brain: pi4")
         self.assertEqual(body["mode"], FLASH_MODE)
         self.assertEqual(body["model"], FLASH_MODE)
         self.assertEqual(body["checkpoint"], runtime.MODEL)
-        self.assertEqual(body["pi_model"], "canned")
-        self.assertEqual(
-            body["choices"][0]["message"]["content"], "Hi. What can I help you with?"
-        )
-        self.assertEqual(OllamaFake.posts, posts_before)
+        self.assertEqual(body["pi_model"], "qwen3:0.6b")
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertGreater(OllamaFake.posts, posts_before)
 
         status, headers, body = self._json(
             "POST",
@@ -473,10 +471,9 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(status, 200, body)
         self.assertNotIn("mode", body)
         self.assertIsNone(headers.get("X-Pi-Model"))
-        self.assertEqual(
-            body["choices"][0]["message"]["content"], "Hi. What can I help you with?"
-        )
-        self.assertEqual(body["pi_model"], "canned")
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertEqual(body["pi_model"], "qwen3:0.6b")
+        self.assertNotEqual(body["pi_model"], "canned")
 
         health_status, _headers, health = self._json("GET", "/health")
         self.assertEqual(health_status, 200)
@@ -596,8 +593,9 @@ class PublicApi(unittest.TestCase):
                 {"messages": [{"role": "user", "content": "Hi!"}]},
                 self._auth(),
             )
-            self.assertEqual(hit, 200, hit_body)
-            self.assertEqual(hit_body["pi_model"], "canned")
+            self.assertEqual(hit, 503)
+            self.assertEqual(hit_body["error"], BUSY)
+            self.assertNotEqual(hit_body.get("pi_model"), "canned")
             self.assertEqual(OllamaFake.posts, 0)
         finally:
             runtime.set_infer_slots(previous)
@@ -891,7 +889,7 @@ class Exposure(unittest.TestCase):
         status, headers, _raw = self._open("POST", "/v1/chat/completions", cached)
         self.assertEqual(status, 200)
         self.assertEqual(headers.get_all("X-Pi-Mode"), ["flash"])
-        self.assertEqual(headers.get("X-Pi-Peer"), "cache")
+        self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
 
         streamed = {
             "messages": [{"role": "user", "content": "hello"}],

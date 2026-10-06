@@ -26,10 +26,9 @@ _DEFAULTS = {
     # Prompt-ingest batch. Ollama's default is 512, which is wider than this
     # board's 1MB L2 wants while a search note is being prefilled.
     "num_batch": 128,
-    # Flash and Pro both use a 1536 context and a 128 prompt batch. A shorter
-    # context is a smaller key/value cache on the four Pi 4 cores.
-    "flash_num_ctx": 1536,
-    "pro_num_ctx": 1536,
+    # Flash and Pro share one context size so a mode switch does not reload.
+    "flash_num_ctx": 2048,
+    "pro_num_ctx": 2048,
     "flash_num_thread": 4,
     "pro_num_thread": 4,
     "flash_num_batch": 128,
@@ -69,31 +68,37 @@ def _as_int(value, fallback: int) -> int:
         return int(fallback)
 
 
+def runner_options(mode: str | None = None, knobs: dict | None = None) -> dict:
+    """The only source of num_ctx, num_batch, and num_thread.
+
+    Flash and Pro both use 2048 context and a 128 batch unless the operator
+    file says otherwise. Callers must not invent a second set of these three.
+    """
+    row = knobs if knobs is not None else inference_knobs()
+    flash = str(row.get("model") or "")
+    pro = str(row.get("pro_model") or "")
+    name = str(mode or "").strip().lower()
+    pro_mode = name == "pro" or (
+        bool(pro) and name == pro.lower() and name != flash.lower()
+    )
+    prefix = "pro" if pro_mode else "flash"
+    return {
+        "num_ctx": _as_int(row.get(f"{prefix}_num_ctx"), 2048),
+        "num_thread": _as_int(
+            row.get(f"{prefix}_num_thread"), _as_int(row.get("num_thread"), 4)
+        ),
+        "num_batch": _as_int(
+            row.get(f"{prefix}_num_batch"), _as_int(row.get("num_batch"), 128)
+        ),
+    }
+
+
 def mode_limits(model: str, knobs: dict | None = None) -> dict:
     """num_ctx, num_thread, and num_batch for Flash or Pro.
 
     An unknown tag uses the Flash numbers. num_predict stays with the caller.
     """
-    row = knobs if knobs is not None else inference_knobs()
-    flash = str(row.get("model") or "")
-    pro = str(row.get("pro_model") or "")
-    name = str(model or "")
-    if pro and name == pro and name != flash:
-        prefix = "pro"
-        batch_fallback = _as_int(row.get("num_batch"), 128)
-        ctx_fallback = 1536
-    else:
-        prefix = "flash"
-        batch_fallback = _as_int(row.get("num_batch"), 128)
-        ctx_fallback = _as_int(
-            row.get("flash_num_ctx"), _as_int(row.get("num_ctx"), 2048)
-        )
-    thread_fallback = _as_int(row.get("num_thread"), 4)
-    return {
-        "num_ctx": _as_int(row.get(f"{prefix}_num_ctx"), ctx_fallback),
-        "num_thread": _as_int(row.get(f"{prefix}_num_thread"), thread_fallback),
-        "num_batch": _as_int(row.get(f"{prefix}_num_batch"), batch_fallback),
-    }
+    return runner_options(model, knobs)
 
 
 def ollama_options(

@@ -110,7 +110,7 @@ def openapi_document() -> dict:
         "both send Ollama `think` false, with top_p 0.8 and top_k 20. "
         "Flash uses temperature 0.3 and presence_penalty 0. Pro uses "
         "temperature 0.5, presence_penalty 0 at Low, and 0.5 at Medium and High. "
-        "Low allows 160 answer tokens, "
+        "Low allows 96 answer tokens, "
         "Medium allows 256, and High allows 512. The system prompt asks for a "
         "shorter, moderate, or fuller answer. "
         "On the LAN page, High stays on Flash unless Pro was chosen. "
@@ -145,8 +145,7 @@ def openapi_document() -> dict:
                     "description": (
                         "One user turn, or a short session in `messages`. "
                         "Omitting `mode` selects the Flash model. "
-                        "A stored sentence is returned with `pi_model` `canned` "
-                        "and does not call pi4. A miss is generated only on pi4."
+                        "Every reply is generated on pi4. Stored sentences are not served."
                     ),
                     "security": [{"bearerAuth": []}, {"apiKeyAuth": []}],
                     "requestBody": {

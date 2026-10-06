@@ -431,8 +431,6 @@ def settle_reply(prompt: str, text: str, retry, ground=None) -> str:
             return raw
         cleaned = scrub_reply(raw)
         return cleaned or raw
-    if is_casual_greeting(prompt):
-        return _usable(prompt, raw) or friendly_greeting(prompt)
     kept = _usable(prompt, raw)
     if kept:
         return kept

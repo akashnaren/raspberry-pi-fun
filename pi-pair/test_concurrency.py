@@ -435,53 +435,44 @@ class ConcurrentChat(unittest.TestCase):
         self.assertEqual(HoldOllama.posts, 0)
         runtime.gate.release()
 
-    def test_canned_answers_skip_a_full_gate(self):
+    def test_a_greeting_does_not_skip_a_full_gate(self):
         runtime.set_infer_slots(1)
+        runtime.gate.queue_limit = 0
         self.assertTrue(runtime.gate.try_acquire())
         port = self._pi4()
-        started = time.perf_counter()
-        status, headers, body = self._post(
-            port,
-            "Hi!",
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertLess(time.perf_counter() - started, 0.5)
-        self.assertEqual(status, 200)
-        self.assertEqual(headers.get("X-Pi-Chip"), "cache")
-        self.assertEqual(
-            body["choices"][0]["message"]["content"], "Hi. What can I help you with?"
-        )
-        self.assertEqual(HoldOllama.posts, 0)
-        runtime.gate.release()
-
-    def test_canned_hit_skips_a_full_gate(self):
-        runtime.set_infer_slots(1)
-        self.assertTrue(runtime.gate.try_acquire())
-        port = self._pi4()
-        original = pair_server.lookup
-
-        def fake_lookup(text, path=None):
-            if "paraphrase" in (text or "").lower():
-                return "stored sentence from the map"
-            return original(text, path)
-
-        pair_server.lookup = fake_lookup
         try:
             started = time.perf_counter()
-            status, headers, body = self._post(
+            status, _headers, body = self._post(
+                port,
+                "Hi!",
+                {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+            )
+            self.assertLess(time.perf_counter() - started, 0.5)
+            self.assertEqual(status, 503)
+            self.assertEqual(body["error"], BUSY)
+            self.assertNotIn("Hi. What can I help you with?", json.dumps(body))
+            self.assertEqual(HoldOllama.posts, 0)
+        finally:
+            runtime.gate.release()
+
+    def test_a_stored_map_does_not_skip_a_full_gate(self):
+        runtime.set_infer_slots(1)
+        runtime.gate.queue_limit = 0
+        self.assertTrue(runtime.gate.try_acquire())
+        port = self._pi4()
+        try:
+            started = time.perf_counter()
+            status, _headers, body = self._post(
                 port,
                 "a paraphrase the exact map does not contain",
                 {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
             )
             self.assertLess(time.perf_counter() - started, 0.5)
-            self.assertEqual(status, 200)
-            self.assertEqual(headers.get("X-Pi-Chip"), "cache")
-            self.assertEqual(
-                body["choices"][0]["message"]["content"], "stored sentence from the map"
-            )
+            self.assertEqual(status, 503)
+            self.assertEqual(body["error"], BUSY)
+            self.assertNotIn("stored sentence", json.dumps(body))
             self.assertEqual(HoldOllama.posts, 0)
         finally:
-            pair_server.lookup = original
             runtime.gate.release()
 
     def test_weak_boards_still_do_not_generate(self):
