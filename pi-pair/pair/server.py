@@ -744,6 +744,9 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/docs", "/docs/", "/swagger", "/swagger/"):
             self._docs()
             return
+        if path == "/tools/health":
+            self._tool_health()
+            return
         if path == "/api/health":
             self._api_health()
             return
@@ -852,6 +855,9 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/v1/search":
             self._search()
+            return
+        if path.startswith("/tools/"):
+            self._tool(path)
             return
         if path == "/v1/attachments":
             self._attachment()
@@ -1244,6 +1250,10 @@ class Handler(BaseHTTPRequestHandler):
             hint = structure_hint(prompt) or ""
             search_note = None
             search_job = _begin_lookup(prompt, model) if do_search else None
+            if do_search and os.environ.get("PI_PAIR_PREFIX_PRIME") == "1":
+                from pair.tools import schedule_prefix_prime
+
+                schedule_prefix_prime(outbound)
             grounded = None
         except ClientGone:
             raise
@@ -1489,6 +1499,40 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = json.dumps(result).encode()
         self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _tool_health(self) -> None:
+        from pair.nodes.worker import health_body
+
+        body = json.dumps(health_body()).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _tool(self, path: str) -> None:
+        """pi2 and pi3 tools. pi4 may extract only as a last resort. No generation."""
+        from pair.nodes.worker import GENERATION_PATHS, handle
+
+        if path in GENERATION_PATHS:
+            self._error("this node does not generate", status=404)
+            return
+        role = node_role()
+        if role == "brain" and path != "/tools/extract":
+            self._error("tools run on pi2 or pi3", status=403)
+            return
+        row = self._read_json(label="tool body", empty_ok=True)
+        if row is None:
+            return
+        status, payload = handle(path, row if isinstance(row, dict) else {})
+        body = json.dumps(payload).encode()
+        self.send_response(status)
         self._cors()
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))

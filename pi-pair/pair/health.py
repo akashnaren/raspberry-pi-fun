@@ -214,6 +214,40 @@ def join_refresh(timeout: float = 2.0) -> None:
         thread.join(timeout)
 
 
+_LOAD_TTL_S = 2.0
+_load_lock = threading.Lock()
+_load_cache = {"t": 0.0, "rows": {}}
+
+
+def peer_load(nodes: list[str], fetch=None, now: float | None = None) -> dict:
+    """Load, temperature, and queue depth. The same snapshot is reused for 2 seconds."""
+    moment = time.monotonic() if now is None else now
+    with _load_lock:
+        age = moment - float(_load_cache["t"] or 0)
+        fresh = 0 <= age < _LOAD_TTL_S and bool(_load_cache["rows"])
+        if fresh:
+            return {name: dict(_load_cache["rows"].get(name) or {}) for name in nodes}
+    rows = {}
+    getter = fetch
+    for name in nodes:
+        row = {"load": 0.0, "temp_c": None, "queue": 0}
+        if getter is not None:
+            try:
+                got = getter(name) or {}
+            except Exception:
+                got = {}
+            if isinstance(got, dict):
+                row["load"] = float(got.get("load") or 0)
+                row["queue"] = float(got.get("queue") or 0)
+                if got.get("temp_c") is not None:
+                    row["temp_c"] = float(got["temp_c"])
+        rows[name] = row
+    with _load_lock:
+        _load_cache["t"] = moment
+        _load_cache["rows"] = rows
+    return {name: dict(rows.get(name) or {}) for name in nodes}
+
+
 def snapshot_peers(force: bool = False):
     """Cached peer health. A stale cache returns immediately and refreshes behind it."""
     now = time.time()
