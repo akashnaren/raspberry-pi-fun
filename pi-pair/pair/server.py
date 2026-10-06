@@ -52,7 +52,7 @@ from pair.errors import (
     friendly_error,
 )
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
-from pair.health import COOLING_NOTE, board_thermal, snapshot_peers
+from pair.health import board_thermal, snapshot_peers
 from pair.thermal import sample as thermal_sample
 from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
 from pair.modes import (
@@ -724,7 +724,6 @@ def health_document() -> dict:
         "waiting": runtime.gate.waiting(),
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
         "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
-        "cooling": COOLING_NOTE,
         "memory": _memory_stats(),
         "services": {
             "brain": _service_row(peers, "brain", "pi4"),
@@ -806,7 +805,6 @@ def public_health(doc: dict) -> dict:
         "in_flight": doc.get("in_flight"),
         "waiting": doc.get("waiting", runtime.gate.waiting()),
         "uptime_s": doc.get("uptime_s"),
-        "cooling": COOLING_NOTE,
         "peers_up": doc.get("peers_up"),
         "services": services,
         "peers": peers,

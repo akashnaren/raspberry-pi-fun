@@ -21,8 +21,6 @@ from pair.config import PI2_ALT_PORTS
 from pair.guard import may_generate
 from pair import runtime
 
-COOLING_NOTE = "A heatsink and a fan keep the Pi from slowing down under load."
-
 # Peer /health and /api/tags budget. Callers treat a miss past this as down.
 PEER_PROBE_S = 2.5
 # One timed-out poll stays inside this window. The next miss can drop peers_up.
