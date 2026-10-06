@@ -12,6 +12,7 @@ from pair.think import (
     DIRECT_FALLBACK,
     NON_THINK_TEMPERATURE,
     NON_THINK_TOP_P,
+    PRESENCE_PENALTY,
     TOP_K,
     clip_reasoning,
     reasoning_tokens,
@@ -144,6 +145,7 @@ def iter_ollama_channels(
     predict = int(plan.ollama_predict(max_tokens)) if plan else int(max_tokens)
     top_p = plan.top_p if plan else None
     top_k = plan.top_k if plan else None
+    penalty = plan.presence_penalty if plan and plan.presence_penalty else None
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
     payload = ollama_payload(
         model,
@@ -155,6 +157,7 @@ def iter_ollama_channels(
         think=think,
         top_p=top_p,
         top_k=top_k,
+        presence_penalty=penalty,
     )
     accumulated = ""
     saw_content = False
@@ -218,6 +221,7 @@ def iter_ollama_channels(
         think=False,
         top_p=NON_THINK_TOP_P,
         top_k=TOP_K,
+        presence_penalty=PRESENCE_PENALTY,
     )
     try:
         with open_json(url, forced, timeout=180) as response:

@@ -5,8 +5,8 @@ answer budget than Low. High thinks, then stops at about 192 tokens or
 25 seconds, whichever comes first, and asks for the answer in a second
 call so `num_predict` cannot be spent entirely on reasoning. The answer
 text never keeps a `<think>` block. Sampling follows the Qwen3 card:
-non-thinking temperature 0.7 and top_p 0.8; thinking temperature 0.6,
-top_p 0.95, top_k 20.
+non-thinking temperature 0.7, top_p 0.8, top_k 20, presence_penalty 1.5;
+thinking temperature 0.6, top_p 0.95, top_k 20.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ NON_THINK_TOP_P = 0.8
 THINK_TEMPERATURE = 0.6
 THINK_TOP_P = 0.95
 TOP_K = 20
+PRESENCE_PENALTY = 1.5
 
 LOW_PREDICT = 64
 # The old medium answer was 256. Thinking no longer spends that budget,
@@ -47,6 +48,7 @@ class DecodePlan:
     num_predict: int
     think_budget: int
     think_seconds: float = 0.0
+    presence_penalty: float = 0.0
 
     def ollama_predict(self, answer_tokens: int | None = None) -> int:
         """Tokens Ollama may emit. `num_predict` counts thinking and the answer."""
@@ -65,6 +67,7 @@ def _direct(name: str, num_predict: int) -> DecodePlan:
         TOP_K,
         num_predict,
         0,
+        presence_penalty=PRESENCE_PENALTY,
     )
 
 

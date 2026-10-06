@@ -10,6 +10,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -28,6 +29,7 @@ class ModeOllama(BaseHTTPRequestHandler):
     sticky = False
     block_chat = None
     ps_fail = False
+    hold_load = False
 
     def log_message(self, *args):
         pass
@@ -62,7 +64,7 @@ class ModeOllama(BaseHTTPRequestHandler):
             alive = payload.get("keep_alive")
             if alive == 0 and not type(self).sticky:
                 type(self).loaded = [item for item in type(self).loaded if item != name]
-            elif name and name not in type(self).loaded:
+            elif name and name not in type(self).loaded and not type(self).hold_load:
                 type(self).loaded = [*type(self).loaded, name]
             self._json(b"{}")
             return
@@ -114,6 +116,7 @@ def _reset_fake() -> None:
     ModeOllama.sticky = False
     ModeOllama.block_chat = None
     ModeOllama.ps_fail = False
+    ModeOllama.hold_load = False
 
 
 def _posts(path: str) -> list[dict]:
@@ -318,6 +321,10 @@ class ModeHttp(unittest.TestCase):
             self.assertEqual(chats[0]["options"]["temperature"], temperature, level)
             self.assertEqual(chats[0]["options"]["top_p"], top_p, level)
             self.assertEqual(chats[0]["options"]["top_k"], 20, level)
+            if not think:
+                self.assertEqual(chats[0]["options"]["presence_penalty"], 1.5, level)
+            else:
+                self.assertNotIn("presence_penalty", chats[0]["options"], level)
             self.assertEqual(chats[0]["options"]["num_predict"], num_predict, level)
             for name in ("qwen3:0.6b", "qwen3:1.7b"):
                 self.assertIn(name, ModeOllama.loaded, level)
@@ -719,6 +726,9 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(len(warm), 1)
         self.assertEqual(warm[0]["model"], "qwen3:1.7b")
         self.assertEqual(warm[0]["keep_alive"], -1)
+        self.assertEqual(warm[0]["options"]["num_ctx"], 2048)
+        self.assertEqual(warm[0]["options"]["num_batch"], 64)
+        self.assertEqual(warm[0]["options"]["num_thread"], 4)
         self.assertIn("qwen3:0.6b", ModeOllama.loaded)
         self.assertIn("qwen3:1.7b", ModeOllama.loaded)
 
@@ -741,19 +751,45 @@ class ModeHttp(unittest.TestCase):
             {"messages": [{"role": "user", "content": "resident flash please"}]},
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
-        self.assertEqual(status, 502, body)
-        self.assertEqual(body["error"], "The larger model is not ready yet.")
+        self.assertEqual(status, 200, body)
+        self.assertNotIn("error", body)
+        self.assertNotIn("larger model", json.dumps(body).lower())
+        self.assertNotEqual(status, 502)
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertEqual(body["pi_model"], "qwen3:0.6b")
         self.assertNotIn("Loading Pro", json.dumps(body))
-        self.assertNotIn("loading", json.dumps(body))
-        self.assertEqual(_posts("/api/chat"), [])
-        deadline = time.time() + 2
-        while time.time() < deadline and not _posts("/api/generate"):
-            time.sleep(0.02)
+        chats = _posts("/api/chat")
+        self.assertEqual(chats[0]["model"], "qwen3:0.6b")
         warm = _posts("/api/generate")
         self.assertEqual(len(warm), 1)
         self.assertEqual(warm[0]["model"], "qwen3:0.6b")
         self.assertEqual(warm[0]["keep_alive"], -1)
+        self.assertEqual(warm[0]["options"]["num_ctx"], 1536)
+        self.assertEqual(warm[0]["options"]["num_batch"], 128)
+        self.assertEqual(warm[0]["options"]["num_thread"], 4)
         self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])
+
+    def test_a_cold_flash_wait_is_not_a_502(self):
+        from pair.preload import COLD_WAIT_S
+
+        port = self._boot()
+        ModeOllama.loaded = []
+        ModeOllama.hold_load = True
+        ModeOllama.calls = []
+        self.assertGreaterEqual(COLD_WAIT_S, 30)
+        with patch("pair.preload.COLD_WAIT_S", 0.05):
+            status, _headers, body = self._post(
+                port,
+                {"messages": [{"role": "user", "content": "still cold flash"}]},
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+            )
+        self.assertEqual(status, 200, body)
+        self.assertNotEqual(status, 502)
+        text = body["choices"][0]["message"]["content"]
+        self.assertIn("warming up", text.lower())
+        self.assertNotIn("larger model", text.lower())
+        self.assertNotIn("larger model", json.dumps(body).lower())
+        self.assertEqual(_posts("/api/chat"), [])
 
     def test_unknown_residency_does_not_drop_pro(self):
         port = self._boot()

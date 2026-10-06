@@ -52,14 +52,15 @@ class TurnShape(unittest.TestCase):
         self.assertFalse(needs_web("plot a bar chart of the picnic"))
         self.assertFalse(needs_web("make a list of picnic foods"))
         self.assertFalse(needs_web("checklist for the trip"))
-        self.assertFalse(needs_web("Top 5 fruits"))
+        self.assertTrue(needs_web("Top 5 fruits"))
         self.assertFalse(needs_web("5 best picnic snacks"))
         self.assertFalse(needs_web("rank the orchard fruit"))
         self.assertTrue(needs_web("Top 5 latest news about the orchard"))
         self.assertTrue(needs_web("what is the current score"))
         tail = "A" * 90
         self.assertFalse(needs_web(f"what does this say{ATTACH_MARK}{tail}"))
-        self.assertTrue(needs_web("Say hi in five words."))
+        self.assertFalse(needs_web("Say hi in five words."))
+        self.assertTrue(needs_web("best comedy movies to watch"))
         self.assertTrue(needs_web("list the latest news about the bench"))
         self.assertTrue(needs_web("Search for sources for the east window"))
         self.assertTrue(
@@ -444,7 +445,9 @@ class TurnHttp(unittest.TestCase):
                 {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, prompt)
-            expected = ["fruits"] if prompt == "Top 5 fruits" else []
+            expected = (
+                ["best fruits of all time list"] if prompt == "Top 5 fruits" else []
+            )
             self.assertEqual(self.search_calls, expected, prompt)
         self.search_calls.clear()
         news = "Top 5 latest news about the orchard"
@@ -789,9 +792,9 @@ class TurnHttp(unittest.TestCase):
             self.assertNotIn("civic", lowered, prompt)
             self.assertNotIn("godfather", lowered, prompt)
             expected = {
-                "Top 5 cars": "cars",
-                "Top 5 electric cars": "electric cars",
-                "Top 5 horror movies": "horror films",
+                "Top 5 cars": "best cars of all time list",
+                "Top 5 electric cars": "best electric cars of all time list",
+                "Top 5 horror movies": "best horror movies of all time list",
             }[prompt]
             self.assertEqual(self.search_calls, [expected], prompt)
             self.assertEqual(ScriptOllama.posts, 2, prompt)
@@ -882,7 +885,7 @@ class TurnHttp(unittest.TestCase):
         self.assertIn("Nissan Leaf", text)
         self.assertNotIn("Civic", text)
         self.assertNotIn("can't assist", text.lower())
-        self.assertEqual(self.search_calls, ["electric cars"])
+        self.assertEqual(self.search_calls, ["best electric cars of all time list"])
         self.assertEqual(ScriptOllama.posts, 3)
         self.assertTrue(
             all(item.get("model") == FLASH_MODEL for item in ScriptOllama.seen)
@@ -935,7 +938,7 @@ class TurnHttp(unittest.TestCase):
         self.assertNotIn("Civic", text)
         self.assertEqual(ScriptOllama.posts, 3)
         self.assertEqual(ScriptOllama.seen[2].get("model"), PRO_MODEL)
-        self.assertEqual(self.search_calls, ["phones"])
+        self.assertEqual(self.search_calls, ["best phones of all time list"])
 
     def test_a_non_shape_refusal_is_not_retried(self):
         refusal = "I'm sorry, but I can't assist with that."
@@ -1470,7 +1473,7 @@ class TurnHttp(unittest.TestCase):
         self.assertNotIn("Shapen", raw)
         self.assertNotIn("pi_replace", raw)
         self.assertEqual(ScriptOllama.posts, 1)
-        self.assertEqual(self.search_calls, ["horror films"])
+        self.assertEqual(self.search_calls, ["best horror movies of all time list"])
 
     def test_a_short_category_list_searches_once_and_primes_do_not(self):
         partial = "1. Halloween\n2. Hereditary\n3. The Thing"
@@ -1520,7 +1523,7 @@ class TurnHttp(unittest.TestCase):
         self.assertIn("Halloween", text)
         self.assertIn("The Exorcist", text)
         self.assertEqual(ScriptOllama.posts, 2)
-        self.assertEqual(self.search_calls, ["horror films"])
+        self.assertEqual(self.search_calls, ["best horror movies of all time list"])
         follow = ScriptOllama.seen[1]["messages"][-1]["content"]
         self.assertIn("exactly 5", follow)
         notes = ScriptOllama.seen[1]["messages"][0]["content"]
@@ -2002,7 +2005,7 @@ class TurnHttp(unittest.TestCase):
         )
         self.assertNotIn("Shapen", text)
         self.assertEqual(ScriptOllama.posts, 1)
-        self.assertEqual(self.search_calls, ["horror films"])
+        self.assertEqual(self.search_calls, ["best horror movies of all time list"])
 
         ScriptOllama.replies = [
             {"message": {"content": invented}, "done": True, "done_reason": "stop"},
@@ -2034,7 +2037,253 @@ class TurnHttp(unittest.TestCase):
         self.assertIn("The Shining", raw)
         self.assertNotIn("Shapen", raw)
         self.assertEqual(ScriptOllama.posts, 1)
-        self.assertEqual(self.search_calls, ["horror films"])
+        self.assertEqual(self.search_calls, ["best horror movies of all time list"])
+
+    def test_top_lists_on_both_qwen_tags_ignore_junk_and_repeats(self):
+        junk = (
+            "Web search notes.\n"
+            "- Movie Tickets & Movie Times | Fandango (https://www.fandango.com/): "
+            "Movie Tickets & Movie Times | Fandango\n"
+            "- Cinemark Century Redwood Downtown 20 and XD (https://www.cinemark.com/): "
+            "Cinemark Century Redwood Downtown 20 and XD\n"
+            "- Movies & TV (https://www.google.com/): Movies & TV\n"
+            "- Watch (https://example.com/watch): Watch movies online near Oakland\n"
+        )
+        known = (
+            "1. The Godfather\n2. The Shawshank Redemption\n"
+            "3. The Dark Knight\n4. Schindler's List\n5. Pulp Fiction"
+        )
+        loop = "\n".join(f"{index}. The Pursuit of Happo" for index in range(1, 5))
+        comedies = (
+            "1. Some Like It Hot\n2. Dr. Strangelove\n3. The Grand Budapest Hotel\n"
+            "4. Groundhog Day\n5. When Harry Met Sally"
+        )
+
+        def _notes(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "sources": [
+                    {"title": "Movies & TV", "url": "https://example.com/junk"}
+                ],
+                "context": junk,
+            }
+
+        pair_server.lookup_web = _notes
+        for mode, tag in (("flash", FLASH_MODEL), ("pro", PRO_MODEL)):
+            ScriptOllama.replies = [
+                {"message": {"content": known}, "done": True, "done_reason": "stop"}
+            ]
+            ScriptOllama.seen = []
+            ScriptOllama.posts = 0
+            OllamaFake.catalog = [FLASH_MODEL, PRO_MODEL]
+            peer_port = self._listen(ScriptOllama)
+            runtime.set_peers(
+                [
+                    {
+                        "name": "pi4",
+                        "host": "127.0.0.1",
+                        "port": peer_port,
+                        "kind": "ollama",
+                        "generative": True,
+                        "role": "brain",
+                        "note": "",
+                    }
+                ]
+            )
+            port = self._pair()
+            self.search_calls.clear()
+            with patch("pair.server.cards_for_answer", return_value=[]):
+                status, _headers, body = self._post(
+                    port,
+                    {
+                        "mode": mode,
+                        "messages": [{"role": "user", "content": "top 5 movies"}],
+                        "stream": False,
+                    },
+                    {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+                )
+            self.assertEqual(status, 200, mode)
+            text = body["choices"][0]["message"]["content"]
+            self.assertEqual(
+                [line.split(". ", 1)[1] for line in text.splitlines() if ". " in line],
+                [
+                    "The Godfather",
+                    "The Shawshank Redemption",
+                    "The Dark Knight",
+                    "Schindler's List",
+                    "Pulp Fiction",
+                ],
+                mode,
+            )
+            self.assertNotIn("Fandango", text)
+            self.assertNotIn("Cinemark", text)
+            self.assertNotIn("Movies & TV", text)
+            self.assertEqual(self.search_calls, ["best movies of all time list"], mode)
+            self.assertEqual(ScriptOllama.seen[0]["model"], tag, mode)
+
+        shining = "\n".join(
+            [
+                "1. *The Shining*",
+                "2. **The Shining**",
+                "3. _The Shining_",
+                "4. *The Shining*",
+                "5. The Shining",
+            ]
+        )
+        horror_notes = (
+            "Web search notes.\nText from the first page:\n"
+            "1. The Exorcist\n2. Hereditary\n3. Get Out\n"
+            "4. The Shining\n5. Halloween\n"
+        )
+
+        def _horror(query, opener=None):
+            self.search_calls.append(query)
+            return {
+                "status": "ok",
+                "sources": [
+                    {"title": "Horror films", "url": "https://example.com/horror"}
+                ],
+                "context": horror_notes,
+            }
+
+        pair_server.lookup_web = _horror
+        for mode, tag in (("flash", FLASH_MODEL), ("pro", PRO_MODEL)):
+            ScriptOllama.replies = [
+                {
+                    "message": {"content": shining},
+                    "done": True,
+                    "done_reason": "stop",
+                }
+            ]
+            ScriptOllama.seen = []
+            ScriptOllama.posts = 0
+            OllamaFake.catalog = [FLASH_MODEL, PRO_MODEL]
+            peer_port = self._listen(ScriptOllama)
+            runtime.set_peers(
+                [
+                    {
+                        "name": "pi4",
+                        "host": "127.0.0.1",
+                        "port": peer_port,
+                        "kind": "ollama",
+                        "generative": True,
+                        "role": "brain",
+                        "note": "",
+                    }
+                ]
+            )
+            port = self._pair()
+            self.search_calls.clear()
+            with patch("pair.server.cards_for_answer", return_value=[]):
+                status, _headers, body = self._post(
+                    port,
+                    {
+                        "mode": mode,
+                        "messages": [
+                            {"role": "user", "content": "Top 5 horror movies"}
+                        ],
+                        "stream": False,
+                    },
+                    {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+                )
+            self.assertEqual(status, 200, mode)
+            text = body["choices"][0]["message"]["content"]
+            self.assertEqual(
+                [line.split(". ", 1)[1] for line in text.splitlines() if ". " in line],
+                ["The Exorcist", "Hereditary", "Get Out", "The Shining", "Halloween"],
+                mode,
+            )
+            self.assertEqual(text.count("The Shining"), 1, mode)
+            self.assertEqual(
+                self.search_calls, ["best horror movies of all time list"], mode
+            )
+            self.assertEqual(ScriptOllama.seen[0]["model"], tag, mode)
+
+        ScriptOllama.replies = [
+            {"message": {"content": loop}, "done": True, "done_reason": "stop"},
+            {"message": {"content": comedies}, "done": True, "done_reason": "stop"},
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        OllamaFake.catalog = [FLASH_MODEL, PRO_MODEL]
+        pair_server.lookup_web = _notes
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        self.search_calls.clear()
+        with patch("pair.server.cards_for_answer", return_value=[]):
+            status, _headers, body = self._post(
+                port,
+                {
+                    "mode": "flash",
+                    "think": "low",
+                    "messages": [
+                        {"role": "user", "content": "best comedy movies to watch"}
+                    ],
+                    "stream": False,
+                },
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+            )
+        self.assertEqual(status, 200, body)
+        text = body["choices"][0]["message"]["content"]
+        self.assertNotIn("The Pursuit of Happo", text)
+        self.assertIn("Some Like It Hot", text)
+        self.assertIn("Dr. Strangelove", text)
+        self.assertNotIn("Fandango", text)
+        self.assertEqual(
+            self.search_calls, ["best comedy movies to watch of all time list"]
+        )
+        self.assertEqual(ScriptOllama.seen[0]["model"], FLASH_MODEL)
+        self.assertEqual(ScriptOllama.seen[1]["model"], PRO_MODEL)
+        self.assertEqual(ScriptOllama.seen[0]["options"]["presence_penalty"], 1.5)
+
+        ScriptOllama.replies = [
+            {
+                "chunks": [
+                    "1. The Pursuit of Happo\n",
+                    "2. The Pursuit of Happo\n",
+                    "3. The Pursuit of Happo\n",
+                    "4. The Pursuit of Happo\n",
+                ],
+                "done_reason": "stop",
+            }
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        self.search_calls.clear()
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/chat/completions",
+            body=json.dumps(
+                {
+                    "messages": [{"role": "user", "content": "Say hi in five words."}],
+                    "stream": True,
+                }
+            ).encode(),
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Target": "pi4",
+                "X-Pi-Mesh": "off",
+            },
+        )
+        raw = conn.getresponse().read().decode()
+        conn.close()
+        self.assertEqual(raw.count("The Pursuit of Happo"), 1)
+        self.assertEqual(self.search_calls, [])
 
 
 if __name__ == "__main__":

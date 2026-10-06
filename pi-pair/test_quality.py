@@ -12,7 +12,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pair.charts import chart_json_ok, ready_chart, repair_chart_reply  # noqa: E402
-from pair.lists import ground_category_list  # noqa: E402
+from pair.lists import (  # noqa: E402
+    clip_repeat,
+    dedupe_lines,
+    ground_category_list,
+    ranked_entities,
+)
 from pair.sequences import sequence_answer, sequence_values  # noqa: E402
 
 HORROR_NOTES = """Web search notes.
@@ -69,6 +74,66 @@ class GroundedLists(unittest.TestCase):
         sparse = "Web search notes.\n- Halloween is a horror film."
         kept = ground_category_list("Top 5 horror movies", invented, sparse)
         self.assertEqual(kept, invented)
+
+    def test_junk_page_titles_do_not_become_the_list(self):
+        junk = """Web search notes.
+- Movie Tickets & Movie Times | Fandango (https://www.fandango.com/): Movie Tickets & Movie Times | Fandango
+- Cinemark Century Redwood Downtown 20 and XD (https://www.cinemark.com/): Cinemark Century Redwood Downtown 20 and XD
+- Movies & TV (https://www.google.com/search?q=movies): Movies & TV
+- Watch movies online (https://example.com/watch): Watch movies online near Oakland
+- Showtimes (https://example.com/times): Showtimes near Redwood City
+"""
+        known = (
+            "1. The Godfather\n"
+            "2. The Shawshank Redemption\n"
+            "3. The Dark Knight\n"
+            "4. Schindler's List\n"
+            "5. Pulp Fiction"
+        )
+        for prompt in ("top 5 movies", "top 5 horror movies"):
+            done = ground_category_list(prompt, known, junk)
+            self.assertEqual(done, known, prompt)
+            self.assertNotIn("Fandango", done)
+            self.assertNotIn("Cinemark", done)
+            self.assertNotIn("Movies & TV", done)
+            self.assertEqual(ranked_entities(junk), [])
+
+        loop = "\n".join(f"{i}. *The Shining*" for i in range(1, 6))
+        mixed = (
+            "1. *The Shining*\n"
+            "2. **The Shining**\n"
+            "3. _The Shining_\n"
+            "4. *The Shining*\n"
+            "5. The Shining"
+        )
+        for prompt in ("top 5 movies", "top 5 horror movies"):
+            cleaned = ground_category_list(prompt, mixed, junk)
+            self.assertEqual(cleaned, "1. The Shining", prompt)
+            self.assertNotIn("Fandango", cleaned)
+            self.assertEqual(dedupe_lines(loop).count("The Shining"), 1)
+
+        notes = (
+            "Web search notes.\n"
+            '- Rank (https://example.com/a): "The Godfather" "The Dark Knight"\n'
+            '- Again (https://example.com/b): "The Godfather" "Pulp Fiction"\n'
+            "- Junk (https://www.fandango.com/): Movie Tickets & Movie Times | Fandango\n"
+        )
+        ranked = ranked_entities(notes)
+        self.assertEqual(ranked[0], "The Godfather")
+        self.assertIn("The Dark Knight", ranked)
+        self.assertNotIn("Fandango", " ".join(ranked))
+
+    def test_a_repeated_line_stops_the_stream(self):
+        loop = (
+            "1. The Pursuit of Happo\n"
+            "2. The Pursuit of Happo\n"
+            "3. The Pursuit of Happo\n"
+            "4. The Pursuit of Happo\n"
+        )
+        clipped, stopped = clip_repeat(loop)
+        self.assertTrue(stopped)
+        self.assertEqual(clipped.strip(), "1. The Pursuit of Happo")
+        self.assertEqual(dedupe_lines(loop), "1. The Pursuit of Happo")
 
 
 class ComputedCharts(unittest.TestCase):

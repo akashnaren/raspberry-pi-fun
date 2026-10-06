@@ -42,6 +42,7 @@ def ollama_payload(
     think: bool = False,
     top_p: float | None = None,
     top_k: int | None = None,
+    presence_penalty: float | None = None,
 ) -> dict:
     """The one Ollama chat body. keep_alive is the pi4 knob, not a per-call TTL.
 
@@ -54,6 +55,8 @@ def ollama_payload(
         options["top_p"] = float(top_p)
     if top_k is not None:
         options["top_k"] = int(top_k)
+    if presence_penalty:
+        options["presence_penalty"] = float(presence_penalty)
     return {
         "model": model,
         "messages": messages,
@@ -103,6 +106,7 @@ def chat_ollama(
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
     top_p = plan.top_p if plan else None
     top_k = plan.top_k if plan else None
+    penalty = plan.presence_penalty if plan else None
     predict = int(plan.ollama_predict(max_tokens)) if plan else int(max_tokens)
     payload = ollama_payload(
         model,
@@ -114,6 +118,7 @@ def chat_ollama(
         think=False,
         top_p=top_p,
         top_k=top_k,
+        presence_penalty=penalty,
     )
     out = _post_json(url, payload, timeout=180)
     answer, thinking = split_ollama_message(out.get("message") or {})
