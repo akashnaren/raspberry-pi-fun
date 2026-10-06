@@ -36,7 +36,7 @@ _DEFAULTS = {
     "pro_num_batch": 64,
     # Characters of search notes pasted into the prompt. Sources on the page
     # are not cut. A shorter note is a shorter prefill.
-    "search_note_chars": 640,
+    "search_note_chars": 720,
     # Characters of one attachment kept in the prompt. The upload route may
     # return more for the composer. The model sees this cut, inside a fence.
     "attachment_chars": 1200,

@@ -207,6 +207,9 @@ class MeshRoles(unittest.TestCase):
                 os.environ["PI_PAIR_REMOTE_SEARCH_TIMEOUT"] = read
         self.assertLessEqual(connect, 2.0)
         self.assertLessEqual(read_s, 12.0)
+        connect, read_s = search_timeouts()
+        self.assertEqual(connect, 0.6)
+        self.assertEqual(read_s, 3.0)
 
 
 class SearchRouting(unittest.TestCase):
@@ -299,6 +302,25 @@ class SearchRouting(unittest.TestCase):
         self.assertLess(elapsed, 1.0)
         self.assertEqual(found["via"], "local")
         self.assertEqual(local, ["bench height"])
+
+    def test_remote_timeout_skips_local_when_the_budget_is_gone(self):
+        self._peer(1)
+        os.environ["PI_PAIR_REMOTE_SEARCH_CONNECT_TIMEOUT"] = "0.4"
+        local = []
+
+        def fake(query):
+            local.append(query)
+            return {"status": "ok", "sources": [], "context": "local notes"}
+
+        started = time.perf_counter()
+        found = lookup_for_brain(
+            "bench height", local=fake, deadline=time.monotonic() + 0.2
+        )
+        elapsed = time.perf_counter() - started
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(local, [])
+        self.assertEqual(found["status"], "failed")
+        self.assertEqual(found["via"], "budget")
 
     def test_remote_off_stays_local(self):
         port = _listen(self.servers, SearchPage)

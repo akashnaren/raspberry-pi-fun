@@ -1651,7 +1651,7 @@ class PairHttp(unittest.TestCase):
         from pair.knobs import search_note_limit
 
         limit = search_note_limit()
-        self.assertEqual(limit, 640)
+        self.assertEqual(limit, 720)
         prompt = "Search for how wide the east window is."
         page = "snippet " * 400
 

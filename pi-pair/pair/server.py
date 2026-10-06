@@ -331,13 +331,44 @@ def _join_cancel(thread, timeout: float | None, cancel=None) -> None:
         thread.join(0.25)
 
 
+def _begin_lookup(prompt: str, model: str) -> dict:
+    """Start the lookup before the decode slot, so it overlaps the queue wait."""
+    cap = _source_cap(model)
+    holder: dict = {}
+    started = time.perf_counter()
+    deadline = time.monotonic() + SEARCH_BUDGET_S
+
+    def _lookup() -> None:
+        try:
+            holder["found"] = lookup_for_brain(
+                prompt, local=lookup_web, limit=cap, deadline=deadline
+            )
+        except Exception:
+            holder["found"] = None
+
+    lookup = threading.Thread(target=_lookup, name="search-lookup", daemon=True)
+    lookup.start()
+    return {
+        "thread": lookup,
+        "holder": holder,
+        "deadline": deadline,
+        "started": started,
+        "cap": cap,
+    }
+
+
 def _with_search(
-    messages, prompt: str, images: list | None = None, model: str = "", cancel=None
+    messages,
+    prompt: str,
+    images: list | None = None,
+    model: str = "",
+    cancel=None,
+    job: dict | None = None,
 ):
     """On pi4, attach public notes when a lookup already ran. Failures stay local.
 
-    The lookup is capped so a slow page cannot hold the first token. Image
-    cards and an in-flight model warm run beside the lookup.
+    The lookup is capped so a slow search cannot hold the first token. Image
+    cards and an in-flight model warm run beside the join.
     """
     warm = warm_in_flight()
     worker = None
@@ -354,19 +385,13 @@ def _with_search(
         _join_cancel(worker, None, cancel)
         _join_cancel(warm, 40, cancel)
         return messages, None
-    query = prompt
-    cap = _source_cap(model)
-    holder: dict = {}
-
-    def _lookup() -> None:
-        try:
-            holder["found"] = lookup_for_brain(query, local=lookup_web, limit=cap)
-        except Exception:
-            holder["found"] = None
-
-    lookup = threading.Thread(target=_lookup, name="search-lookup", daemon=True)
-    lookup.start()
-    _join_cancel(lookup, SEARCH_BUDGET_S, cancel)
+    if job is None:
+        job = _begin_lookup(prompt, model)
+    lookup = job["thread"]
+    holder = job["holder"]
+    cap = int(job["cap"])
+    remain = max(0.0, float(job["deadline"]) - time.monotonic())
+    _join_cancel(lookup, remain, cancel)
     found = holder.get("found") if not lookup.is_alive() else None
     if not isinstance(found, dict):
         found = {"status": "failed", "sources": [], "context": ""}
@@ -986,14 +1011,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._queue_ms = int((time.perf_counter() - started) * 1000)
 
-    def _timed_search(self, *args, **kwargs):
+    def _timed_search(self, *args, job=None, **kwargs):
         started = time.perf_counter()
         try:
-            return _with_search(*args, **kwargs)
+            return _with_search(*args, job=job, **kwargs)
         finally:
-            self._search_ms = int(
-                getattr(self, "_search_ms", 0) + (time.perf_counter() - started) * 1000
-            )
+            origin = job["started"] if isinstance(job, dict) else started
+            self._search_ms = int((time.perf_counter() - origin) * 1000)
 
     def _attach_timing(self, payload: dict, started: float) -> None:
         timing = assemble(
@@ -1302,17 +1326,9 @@ class Handler(BaseHTTPRequestHandler):
                 outbound = [{"role": "system", "content": hint}, *outbound]
             search_note = None
             images: list[dict] = []
-            if do_search and not want_stream:
-                self._searched = True
-                outbound, search_note = self._timed_search(
-                    outbound, prompt, images, model, getattr(self, "_cancel", None)
-                )
-            elif not want_stream:
+            search_job = _begin_lookup(prompt, model) if do_search else None
+            if not do_search and not want_stream:
                 images = _image_cards(prompt)
-            if not want_stream:
-                outbound = shape_messages(
-                    outbound, prompt, tuned, think_name, _prompt_note(search_note)
-                )
             grounded = ready
         except ClientGone:
             raise
@@ -1387,6 +1403,7 @@ class Handler(BaseHTTPRequestHandler):
                     resident_name=resident_name,
                     ready_answer=grounded,
                     slot=slot,
+                    search_job=search_job,
                 )
             else:
                 if slot["waiting"] and not _claim_wait(
@@ -1396,6 +1413,19 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if slot["held"]:
                     self._mark_queue()
+                if do_search:
+                    self._searched = True
+                    outbound, search_note = self._timed_search(
+                        outbound,
+                        prompt,
+                        images,
+                        model,
+                        getattr(self, "_cancel", None),
+                        job=search_job,
+                    )
+                outbound = shape_messages(
+                    outbound, prompt, tuned, think_name, _prompt_note(search_note)
+                )
                 stages = ["thinking"]
                 if do_search:
                     stages.append("searching")
@@ -2004,6 +2034,7 @@ class Handler(BaseHTTPRequestHandler):
         resident_name: str = "",
         ready_answer: str | None = None,
         slot: dict | None = None,
+        search_job: dict | None = None,
     ) -> None:
         self.send_response(200)
         self._cors()
@@ -2078,7 +2109,12 @@ class Handler(BaseHTTPRequestHandler):
             if not searched:
                 fresh: list[dict] = []
                 messages, search_note = self._timed_search(
-                    messages, prompt, fresh, model, getattr(self, "_cancel", None)
+                    messages,
+                    prompt,
+                    fresh,
+                    model,
+                    getattr(self, "_cancel", None),
+                    job=search_job,
                 )
                 images = fresh
             found = {"pi_tool": "search"}

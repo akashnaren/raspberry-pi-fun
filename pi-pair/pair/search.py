@@ -22,7 +22,7 @@ from urllib.request import (
     build_opener,
 )
 
-from pair.search_html import parse_result_page, plain_text
+from pair.search_html import parse_result_page
 
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 INSTANT_URL = "https://api.duckduckgo.com/"
@@ -30,17 +30,14 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux armv7l) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-# One DuckDuckGo fetch, then one page. These do not grow with the hit count,
-# so a slow Pi does not wait out a timeout per result.
-SEARCH_TIMEOUT = 5
-PAGE_TIMEOUT = 3
+# One DuckDuckGo fetch. Snippets only, so a slow page cannot stall the turn.
+SEARCH_TIMEOUT = 3
 QUERY_CAP = 240
-DEFAULT_RESULTS = 8
+DEFAULT_RESULTS = 3
 MAX_RESULTS = 10
 TITLE_CAP = 120
 SNIPPET_CAP = 240
 PAGE_READ_CAP = 32000
-PAGE_TEXT_CAP = 1200
 MAX_REDIRECTS = 2
 # CGNAT, including Tailscale. Python 3.12 does not mark this range private.
 _CGNAT = ip_network("100.64.0.0/10")
@@ -338,10 +335,6 @@ def _fetch(url: str, opener, timeout: float, cap: int) -> tuple[bytes, str]:
         return body, ctype
 
 
-def _plain(raw: str) -> str:
-    return plain_text(raw, PAGE_TEXT_CAP)
-
-
 def _parse_results(page: str, limit: int) -> list[dict]:
     return parse_result_page(page, limit, _unwrap, TITLE_CAP, SNIPPET_CAP)
 
@@ -388,14 +381,7 @@ def _instant(query: str, opener, limit: int) -> list[dict]:
     return found[:limit]
 
 
-def _page_plain(url: str, opener) -> str:
-    body, ctype = _fetch(url, opener, PAGE_TIMEOUT, PAGE_READ_CAP)
-    if ctype and "html" not in ctype and not ctype.startswith("text/"):
-        return ""
-    return _plain(body.decode("utf-8", "replace"))
-
-
-def _pack(results: list[dict], page: str, limit: int) -> dict:
+def _pack(results: list[dict], limit: int) -> dict:
     lines = ["Web search notes."]
     sources = []
     for item in results[:limit]:
@@ -404,9 +390,6 @@ def _pack(results: list[dict], page: str, limit: int) -> dict:
         snippet = item["snippet"][:SNIPPET_CAP]
         sources.append({"title": title, "url": url})
         lines.append(f"- {title} ({url}): {snippet}")
-    if page:
-        lines.append("Text from the first page:")
-        lines.append(page[:PAGE_TEXT_CAP])
     return {"status": "ok", "sources": sources, "context": "\n".join(lines)}
 
 
@@ -435,14 +418,7 @@ def lookup_web(query: str, opener=None, *, limit: int | None = None) -> dict:
         if cacheable:
             _web_put(text, failed)
         return failed
-    page = ""
-    for item in results:
-        try:
-            page = _page_plain(item["url"], opener)
-        except Exception:
-            page = ""
-        break
-    packed = _pack(results, page, count)
+    packed = _pack(results, count)
     if cacheable:
         _web_put(text, packed)
     return packed

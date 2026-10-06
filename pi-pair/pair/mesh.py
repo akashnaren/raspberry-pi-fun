@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from urllib.parse import urlparse
 
 import http.client
@@ -23,7 +24,7 @@ _DEFAULTS = {
     "dataset_and_train": ["pi3"],
     "public_labels": ["pi3"],
     "remote_search_connect_timeout_s": 0.6,
-    "remote_search_read_timeout_s": 9,
+    "remote_search_read_timeout_s": 3,
     "hf_dataset": DEFAULT_DATASET,
 }
 _CONNECT_CAP = 2.0
@@ -61,12 +62,12 @@ def search_timeouts() -> tuple[float, float]:
     """Connect stays short so a dead pi2 cannot stall pi4. Read covers one lookup."""
     cfg = mesh_config()
     connect_default = float(cfg.get("remote_search_connect_timeout_s") or 0.6)
-    read_default = float(cfg.get("remote_search_read_timeout_s") or 9)
+    read_default = float(cfg.get("remote_search_read_timeout_s") or 3)
     connect = _env_float("PI_PAIR_REMOTE_SEARCH_CONNECT_TIMEOUT", connect_default)
     read = _env_float("PI_PAIR_REMOTE_SEARCH_TIMEOUT", read_default)
     return (
         _clamp(connect, _CONNECT_CAP, 0.6),
-        _clamp(read, _READ_CAP, 9.0),
+        _clamp(read, _READ_CAP, 3.0),
     )
 
 
@@ -159,8 +160,18 @@ def lookup_remote(query: str) -> dict | None:
     return _valid_search(raw)
 
 
-def lookup_for_brain(query: str, *, local=None, limit: int | None = None) -> dict:
-    """pi4 chat search. Remote pi2 first, then the local lookup if pi2 is down."""
+def lookup_for_brain(
+    query: str,
+    *,
+    local=None,
+    limit: int | None = None,
+    deadline: float | None = None,
+) -> dict:
+    """pi4 chat search. Remote pi2 first, then the local lookup if pi2 is down.
+
+    `deadline` is a monotonic timestamp. When less than 1.5s remains, the
+    local fallback is skipped so a dead pi2 cannot eat the rest of the budget.
+    """
     local_fn = local or lookup_web
     if remote_search_enabled():
         found = lookup_remote(query)
@@ -168,6 +179,9 @@ def lookup_for_brain(query: str, *, local=None, limit: int | None = None) -> dic
             copied = dict(found)
             copied["via"] = "pi2"
             return copied
+    if deadline is not None and deadline - time.monotonic() < 1.5:
+        failed = {"status": "failed", "sources": [], "context": "", "via": "budget"}
+        return failed
     if limit is not None and local_fn is lookup_web:
         result = local_fn(query, limit=limit)
     else:
