@@ -649,7 +649,8 @@ class PairHttp(unittest.TestCase):
         self.assertIn("if (event.shiftKey) return;", source)
         self.assertIn("event.ctrlKey || event.metaKey", source)
         self.assertNotIn("metaKey||e.ctrlKey", source)
-        self.assertIn("think: effort", source)
+        history = (ROOT / "web" / "src" / "history.ts").read_text(encoding="utf-8")
+        self.assertIn("think: options.effort", history)
         self.assertIn("X-Pi-Route", source)
         settings_src = (ROOT / "web" / "src" / "settings.ts").read_text(
             encoding="utf-8"
