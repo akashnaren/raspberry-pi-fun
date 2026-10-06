@@ -350,7 +350,7 @@ class WorkerHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertFalse(stored["model"])
-        self.assertTrue(stored["facts"][0]["text"].startswith("user said"))
+        self.assertTrue(stored["facts"][0]["text"].startswith("The user said:"))
 
 
 if __name__ == "__main__":

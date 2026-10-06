@@ -211,6 +211,154 @@ def figure_from_plot(text: str, title: str = "") -> dict | None:
     )
 
 
+def is_placeholder_table(text: str) -> bool:
+    """A stand-in table whose row labels are single letters, such as a = 1."""
+    parsed = parse_markdown_table(text)
+    if not parsed:
+        return False
+    _headers, rows = parsed
+    labels = [row[0].strip() for row in rows if row and row[0].strip()]
+    if not labels:
+        return False
+    return all(len(label) == 1 and label.isalpha() for label in labels)
+
+
+def without_placeholders(text: str) -> str:
+    """Drop stand-in tables and keep the surrounding prose."""
+    lines = (text or "").splitlines()
+    kept: list[str] = []
+    index = 0
+    while index < len(lines):
+        if (
+            index + 1 < len(lines)
+            and "|" in lines[index]
+            and _RULE.match(lines[index + 1])
+        ):
+            end = index + 2
+            while end < len(lines) and lines[end].strip() and "|" in lines[end]:
+                end += 1
+            chunk = "\n".join(lines[index:end])
+            if not is_placeholder_table(chunk):
+                kept.extend(lines[index:end])
+            index = end
+            continue
+        kept.append(lines[index])
+        index += 1
+    return "\n".join(kept)
+
+
+_PAIR = re.compile(r"\b([A-Za-z][A-Za-z0-9]{0,20})\s*:?\s*([+-]?\d+(?:\.\d+)?)\b")
+_HEADER = re.compile(
+    r"\bcolumns?\s+([A-Za-z][\w-]*)\s+and\s+([A-Za-z][\w-]*)",
+    re.I,
+)
+_SERIES_STOP = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "bar",
+    "be",
+    "by",
+    "chart",
+    "charts",
+    "column",
+    "columns",
+    "csv",
+    "data",
+    "do",
+    "docx",
+    "download",
+    "downloadable",
+    "downloads",
+    "each",
+    "file",
+    "files",
+    "for",
+    "from",
+    "give",
+    "graph",
+    "graphs",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "item",
+    "items",
+    "label",
+    "line",
+    "list",
+    "make",
+    "markdown",
+    "me",
+    "monthly",
+    "my",
+    "need",
+    "note",
+    "of",
+    "on",
+    "or",
+    "over",
+    "page",
+    "pdf",
+    "per",
+    "please",
+    "plot",
+    "plots",
+    "scatter",
+    "show",
+    "spreadsheet",
+    "table",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "they",
+    "this",
+    "titled",
+    "to",
+    "txt",
+    "us",
+    "using",
+    "value",
+    "values",
+    "want",
+    "we",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+    "xlsx",
+    "your",
+}
+
+
+def series_markdown(text: str) -> str:
+    """A markdown table of the word/number pairs in `text`, or empty."""
+    header = _HEADER.search(text or "")
+    left, right = ("label", "value")
+    if header:
+        left, right = header.group(1), header.group(2)
+    pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for match in _PAIR.finditer(text or ""):
+        word, number = match.group(1), match.group(2)
+        if word.lower() in _SERIES_STOP or word.lower() in seen:
+            continue
+        seen.add(word.lower())
+        pairs.append((word, number))
+    if len(pairs) < 2:
+        return ""
+    rows = [f"| {left} | {right} |", "| --- | --- |"]
+    rows.extend(f"| {word} | {number} |" for word, number in pairs[:12])
+    return "\n".join(rows)
+
+
 def chart_samples(n: int = 50) -> list[dict]:
     """Generic table shapes. The last four are not tables, so they stay text."""
     rows = []

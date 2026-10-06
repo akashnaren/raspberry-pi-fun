@@ -18,6 +18,7 @@ from pair.abilities import (
     JSON_RETRY,
     clean_reply,
     needs_json_retry,
+    settle_blocks,
     tail_hints,
     tool_notes,
 )
@@ -91,6 +92,7 @@ from pair.turn import (
     public_failure,
     shape_messages,
     structure_hint,
+    turns_for_memory,
 )
 from pair.upload import UploadRejected, ingest, read_limited
 
@@ -622,6 +624,21 @@ def _memory_prompt(scope: str) -> tuple[str, str]:
         return memory.facts_block(scope), memory.summary_text(scope)
     except Exception:
         return "", ""
+
+
+def _recall_context(handler, messages, prompt: str) -> str:
+    """Facts, the summary, and earlier turns. The current question is not a source."""
+    facts, summary = _memory_prompt(handler._memory_scope())
+    question = " ".join((prompt or "").split())
+    parts = [facts, summary]
+    for row in messages or []:
+        if not isinstance(row, dict) or row.get("role") == "system":
+            continue
+        text = " ".join(str(row.get("content") or "").split())
+        if not text or text == question:
+            continue
+        parts.append(text)
+    return "\n".join(part for part in parts if part)
 
 
 def _source_count(search_note) -> int:
@@ -1324,10 +1341,15 @@ class Handler(BaseHTTPRequestHandler):
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             structured = is_structured_request(prompt)
+            self._local_context = _recall_context(self, outbound, prompt)
             do_search = (
                 bool(mesh and node_role() == "brain")
                 and not structured
-                and needs_web(prompt, follow_up=not one_user_turn(messages))
+                and needs_web(
+                    prompt,
+                    follow_up=not one_user_turn(messages),
+                    context=self._local_context,
+                )
             )
             tuned = _tuned_knobs(used if kind != "llamacpp" else model)
             ctx = int(tuned.get("num_ctx") or 2048)
@@ -1444,6 +1466,7 @@ class Handler(BaseHTTPRequestHandler):
                         job=search_job,
                     )
                 fact_text, summary_text = _memory_prompt(self._memory_scope())
+                source_rows = list(outbound)
                 outbound = shape_messages(
                     outbound,
                     prompt,
@@ -1454,6 +1477,7 @@ class Handler(BaseHTTPRequestHandler):
                     facts=fact_text,
                     summary=summary_text,
                 )
+                memory_rows = turns_for_memory(source_rows, outbound)
                 stages = ["thinking"]
                 if do_search:
                     stages.append("searching")
@@ -1474,6 +1498,7 @@ class Handler(BaseHTTPRequestHandler):
                     route_name,
                     resident_name,
                     ready_answer=grounded,
+                    memory_turns=memory_rows,
                 )
         except ClientGone:
             raise
@@ -2135,7 +2160,12 @@ class Handler(BaseHTTPRequestHandler):
             search_note,
             content,
         )
-        content = clean_reply(content, prompt, _source_count(search_note))
+        content = clean_reply(
+            content,
+            prompt,
+            _source_count(search_note),
+            context=getattr(self, "_local_context", ""),
+        )
         if not str(content).strip():
             raise DecodeFailed(friendly_error(""))
         return content, used, True
@@ -2155,12 +2185,14 @@ class Handler(BaseHTTPRequestHandler):
         """At most one extra decode: tool results, or a single JSON schema retry."""
         if getattr(self, "_extra_call", False):
             return content
-        notes = tool_notes(content)
-        retry = needs_json_retry(prompt, content) and not notes
+        context = getattr(self, "_local_context", "")
+        settled = settle_blocks(content, prompt, context=context)
+        notes = tool_notes(settled, prompt=prompt, context=context)
+        retry = needs_json_retry(prompt, settled) and not notes
         if not notes and not retry:
-            return content
+            return settled
         follow = list(messages or [])
-        follow.append({"role": "assistant", "content": content})
+        follow.append({"role": "assistant", "content": settled})
         follow.append(
             {"role": "system", "content": notes or JSON_RETRY},
         )
@@ -2186,8 +2218,8 @@ class Handler(BaseHTTPRequestHandler):
         if retry and not needs_json_retry(prompt, nxt):
             return nxt
         if notes:
-            return content.rstrip() + "\n\n" + nxt
-        return content
+            return settled.rstrip() + "\n\n" + nxt
+        return settled
 
     def _stream(
         self,
@@ -2300,6 +2332,7 @@ class Handler(BaseHTTPRequestHandler):
         if not emit_status("answering", answer_extra or None):
             return
         fact_text, summary_text = _memory_prompt(self._memory_scope())
+        source_rows = list(messages)
         messages = shape_messages(
             messages,
             prompt,
@@ -2310,6 +2343,7 @@ class Handler(BaseHTTPRequestHandler):
             facts=fact_text,
             summary=summary_text,
         )
+        self._memory_rows = turns_for_memory(source_rows, messages)
         if grounded is not None:
             self._emit_ready_answer(
                 peer,
@@ -2579,7 +2613,12 @@ class Handler(BaseHTTPRequestHandler):
                     search_note,
                     answer,
                 )
-                shown = clean_reply(more, prompt, _source_count(search_note))
+                shown = clean_reply(
+                    more,
+                    prompt,
+                    _source_count(search_note),
+                    context=getattr(self, "_local_context", ""),
+                )
                 visible = "\n".join(
                     line for line in streamed.splitlines() if line.strip()
                 ).strip()
@@ -2649,7 +2688,8 @@ class Handler(BaseHTTPRequestHandler):
                     prompt, answer, chip=chip, peer=peer["name"], train=trainable
                 )
             remember_completion(prompt, answer, chip, peer["name"])
-            self._touch_memory(messages)
+            remembered = getattr(self, "_memory_rows", None)
+            self._touch_memory(messages if remembered is None else remembered)
             apply_tier(self, final)
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
@@ -2742,6 +2782,7 @@ class Handler(BaseHTTPRequestHandler):
         route_name: str = "",
         resident_name: str = "",
         ready_answer: str | None = None,
+        memory_turns=None,
     ) -> None:
         grounded = ready_answer
         train = True
@@ -2767,7 +2808,7 @@ class Handler(BaseHTTPRequestHandler):
         if train:
             note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
         remember_completion(prompt, content, chip, peer["name"])
-        self._touch_memory(messages)
+        self._touch_memory(messages if memory_turns is None else memory_turns)
         elapsed = int((time.time() - started) * 1000)
         message = {"role": "assistant", "content": content}
         reasoning = getattr(self, "_last_reasoning", "") or ""

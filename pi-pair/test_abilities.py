@@ -97,10 +97,26 @@ class Abilities(unittest.TestCase):
         self.assertNotIn(question, cleaned)
         self.assertNotIn("```calc", cleaned)
         self.assertNotIn("not a language", cleaned)
-        self.assertEqual(cleaned.count("```doc"), 1)
+        self.assertNotIn("```doc", cleaned)
         self.assertNotIn("[n]", cleaned)
         self.assertNotIn("[3]", cleaned)
         self.assertNotIn("[1]", cleaned)
+        file_q = "Make a txt file with a greeting."
+        file_raw = "\n".join(
+            [
+                "```doc",
+                "kind: txt",
+                "Hi",
+                "```",
+                "```doc",
+                "kind: txt",
+                "Hi",
+                "```",
+            ]
+        )
+        file_cleaned = clean_reply(file_raw, file_q)
+        self.assertEqual(file_cleaned.count("```doc"), 1)
+        self.assertIn("Hi", file_cleaned)
 
     def test_pdf_xlsx_and_md_fences_become_files(self):
         def rendered(body: str):
