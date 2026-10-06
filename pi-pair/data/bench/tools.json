@@ -1,0 +1,8 @@
+{
+  "n": 200,
+  "median_s": 0.35,
+  "p95_s": 1.65,
+  "median_target_s": 1.5,
+  "p95_target_s": 3.0,
+  "ok": true
+}

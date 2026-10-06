@@ -129,10 +129,48 @@ def run_local(
     return subprocess.CompletedProcess(argv, proc.returncode or 0, stdout, stderr)
 
 
+def remote_extract(data: bytes, filename: str, url: str) -> str:
+    """Ask pi3 to extract. The URL is a tool route, never a chat route."""
+    import base64
+    import json
+    import os
+    import urllib.request
+
+    if "/api/" in url or url.rstrip("/").endswith("/v1/chat/completions"):
+        raise OcrFailed("refusing a generation url")
+    if os.environ.get("PI_PAIR_ROLE", "").strip().lower() != "brain":
+        return ""
+    body = json.dumps(
+        {
+            "filename": filename,
+            "kind": "pdf" if filename.lower().endswith(".pdf") else "image",
+            "data": base64.b64encode(data).decode("ascii"),
+        }
+    ).encode()
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"content-type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=OCR_TIMEOUT) as response:
+        payload = json.loads(response.read().decode() or "{}")
+    return str(payload.get("text") or "").strip()
+
+
 def recognize_image(data: bytes) -> str:
-    """OCR one image. `data` is the file bytes, not a path."""
+    """OCR one image. pi3 first when PI_PAIR_OCR_URL is set, else local under nice."""
+    import os
+
     if not data:
         raise OcrFailed("empty image")
+    remote = os.environ.get("PI_PAIR_OCR_URL", "").strip()
+    if remote:
+        try:
+            text = remote_extract(data, "image.png", remote)
+        except Exception:
+            text = ""
+        if text:
+            return text
     proc = run_local(tesseract_argv(), data, timeout=OCR_TIMEOUT)
     text = proc.stdout.decode("utf-8", "replace").replace("\x0c", "\n")
     return text.strip()
