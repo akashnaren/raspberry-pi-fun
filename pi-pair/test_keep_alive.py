@@ -64,7 +64,8 @@ class KeepAliveDefault(unittest.TestCase):
             )
         )
         self.assertEqual(shipped["keep_alive"], -1)
-        self.assertEqual(shipped["ollama_num_parallel"], 2)
+        self.assertEqual(shipped["ollama_num_parallel"], 1)
+        self.assertEqual(shipped["ollama_max_queue"], 8)
 
     def test_chat_and_stream_send_minus_one(self):
         seen = []
@@ -114,9 +115,8 @@ class KeepAliveDefault(unittest.TestCase):
             'Environment="OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}"', script
         )
         self.assertIn("Environment=OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}", script)
-        self.assertNotIn("OLLAMA_NUM_PARALLEL=1", script)
-        self.assertIn("Environment=OLLAMA_NUM_PARALLEL=2", unit)
-        self.assertNotIn("OLLAMA_NUM_PARALLEL=1", unit)
+        self.assertIn("Environment=OLLAMA_NUM_PARALLEL=1", unit)
+        self.assertNotIn("OLLAMA_NUM_PARALLEL=2", unit)
         readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
         self.assertIn("OLLAMA_MAX_LOADED_MODELS=2", readme)
         self.assertIn("OLLAMA_KEEP_ALIVE=-1", readme)

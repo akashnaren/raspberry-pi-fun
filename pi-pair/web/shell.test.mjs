@@ -294,7 +294,7 @@ if (!document.body.textContent.includes("Waiting for a free slot")) {
 }
 live.push({ pi_status: "waiting", pi_queue: { position: 2, eta_s: 120 } });
 await new Promise((resolve) => setTimeout(resolve, 20));
-if (!document.body.textContent.includes("Waiting · 2 ahead · about 2 min")) {
+if (!document.body.textContent.includes("You're #2, about 120 s")) {
   throw new Error("queue line missing: " + document.body.textContent);
 }
 live.push({ pi_status: "thinking", pi_mode: "auto", pi_route: "flash" });

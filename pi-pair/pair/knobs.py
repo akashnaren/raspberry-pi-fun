@@ -16,10 +16,10 @@ _DEFAULTS = {
     # Sequences in flight on the chat tag being decoded. Ollama sizes that
     # model's key/value cache as num_ctx * this value. Flash is the default
     # tag. Pro is a separate resident tag and uses the same router slot gate.
-    # Clamped to 1..4. Default 2. Four sequences at num_ctx 2048 stayed
-    # under 1 GB RSS on the previous Flash tag, but that cap was too slow
-    # on pi4 (p95 34.9s).
-    "ollama_num_parallel": 2,
+    # Clamped to 1..4. One sequence. Two decodes on four cores were slower
+    # than waiting for the single slot.
+    "ollama_num_parallel": 1,
+    "ollama_max_queue": 8,
     # Pi 4 is four Cortex-A72 cores. Ollama forwards num_thread as llama.cpp -t
     # only when the request sets it; otherwise the runner auto-detects.
     "num_thread": 4,
@@ -166,6 +166,20 @@ def clamp_parallel(value: int) -> int:
         return PARALLEL_MIN
     if value > PARALLEL_MAX:
         return PARALLEL_MAX
+    return value
+
+
+def queue_limit(knobs: dict | None = None) -> int:
+    """How many chats may wait behind the running decode."""
+    row = knobs if knobs is not None else inference_knobs()
+    try:
+        value = int(row.get("ollama_max_queue"))
+    except (TypeError, ValueError):
+        value = int(_DEFAULTS["ollama_max_queue"])
+    if value < 0:
+        return 0
+    if value > 64:
+        return 64
     return value
 
 

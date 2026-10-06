@@ -306,8 +306,8 @@ function waitingCopy(queue: { position?: number; eta_s?: number } | null): strin
   if (!Number.isFinite(ahead) || ahead <= 0 || !Number.isFinite(eta) || eta <= 0) {
     return WAITING_LINE;
   }
-  const minutes = Math.max(1, Math.round(eta / 60));
-  return "Waiting · " + Math.round(ahead) + " ahead · about " + minutes + " min";
+  const seconds = Math.max(1, Math.round(eta));
+  return "You're #" + Math.round(ahead) + ", about " + seconds + " s";
 }
 
 function stageText(name: StageName, search: SearchInfo | null): string {

@@ -1,6 +1,6 @@
 """How many generations may run at once.
 
-Two chats may decode at once. Further chats wait in line. A full queue, or a
+One chat decodes at a time. Further chats wait in line. A full queue, or a
 wait that runs out, is a busy line rather than an immediate error.
 """
 
@@ -75,11 +75,13 @@ class InferenceGate:
             return len(self._queue)
 
     def position(self, ticket: Ticket) -> int:
+        """Place in line. The running decode is #1, so the first waiter is #2."""
         with self._cv:
             try:
-                return self._queue.index(ticket) + 1
+                index = self._queue.index(ticket)
             except ValueError:
                 return 0
+            return self._in_flight + index + 1
 
     def eta_s(self, pos: int) -> int:
         """Rough seconds until a waiter at `pos` (1-based) starts."""
@@ -149,7 +151,7 @@ class InferenceGate:
                     if gone:
                         raise ClientGone()
                     return False
-                pos = self._queue.index(ticket) + 1
+                pos = self._in_flight + self._queue.index(ticket) + 1
                 now = time.monotonic()
                 if on_tick is not None and (pos != last or now - last_t >= 5):
                     last = pos

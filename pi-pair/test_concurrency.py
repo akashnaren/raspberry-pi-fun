@@ -128,8 +128,7 @@ class GateUnit(unittest.TestCase):
         previous = os.environ.pop("PI_PAIR_SLOTS", None)
         try:
             limit = infer_slots()
-            self.assertGreaterEqual(limit, 2)
-            self.assertLessEqual(limit, 4)
+            self.assertEqual(limit, 1)
             self.assertEqual(limit, parallel_limit())
             os.environ["PI_PAIR_SLOTS"] = "99"
             self.assertEqual(infer_slots(), 4)
@@ -150,8 +149,8 @@ class GateUnit(unittest.TestCase):
         status_b, ticket_b = gate.reserve_ticket()
         self.assertEqual(status_a, "wait")
         self.assertEqual(status_b, "wait")
-        self.assertEqual(gate.position(ticket_a), 1)
-        self.assertEqual(gate.position(ticket_b), 2)
+        self.assertEqual(gate.position(ticket_a), 2)
+        self.assertEqual(gate.position(ticket_b), 3)
         self.assertGreater(gate.eta_s(2), 0)
         ticks: list[tuple[str, int]] = []
         order: list[str] = []
@@ -173,8 +172,8 @@ class GateUnit(unittest.TestCase):
         first.join(2)
         second.join(2)
         self.assertEqual(order, ["a", "b"])
-        self.assertIn(("b", 2), ticks)
-        self.assertIn(("b", 1), ticks)
+        self.assertIn(("a", 2), ticks)
+        self.assertIn(("b", 3), ticks)
         self.assertEqual(gate.in_flight(), 0)
         self.assertEqual(gate.waiting(), 0)
 

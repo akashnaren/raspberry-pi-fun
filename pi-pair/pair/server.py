@@ -56,7 +56,7 @@ from pair.errors import (
     friendly_error,
 )
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
-from pair.health import snapshot_peers
+from pair.health import COOLING_NOTE, board_thermal, snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
 from pair.modes import (
@@ -536,7 +536,7 @@ def health_document() -> dict:
     up = sum(1 for peer in peers if isinstance(peer, dict) and peer.get("ok"))
     table = mode_table()
     pro_model = str(table.get("pro") or "").strip()
-    return {
+    doc = {
         "ok": True,
         "model": runtime.MODEL,
         "pro_model": pro_model,
@@ -549,6 +549,7 @@ def health_document() -> dict:
         "waiting": runtime.gate.waiting(),
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
         "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
+        "cooling": COOLING_NOTE,
         "services": {
             "brain": _service_row(peers, "brain", "pi4"),
             "search": _service_row(peers, "health", "pi2"),
@@ -556,6 +557,8 @@ def health_document() -> dict:
             "peers": len(peers),
         },
     }
+    doc.update(board_thermal())
+    return doc
 
 
 def public_health(doc: dict) -> dict:
@@ -572,16 +575,18 @@ def public_health(doc: dict) -> dict:
             continue
         models = peer.get("models") if isinstance(peer.get("models"), list) else []
         peers.append({"ok": bool(peer.get("ok")), "models": models})
-    return {
+    shown = {
         "ok": bool(doc.get("ok")),
         "slots": doc.get("slots"),
         "in_flight": doc.get("in_flight"),
         "waiting": doc.get("waiting", runtime.gate.waiting()),
         "uptime_s": doc.get("uptime_s"),
+        "cooling": COOLING_NOTE,
         "peers_up": doc.get("peers_up"),
         "services": services,
         "peers": peers,
     }
+    return shown
 
 
 def index_body() -> bytes:
