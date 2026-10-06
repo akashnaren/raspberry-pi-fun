@@ -423,22 +423,28 @@ class InferenceGate:
             self._bg_cancel = cancel
 
         def run() -> None:
+            holding = False
             try:
                 while not cancel.is_set():
                     with self._cv:
-                        idle = self._in_flight == 0 and not self._queue
-                    if idle:
-                        break
+                        if cancel.is_set():
+                            return
+                        if self._in_flight == 0 and not self._queue:
+                            self._in_flight += 1
+                            holding = True
+                            break
                     if cancel.wait(0.02):
                         return
-                if cancel.is_set():
+                if not holding or cancel.is_set():
                     return
                 fn(cancel)
             finally:
                 with self._cv:
+                    if holding and self._in_flight > 0:
+                        self._in_flight -= 1
                     if self._bg_cancel is cancel:
                         self._bg_cancel = None
-                        self._cv.notify_all()
+                    self._cv.notify_all()
 
         threading.Thread(target=run, name="background-decode", daemon=True).start()
         return True
@@ -682,10 +688,11 @@ def background_cancel_report() -> dict:
         }
     second = gate.enqueue_background(lambda _cancel: None)
     began = time.perf_counter()
-    gate.reserve_ticket("user")
+    status, ticket = gate.reserve_ticket("user")
     cancelled = seen.wait(0.2)
     elapsed = time.perf_counter() - began
-    gate.release()
+    if status == "ready":
+        gate.release(ticket)
     return {
         "enqueued": enqueued,
         "cancelled": cancelled,
