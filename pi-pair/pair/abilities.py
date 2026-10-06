@@ -11,7 +11,7 @@ import os
 import re
 
 from pair.calc import evaluate_expr
-from pair.turn import ATTACH_MARK
+from pair.turn import ATTACH_MARK, estimate_tokens
 
 _TOOL_LANG = "search|calc|plot|chart|bar|doc|pdf|docx|xlsx|md|markdown|txt|csv"
 _FENCE = re.compile(rf"```({_TOOL_LANG})[ \t]*\n(.*?)```", re.S | re.I)
@@ -176,6 +176,96 @@ def _copied_from_prompt(text: str, persona: str) -> bool:
     return payload in source
 
 
+# Tokens left after the fence's own name. "content" is 3, so "PDF content"
+# is only the label. A body with no label word, such as "Hi", stays a file.
+_MIN_OTHER_TOKENS = 4
+_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+
+
+def _label_words(name: str, body: str) -> set[str]:
+    """The fence's own names: its language, kind, and type."""
+    labels = {(name or "").strip().lower()}
+    meta, _payload = _split_meta(body)
+    for line in meta.splitlines():
+        match = re.match(r"^(?:kind|type)\s*:\s*(\S+)", line.strip(), re.I)
+        if match:
+            labels.add(match.group(1).strip().lower())
+    if labels & {"plot", "chart", "bar"}:
+        labels.update({"plot", "chart", "bar"})
+    if labels & ({"doc"} | _FILE_LANG):
+        labels.update(_FILE_LANG)
+        labels.add("doc")
+    return {word for word in labels if word}
+
+
+def _norm_words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", (text or "").lower())
+
+
+def _merely_label(payload: str, labels: set[str]) -> bool:
+    """True when the body is the fence name, or that name plus a stub."""
+    words = _norm_words(payload)
+    if not words:
+        return True
+    if all(word in labels for word in words):
+        return True
+    if any(word in labels for word in words):
+        rest = " ".join(word for word in words if word not in labels)
+        if estimate_tokens(rest) < _MIN_OTHER_TOKENS:
+            return True
+    return False
+
+
+def _structured_body(payload: str) -> bool:
+    """A table or a list is document content."""
+    rows = [line for line in (payload or "").splitlines() if line.count("|") >= 2]
+    if len(rows) >= 2:
+        return True
+    bullets = [line for line in (payload or "").splitlines() if _BULLET.match(line)]
+    return len(bullets) >= 2
+
+
+def _restates_request(payload: str, question: str, labels: set[str]) -> bool:
+    """True when the body only repeats the user's request."""
+    body_words = _norm_words(payload)
+    ask_words = _norm_words(question)
+    if not body_words or not ask_words:
+        return False
+    body = " ".join(body_words)
+    ask = " ".join(ask_words)
+    if body == ask:
+        return True
+    if body in ask or ask in body:
+        short, long_ = sorted((len(body), len(ask)))
+        if short >= int(0.8 * long_):
+            return True
+    if _structured_body(payload):
+        return False
+    return set(body_words) <= (set(ask_words) | labels)
+
+
+def _substantive_block(name: str, body: str, question: str) -> bool:
+    """A doc or plot body that is long enough to be a file or a chart."""
+    _meta, payload = _split_meta(body)
+    if not payload or estimate_tokens(payload) < 1:
+        return False
+    labels = _label_words(name, body)
+    if _merely_label(payload, labels):
+        return False
+    return not _restates_request(payload, question, labels)
+
+
+def _chat_text(body: str, persona: str) -> str:
+    """The fence body as chat text. A copied prompt block is dropped."""
+    meta, payload = _split_meta(body)
+    if not payload:
+        return ""
+    joined = "\n".join(part for part in (meta, payload) if part)
+    if any(_copied_from_prompt(part, persona) for part in (body, payload, joined)):
+        return ""
+    return payload
+
+
 def _calc_line(body: str) -> str:
     """The expression in a calc fence, or empty when it does not evaluate."""
     _meta, payload = _split_meta(body)
@@ -189,7 +279,7 @@ def _calc_line(body: str) -> str:
     return ""
 
 
-def _real_block(name: str, body: str, persona: str) -> bool:
+def _real_block(name: str, body: str, persona: str, question: str = "") -> bool:
     """A fence the model wrote, with content, that is not prompt text."""
     meta, payload = _split_meta(body)
     if _copied_from_prompt(body, persona) or _copied_from_prompt(payload, persona):
@@ -202,6 +292,8 @@ def _real_block(name: str, body: str, persona: str) -> bool:
         return bool(_calc_line(body))
     if name == "search":
         return bool((body or "").strip())
+    if name in {"doc", "plot"}:
+        return _substantive_block(name, body, question)
     return bool(payload)
 
 
@@ -243,12 +335,14 @@ def settle_blocks(
     context: str = "",
     have_tools: bool = False,
 ) -> str:
-    """Keep a chart or file only when the model wrote a block with content.
+    """Keep a chart or file only when the model wrote a substantive block.
 
-    Nothing here wraps a plain reply as a download, and nothing here builds
-    a table from the user's wording. A search fence runs at most once, and
-    not when this turn already has a tool result. A block copied from the
-    system prompt is dropped. A rejected block is not a tool call.
+    A doc or plot fence becomes a file or chart when its body is more than
+    the fence label or a restatement of the request. Otherwise that body is
+    chat text. Nothing here wraps a plain reply as a download, and nothing
+    here builds a table from the user's wording. A search fence runs at most
+    once, and not when this turn already has a tool result. A block copied
+    from the system prompt is dropped. A rejected block is not a tool call.
     """
     from pair.turn import PERSONA, notes_for, sample_turns, user_question
 
@@ -263,7 +357,7 @@ def settle_blocks(
         name, _body = _as_tool(match.group(1), raw)
         found.append((match, name, raw))
     other = any(
-        name != "search" and _real_block(name, raw, source_persona)
+        name != "search" and _real_block(name, raw, source_persona, question)
         for _match, name, raw in found
     )
     block_search = bool(have_tools or other or notes_for(question))
@@ -277,12 +371,14 @@ def settle_blocks(
             if (
                 not saw_search
                 and not block_search
-                and _real_block(name, raw, source_persona)
+                and _real_block(name, raw, source_persona, question)
             ):
                 keep = match.group(0)
                 saw_search = True
-        elif _real_block(name, raw, source_persona):
+        elif _real_block(name, raw, source_persona, question):
             keep = _kept_fence(match.group(0), match.group(1), name, raw)
+        elif name in {"doc", "plot"}:
+            keep = _chat_text(raw, source_persona)
         pieces.append(keep)
         last = match.end()
     pieces.append(source[last:])

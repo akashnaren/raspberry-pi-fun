@@ -80,6 +80,7 @@ PDF = (
 DOCX = (
     "Make a DOCX file I can download: a packing list for a beach trip with five items."
 )
+PACK = "Make a docx packing list for a beach trip with 5 items"
 MD = "Make a Markdown .md file I can download with a short recipe for pancakes."
 MENTION = (
     "What is the difference between docx and pdf?",
@@ -121,7 +122,7 @@ def _ask(prompt: str) -> str:
         "stream": False,
         "think": False,
         "messages": shape_messages([{"role": "user", "content": prompt}], prompt),
-        "options": {"temperature": 0, "num_predict": 256},
+        "options": {"temperature": 0, "seed": 0, "num_predict": 256},
     }
     request = urllib.request.Request(
         "http://127.0.0.1:11434/api/chat",
@@ -161,6 +162,16 @@ def _table_values(body: str) -> list[float]:
     return values
 
 
+def _item_count(body: str) -> int:
+    parsed = parse_markdown_table(body)
+    rows = len(parsed[1]) if parsed else 0
+    bullets = 0
+    for line in (body or "").splitlines():
+        if re.match(r"^\s*(?:[-*+]|\d+[.)])\s+\S", line):
+            bullets += 1
+    return max(rows, bullets)
+
+
 def _download(text: str) -> bool:
     return any(fence["name"] == "doc" for fence in parse_fences(text))
 
@@ -175,12 +186,13 @@ def _kind_of(text: str) -> str:
     return ""
 
 
-def _file_report(prompt: str, kind: str) -> dict:
+def _file_report(prompt: str, kind: str, min_items: int = 0) -> dict:
     cleaned = settle_blocks(_ask(prompt), prompt)
     body = _fence_body(cleaned, "doc")
     found = _kind_of(cleaned)
     rendered = b""
     ext = ""
+    items = _item_count(body)
     if body:
         rendered, ext = _rendered(fence_body_with_kind(cleaned))
     preview = body[:180]
@@ -189,6 +201,7 @@ def _file_report(prompt: str, kind: str) -> dict:
         "ext": ext,
         "echo": _echo(cleaned),
         "download": _download(cleaned),
+        "items": items,
         "bytes": len(rendered),
         "pdf": rendered.startswith(b"%PDF"),
         "zip": rendered.startswith(b"PK"),
@@ -199,6 +212,7 @@ def _file_report(prompt: str, kind: str) -> dict:
             and not _echo(cleaned)
             and bool(body)
             and body.lower().count("| a | 1 |") == 0
+            and (min_items <= 0 or items >= min_items)
             and (kind != "pdf" or rendered.startswith(b"%PDF"))
             and (kind not in {"docx", "xlsx"} or rendered.startswith(b"PK"))
             and (kind != "md" or ext == "md")
@@ -247,7 +261,8 @@ def live() -> bool:
         grades = settle_blocks(_ask(GRADES), GRADES)
         files = {
             "pdf": _file_report(PDF, "pdf"),
-            "docx": _file_report(DOCX, "docx"),
+            "docx": _file_report(DOCX, "docx", min_items=5),
+            "pack": _file_report(PACK, "docx", min_items=5),
             "xlsx": _file_report(XLSX, "xlsx"),
             "md": _file_report(MD, "md"),
         }
@@ -283,6 +298,7 @@ def live() -> bool:
         )
         and "| a | 1 |" not in grades,
         "grades_preview": grades_body[:180],
+        "summarize_download": "Summarize this PDF in two lines." in downloads,
         "files": files,
     }
     print(json.dumps(report, indent=2))
