@@ -54,10 +54,9 @@ for (const face of faces) {
 }
 flushFaces();
 fs.copyFileSync(path.join(katexRoot, "LICENSE"), path.join(outDir, "katex-license.txt"));
-for (const name of ["plotly.min.js", "plotly-license.txt"]) {
-  const stale = path.join(outDir, name);
-  if (fs.existsSync(stale)) fs.unlinkSync(stale);
-}
+const plotlyRoot = path.dirname(require.resolve("plotly.js-basic-dist-min/package.json"));
+fs.copyFileSync(path.join(plotlyRoot, "plotly-basic.min.js"), path.join(outDir, "plotly.min.js"));
+fs.copyFileSync(path.join(plotlyRoot, "LICENSE"), path.join(outDir, "plotly-license.txt"));
 fs.writeFileSync(
   path.join(outDir, "mesh.css"),
   `${imports.join("")}\n${tw.css}\n${compiled.css}\n${katexCss}`,

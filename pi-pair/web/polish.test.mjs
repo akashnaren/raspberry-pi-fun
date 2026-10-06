@@ -60,6 +60,18 @@ if (!bare.includes("<th>Year</th>") || !bare.includes("<td>Dune</td>")) {
   throw new Error("bare GFM table stayed prose: " + bare);
 }
 
+const tableChart = renderMarkdown("| item | value |\n| --- | --- |\n| a | 1 |\n| b | 2 |\n");
+if (!tableChart.includes("<table>") || !tableChart.includes('class="pi-chart"')) {
+  throw new Error("a data table did not keep the table and a chart: " + tableChart);
+}
+const plot = renderMarkdown("```plot\ntitle: Wave\nsin(x)\n```");
+if (!plot.includes('class="pi-chart"') || !plot.includes("sin(x)")) {
+  throw new Error("a plot fence was not kept: " + plot);
+}
+const docCard = renderMarkdown("```doc\nkind: txt\ntitle: Note\nHello\n```");
+if (!docCard.includes("pi-doc") || !docCard.includes("Download")) {
+  throw new Error("a doc fence had no download card: " + docCard);
+}
 const chart = renderMarkdown(
   '```chart\n{"title":"y = x^2","data":[{"type":"scatter","mode":"lines","y":[0,1,4]}]}\n```',
 );

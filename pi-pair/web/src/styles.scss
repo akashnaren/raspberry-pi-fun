@@ -270,7 +270,9 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
   }
 
   &:has(.pi-diagram),
-  &:has(.pi-table) {
+  &:has(.pi-table),
+  &:has(.pi-chart),
+  &:has(.pi-doc) {
     width: 100%;
 
     .body { width: 100%; }
@@ -913,6 +915,33 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.pi-chart {
+  width: 100%;
+  min-height: 280px;
+  margin: 8px 0;
+}
+
+.pi-plot-src {
+  margin: 8px 0;
+  white-space: pre-wrap;
+}
+
+.pi-plot:has(.js-plotly-plot) .pi-plot-src {
+  display: none;
+}
+
+.pi-doc a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  margin: 8px 0;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  color: var(--ink);
+  text-decoration: none;
 }
 
 .pi-table {
