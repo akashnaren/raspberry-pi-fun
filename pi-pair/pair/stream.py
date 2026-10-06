@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 
+from pair.cancel import ClientGone
 from pair.chat import llamacpp_model, ollama_payload, open_json
 from pair.guard import require_generative
 from pair.knobs import inference_knobs
@@ -119,16 +120,32 @@ class TextStream:
         yield from self._producer(self)
 
 
-def _read_ndjson(response):
-    while True:
-        raw = response.readline()
-        if not raw:
-            break
-        yield raw.decode("utf-8", errors="replace")
+def _read_ndjson(response, cancel=None):
+    token = None
+    if cancel is not None:
+        abort = getattr(response, "abort", None)
+        if abort is not None:
+            token = cancel.attach(abort)
+    try:
+        while True:
+            if cancel is not None:
+                cancel.check()
+            try:
+                raw = response.readline()
+            except OSError:
+                if cancel is not None and cancel.gone():
+                    raise ClientGone() from None
+                raise
+            if not raw:
+                break
+            yield raw.decode("utf-8", errors="replace")
+    finally:
+        if cancel is not None and token:
+            cancel.detach(token)
 
 
 def iter_ollama_channels(
-    peer, model, messages, temperature=0.7, max_tokens=256, plan=None
+    peer, model, messages, temperature=0.7, max_tokens=256, plan=None, cancel=None
 ):
     """Yield ('thinking', text) or ('content', text) from Ollama.
 
@@ -167,8 +184,8 @@ def iter_ollama_channels(
     # socket may stay open for the rest of that reply.
     first_timeout = seconds if think and seconds else 180
     try:
-        with open_json(url, payload, timeout=first_timeout) as response:
-            for line in _read_ndjson(response):
+        with open_json(url, payload, timeout=first_timeout, cancel=cancel) as response:
+            for line in _read_ndjson(response, cancel):
                 content, thinking, done, skip, _reason = ollama_parts(line)
                 if skip:
                     continue
@@ -224,8 +241,8 @@ def iter_ollama_channels(
         presence_penalty=PRESENCE_PENALTY,
     )
     try:
-        with open_json(url, forced, timeout=180) as response:
-            for line in _read_ndjson(response):
+        with open_json(url, forced, timeout=180, cancel=cancel) as response:
+            for line in _read_ndjson(response, cancel):
                 content, _thinking, done, skip, _reason = ollama_parts(line)
                 if skip:
                     continue
@@ -242,13 +259,15 @@ def iter_ollama_channels(
         yield "content", DIRECT_FALLBACK
 
 
-def stream_ollama(peer, model, messages, temperature=0.7, max_tokens=256, plan=None):
+def stream_ollama(
+    peer, model, messages, temperature=0.7, max_tokens=256, plan=None, cancel=None
+):
     """Yield answer deltas from Ollama /api/chat with stream:true (NDJSON)."""
 
     def produce(stream: TextStream):
         del stream
         for kind, text in iter_ollama_channels(
-            peer, model, messages, temperature, max_tokens, plan=plan
+            peer, model, messages, temperature, max_tokens, plan=plan, cancel=cancel
         ):
             if kind == "content" and text:
                 yield text
@@ -256,7 +275,9 @@ def stream_ollama(peer, model, messages, temperature=0.7, max_tokens=256, plan=N
     return TextStream(produce)
 
 
-def stream_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256):
+def stream_llamacpp(
+    peer, model, messages, temperature=0.7, max_tokens=256, cancel=None
+):
     """Yield text deltas from llama.cpp OpenAI SSE /v1/chat/completions stream:true."""
 
     def produce(stream: TextStream):
@@ -270,14 +291,9 @@ def stream_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        with open_json(url, payload, timeout=300) as response:
-            while True:
-                raw = response.readline()
-                if not raw:
-                    break
-                text, done, skip, reason = llamacpp_event(
-                    raw.decode("utf-8", errors="replace")
-                )
+        with open_json(url, payload, timeout=300, cancel=cancel) as response:
+            for decoded in _read_ndjson(response, cancel):
+                text, done, skip, reason = llamacpp_event(decoded)
                 if skip:
                     continue
                 if reason:

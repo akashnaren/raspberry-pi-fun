@@ -26,6 +26,7 @@ from pair.assist import (
     visible_canned,
 )
 from pair.moderate import moderate
+from pair.cancel import Cancel, ClientGone, peer_closed
 from pair.canned import lookup
 from pair.charts import (
     CHART_NUDGE,
@@ -187,9 +188,15 @@ def safe_write(handler, body: bytes, flush: bool = False) -> bool:
             return False
 
     if lock is None:
-        return _write()
-    with lock:
-        return _write()
+        ok = _write()
+    else:
+        with lock:
+            ok = _write()
+    if not ok:
+        cancel = getattr(handler, "_cancel", None)
+        if cancel is not None:
+            cancel.set()
+    return ok
 
 
 def static_file(url_path: str) -> Path | None:
@@ -331,7 +338,24 @@ def _source_cap(model: str) -> int:
     return FLASH_SOURCE_CAP
 
 
-def _with_search(messages, prompt: str, images: list | None = None, model: str = ""):
+def _join_cancel(thread, timeout: float | None, cancel=None) -> None:
+    """Wait for a side thread, and notice a disconnect about four times a second."""
+    if thread is None:
+        return
+    if cancel is None:
+        thread.join(timeout)
+        return
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while thread.is_alive():
+        cancel.check()
+        if deadline is not None and time.monotonic() >= deadline:
+            return
+        thread.join(0.25)
+
+
+def _with_search(
+    messages, prompt: str, images: list | None = None, model: str = "", cancel=None
+):
     """On pi4, after a miss, attach public notes. Failures stay on the local model.
 
     A real-world list searches a ranking query. The lookup is capped so a
@@ -350,10 +374,8 @@ def _with_search(messages, prompt: str, images: list | None = None, model: str =
         )
         worker.start()
     if not (prompt or "").strip():
-        if worker is not None:
-            worker.join()
-        if warm is not None:
-            warm.join(timeout=40)
+        _join_cancel(worker, None, cancel)
+        _join_cancel(warm, 40, cancel)
         return messages, None
     query = category_query(prompt) if is_grounded_list(prompt) else prompt
     cap = _source_cap(model)
@@ -367,7 +389,7 @@ def _with_search(messages, prompt: str, images: list | None = None, model: str =
 
     lookup = threading.Thread(target=_lookup, name="search-lookup", daemon=True)
     lookup.start()
-    lookup.join(SEARCH_BUDGET_S)
+    _join_cancel(lookup, SEARCH_BUDGET_S, cancel)
     found = holder.get("found") if not lookup.is_alive() else None
     if not isinstance(found, dict):
         found = {"status": "failed", "sources": [], "context": ""}
@@ -389,10 +411,8 @@ def _with_search(messages, prompt: str, images: list | None = None, model: str =
     shown = prepare_search_note(full, search_note_limit())
     if status == "ok" and shown:
         messages = [{"role": "system", "content": shown}, *messages]
-    if worker is not None:
-        worker.join()
-    if warm is not None:
-        warm.join(timeout=40)
+    _join_cancel(worker, None, cancel)
+    _join_cancel(warm, 40, cancel)
     return messages, {"status": status, "sources": sources, "context": full}
 
 
@@ -530,10 +550,10 @@ def _service_row(peers: list, role: str, name: str) -> dict:
     }
 
 
-def _claim_wait(slot: dict) -> bool:
+def _claim_wait(slot: dict, cancel=None, on_tick=None) -> bool:
     """Turn a queue reservation into a generation slot. False means the wait ran out."""
     slot["waiting"] = False
-    if runtime.gate.acquire_reserved():
+    if runtime.gate.acquire_reserved(cancel=cancel, on_tick=on_tick):
         slot["held"] = True
         return True
     return False
@@ -1109,7 +1129,50 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
+    def _begin_cancel(self) -> None:
+        """Watch the client socket, and replace any earlier turn with this id."""
+        self._cancel = Cancel()
+        self._watch_stop = threading.Event()
+        request_id = (self.headers.get("X-Pi-Request-Id") or "").strip()
+        self._request_id = request_id
+        if request_id:
+            previous = runtime.requests.get(request_id)
+            if previous is not None and previous is not self._cancel:
+                previous.set()
+            runtime.requests[request_id] = self._cancel
+
+        def watch() -> None:
+            while not self._watch_stop.wait(1.0):
+                try:
+                    gone = peer_closed(self.connection)
+                except Exception:
+                    gone = True
+                if gone:
+                    self._cancel.set()
+                    return
+
+        threading.Thread(target=watch, name="client-watch", daemon=True).start()
+
+    def _end_cancel(self) -> None:
+        stop = getattr(self, "_watch_stop", None)
+        if stop is not None:
+            stop.set()
+        request_id = getattr(self, "_request_id", "")
+        cancel = getattr(self, "_cancel", None)
+        if request_id and cancel is not None:
+            if runtime.requests.get(request_id) is cancel:
+                runtime.requests.pop(request_id, None)
+
     def _serve_chat(self, data: dict, raw: bytes) -> None:
+        self._begin_cancel()
+        try:
+            self._serve_chat_body(data, raw)
+        except ClientGone:
+            return
+        finally:
+            self._end_cancel()
+
+    def _serve_chat_body(self, data: dict, raw: bytes) -> None:
         if not isinstance(data, dict):
             self._error("chat body must be an object", status=400)
             return
@@ -1185,6 +1248,8 @@ class Handler(BaseHTTPRequestHandler):
                             cached_route,
                         )
                         return
+        except ClientGone:
+            raise
         except Exception as error:
             self._error(str(error))
             return
@@ -1229,7 +1294,9 @@ class Handler(BaseHTTPRequestHandler):
             images: list[dict] = []
             if do_search and not want_stream:
                 self._searched = True
-                outbound, search_note = _with_search(outbound, prompt, images, model)
+                outbound, search_note = _with_search(
+                    outbound, prompt, images, model, getattr(self, "_cancel", None)
+                )
             if not want_stream:
                 outbound = shape_messages(outbound, prompt, tuned)
             grounded = ready
@@ -1241,6 +1308,8 @@ class Handler(BaseHTTPRequestHandler):
             # continues once when the ready text is missing or incomplete.
             if canned_partial and (grounded is None or needs_exact_n(prompt, grounded)):
                 grounded = canned_partial
+        except ClientGone:
+            raise
         except Exception as error:
             self._error(str(error))
             return
@@ -1311,7 +1380,9 @@ class Handler(BaseHTTPRequestHandler):
                     slot=slot,
                 )
             else:
-                if slot["waiting"] and not _claim_wait(slot):
+                if slot["waiting"] and not _claim_wait(
+                    slot, cancel=getattr(self, "_cancel", None)
+                ):
                     self._error(BUSY, status=503)
                     return
                 stages = ["thinking"]
@@ -1336,6 +1407,8 @@ class Handler(BaseHTTPRequestHandler):
                     resident_name,
                     ready_answer=grounded,
                 )
+        except ClientGone:
+            raise
         except Exception as error:
             self._error(str(error))
         finally:
@@ -1777,18 +1850,30 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 note = None
                 if not noted:
-                    rows, note = _with_search(rows, prompt, model=model)
+                    rows, note = _with_search(
+                        rows, prompt, model=model, cancel=getattr(self, "_cancel", None)
+                    )
                 context = _search_context(note, rows)
 
             def more(partial: str, count: int) -> str:
                 follow = continuation_messages(rows, partial, count)
                 if kind == "llamacpp":
                     nxt, _used = chat_llamacpp(
-                        peer, model, follow, temperature, max_tokens
+                        peer,
+                        model,
+                        follow,
+                        temperature,
+                        max_tokens,
+                        cancel=self._cancel,
                     )
                 else:
                     nxt, _used = chat_ollama(
-                        peer, model, follow, temperature, max_tokens
+                        peer,
+                        model,
+                        follow,
+                        temperature,
+                        max_tokens,
+                        cancel=self._cancel,
                     )
                 return nxt
 
@@ -1798,6 +1883,8 @@ class Handler(BaseHTTPRequestHandler):
             extended = finish_numbered(prompt, current, more)
             if context and source_titles(context):
                 extended = ground_category_list(prompt, extended, context)
+        except ClientGone:
+            raise
         except Exception:
             return text
         if extended != text or list_count(prompt):
@@ -1820,7 +1907,13 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if kind == "llamacpp":
                 content, used = chat_llamacpp(
-                    peer, model, messages, temperature, max_tokens, meta=meta
+                    peer,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    meta=meta,
+                    cancel=self._cancel,
                 )
             else:
                 content, used = chat_ollama(
@@ -1831,6 +1924,7 @@ class Handler(BaseHTTPRequestHandler):
                     max_tokens,
                     meta=meta,
                     plan=getattr(self, "_decode_plan", None),
+                    cancel=self._cancel,
                 )
         except (OSError, json.JSONDecodeError) as error:
             self._last_reasoning = ""
@@ -1858,11 +1952,21 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if kind == "llamacpp":
                     more, used = chat_llamacpp(
-                        peer, model, follow, temperature, max_tokens
+                        peer,
+                        model,
+                        follow,
+                        temperature,
+                        max_tokens,
+                        cancel=self._cancel,
                     )
                 else:
                     more, used = chat_ollama(
-                        peer, model, follow, temperature, max_tokens
+                        peer,
+                        model,
+                        follow,
+                        temperature,
+                        max_tokens,
+                        cancel=self._cancel,
                     )
             except (OSError, json.JSONDecodeError):
                 more = ""
@@ -1966,6 +2070,7 @@ class Handler(BaseHTTPRequestHandler):
                 temperature,
                 max_tokens,
                 plan=getattr(self, "_decode_plan", None),
+                cancel=self._cancel,
             )
         except (OSError, json.JSONDecodeError):
             return None
@@ -1977,11 +2082,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if kind == "llamacpp":
                 more, _used = chat_llamacpp(
-                    peer, model, messages, temperature, max_tokens
+                    peer, model, messages, temperature, max_tokens, cancel=self._cancel
                 )
             else:
                 more, _used = chat_ollama(
-                    peer, model, messages, temperature, max_tokens
+                    peer, model, messages, temperature, max_tokens, cancel=self._cancel
                 )
         except (OSError, json.JSONDecodeError):
             return ""
@@ -2051,7 +2156,9 @@ class Handler(BaseHTTPRequestHandler):
             and not is_structured_request(prompt)
             and not getattr(self, "_searched", False)
         ):
-            outbound, note = _with_search(rows, prompt, model=model)
+            outbound, note = _with_search(
+                rows, prompt, model=model, cancel=getattr(self, "_cancel", None)
+            )
         context = ""
         if isinstance(note, dict) and note.get("status") == "ok":
             context = str(note.get("context") or "").strip()
@@ -2101,11 +2208,21 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if kind == "llamacpp":
                     more, _used = chat_llamacpp(
-                        peer, model, follow, temperature, max_tokens
+                        peer,
+                        model,
+                        follow,
+                        temperature,
+                        max_tokens,
+                        cancel=self._cancel,
                     )
                 else:
                     more, _used = chat_ollama(
-                        peer, model, follow, temperature, max_tokens
+                        peer,
+                        model,
+                        follow,
+                        temperature,
+                        max_tokens,
+                        cancel=self._cancel,
                     )
             except (OSError, json.JSONDecodeError):
                 return ""
@@ -2171,7 +2288,17 @@ class Handler(BaseHTTPRequestHandler):
         if slot and slot.get("waiting"):
             if not emit_status("waiting", {"pi_detail": WAITING}):
                 return
-            if not _claim_wait(slot):
+
+            def on_tick(pos: int, eta: int) -> None:
+                emit_status(
+                    "waiting",
+                    {
+                        "pi_detail": WAITING,
+                        "pi_queue": {"position": pos, "eta_s": eta},
+                    },
+                )
+
+            if not _claim_wait(slot, cancel=self._cancel, on_tick=on_tick):
                 write_event(
                     self,
                     {
@@ -2194,7 +2321,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if not searched:
                 fresh: list[dict] = []
-                messages, search_note = _with_search(messages, prompt, fresh, model)
+                messages, search_note = _with_search(
+                    messages, prompt, fresh, model, getattr(self, "_cancel", None)
+                )
                 images = fresh
             found = {"pi_tool": "search"}
             if search_note:
@@ -2317,18 +2446,35 @@ class Handler(BaseHTTPRequestHandler):
                 channels = (
                     ("content", delta)
                     for delta in stream_llamacpp(
-                        peer, model, messages, temperature, max_tokens
+                        peer,
+                        model,
+                        messages,
+                        temperature,
+                        max_tokens,
+                        cancel=self._cancel,
                     )
                 )
             elif plan is not None:
                 channels = iter_ollama_channels(
-                    peer, model, messages, temperature, max_tokens, plan=plan
+                    peer,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    plan=plan,
+                    cancel=self._cancel,
                 )
             else:
                 channels = (
                     ("content", delta)
                     for delta in stream_ollama(
-                        peer, model, messages, temperature, max_tokens, plan=plan
+                        peer,
+                        model,
+                        messages,
+                        temperature,
+                        max_tokens,
+                        plan=plan,
+                        cancel=self._cancel,
                     )
                 )
             closed = False
@@ -2663,6 +2809,8 @@ class Handler(BaseHTTPRequestHandler):
             }
             safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
+        except ClientGone:
+            return
         except Exception as error:
             err = {"error": public_failure(error, search_note)}
             apply_tier(self, err)

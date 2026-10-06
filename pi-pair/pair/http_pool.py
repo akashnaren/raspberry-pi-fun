@@ -130,7 +130,20 @@ class _Body:
         return False
 
 
-def _pool_post(url: str, body: bytes, timeout: float):
+def _abort_conn(conn: http.client.HTTPConnection) -> None:
+    sock = getattr(conn, "sock", None)
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def _pool_post(url: str, body: bytes, timeout: float, cancel=None):
     parsed = urlparse(url)
     if parsed.scheme not in ("http", ""):
         request = urllib.request.Request(
@@ -157,12 +170,31 @@ def _pool_post(url: str, body: bytes, timeout: float):
             if conn.sock is not None:
                 conn.sock.settimeout(timeout)
             conn.request("POST", path, body=body, headers=headers)
-            response = conn.getresponse()
+            token = None
+            if cancel is not None:
+                token = cancel.attach(lambda connection=conn: _abort_conn(connection))
+            try:
+                response = conn.getresponse()
+            except Exception:
+                if cancel is not None and cancel.gone():
+                    from pair.cancel import ClientGone
+
+                    raise ClientGone() from None
+                raise
+            finally:
+                if cancel is not None and token:
+                    cancel.detach(token)
 
             def release(reuse: bool, connection=conn, origin=host, number=port) -> None:
                 _POOL.release(origin, number, connection, reuse)
 
-            return _Body(response, release, connection=conn)
+            body_out = _Body(response, release, connection=conn)
+            if cancel is not None and cancel.gone():
+                body_out.abort()
+                from pair.cancel import ClientGone
+
+                raise ClientGone()
+            return body_out
         except Exception as exc:
             _POOL.discard(conn)
             caught = exc
@@ -170,13 +202,21 @@ def _pool_post(url: str, body: bytes, timeout: float):
     raise caught
 
 
-def open_json_request(request, timeout: float):
+def open_json_request(request, timeout: float, cancel=None):
     """POST JSON. Tests that replace urlopen receive the urllib request."""
     current = urllib.request.urlopen
     if current is not _STDLIB_URLOPEN:
-        return current(request, timeout=timeout)
+        opened = current(request, timeout=timeout)
+        if cancel is not None and cancel.gone():
+            abort = getattr(opened, "abort", None)
+            if abort is not None:
+                abort()
+            from pair.cancel import ClientGone
+
+            raise ClientGone()
+        return opened
     url = getattr(request, "full_url", None) or request.get_full_url()
     body = request.data or b""
     if isinstance(body, str):
         body = body.encode()
-    return _pool_post(url, body, timeout)
+    return _pool_post(url, body, timeout, cancel=cancel)
