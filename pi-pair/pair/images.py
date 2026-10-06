@@ -25,6 +25,7 @@ FETCH_TIMEOUT = 2.5
 JOB_BUDGET_S = 4.0
 MAX_CARDS = 4
 MAX_CANDIDATES = 6
+IMAGE_MIN_ANSWER_WORDS = 12
 HIT_TTL_S = 24 * 60 * 60
 MISS_TTL_S = 60 * 60
 SEARCH_TTL_S = 10 * 60
@@ -34,6 +35,7 @@ _CGNAT = ip_network("100.64.0.0/10")
 _FENCE_CLOSED = re.compile(r"```[\s\S]*?```")
 _FENCE_OPEN = re.compile(r"```[\s\S]*\Z")
 _ITEM_LINE = re.compile(r"(?m)^\s*(?:\d{1,2}[.)]\s+|[-*]\s+)(.+)$")
+_LETTER = re.compile(r"[^\W\d_]+", re.UNICODE)
 _HEAD_CUT = re.compile(r"\s+[—–]\s+|\s+-\s+|:\s+|\s+\(")
 _BOLD = re.compile(r"\*\*([^*\n]{2,80})\*\*")
 _PAREN = re.compile(r"\s*\([^)]*\)\s*$")
@@ -495,6 +497,32 @@ def _lookup_one(candidate: dict, opener, question: str, answer: str, deadline: f
     return card
 
 
+def _entity_cue(question: str) -> bool:
+    """A cased token that is not the first word of a sentence."""
+    text = question or ""
+    for match in _LETTER.finditer(text):
+        word = match.group(0)
+        if len(word) < 2 or not word[0].isupper():
+            continue
+        before = text[: match.start()].rstrip()
+        if not before or before[-1] in ".!?":
+            continue
+        return True
+    return False
+
+
+def _informative_answer(answer: str) -> bool:
+    plain = " ".join(_outside_fences(answer or "").split())
+    if len(plain.split()) < IMAGE_MIN_ANSWER_WORDS:
+        return False
+    return not plain.endswith("?")
+
+
+def _substantive_turn(question: str, answer: str) -> bool:
+    """Question-search only. Lists, bold text, and sources do not use this."""
+    return _entity_cue(question) or _informative_answer(answer)
+
+
 def _search_title(question: str, opener, deadline: float) -> str:
     query = " ".join((question or "").split())[:160].strip()
     if not query or time.monotonic() >= deadline:
@@ -553,7 +581,7 @@ def _cards(payload: dict, opener) -> dict:
     sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
     deadline = time.monotonic() + max(0.05, float(JOB_BUDGET_S))
     found = candidates(question, answer, sources[:8])
-    if not found:
+    if not found and _substantive_turn(question, answer):
         title = _search_title(question, opener, deadline)
         norm = normalize_title(title)
         if title and norm:

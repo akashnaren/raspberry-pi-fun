@@ -8,6 +8,7 @@ from pair.abilities import (
     CATEGORIES,
     category_rates,
     clean_reply,
+    mend_cut_tail,
     parse_fences,
     tool_notes,
 )
@@ -149,6 +150,38 @@ class Abilities(unittest.TestCase):
         self.assertEqual(md_ext, "md")
         drawn = render_chart(table=chart[0]["body"])
         self.assertTrue(drawn["ok"], drawn)
+
+    def test_plotly_json_becomes_a_plot_fence(self):
+        figure = (
+            '{"data":[{"type":"bar","x":["1","2"],"y":[1,2],"name":"Sample Data"}],'
+            '"layout":{"title":"Sample Data","xaxis":{"title":"Value"}}}'
+        )
+        cleaned = clean_reply(
+            "Sure!\n```json\n" + figure + "\n```",
+            "Try using plotly?",
+        )
+        self.assertIn("```plot", cleaned)
+        self.assertNotIn("```json", cleaned)
+        plain = clean_reply('```json\n{"name":"x"}\n```', "name a file")
+        self.assertIn("```json", plain)
+        self.assertIn('{"name":"x"}', plain)
+
+    def test_a_cut_reply_loses_the_dangling_marker(self):
+        cut = mend_cut_tail("- **Value 1:** 1\n- **Value 2", True)
+        self.assertEqual(cut, "- **Value 1:** 1\n- Value 2…")
+        self.assertEqual(cut.count("**") % 2, 0)
+        self.assertEqual(
+            mend_cut_tail("fine **bold** text.", False), "fine **bold** text."
+        )
+        fenced = "```python\ndef f(**kwargs):\n    return 1\n```"
+        self.assertEqual(mend_cut_tail(fenced, False), fenced)
+        self.assertIn("**kwargs", mend_cut_tail(fenced, True))
+
+    def test_persona_names_the_downloadable_types(self):
+        for kind in ("pdf", "docx", "xlsx", "md", "txt", "csv"):
+            self.assertIn(kind, PERSONA)
+        self.assertIn("plot fence", PERSONA)
+        self.assertNotIn("pptx", PERSONA.lower())
 
 
 if __name__ == "__main__":

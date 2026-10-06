@@ -114,6 +114,42 @@ export function cardFrom(raw: unknown): ImageCard | null {
   };
 }
 
+const IMAGE_MIN_ANSWER_WORDS = 12;
+const LIST_LINE = /^\s*(?:\d{1,2}[.)]\s+|[-*]\s+)/m;
+
+function outsideFences(text: string): string {
+  return String(text || "")
+    .replace(/```[\s\S]*?```/g, "\n")
+    .replace(/```[\s\S]*$/g, "\n");
+}
+
+function namedEntityCue(question: string): boolean {
+  const text = String(question || "");
+  const tokens = text.matchAll(/[^\W\d_]+/gu);
+  for (const token of tokens) {
+    const word = token[0];
+    if (word.length < 2) continue;
+    const first = word[0];
+    if (first.toUpperCase() === first.toLowerCase() || first !== first.toUpperCase()) continue;
+    const before = text.slice(0, token.index ?? 0).trimEnd();
+    if (!before) continue;
+    const mark = before[before.length - 1];
+    if (mark === "." || mark === "!" || mark === "?") continue;
+    return true;
+  }
+  return false;
+}
+
+/** True when a turn has no list, bold, or topical cue, so image search can wait. */
+export function lowSubstance(question: string, answer: string): boolean {
+  const plain = outsideFences(answer);
+  if (plain.includes("**") || LIST_LINE.test(plain)) return false;
+  const words = plain.trim().split(/\s+/).filter(Boolean);
+  const informative = words.length >= IMAGE_MIN_ANSWER_WORDS && !plain.trim().endsWith("?");
+  if (informative || namedEntityCue(question)) return false;
+  return true;
+}
+
 export function cardsFrom(raw: unknown): ImageCard[] {
   if (!Array.isArray(raw)) return [];
   const cards: ImageCard[] = [];

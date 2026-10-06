@@ -8,6 +8,7 @@ no JSON chart spec. Nothing here generates text.
 
 from __future__ import annotations
 
+import json
 import re
 
 from pair.calc import evaluate_expr
@@ -299,9 +300,182 @@ def chart_samples(n: int = 50) -> list[dict]:
     return rows
 
 
+def _numeric(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    if isinstance(value, str):
+        if not _is_number(value):
+            return None
+        return _float(value)
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return float(value)
+
+
+def _num_cell(value: float) -> str:
+    if value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _plain_cell(value: str) -> str:
+    return " ".join(str(value).replace("|", " ").split())
+
+
+def _axis_title(layout: dict) -> str:
+    axis = layout.get("xaxis") if isinstance(layout, dict) else None
+    if not isinstance(axis, dict):
+        return "label"
+    title = axis.get("title")
+    if isinstance(title, str) and title.strip():
+        return _plain_cell(title) or "label"
+    if isinstance(title, dict):
+        text = title.get("text")
+        if isinstance(text, str) and text.strip():
+            return _plain_cell(text) or "label"
+    return "label"
+
+
+def _layout_title(layout: dict) -> str:
+    if not isinstance(layout, dict):
+        return ""
+    title = layout.get("title")
+    if isinstance(title, str):
+        return _plain_cell(title)
+    if isinstance(title, dict):
+        text = title.get("text")
+        if isinstance(text, str):
+            return _plain_cell(text)
+    return ""
+
+
+def _x_label(item) -> str | None:
+    if isinstance(item, bool) or item is None:
+        return None
+    if isinstance(item, str):
+        return _plain_cell(item)
+    if isinstance(item, int):
+        return str(item)
+    if isinstance(item, float):
+        number = _numeric(item)
+        if number is None:
+            return None
+        return _num_cell(number)
+    return None
+
+
+def _trace_kind(trace: dict) -> str:
+    kind = str(trace.get("type") or "").strip().lower()
+    if kind not in {"bar", "scatter", "line"}:
+        return ""
+    if kind == "scatter" and "lines" in str(trace.get("mode") or ""):
+        return "line"
+    return kind
+
+
+def _trace_row(trace: dict) -> dict | None:
+    kind = _trace_kind(trace)
+    if not kind:
+        return None
+    raw_y = trace.get("y")
+    if not isinstance(raw_y, list) or not raw_y or len(raw_y) > _POINTS:
+        return None
+    ys: list[float] = []
+    for item in raw_y:
+        number = _numeric(item)
+        if number is None:
+            return None
+        ys.append(number)
+    raw_x = trace.get("x")
+    if raw_x is None:
+        labels = [str(index) for index in range(1, len(ys) + 1)]
+    elif isinstance(raw_x, list) and len(raw_x) == len(ys):
+        labels = []
+        for item in raw_x:
+            label = _x_label(item)
+            if label is None:
+                return None
+            labels.append(label)
+    else:
+        return None
+    name = trace.get("name")
+    if not isinstance(name, str) or not name.strip():
+        name = "value"
+    return {"kind": kind, "name": _plain_cell(name) or "value", "x": labels, "y": ys}
+
+
+def figure_to_plot_fence(body: str) -> str:
+    """A Plotly-shaped JSON body as a plot fence, or empty when it is not one.
+
+    Only bar, scatter, and line traces become a markdown table. Every other
+    key is ignored. A pie, a script string, or a huge series is not a figure.
+    """
+    try:
+        value = json.loads(body or "")
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return ""
+    layout: dict = {}
+    if isinstance(value, dict) and isinstance(value.get("data"), list):
+        traces = value.get("data")
+        if isinstance(value.get("layout"), dict):
+            layout = value["layout"]
+    elif isinstance(value, list):
+        traces = value
+    else:
+        return ""
+    kept: list[dict] = []
+    for trace in traces:
+        if not isinstance(trace, dict):
+            continue
+        row = _trace_row(trace)
+        if row is None:
+            continue
+        kept.append(row)
+        if len(kept) >= 8:
+            break
+    if not kept:
+        return ""
+    same_x = all(row["x"] == kept[0]["x"] for row in kept)
+    used = kept if same_x else [kept[0]]
+    headers = [_axis_title(layout), *[row["name"] for row in used]]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for index in range(len(used[0]["y"])):
+        cells = [used[0]["x"][index]]
+        cells.extend(_num_cell(row["y"][index]) for row in used)
+        lines.append("| " + " | ".join(cells) + " |")
+    parts = [f"type: {used[0]['kind']}"]
+    title = _layout_title(layout)
+    if title:
+        parts.append(f"title: {title}")
+    parts.extend(lines)
+    return "```plot\n" + "\n".join(parts) + "\n```"
+
+
+def _unwrap_fence(text: str) -> str:
+    stripped = (text or "").strip()
+    if not stripped.startswith("```"):
+        return text or ""
+    rows = stripped.split("\n")
+    if rows and rows[-1].strip() == "```":
+        rows = rows[1:-1]
+    else:
+        rows = rows[1:]
+    return "\n".join(rows).strip("\n")
+
+
 def render_chart(table: str = "", plot: str = "") -> dict:
     """A figure plus the original table text, so a failed chart still shows the table."""
     source = plot or table or ""
+    for candidate in (plot, table):
+        if not candidate:
+            continue
+        fence = figure_to_plot_fence(candidate)
+        if fence:
+            source = _unwrap_fence(fence)
+            break
     settings = key_values(source)
     title = settings.get("title") or ""
     forced = settings.get("type") or ""

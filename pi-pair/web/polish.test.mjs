@@ -1,6 +1,7 @@
 import fs from "fs";
 import { parseHTML } from "linkedom";
 import { docExcerpt, modelUserContent, userMessagePieces } from "./src/attach.ts";
+import { mountCharts } from "./src/chart.ts";
 import { flowchartSvg, mountDiagrams } from "./src/diagram.ts";
 import { renderMarkdown, renderStreamingMarkdown, stabilizeMarkdown } from "./src/markdown.ts";
 import { linkCitations } from "./src/sources.ts";
@@ -11,6 +12,10 @@ if (!stable.trimEnd().endsWith("```")) throw new Error("an open fence was left o
 const streaming = renderStreamingMarkdown("## Heading\n\n- one\n- two");
 if (!streaming.includes("<h2>") || !streaming.includes("<li>one</li>")) {
   throw new Error("streaming markdown stayed plain: " + streaming);
+}
+const streamingBold = renderStreamingMarkdown("a **b");
+if (!streamingBold.includes("<strong>b</strong>")) {
+  throw new Error("a dangling bold marker stayed literal: " + streamingBold);
 }
 const broken = renderStreamingMarkdown("\\( x^2");
 if (broken.includes("\\( x^2")) throw new Error("a dangling inline formula leaked: " + broken);
@@ -188,6 +193,42 @@ if (page.includes("voice-dots") || builtPage.includes("voice-dots")) {
 const reducedAt = builtCss.indexOf("prefers-reduced-motion");
 if (reducedAt < 0 || !builtCss.slice(reducedAt, reducedAt + 800).includes("#voiceStage")) {
   throw new Error("reduced motion does not cover the voice stage");
+}
+
+const plotHtml = renderMarkdown("```plot\ntitle: Wave\nsin(x)\n```");
+const plotHost = parseHTML(
+  `<div id="one">${plotHtml}</div><div id="two">${plotHtml}</div>`,
+);
+const previousWindow = globalThis.window;
+const previousDocument = globalThis.document;
+const previousFetch = globalThis.fetch;
+let chartFetches = 0;
+plotHost.window.Plotly = { newPlot() {} };
+globalThis.window = plotHost.window;
+globalThis.document = plotHost.document;
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === "string" ? input : input.url;
+  if (String(url).includes("/tools/render_chart")) {
+    chartFetches += 1;
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        figure: { data: [{ type: "scatter", x: [0, 1], y: [0, 1] }], layout: {} },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+  if (previousFetch) return previousFetch(input, init);
+  return new Response("missing", { status: 404 });
+};
+mountCharts(plotHost.document.getElementById("one"));
+mountCharts(plotHost.document.getElementById("two"));
+await new Promise((resolve) => setTimeout(resolve, 40));
+globalThis.window = previousWindow;
+globalThis.document = previousDocument;
+globalThis.fetch = previousFetch;
+if (chartFetches !== 1) {
+  throw new Error("the same plot fetched render_chart " + chartFetches + " times");
 }
 
 console.log("ok");

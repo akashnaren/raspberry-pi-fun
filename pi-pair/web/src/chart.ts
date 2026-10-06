@@ -159,50 +159,93 @@ function draw(node: Element, figure: Figure): void {
   api.newPlot(node, figure.data, figure.layout, { displayModeBar: false, responsive: true });
 }
 
+const figures = new Map<string, Figure | null>();
+const inflight = new Map<string, Promise<Figure | null>>();
+
+function readSpec(node: Element): (Figure & { plot?: string }) | null {
+  const script = node.querySelector("script");
+  if (!script) return null;
+  try {
+    return JSON.parse(script.textContent || "") as Figure & { plot?: string };
+  } catch {
+    return null;
+  }
+}
+
+function figureForPlot(plot: string): Promise<Figure | null> {
+  if (figures.has(plot)) return Promise.resolve(figures.get(plot) ?? null);
+  const pending = inflight.get(plot);
+  if (pending) return pending;
+  const job = fetch("/tools/render_chart", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ plot }),
+  })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((body: { figure?: Figure } | null) => {
+      const figure = body?.figure && Array.isArray(body.figure.data) ? body.figure : null;
+      figures.set(plot, figure);
+      return figure;
+    })
+    .catch(() => {
+      figures.set(plot, null);
+      return null;
+    })
+    .finally(() => {
+      inflight.delete(plot);
+    });
+  inflight.set(plot, job);
+  return job;
+}
+
+function revealChart(node: Element): void {
+  if (node.getAttribute("data-drawn") === "1") return;
+  const spec = readSpec(node);
+  if (!spec) return;
+  if (Array.isArray(spec.data)) {
+    draw(node, spec);
+    return;
+  }
+  if (!spec.plot) return;
+  const plot = spec.plot;
+  if (figures.has(plot)) {
+    const cached = figures.get(plot);
+    if (cached) draw(node, cached);
+    return;
+  }
+  void figureForPlot(plot).then((figure) => {
+    if (figure) draw(node, figure);
+  });
+}
+
 export function mountCharts(root: ParentNode | null): void {
   if (!root || typeof document === "undefined") return;
-  const nodes = [...root.querySelectorAll(".pi-chart")];
+  const nodes = [...root.querySelectorAll(".pi-chart")].filter((node) => node.getAttribute("data-drawn") !== "1");
   if (!nodes.length) return;
-  const ready: Element[] = [];
-  const pending: Element[] = [];
-  for (const node of nodes) {
-    if (node.getAttribute("data-drawn") === "1") continue;
-    const script = node.querySelector("script");
-    if (!script) continue;
-    try {
-      const spec = JSON.parse(script.textContent || "") as Figure & { plot?: string };
-      if (Array.isArray(spec.data)) ready.push(node);
-      else if (spec.plot) pending.push(node);
-    } catch {
-      /* the table or the expression stays visible */
-    }
-  }
-  if (!ready.length && !pending.length) return;
-  loadPlotly()
-    .then(() => {
-      for (const node of ready) {
-        const script = node.querySelector("script");
-        if (!script) continue;
-        draw(node, JSON.parse(script.textContent || "") as Figure);
-      }
-      for (const node of pending) {
-        const script = node.querySelector("script");
-        if (!script) continue;
-        const spec = JSON.parse(script.textContent || "") as { plot?: string };
-        fetch("/tools/render_chart", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ plot: spec.plot || "" }),
-        })
-          .then((response) => (response.ok ? response.json() : null))
-          .then((body: { figure?: Figure } | null) => {
-            if (body?.figure) draw(node, body.figure);
+  const paint = () => {
+    for (const node of nodes) revealChart(node);
+  };
+  if (typeof IntersectionObserver === "function") {
+    const io = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting);
+        if (!visible.length) return;
+        for (const entry of visible) io.unobserve(entry.target);
+        loadPlotly()
+          .then(() => {
+            for (const entry of visible) revealChart(entry.target);
           })
           .catch(() => {
-            /* the fenced expression stays visible */
+            /* the table or the expression stays visible */
           });
-      }
-    })
+      },
+      { rootMargin: "200px" },
+    );
+    for (const node of nodes) io.observe(node);
+    return;
+  }
+  loadPlotly()
+    .then(paint)
     .catch(() => {
       /* the table or the expression stays visible */
     });

@@ -613,7 +613,9 @@ class TurnHttp(unittest.TestCase):
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["choices"][0]["message"]["content"], "apples,")
+        # A length stop on a fragment that is not a sentence or a list ends
+        # as the cut mark. The model text is not expanded into a picnic list.
+        self.assertEqual(body["choices"][0]["message"]["content"], "…")
         self.assertEqual(len(ScriptOllama.seen), 1)
         hinted = "\n".join(
             item.get("content", "") for item in ScriptOllama.seen[0]["messages"]

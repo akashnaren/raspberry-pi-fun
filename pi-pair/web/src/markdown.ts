@@ -227,10 +227,15 @@ function oddMarker(text: string, marker: string): boolean {
   return text.split(marker).length % 2 === 0;
 }
 
+function outsideFences(text: string): string {
+  return text.replace(/```[\s\S]*?```/g, "").replace(/```[\s\S]*$/g, "");
+}
+
 /** Close a fence or display-math marker that the stream has not finished. */
 export function stabilizeMarkdown(source: string): string {
   let text = String(source ?? "");
   if (oddMarker(text, "```")) text += "\n```";
+  if (oddMarker(outsideFences(text), "**")) text += "**";
   if (oddMarker(text, "$$")) text += "$$";
   const openDisp = (text.match(/\\\[/g) || []).length;
   const closeDisp = (text.match(/\\\]/g) || []).length;

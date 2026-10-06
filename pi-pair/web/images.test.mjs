@@ -1,4 +1,4 @@
-import { cardFrom, cardsFrom, renderImageCardsHtml } from "./src/images.ts";
+import { cardFrom, cardsFrom, lowSubstance, renderImageCardsHtml } from "./src/images.ts";
 
 const poster = {
   url: "https://upload.wikimedia.org/wikipedia/en/2/2e/Tour_Eiffel.jpg",
@@ -126,6 +126,13 @@ if (many.length !== 4) throw new Error("cap is 4, got " + many.length);
 const capped = renderImageCardsHtml(many.concat(poster));
 if ((capped.match(/class="image-card"/g) || []).length !== 4) {
   throw new Error("render cap is 4, got " + capped);
+}
+
+if (lowSubstance("Hello", "Hello! What can I help you with?") !== true) {
+  throw new Error("a greeting looked topical");
+}
+if (lowSubstance("Tell me about the movie Inception", "It is a story.") !== false) {
+  throw new Error("Inception was treated as low substance");
 }
 
 console.log("ok");

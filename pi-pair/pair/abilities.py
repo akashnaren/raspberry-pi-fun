@@ -390,6 +390,142 @@ def settle_blocks(
     return out
 
 
+_FIGURE_LABELS = frozenset({"", "json", "plotly", "javascript", "js", "chart", "plot"})
+
+
+def normalize_figure_fences(text: str) -> str:
+    """Replace a fenced Plotly figure with a plot table. Other JSON stays."""
+    from pair.charts import figure_to_plot_fence
+
+    def repl(match: re.Match) -> str:
+        label = (match.group(1) or "").strip().lower()
+        if label not in _FIGURE_LABELS:
+            return match.group(0)
+        fence = figure_to_plot_fence(match.group(2) or "")
+        return fence or match.group(0)
+
+    return _ANY_FENCE.sub(repl, text or "")
+
+
+def _odd_marker(line: str, marker: str) -> bool:
+    return line.count(marker) % 2 == 1
+
+
+def _lone_stars(line: str) -> int:
+    count = 0
+    index = 0
+    while index < len(line):
+        if line.startswith("**", index):
+            index += 2
+            continue
+        if line[index] == "*":
+            count += 1
+        index += 1
+    return count
+
+
+def _drop_last_lone_star(line: str) -> str:
+    index = len(line) - 1
+    while index >= 0:
+        if line[index] == "*" and not (index > 0 and line[index - 1] == "*"):
+            return line[:index] + line[index + 1 :]
+        if line.startswith("**", max(0, index - 1)):
+            index -= 2
+            continue
+        index -= 1
+    return line
+
+
+def _balance_line(line: str) -> str:
+    if _odd_marker(line, "**"):
+        at = line.rfind("**")
+        line = line[:at] + line[at + 2 :]
+    if _odd_marker(line, "`"):
+        at = line.rfind("`")
+        line = line[:at] + line[at + 1 :]
+    if _lone_stars(line) % 2 == 1:
+        line = _drop_last_lone_star(line)
+    return line
+
+
+def _line_spans(text: str):
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        yield pos, line
+        pos += len(line)
+
+
+def _last_outside_span(text: str) -> tuple[int, int] | None:
+    """The last non-empty line that is not inside a fence."""
+    in_fence = False
+    last = None
+    for pos, line in _line_spans(text):
+        stripped = line.strip()
+        if in_fence:
+            if stripped.startswith("```"):
+                in_fence = False
+            continue
+        if stripped.startswith("```"):
+            in_fence = True
+            continue
+        if stripped:
+            last = (pos, pos + len(line))
+    return last
+
+
+def _balance_outside(text: str) -> str:
+    span = _last_outside_span(text)
+    if span is None:
+        return text
+    start, end = span
+    chunk = text[start:end]
+    newline = ""
+    body = chunk
+    if body.endswith("\r\n"):
+        newline = "\r\n"
+        body = body[:-2]
+    elif body.endswith("\n"):
+        newline = "\n"
+        body = body[:-1]
+    balanced = _balance_line(body)
+    if balanced == body:
+        return text
+    return text[:start] + balanced + newline + text[end:]
+
+
+def _row_kept(line: str) -> bool:
+    stripped = line.strip()
+    if "|" in stripped:
+        return True
+    return bool(re.match(r"^(?:[-*+]|\d+[.)])\s+\S", stripped))
+
+
+def _sentence_end(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped) and stripped[-1] in ".!?"
+
+
+def mend_cut_tail(text: str, cut: bool) -> str:
+    """Close a dangling emphasis mark. A length stop also ends on an ellipsis.
+
+    Markers inside a fence stay, including ``**kwargs``. An open file fence
+    is closed so a short file can still download.
+    """
+    source = _close_trailing_fence(text or "") if cut else (text or "")
+    source = _balance_outside(source)
+    if not cut:
+        return source
+    span = _last_outside_span(source)
+    if span is not None:
+        start, end = span
+        line = source[start:end]
+        if line.strip() and not _sentence_end(line) and not _row_kept(line):
+            source = source[:start].rstrip()
+    if source.endswith("…"):
+        return source
+    return source.rstrip() + "…"
+
+
 def clean_reply(
     text: str,
     prompt: str = "",
@@ -401,7 +537,8 @@ def clean_reply(
     """Drop empty fences, repeated fences, echoed prompt lines, and stray [n]."""
     from pair.turn import PERSONA, user_question
 
-    cleaned = settle_blocks(text or "", prompt, persona, context, have_tools=have_tools)
+    cleaned = normalize_figure_fences(text or "")
+    cleaned = settle_blocks(cleaned, prompt, persona, context, have_tools=have_tools)
     cleaned = dedupe_fences(strip_fences(cleaned))
     question = " ".join(user_question(prompt or "").split())
     banned = _persona_lines(persona or PERSONA)

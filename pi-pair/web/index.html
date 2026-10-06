@@ -41,7 +41,7 @@ try {
     <div id="memPop" class="mem-pop" role="tooltip" hidden>
       <p id="memPopText">Context 0% used</p>
       <button type="button" id="memCompact">Compact now</button>
-      <button type="button" id="memShow">Memory</button>
+      <button type="button" id="memClear">Clear memory</button>
     </div>
     </div>
     <button class="head-btn" id="btnNew" type="button" aria-label="New chat">
@@ -52,11 +52,6 @@ try {
     </button>
     </div>
   </header>
-  <div id="memoryPanel" class="memory-panel" hidden>
-    <p class="memory-title">Memory</p>
-    <ul id="memoryList"></ul>
-    <button type="button" id="memoryClear">Clear</button>
-  </div>
   <div id="log"><div class="empty" id="empty"><p>Ask anything.</p></div></div>
   <div id="voiceStage" class="voice-stage" role="status" aria-hidden="true" aria-label="idle">
     <canvas id="voiceOrb" width="220" height="220" aria-hidden="true"></canvas>

@@ -16,7 +16,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from pair.charts import chart_samples, chart_type, render_chart
+from pair.charts import chart_samples, chart_type, figure_to_plot_fence, render_chart
 from pair.docs import (
     MAX_FILES,
     open_document,
@@ -53,6 +53,60 @@ class Charts(unittest.TestCase):
         missed = render_chart(plot="open(__import__('os').system)")
         self.assertFalse(missed["ok"])
         self.assertIn("open", missed["table"])
+
+    def test_plotly_json_becomes_a_table_fence(self):
+        shot = json.dumps(
+            {
+                "data": [
+                    {
+                        "type": "bar",
+                        "x": ["1", "2"],
+                        "y": [1, 2],
+                        "name": "Sample Data",
+                    }
+                ],
+                "layout": {
+                    "title": "Sample Data",
+                    "xaxis": {"title": "Value"},
+                },
+            }
+        )
+        fence = figure_to_plot_fence(shot)
+        self.assertTrue(fence.startswith("```plot\n"))
+        self.assertIn("| Value | Sample Data |", fence)
+        self.assertIn("| 1 | 1 |", fence)
+        self.assertIn("| 2 | 2 |", fence)
+        self.assertIn("type: bar", fence)
+        body = fence.split("\n", 1)[1].rsplit("```", 1)[0]
+        self.assertTrue(render_chart(plot=body)["ok"])
+        self.assertTrue(render_chart(plot=shot)["ok"])
+        plain = figure_to_plot_fence(
+            json.dumps(
+                {
+                    "data": [
+                        {
+                            "type": "bar",
+                            "x": ["1", "2"],
+                            "y": [1, 2],
+                            "name": "Sample Data",
+                        }
+                    ]
+                }
+            )
+        )
+        self.assertIn("| label | Sample Data |", plain)
+        self.assertEqual(
+            figure_to_plot_fence('{"data":[{"type":"bar","y":["<script>"]}]}'),
+            "",
+        )
+        huge = json.dumps({"data": [{"type": "bar", "y": list(range(10000))}]})
+        self.assertEqual(figure_to_plot_fence(huge), "")
+        nested = '{"data":[{"type":"bar","y":[{"a":1}]}]}'
+        self.assertEqual(figure_to_plot_fence(nested), "")
+        self.assertEqual(
+            figure_to_plot_fence('{"data":[{"type":"pie","y":[1,2]}]}'),
+            "",
+        )
 
     def test_most_sample_tables_render_and_the_rest_stay_text(self):
         samples = chart_samples()
