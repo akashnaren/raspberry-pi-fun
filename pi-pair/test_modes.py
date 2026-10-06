@@ -285,8 +285,8 @@ class ModeHttp(unittest.TestCase):
         port = self._boot()
         levels = {
             "low": (False, 0.5, 0.8, 160, 0),
-            "medium": (False, 0.5, 0.8, 384, 0.5),
-            "high": (False, 0.5, 0.8, 768, 0.5),
+            "medium": (False, 0.5, 0.8, 256, 0.5),
+            "high": (False, 0.5, 0.8, 512, 0.5),
         }
         for level, (think, temperature, top_p, num_predict, penalty) in levels.items():
             _reset_fake()
@@ -331,7 +331,7 @@ class ModeHttp(unittest.TestCase):
 
     def test_every_mode_and_level_sends_think_false(self):
         port = self._boot()
-        budgets = {"low": 160, "medium": 384, "high": 768}
+        budgets = {"low": 160, "medium": 256, "high": 512}
         models = {"flash": "qwen3:0.6b", "pro": "qwen3:1.7b", "auto": "qwen3:0.6b"}
         for mode, model in models.items():
             for level, predict in budgets.items():
@@ -770,8 +770,8 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(len(warm), 1)
         self.assertEqual(warm[0]["model"], "qwen3:1.7b")
         self.assertEqual(warm[0]["keep_alive"], -1)
-        self.assertEqual(warm[0]["options"]["num_ctx"], 2048)
-        self.assertEqual(warm[0]["options"]["num_batch"], 64)
+        self.assertEqual(warm[0]["options"]["num_ctx"], 1536)
+        self.assertEqual(warm[0]["options"]["num_batch"], 128)
         self.assertEqual(warm[0]["options"]["num_thread"], 4)
         self.assertIn("qwen3:0.6b", ModeOllama.loaded)
         self.assertIn("qwen3:1.7b", ModeOllama.loaded)

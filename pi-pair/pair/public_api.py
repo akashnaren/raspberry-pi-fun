@@ -111,7 +111,7 @@ def openapi_document() -> dict:
         "Flash uses temperature 0.3 and presence_penalty 0. Pro uses "
         "temperature 0.5, presence_penalty 0 at Low, and 0.5 at Medium and High. "
         "Low allows 160 answer tokens, "
-        "Medium allows 384, and High allows 768. The system prompt asks for a "
+        "Medium allows 256, and High allows 512. The system prompt asks for a "
         "shorter, moderate, or fuller answer. "
         "On the LAN page, High stays on Flash unless Pro was chosen. "
         "A leaked `<think>` block is removed from the answer. "

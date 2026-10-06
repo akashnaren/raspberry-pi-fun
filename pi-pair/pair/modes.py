@@ -27,6 +27,7 @@ def mode_tips(knobs: dict | None = None) -> dict[str, str]:
     return {
         FLASH: "Fast answers for everyday questions.",
         PRO: "Slower, more careful answers for harder questions.",
+        AUTO: "Auto stays on Flash. It does not choose Pro.",
     }
 
 

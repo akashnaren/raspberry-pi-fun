@@ -248,7 +248,7 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
         self.assertNotEqual(OllamaFake.last_payload["model"], "llama3.2:1b")
         self.assertFalse(OllamaFake.last_payload["think"])
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 384)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 256)
         self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
 
         status, _headers, body = self._json(
@@ -266,7 +266,7 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(body["pi_think"], "high")
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
         self.assertFalse(OllamaFake.last_payload["think"])
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 512)
         self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
         self.assertEqual(OllamaFake.last_payload["options"]["top_p"], 0.8)
         self.assertEqual(OllamaFake.last_payload["options"]["top_k"], 20)

@@ -50,6 +50,7 @@ class Resolve(unittest.TestCase):
             tips["pro"], "Slower, more careful answers for harder questions."
         )
         self.assertNotIn("qwen2.5", tips["flash"] + tips["pro"])
+        self.assertEqual(tips["auto"], "Auto stays on Flash. It does not choose Pro.")
         route, tag, reason = resolve_auto(
             "Write a python function", [FLASH_MODEL], knobs
         )

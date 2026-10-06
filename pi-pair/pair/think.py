@@ -31,10 +31,8 @@ TOP_K = 20
 PRESENCE_PENALTY = FLASH_PRESENCE
 
 LOW_PREDICT = 160
-# The old medium answer was 256. Thinking no longer spends that budget,
-# so the direct reply gets the extra room.
-MEDIUM_PREDICT = 384
-HIGH_PREDICT = 768
+MEDIUM_PREDICT = 256
+HIGH_PREDICT = 512
 HIGH_THINK_BUDGET = 192
 HIGH_THINK_SECONDS = 25.0
 

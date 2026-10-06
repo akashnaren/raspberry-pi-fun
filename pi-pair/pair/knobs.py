@@ -26,14 +26,14 @@ _DEFAULTS = {
     # Prompt-ingest batch. Ollama's default is 512, which is wider than this
     # board's 1MB L2 wants while a search note is being prefilled.
     "num_batch": 128,
-    # Flash is the common path. A shorter context is a smaller key/value cache
-    # on the four Pi 4 cores. Pro keeps the full window for code and math.
+    # Flash and Pro both use a 1536 context and a 128 prompt batch. A shorter
+    # context is a smaller key/value cache on the four Pi 4 cores.
     "flash_num_ctx": 1536,
-    "pro_num_ctx": 2048,
+    "pro_num_ctx": 1536,
     "flash_num_thread": 4,
     "pro_num_thread": 4,
     "flash_num_batch": 128,
-    "pro_num_batch": 64,
+    "pro_num_batch": 128,
     # Characters of search notes pasted into the prompt. Sources on the page
     # are not cut. A shorter note is a shorter prefill.
     "search_note_chars": 720,
@@ -80,8 +80,8 @@ def mode_limits(model: str, knobs: dict | None = None) -> dict:
     name = str(model or "")
     if pro and name == pro and name != flash:
         prefix = "pro"
-        batch_fallback = 64
-        ctx_fallback = _as_int(row.get("num_ctx"), 2048)
+        batch_fallback = _as_int(row.get("num_batch"), 128)
+        ctx_fallback = 1536
     else:
         prefix = "flash"
         batch_fallback = _as_int(row.get("num_batch"), 128)

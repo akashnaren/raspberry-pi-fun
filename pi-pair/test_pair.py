@@ -969,8 +969,8 @@ class PairHttp(unittest.TestCase):
         port = self._pair()
         expected = {
             "low": (False, 0.3, 0.8, 160),
-            "medium": (False, 0.3, 0.8, 384),
-            "high": (False, 0.3, 0.8, 768),
+            "medium": (False, 0.3, 0.8, 256),
+            "high": (False, 0.3, 0.8, 512),
         }
         seen = {}
         for level, (think, temperature, top_p, num_predict) in expected.items():
@@ -1013,7 +1013,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(OllamaFake.last_payload["think"])
         self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 384)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 256)
 
     def test_feedback_rates_the_last_completion(self):
         self._pi3_accepts_forwarded_rows()
@@ -1146,7 +1146,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(headers.get("X-Pi-Think"), "high")
         self.assertEqual(body["pi_think"], "high")
         self.assertEqual(LlamaFake.last_payload["temperature"], 0.3)
-        self.assertEqual(LlamaFake.last_payload["max_tokens"], 768)
+        self.assertEqual(LlamaFake.last_payload["max_tokens"], 512)
         self.assertNotIn("think", LlamaFake.last_payload)
 
     def _pi4(self):
@@ -1803,7 +1803,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(OllamaFake.last_payload["options"]["top_p"], 0.8)
         self.assertEqual(OllamaFake.last_payload["options"]["top_k"], 20)
         self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 0)
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 512)
         status, headers, body = self._post(
             port,
             {
