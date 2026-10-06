@@ -59,6 +59,10 @@ def registry() -> dict[str, Tool]:
             "render_chart", "/tools/render_chart", ("pi3", "pi2"), 10.0, True
         ),
         "tokenize": Tool("tokenize", "/tools/tokenize", ("pi3",), 5.0, True),
+        "compact_plan": Tool(
+            "compact_plan", "/tools/compact_plan", ("pi3",), 5.0, True
+        ),
+        "memory": Tool("memory", "/tools/memory", ("pi3",), 5.0, True),
     }
 
 

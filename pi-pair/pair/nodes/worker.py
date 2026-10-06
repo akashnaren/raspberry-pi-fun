@@ -63,12 +63,33 @@ def _tokenize(payload: dict) -> dict:
     return {"ok": True, "tokens": tokens}
 
 
+def _compact_plan(payload: dict) -> dict:
+    from pair.nodes.compact_plan import plan_turns
+
+    turns = payload.get("turns") if isinstance(payload.get("turns"), list) else []
+    try:
+        num_ctx = int(payload.get("num_ctx") or 2048)
+    except (TypeError, ValueError):
+        num_ctx = 2048
+    planned = plan_turns(turns, num_ctx)
+    planned["ok"] = True
+    return planned
+
+
+def _memory(payload: dict) -> dict:
+    from pair.nodes.memory_store import apply
+
+    return apply(payload)
+
+
 _HANDLERS = {
     "/tools/extract": _extract,
     "/tools/search": _search,
     "/tools/render_doc": _render_doc,
     "/tools/render_chart": _render_chart,
     "/tools/tokenize": _tokenize,
+    "/tools/compact_plan": _compact_plan,
+    "/tools/memory": _memory,
 }
 
 

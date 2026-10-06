@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 import time
 import unittest
@@ -313,6 +314,43 @@ class WorkerHttp(unittest.TestCase):
         status, body = handle("/api/chat", {})
         self.assertEqual(status, 404)
         self.assertIn("does not generate", body["error"])
+
+    def test_compact_plan_and_memory_do_not_generate(self):
+        self.assertEqual(generation_routes(), [])
+        self.assertEqual(forbidden_routes(), [])
+        previous = os.environ.get("PI_PAIR_DATA")
+        tmp = tempfile.TemporaryDirectory()
+        os.environ["PI_PAIR_DATA"] = tmp.name
+        try:
+            self._compact_and_memory()
+        finally:
+            if previous is None:
+                os.environ.pop("PI_PAIR_DATA", None)
+            else:
+                os.environ["PI_PAIR_DATA"] = previous
+            tmp.cleanup()
+
+    def _compact_and_memory(self) -> None:
+        status, body = handle(
+            "/tools/compact_plan",
+            {
+                "num_ctx": 2,
+                "turns": [
+                    {"role": "user", "content": "the locker code is 4182"},
+                    {"role": "assistant", "content": "Noted."},
+                ],
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(body["model"])
+        self.assertNotIn("tokens", body)
+        self.assertIn("4182", " ".join(body["facts"]))
+        status, stored = handle(
+            "/tools/memory", {"op": "put", "text": "the locker code is 4182"}
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(stored["model"])
+        self.assertTrue(stored["facts"][0]["text"].startswith("user said"))
 
 
 if __name__ == "__main__":
