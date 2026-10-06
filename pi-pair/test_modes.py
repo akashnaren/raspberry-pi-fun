@@ -284,7 +284,7 @@ class ModeHttp(unittest.TestCase):
     def test_pro_keeps_flash_and_applies_thinking(self):
         port = self._boot()
         levels = {
-            "low": (False, 0.5, 0.8, 160, 0),
+            "low": (False, 0.5, 0.8, 96, 0),
             "medium": (False, 0.5, 0.8, 256, 0.5),
             "high": (False, 0.5, 0.8, 512, 0.5),
         }
@@ -331,7 +331,7 @@ class ModeHttp(unittest.TestCase):
 
     def test_every_mode_and_level_sends_think_false(self):
         port = self._boot()
-        budgets = {"low": 160, "medium": 256, "high": 512}
+        budgets = {"low": 96, "medium": 256, "high": 512}
         models = {"flash": "qwen3:0.6b", "pro": "qwen3:1.7b", "auto": "qwen3:0.6b"}
         for mode, model in models.items():
             for level, predict in budgets.items():
@@ -475,8 +475,9 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(body["pi_mode"], "pro")
         self.assertEqual(_posts("/api/chat")[0]["model"], "qwen3:1.7b")
 
-    def test_cache_hit_does_not_touch_ollama_in_either_mode(self):
+    def test_a_greeting_calls_the_model_in_either_mode(self):
         port = self._boot()
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
         for mode in ("flash", "pro"):
             ModeOllama.calls = []
             status, headers, body = self._post(
@@ -485,11 +486,14 @@ class ModeHttp(unittest.TestCase):
                 {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, mode)
-            self.assertEqual(headers.get("X-Pi-Chip"), "cache", mode)
+            self.assertEqual(headers.get("X-Pi-Chip"), "brain: pi4", mode)
             self.assertEqual(headers.get("X-Pi-Mode"), mode, mode)
-            self.assertEqual(body["pi_model"], "canned", mode)
+            self.assertNotEqual(body["pi_model"], "canned", mode)
+            self.assertEqual(
+                body["choices"][0]["message"]["content"], "hello from peer", mode
+            )
             self.assertEqual(body["pi_mode"], mode, mode)
-            self.assertEqual(ModeOllama.calls, [], mode)
+            self.assertTrue(_posts("/api/chat"), mode)
             self.assertEqual(self.search_calls, [])
 
     def test_missing_pro_does_not_ask_ollama_to_pull(self):
@@ -770,7 +774,7 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(len(warm), 1)
         self.assertEqual(warm[0]["model"], "qwen3:1.7b")
         self.assertEqual(warm[0]["keep_alive"], -1)
-        self.assertEqual(warm[0]["options"]["num_ctx"], 1536)
+        self.assertEqual(warm[0]["options"]["num_ctx"], 2048)
         self.assertEqual(warm[0]["options"]["num_batch"], 128)
         self.assertEqual(warm[0]["options"]["num_thread"], 4)
         self.assertIn("qwen3:0.6b", ModeOllama.loaded)
@@ -808,7 +812,7 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(len(warm), 1)
         self.assertEqual(warm[0]["model"], "qwen3:0.6b")
         self.assertEqual(warm[0]["keep_alive"], -1)
-        self.assertEqual(warm[0]["options"]["num_ctx"], 1536)
+        self.assertEqual(warm[0]["options"]["num_ctx"], 2048)
         self.assertEqual(warm[0]["options"]["num_batch"], 128)
         self.assertEqual(warm[0]["options"]["num_thread"], 4)
         self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])

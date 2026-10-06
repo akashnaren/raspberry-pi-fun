@@ -7,6 +7,7 @@ import os
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from unittest.mock import patch
 from http.client import HTTPConnection
@@ -32,7 +33,8 @@ from pair.think import (
     stop_thinking,
     visible_answer,
 )
-from pair.turn import EFFORT_HINT, SHORT_ANSWER
+from pair.errors import GENERIC
+from pair.turn import EFFORT_HINT
 
 ROOT = Path(__file__).resolve().parent
 
@@ -60,8 +62,8 @@ class ThinkLevels(unittest.TestCase):
         self.assertEqual(pro_low.presence_penalty, 0)
         self.assertEqual(pro_medium.presence_penalty, 0.5)
         self.assertEqual(pro_high.presence_penalty, 0.5)
-        self.assertEqual(low.num_predict, 160)
-        self.assertEqual(low.ollama_predict(), 160)
+        self.assertEqual(low.num_predict, 96)
+        self.assertEqual(low.ollama_predict(), 96)
         self.assertFalse(trivial.think)
         self.assertEqual(trivial.temperature, 0.3)
         self.assertEqual(trivial.num_predict, 256)
@@ -467,33 +469,42 @@ class ThinkHttp(unittest.TestCase):
 
         ThinkOllama.calls = []
         ThinkOllama.replies = [{"content": "", "thinking": ""}]
-        empty = self._post(
-            port,
-            {
-                "messages": [{"role": "user", "content": "Explain why the tide turns"}],
-                "stream": False,
-                "think": "high",
-            },
-        )
-        message = empty["choices"][0]["message"]
-        self.assertEqual(message["content"], SHORT_ANSWER)
+        with self.assertRaises(urllib.error.HTTPError) as empty_error:
+            self._post(
+                port,
+                {
+                    "messages": [
+                        {"role": "user", "content": "Explain why the tide turns"}
+                    ],
+                    "stream": False,
+                    "think": "high",
+                },
+            )
+        self.assertEqual(empty_error.exception.code, 502)
+        empty = json.loads(empty_error.exception.read().decode())
+        self.assertEqual(empty["error"], GENERIC)
+        self.assertNotIn("<think", empty["error"])
         self.assertEqual(len(ThinkOllama.calls), 1)
         self.assertFalse(ThinkOllama.calls[0]["think"])
 
         ThinkOllama.calls = []
         ThinkOllama.replies = [{"content": "<think>only the trace</think>"}]
-        tagged = self._post(
-            port,
-            {
-                "messages": [{"role": "user", "content": "Name the river in Paris"}],
-                "stream": False,
-                "think": "high",
-            },
-        )
-        tagged_message = tagged["choices"][0]["message"]
-        self.assertEqual(tagged_message["content"], SHORT_ANSWER)
-        self.assertNotIn("<think", tagged_message["content"])
-        self.assertNotIn("only the trace", tagged_message["content"])
+        with self.assertRaises(urllib.error.HTTPError) as tagged_error:
+            self._post(
+                port,
+                {
+                    "messages": [
+                        {"role": "user", "content": "Name the river in Paris"}
+                    ],
+                    "stream": False,
+                    "think": "high",
+                },
+            )
+        self.assertEqual(tagged_error.exception.code, 502)
+        tagged = json.loads(tagged_error.exception.read().decode())
+        self.assertEqual(tagged["error"], GENERIC)
+        self.assertNotIn("<think", tagged["error"])
+        self.assertNotIn("only the trace", tagged["error"])
         self.assertEqual(len(ThinkOllama.calls), 1)
         self.assertFalse(ThinkOllama.calls[0]["think"])
 
@@ -569,9 +580,9 @@ class ThinkHttp(unittest.TestCase):
         )
         text = "".join(piece for kind, piece in chunks if kind == "content")
         visible, _reasoning = peel_think(text)
-        self.assertEqual(visible, DIRECT_FALLBACK)
+        self.assertEqual(visible, "")
+        self.assertNotIn(DIRECT_FALLBACK, text)
         self.assertNotIn("<think", visible)
         self.assertNotIn("secret", visible)
-        self.assertEqual(len(ThinkOllama.calls), 2)
+        self.assertEqual(len(ThinkOllama.calls), 1)
         self.assertTrue(ThinkOllama.calls[0]["think"])
-        self.assertFalse(ThinkOllama.calls[1]["think"])

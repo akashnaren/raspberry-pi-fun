@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import json
+import math
 import re
 from datetime import date
 
@@ -20,9 +21,7 @@ from pair.errors import friendly_error
 from pair.knobs import attachment_limit, inference_knobs
 
 ATTACH_MARK = "\n\n---\n"
-SLOW_ANSWER = "That took too long. Ask again in a moment."
-SHORT_ANSWER = "I could not finish that. Ask again with a shorter question."
-NOTES_ANSWER = "I could not finish a full answer. From the notes: "
+CHARS_PER_TOKEN = 3.2
 
 PERSONA = (
     "You are OpenPi, a helpful assistant that runs on a Raspberry Pi. "
@@ -321,32 +320,42 @@ def _persona_row(row: dict, text: str) -> bool:
 
 
 def add_persona(
-    messages, prompt: str, effort: str = "", knobs: dict | None = None
+    messages, prompt: str = "", effort: str = "", knobs: dict | None = None
 ) -> list:
     """Persona is always message 0 so the prefix cache can reuse it.
 
-    The effort sentence is the next system message. It does not enable thinking.
+    Effort, tool results, and hints belong in the tail note, not here.
     """
+    del prompt, effort
     text = persona_text(knobs)
     rows = [
         row
         for row in list(messages or [])
         if not (isinstance(row, dict) and _persona_row(row, text))
     ]
-    head = [{"role": "system", "content": text}]
+    return [{"role": "system", "content": text}, *rows]
+
+
+def tail_note(effort: str = "", notes: str = "", hints: str = "") -> str:
+    """One per-turn note: effort, then hints, then tool results."""
+    parts: list[str] = []
     extra = EFFORT_HINT.get((effort or "").strip().lower(), "")
     if extra:
-        head.append({"role": "system", "content": extra})
-    return [*head, *rows]
+        parts.append(extra)
+    hint = (hints or "").strip()
+    if hint:
+        parts.append(hint)
+    note = (notes or "").strip()
+    if note:
+        parts.append(note if note.startswith("Notes:") else "Notes:\n" + note)
+    return "\n\n".join(parts)
 
 
 def add_notes(messages, note: str) -> list:
-    """One Notes message immediately before the last user turn."""
+    """One tail message immediately before the last user turn."""
     text = (note or "").strip()
     if not text:
         return list(messages or [])
-    if not text.startswith("Notes:"):
-        text = "Notes:\n" + text
     rows = list(messages or [])
     index = len(rows)
     for cursor in range(len(rows) - 1, -1, -1):
@@ -356,6 +365,14 @@ def add_notes(messages, note: str) -> list:
             break
     rows.insert(index, {"role": "system", "content": text})
     return rows
+
+
+def estimate_tokens(text: str) -> int:
+    """About 3.2 characters per token. Empty text is zero."""
+    raw = text or ""
+    if not raw:
+        return 0
+    return max(1, math.ceil(len(raw) / CHARS_PER_TOKEN))
 
 
 def _num_ctx(knobs: dict | None = None) -> int:
@@ -414,58 +431,57 @@ def _clip_text(text: str, keep: int) -> str:
     return text[:room].rstrip() + mark
 
 
+def _token_count(rows: list) -> int:
+    return sum(estimate_tokens(str(row.get("content") or "")) for row in rows)
+
+
 def fit_messages(messages, knobs: dict | None = None) -> list:
-    """Cut search notes and attachment text first. Keep the persona and the last turn."""
+    """Drop whole old turns when the prompt is over num_ctx. Never drop a system row."""
     rows = []
     for item in messages or []:
         if isinstance(item, dict) and str(item.get("content") or "").strip():
             rows.append(dict(item))
     if not rows:
         return []
-    # Two characters per token. An input that fits num_ctx stays whole.
-    if (_size(rows) + 1) // 2 <= _num_ctx(knobs):
+    limit = _num_ctx(knobs)
+    if _token_count(rows) <= limit:
         return rows
     persona = persona_text(knobs)
-    budget = char_budget(knobs)
     guard = 0
-    while _size(rows) > budget and guard < 16:
+    while _token_count(rows) > limit and guard < 64:
         guard += 1
-        search = next(
+        last_user = -1
+        for index, row in enumerate(rows):
+            if row.get("role") == "user":
+                last_user = index
+        drop_at = next(
             (
-                row
-                for row in rows
-                if _search_row(row) and len(str(row.get("content") or "")) > 160
+                index
+                for index, row in enumerate(rows)
+                if row.get("role") != "system" and index != last_user
             ),
             None,
         )
-        if search is not None:
-            text = str(search.get("content") or "")
-            overflow = _size(rows) - budget
-            search["content"] = _clip_text(text, max(160, len(text) - overflow))
-            continue
-        if len(rows) > 1:
-            drop_at = next(
-                (
-                    index
-                    for index, row in enumerate(rows[:-1])
-                    if not _persona_row(row, persona)
-                ),
-                None,
-            )
-            if drop_at is not None:
-                rows.pop(drop_at)
-                continue
-        plain = [
+        if drop_at is None:
+            break
+        rows.pop(drop_at)
+    guard = 0
+    while _token_count(rows) > limit and guard < 16:
+        guard += 1
+        pool = [
             row
             for row in rows
             if not _persona_row(row, persona)
             and len(str(row.get("content") or "")) > 80
         ]
-        pool = plain or rows
+        if not pool:
+            break
         target = max(pool, key=lambda row: len(str(row.get("content") or "")))
         text = str(target.get("content") or "")
-        overflow = _size(rows) - budget
-        clipped = _clip_text(text, max(80, len(text) - overflow))
+        overflow = _token_count(rows) - limit
+        clipped = _clip_text(
+            text, max(80, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
+        )
         if len(clipped) >= len(text):
             break
         target["content"] = clipped
@@ -478,12 +494,14 @@ def shape_messages(
     knobs: dict | None = None,
     effort: str = "",
     notes: str = "",
+    hints: str = "",
 ) -> list:
+    """Persona, then verbatim turns, then one tail note, then the last user."""
     rows = fence_messages(messages, knobs)
-    rows = add_persona(rows, prompt, effort, knobs)
+    rows = add_persona(rows, prompt, "", knobs)
     calc = notes_for(user_question(prompt)) or ""
     combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
-    rows = add_notes(rows, combined)
+    rows = add_notes(rows, tail_note(effort, combined, hints))
     return fit_messages(rows, knobs)
 
 
@@ -509,21 +527,13 @@ def _note_clip(search_note) -> str:
     return neutralize(" ".join(lines))[:240].strip()
 
 
-def degraded_answer(search_note, error: BaseException | None = None) -> str:
-    """A sentence the page can show. Not an exception string and not empty."""
-    if _is_timeout(error):
-        return SLOW_ANSWER
-    clip = _note_clip(search_note)
-    if clip:
-        return NOTES_ANSWER + clip
-    return SHORT_ANSWER
-
-
 def public_failure(error: BaseException, search_note=None) -> str:
-    """One visible line. Network failures and tracebacks stay off the page."""
-    if isinstance(error, (OSError, json.JSONDecodeError)):
-        return degraded_answer(search_note, error)
-    text = str(error).strip().splitlines()[0] if str(error).strip() else ""
-    if not text or text.startswith("Traceback") or len(text) > 240:
-        return degraded_answer(search_note, error)
-    return friendly_error(text)
+    """One visible error line. Notes are not turned into an answer."""
+    del search_note
+    if error is None:
+        return friendly_error("")
+    if isinstance(error, TimeoutError) or _is_timeout(error):
+        return friendly_error("timed out")
+    if isinstance(error, json.JSONDecodeError):
+        return friendly_error("")
+    return friendly_error(str(error))

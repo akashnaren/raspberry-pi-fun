@@ -19,11 +19,9 @@ from pair.assist import (
     scrub_reply,
     settle_reply,
     stream_release,
-    visible_canned,
 )
 from pair.moderate import moderate
 from pair.cancel import Cancel, ClientGone, peer_closed
-from pair.canned import lookup
 from pair.chat import (
     chat_llamacpp,
     chat_ollama,
@@ -46,6 +44,7 @@ from pair.errors import (
 )
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import COOLING_NOTE, board_thermal, snapshot_peers
+from pair.thermal import sample as thermal_sample
 from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
 from pair.modes import (
     mode_table,
@@ -79,7 +78,6 @@ from pair.stream import iter_ollama_channels, stream_llamacpp, stream_ollama
 from pair.think import decode_plan, peel_think
 from pair.timing import assemble, present
 from pair.turn import (
-    degraded_answer,
     is_structured_request,
     needs_web,
     prepare_search_note,
@@ -97,6 +95,11 @@ SEARCH_BODY_CAP = 4096
 CHAT_BODY_CAP = 1_000_000
 _DRAIN_CAP = 8 * 1024 * 1024
 _CHAT_ROLES = {"system", "user", "assistant"}
+
+
+class DecodeFailed(Exception):
+    """The model did not return an answer. The message is safe to show."""
+
 
 _LAST_LOCK = threading.Lock()
 _LAST = {"prompt": "", "answer": "", "chip": "", "peer": ""}
@@ -543,6 +546,9 @@ def health_document() -> dict:
         },
     }
     doc.update(board_thermal())
+    temp = thermal_sample().get("temp_c")
+    if temp is not None:
+        doc["temp_c"] = temp
     return doc
 
 
@@ -937,6 +943,7 @@ class Handler(BaseHTTPRequestHandler):
         self._queue_ms = 0
         self._search_ms = 0
         self._usage = {}
+        self._ttft_ms = 0
         self._queue_t0 = None
 
     def _mark_queue(self) -> None:
@@ -959,6 +966,7 @@ class Handler(BaseHTTPRequestHandler):
             search_ms=getattr(self, "_search_ms", 0),
             usage=getattr(self, "_usage", None),
             total_ms=int((time.time() - started) * 1000),
+            ttft_ms=getattr(self, "_ttft_ms", 0),
         )
         payload["pi_timing"] = present(timing, self._public())
 
@@ -1197,26 +1205,6 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 if named is not None and not may_generate(named):
                     raise RuntimeError(weak_brain_error(named["name"]))
-            if (
-                mesh
-                and one_user_turn(messages)
-                and (not target or target == "auto" or _named_can_generate(target))
-            ):
-                hit = lookup(prompt)
-                if hit is not None:
-                    hit = visible_canned(prompt, hit)
-                    note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
-                    remember_completion(prompt, hit, "cache", "cache")
-                    cached_mode, cached_route = self._remember_canned_mode(data)
-                    self._cached(
-                        hit,
-                        want_stream,
-                        started,
-                        think_name,
-                        cached_mode,
-                        cached_route,
-                    )
-                    return
         except ClientGone:
             raise
         except Exception as error:
@@ -1253,9 +1241,7 @@ class Handler(BaseHTTPRequestHandler):
             tuned = _tuned_knobs(used if kind != "llamacpp" else model)
             ctx = int(tuned.get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
-            hint = structure_hint(prompt)
-            if hint:
-                outbound = [{"role": "system", "content": hint}, *outbound]
+            hint = structure_hint(prompt) or ""
             search_note = None
             search_job = _begin_lookup(prompt, model) if do_search else None
             grounded = None
@@ -1351,7 +1337,12 @@ class Handler(BaseHTTPRequestHandler):
                         job=search_job,
                     )
                 outbound = shape_messages(
-                    outbound, prompt, tuned, think_name, _prompt_note(search_note)
+                    outbound,
+                    prompt,
+                    tuned,
+                    think_name,
+                    _prompt_note(search_note),
+                    hints=hint,
                 )
                 stages = ["thinking"]
                 if do_search:
@@ -1822,7 +1813,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
         except (OSError, json.JSONDecodeError) as error:
             self._last_reasoning = ""
-            return degraded_answer(search_note, error), model, False
+            raise DecodeFailed(public_failure(error)) from error
         self._usage = dict(meta.get("usage") or {})
         content = content or ""
         answer, leaked = peel_think(content)
@@ -1842,7 +1833,7 @@ class Handler(BaseHTTPRequestHandler):
             self._last_reasoning = ""
             return refused, used, False
         if not str(content).strip():
-            return degraded_answer(search_note, None), used, False
+            raise DecodeFailed(friendly_error(""))
         return content, used, True
 
     def _stream(
@@ -1956,7 +1947,12 @@ class Handler(BaseHTTPRequestHandler):
         if not emit_status("answering", answer_extra or None):
             return
         messages = shape_messages(
-            messages, prompt, _tuned_knobs(model), think_name, _prompt_note(search_note)
+            messages,
+            prompt,
+            _tuned_knobs(model),
+            think_name,
+            _prompt_note(search_note),
+            hints=structure_hint(prompt) or "",
         )
         if grounded is not None:
             self._emit_ready_answer(
@@ -2145,6 +2141,8 @@ class Handler(BaseHTTPRequestHandler):
                     held = False
                 if not piece:
                     continue
+                if not getattr(self, "_ttft_ms", 0):
+                    self._ttft_ms = max(0, int((time.time() - started) * 1000))
                 chunk = {
                     "id": "pi-pair",
                     "object": "chat.completion.chunk",
@@ -2215,23 +2213,10 @@ class Handler(BaseHTTPRequestHandler):
                 answer = scrub_reply(answer) or answer
             trainable = not policy
             if not policy and not str(answer).strip():
-                answer = degraded_answer(search_note, None)
-                trainable = False
-                fallback = {
-                    "id": "pi-pair",
-                    "object": "chat.completion.chunk",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": answer},
-                            "finish_reason": None,
-                        }
-                    ],
-                }
-                if not write_json(fallback):
-                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                    remember_completion(prompt, answer, chip, peer["name"])
-                    return
+                err = {"error": friendly_error("")}
+                safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
+                safe_write(self, b"data: [DONE]\n\n", flush=True)
+                return
             elapsed = int((time.time() - started) * 1000)
             final = {
                 "id": "pi-pair",
@@ -2278,16 +2263,12 @@ class Handler(BaseHTTPRequestHandler):
             apply_tier(self, final)
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
-        except (OSError, json.JSONDecodeError) as error:
-            sentence = degraded_answer(search_note, error)
-            chunk = {
-                "id": "pi-pair",
-                "object": "chat.completion.chunk",
-                "choices": [
-                    {"index": 0, "delta": {"content": sentence}, "finish_reason": None}
-                ],
-            }
-            safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
+        except (OSError, json.JSONDecodeError, DecodeFailed) as error:
+            shown = (
+                str(error) if isinstance(error, DecodeFailed) else public_failure(error)
+            )
+            err = {"error": shown}
+            safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
         except ClientGone:
             return
@@ -2378,16 +2359,20 @@ class Handler(BaseHTTPRequestHandler):
             content = grounded
             used = model
         else:
-            content, used, train = self._decode_reply(
-                peer,
-                kind,
-                model,
-                messages,
-                temperature,
-                max_tokens,
-                prompt,
-                search_note,
-            )
+            try:
+                content, used, train = self._decode_reply(
+                    peer,
+                    kind,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    prompt,
+                    search_note,
+                )
+            except DecodeFailed as error:
+                self._error(str(error))
+                return
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
         if train:
             note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)

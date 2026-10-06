@@ -25,16 +25,13 @@ from pair import runtime
 from pair import server as pair_server
 from pair.chat import start_model_warm, warm_residents
 from pair.modes import FLASH_MODEL, PRO_MODEL
-from pair.errors import UNREACHABLE
+from pair.errors import GENERIC, TIMEOUT, UNREACHABLE
 from pair.turn import (
     PERSONA,
     EFFORT_HINT,
     ATTACH_MARK,
-    NOTES_ANSWER,
-    SHORT_ANSWER,
-    SLOW_ANSWER,
     char_budget,
-    degraded_answer,
+    estimate_tokens,
     fence_user_text,
     fit_messages,
     needs_web,
@@ -170,35 +167,31 @@ class TurnShape(unittest.TestCase):
             prompt,
             knobs,
         )
-        self.assertLessEqual(sum(len(row["content"]) for row in shaped), 2560)
+        self.assertLessEqual(
+            sum(estimate_tokens(row["content"]) for row in shaped), 2048
+        )
         blob = "\n".join(row["content"] for row in shaped)
         self.assertNotIn("```chart", blob)
         self.assertIn("plot the bars", blob)
         self.assertNotIn("<|im_start|>", blob)
 
-    def test_degraded_answers_stay_one_sentence(self):
+    def test_failures_are_errors_not_invented_answers(self):
         note = {
             "status": "ok",
             "context": "Web search notes.\n- The kettle is in the hall.",
         }
-        self.assertEqual(degraded_answer(None, TimeoutError("timed out")), SLOW_ANSWER)
-        self.assertEqual(degraded_answer(note, TimeoutError()), SLOW_ANSWER)
-        self.assertTrue(degraded_answer(note).startswith(NOTES_ANSWER))
-        self.assertIn("kettle", degraded_answer(note))
-        self.assertEqual(degraded_answer(None), SHORT_ANSWER)
-        self.assertEqual(public_failure(TimeoutError("boom")), SLOW_ANSWER)
-        self.assertEqual(
-            public_failure(json.JSONDecodeError("bad", "x", 0)), SHORT_ANSWER
-        )
+        self.assertEqual(public_failure(TimeoutError("timed out"), note), TIMEOUT)
+        self.assertNotIn("kettle", public_failure(TimeoutError("timed out"), note))
+        self.assertEqual(public_failure(json.JSONDecodeError("bad", "x", 0)), GENERIC)
         self.assertEqual(
             public_failure(RuntimeError("pi4 unreachable on cache miss")),
             UNREACHABLE,
         )
         self.assertEqual(
             public_failure(RuntimeError("Traceback (most recent call last): boom")),
-            SHORT_ANSWER,
+            GENERIC,
         )
-        self.assertEqual(public_failure(RuntimeError("x" * 300)), SHORT_ANSWER)
+        self.assertEqual(public_failure(RuntimeError("x" * 300)), GENERIC)
 
     def test_every_turn_gets_the_same_persona(self):
         for prompt in (
@@ -228,7 +221,39 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(first[0]["content"], PERSONA)
         self.assertEqual(second[0]["content"], PERSONA)
         self.assertEqual(first[0]["content"], second[0]["content"])
-        self.assertEqual(second[1]["content"], EFFORT_HINT["high"])
+        self.assertIn(EFFORT_HINT["high"], second[-2]["content"])
+        self.assertEqual(second[-1]["role"], "user")
+
+    def test_prefix_stays_byte_identical_across_five_turns(self):
+        history = []
+        prefixes = []
+        for index in range(5):
+            prompt = f"turn {index} question about rivers"
+            history.append({"role": "user", "content": prompt})
+            rows = shape_messages(list(history), prompt, effort="medium")
+            prefixes.append(rows[0]["content"])
+            self.assertEqual(rows[0]["role"], "system")
+            self.assertTrue(
+                all(row["role"] != "system" or row["content"] for row in rows)
+            )
+            history.append({"role": "assistant", "content": f"answer {index}"})
+        self.assertEqual(len(set(prefixes)), 1)
+        self.assertEqual(prefixes[0], PERSONA)
+
+    def test_fit_never_drops_a_system_row(self):
+        knobs = {"num_ctx": 256}
+        rows = fit_messages(
+            [
+                {"role": "system", "content": "Keep this persona row intact."},
+                {"role": "user", "content": "old " * 400},
+                {"role": "assistant", "content": "old answer " * 200},
+                {"role": "user", "content": "latest question"},
+            ],
+            knobs,
+        )
+        self.assertEqual(rows[0]["content"], "Keep this persona row intact.")
+        self.assertEqual(rows[-1]["content"], "latest question")
+        self.assertNotIn("old answer", " ".join(row["content"] for row in rows))
 
     def test_notes_sit_just_before_the_last_user_message(self):
         prompt = "capital of australia"
@@ -300,7 +325,15 @@ class ModelWarm(unittest.TestCase):
         self.assertEqual(flash["keep_alive"], -1)
         self.assertFalse(flash["stream"])
         self.assertEqual(flash["options"]["num_predict"], 1)
-        self.assertEqual(flash["messages"], [{"role": "user", "content": "ok"}])
+        from pair.turn import persona_text
+
+        self.assertEqual(
+            flash["messages"],
+            [
+                {"role": "system", "content": persona_text()},
+                {"role": "user", "content": "ok"},
+            ],
+        )
         self.assertEqual(loaded, [FLASH_MODEL])
         self.assertTrue(all("/api/pull" not in url for url, _payload in seen))
 
@@ -446,12 +479,15 @@ class TurnHttp(unittest.TestCase):
             data=json.dumps(payload).encode(),
             headers={"content-type": "application/json", **(headers or {})},
         )
-        with urllib.request.urlopen(request, timeout=5) as response:
-            return (
-                response.status,
-                response.headers,
-                json.loads(response.read().decode()),
-            )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return (
+                    response.status,
+                    response.headers,
+                    json.loads(response.read().decode()),
+                )
+        except urllib.error.HTTPError as error:
+            return error.code, error.headers, json.loads(error.read().decode() or "{}")
 
     def test_plot_stays_on_flash_and_uses_the_model(self):
         OllamaFake.catalog = [FLASH_MODEL, PRO_MODEL]
@@ -652,8 +688,8 @@ class TurnHttp(unittest.TestCase):
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
         )
-        self.assertEqual(status, 200)
-        self.assertEqual(body["choices"][0]["message"]["content"], SHORT_ANSWER)
+        self.assertEqual(status, 502)
+        self.assertEqual(body["error"], GENERIC)
         self.assertEqual(trained, [])
         self.assertNotIn("Traceback", json.dumps(body))
 
@@ -669,8 +705,8 @@ class TurnHttp(unittest.TestCase):
                 },
                 {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
             )
-        self.assertEqual(status, 200)
-        self.assertEqual(body["choices"][0]["message"]["content"], SLOW_ANSWER)
+        self.assertEqual(status, 502)
+        self.assertEqual(body["error"], TIMEOUT)
         raw = json.dumps(body)
         self.assertNotIn("Traceback", raw)
         self.assertNotIn("TimeoutError", raw)
@@ -772,7 +808,7 @@ class TurnHttp(unittest.TestCase):
             response = conn.getresponse()
             raw = response.read().decode()
             conn.close()
-        self.assertIn(SLOW_ANSWER, raw)
+        self.assertIn(TIMEOUT, raw)
         self.assertNotIn("Traceback", raw)
         self.assertNotIn("TimeoutError", raw)
 
@@ -994,11 +1030,12 @@ class TurnHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         text = body["choices"][0]["message"]["content"]
-        self.assertEqual(text, "Hello! How can I help?")
+        self.assertEqual(text, "hello from peer")
         lowered = text.lower()
         for word in ("mesh", "pi4", "canned", "brain", "fleet"):
             self.assertNotIn(word, lowered)
-        self.assertEqual(OllamaFake.posts, 0)
+        self.assertEqual(OllamaFake.posts, 1)
+        self.assertNotEqual(body.get("pi_model"), "canned")
 
         ScriptOllama.replies = [
             {
@@ -1518,19 +1555,23 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(ScriptOllama.posts, 1)
         self.assertEqual(self.search_calls, [prompt])
 
+        stored = "stored primes that must not be served"
         canned = Path(self._tmp.name) / "short_primes.json"
-        canned.write_text(json.dumps({"top 5 primes": short}), encoding="utf-8")
+        canned.write_text(json.dumps({"top 5 primes": stored}), encoding="utf-8")
         os.environ["PI_PAIR_CANNED"] = str(canned)
-        ScriptOllama.replies = []
+        ScriptOllama.replies = [
+            {"message": {"content": short}, "done": True, "done_reason": "stop"},
+        ]
         ScriptOllama.posts = 0
         status, resp_headers, body = self._post(
             port, {**body_json, "stream": False}, headers
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], short)
-        self.assertEqual(body.get("pi_model"), "canned")
-        self.assertEqual(resp_headers.get("X-Pi-Chip"), "cache")
-        self.assertEqual(ScriptOllama.posts, 0)
+        self.assertNotIn(stored, body["choices"][0]["message"]["content"])
+        self.assertNotEqual(body.get("pi_model"), "canned")
+        self.assertNotEqual(resp_headers.get("X-Pi-Chip"), "cache")
+        self.assertEqual(ScriptOllama.posts, 1)
         self.assertEqual(last_completion()["answer"], short)
 
     def test_sampling_uses_presence_penalty_and_repeats_are_not_clipped(self):
@@ -1576,7 +1617,7 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(ScriptOllama.seen[0]["model"], FLASH_MODEL)
         self.assertEqual(ScriptOllama.seen[0]["options"]["presence_penalty"], 0)
         self.assertEqual(ScriptOllama.seen[0]["options"]["temperature"], 0.3)
-        self.assertEqual(ScriptOllama.seen[0]["options"]["num_predict"], 160)
+        self.assertEqual(ScriptOllama.seen[0]["options"]["num_predict"], 96)
         self.assertEqual(ScriptOllama.seen[0]["options"]["top_p"], 0.8)
         self.assertEqual(ScriptOllama.seen[0]["options"]["top_k"], 20)
 

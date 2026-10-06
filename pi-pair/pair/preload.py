@@ -23,7 +23,7 @@ PRELOAD_TIMEOUT_S = 180.0
 COLD_WAIT_S = 60.0
 COLD_POLL_S = 0.05
 RESIDENT_TIMEOUT_S = 0.6
-REWARM_PAUSE_S = 30.0
+REWARM_PAUSE_S = 120.0
 
 
 def resident_tags() -> tuple[str, str]:
@@ -46,10 +46,12 @@ def pro_preload_payload(model: str | None = None) -> dict:
     alive = keep_alive()
     if alive == 0:
         alive = -1
+    from pair.turn import persona_text
+
     limits = mode_limits(tag)
     return {
         "model": tag,
-        "prompt": " ",
+        "prompt": persona_text(),
         "stream": False,
         "keep_alive": alive,
         "think": False,
@@ -133,9 +135,18 @@ def _local_endpoint() -> tuple[str, int]:
     return host, int(port)
 
 
+def _decode_idle() -> bool:
+    """True when no chat is decoding or waiting. A poll must not run mid-turn."""
+    from pair import runtime
+
+    return runtime.gate.in_flight() == 0 and runtime.gate.waiting() == 0
+
+
 def rewarm_pro_if_evicted() -> None:
     """Reload Flash or Pro when /api/ps no longer lists that tag."""
     if not on_pi4():
+        return
+    if not _decode_idle():
         return
     host, port = _local_endpoint()
     resident = resident_models(host, port)

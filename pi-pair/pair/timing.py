@@ -19,6 +19,9 @@ def blank() -> dict:
         "prefill_ms": 0,
         "eval_tokens": 0,
         "eval_ms": 0,
+        "ttft_ms": 0,
+        "prompt_eval_tps": 0.0,
+        "eval_tps": 0.0,
         "total_ms": 0,
     }
 
@@ -41,12 +44,19 @@ def from_ollama(obj: dict | None) -> dict:
     }
 
 
+def _rate(tokens: int, millis: int) -> float:
+    if millis <= 0 or tokens <= 0:
+        return 0.0
+    return round(tokens * 1000 / millis, 2)
+
+
 def assemble(
     *,
     queue_ms: int = 0,
     search_ms: int = 0,
     usage: dict | None = None,
     total_ms: int = 0,
+    ttft_ms: int = 0,
 ) -> dict:
     timing = blank()
     timing["queue_ms"] = max(0, _as_int(queue_ms))
@@ -54,6 +64,9 @@ def assemble(
     taken = usage if isinstance(usage, dict) else {}
     for key in _USAGE:
         timing[key] = max(0, _as_int(taken.get(key)))
+    timing["ttft_ms"] = max(0, _as_int(ttft_ms or taken.get("ttft_ms")))
+    timing["prompt_eval_tps"] = _rate(timing["prefill_tokens"], timing["prefill_ms"])
+    timing["eval_tps"] = _rate(timing["eval_tokens"], timing["eval_ms"])
     timing["total_ms"] = max(0, _as_int(total_ms))
     return timing
 
