@@ -131,5 +131,55 @@ class KeepAliveDefault(unittest.TestCase):
         )
 
 
+class PoolClose(unittest.TestCase):
+    def test_close_does_not_drain_an_unfinished_body(self):
+        from pair.http_pool import _Body
+
+        class _Response:
+            def __init__(self):
+                self.reads = 0
+                self.status = 200
+                self.headers = {}
+                self.will_close = False
+                self._closed = False
+
+            def read(self, amt=-1):
+                self.reads += 1
+                return b"still here"
+
+            def readline(self, amt=-1):
+                self.reads += 1
+                return b"still here\n"
+
+            def isclosed(self):
+                return self._closed
+
+            def close(self):
+                self._closed = True
+
+        class _Sock:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+            def shutdown(self, how):
+                self.closed = True
+
+        class _Conn:
+            def __init__(self):
+                self.sock = _Sock()
+
+        response = _Response()
+        conn = _Conn()
+        reused = []
+        body = _Body(response, reused.append, connection=conn)
+        body.close()
+        self.assertEqual(response.reads, 0)
+        self.assertEqual(reused, [False])
+        self.assertTrue(conn.sock.closed)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ hands that socket to the next call. A closed or failed socket is dropped.
 from __future__ import annotations
 
 import http.client
+import socket
 import threading
 import urllib.request
 from urllib.parse import urlparse
@@ -63,11 +64,14 @@ _POOL = _Pool()
 class _Body:
     """The slice of a urlopen result that chat and the startup warm use."""
 
-    def __init__(self, response: http.client.HTTPResponse, release) -> None:
+    def __init__(
+        self, response: http.client.HTTPResponse, release, connection=None
+    ) -> None:
         self.status = response.status
         self.headers = response.headers
         self._response = response
         self._release = release
+        self._connection = connection
         self._closed = False
 
     def read(self, amt: int = -1) -> bytes:
@@ -76,16 +80,44 @@ class _Body:
     def readline(self, amt: int = -1) -> bytes:
         return self._response.readline(amt)
 
+    def _sock(self):
+        conn = self._connection
+        if conn is not None and getattr(conn, "sock", None) is not None:
+            return conn.sock
+        return None
+
+    def abort(self) -> None:
+        """Unblock a readline on this body. The socket is not reused."""
+        sock = self._sock()
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        self.close()
+
     def close(self) -> None:
+        """Return or drop the socket. An unfinished body is never drained."""
         if self._closed:
             return
         self._closed = True
         reuse = False
         try:
             response = self._response
-            if not response.isclosed():
-                response.read()
-            reuse = not response.will_close
+            if response.isclosed():
+                reuse = not response.will_close
+            else:
+                sock = self._sock()
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
+                try:
+                    response.close()
+                except Exception:
+                    pass
+                reuse = False
         except Exception:
             reuse = False
         self._release(reuse)
@@ -130,7 +162,7 @@ def _pool_post(url: str, body: bytes, timeout: float):
             def release(reuse: bool, connection=conn, origin=host, number=port) -> None:
                 _POOL.release(origin, number, connection, reuse)
 
-            return _Body(response, release)
+            return _Body(response, release, connection=conn)
         except Exception as exc:
             _POOL.discard(conn)
             caught = exc
