@@ -336,5 +336,58 @@ if (lastChat.includes("upload.wikimedia.org") || lastChat.includes("pi_images"))
   throw new Error("image cards were sent back to chat");
 }
 
+await new Promise((resolve) => setTimeout(resolve, 800));
+if (document.querySelector(".msg.streaming")) {
+  const stray = streams[streams.length - 1];
+  stray.push({ choices: [{ index: 0, delta: { content: "Nothing else to add." } }] });
+  stray.end();
+  await waitFor("stray retry settled", () => !document.querySelector(".msg.streaming"));
+}
+
+const greet = "I'm here to help with anything you need. How can I assist you today?";
+const seeded = await sendTurn("hello there");
+seeded.push({ choices: [{ index: 0, delta: { content: greet } }] });
+seeded.end();
+await waitFor("greeting landed", () => assistantBubbles().some((node) => node.textContent.includes("assist you today")));
+const greetingBubbles = () => assistantBubbles().filter((node) => node.textContent.includes("assist you today")).length;
+const bubblesBefore = greetingBubbles();
+const streamsBefore = streams.length;
+const bodiesBefore = chatBodies.length;
+window.speechSynthesis = {
+  speaking: false,
+  pending: false,
+  getVoices() { return []; },
+  cancel() {},
+  resume() {},
+  speak() { throw new Error("a repeated reply was spoken"); },
+};
+const copied = await sendTurn("top ev to buy");
+copied.push({ choices: [{ index: 0, delta: { content: greet } }] });
+copied.end();
+await waitFor("fresh retry", () => chatBodies.slice(bodiesBefore).some((raw) => {
+  const parsed = JSON.parse(raw);
+  return parsed.messages.length === 1 && parsed.messages[0].content === "top ev to buy";
+}));
+if (greetingBubbles() !== bubblesBefore) throw new Error("the repeated reply was pushed");
+const fresh = JSON.parse(chatBodies.find((raw) => {
+  const parsed = JSON.parse(raw);
+  return parsed.messages.length === 1 && parsed.messages[0].content === "top ev to buy";
+}));
+if (fresh.messages.some((row) => row.role === "assistant")) {
+  throw new Error("fresh retry kept earlier replies: " + JSON.stringify(fresh.messages));
+}
+const freshCount = chatBodies.filter((raw) => {
+  const parsed = JSON.parse(raw);
+  return parsed.messages.length === 1 && parsed.messages[0].content === "top ev to buy";
+}).length;
+if (freshCount !== 1) throw new Error("expected one fresh retry, saw " + freshCount);
+const accepted = streams[streams.length - 1];
+accepted.push({ choices: [{ index: 0, delta: { content: greet } }] });
+accepted.end();
+await waitFor("second repeat kept", () => {
+  return greetingBubbles() === bubblesBefore + 1 && !document.querySelector(".msg.streaming");
+});
+if (streams.length !== streamsBefore + 2) throw new Error("the cap retried more than once");
+
 for (const id of timers) rawClearInterval(id);
 console.log("ok");

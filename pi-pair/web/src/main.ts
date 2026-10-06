@@ -13,7 +13,8 @@ import { scrubAssistant } from "./copy";
 import { BIG_LINE, friendlyError, WAITING_LINE } from "./errors";
 import { dropFollow, enqueueFollow, renderFollowQueue, takeFollow, type FollowItem } from "./follow-queue";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
-import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
+import { chatBody } from "./history";
+import { createUtteranceHold, currentSpeech, dropPostSpeechEcho, echoOfSpeech, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, POST_TTS_DEAF_MS, POST_TTS_ECHO_MS, shouldBargeIn, speakText, speechKey, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
 type Role = "user" | "assistant";
 type StageName = "loading" | "waiting" | "thinking" | "searching" | "answering";
@@ -44,6 +45,7 @@ interface Turn {
   thoughtSeconds?: number;
   images?: ImageCard[];
   stopped?: boolean;
+  echo?: boolean;
 }
 
 interface HealthBody extends HealthSnapshot {
@@ -99,6 +101,8 @@ let graceTimer = 0;
 let bargeHandle: { stop: () => void } | null = null;
 let pendingBarge = "";
 let speakingLine = "";
+let voiceEchoUntil = 0;
+let heardConfidence = 1;
 const serviceLines: string[] = [];
 let attachSerial = 0;
 let uploading = false;
@@ -1116,14 +1120,34 @@ function freshRequestId(): string {
   });
 }
 
+function lastAssistantText(): string {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn.role === "assistant" && !turn.stopped) return turn.content;
+  }
+  return "";
+}
+
+function userBeforeCurrent(): string {
+  let seen = 0;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (turns[index].role !== "user") continue;
+    seen += 1;
+    if (seen === 2) return turns[index].content;
+  }
+  return "";
+}
+
 async function sendText(
   text: string,
   isRetry: boolean,
   spoken = false,
   extra?: { hidden?: string; attachment?: DocCard | null },
   attempt = 0,
+  fresh = false,
 ): Promise<void> {
   if (sending) return;
+  let freshNext = false;
   const epoch = chatEpoch;
   const mine = () => epoch === chatEpoch;
   if (!isRetry || !requestId) requestId = freshRequestId();
@@ -1183,32 +1207,14 @@ async function sendText(
   };
   void refresh();
   try {
-    const body: {
-      model: string;
-      messages: { role: string; content: string }[];
-      stream: boolean;
-      think: string;
-      pi_mode: string;
-      pi_target: string;
-      pi_mesh: string;
-    } = {
-      model,
-      messages: [],
-      stream: true,
-      think: effort,
-      pi_mode: modelMode,
-      pi_target: "auto",
-      pi_mesh: "on",
-    };
     const sys = (byId<HTMLTextAreaElement>("sys").value || "").trim();
-    if (sys) body.messages.push({ role: "system", content: sys });
-    turns.forEach((turn) => {
-      if (turn.role !== "user" && turn.role !== "assistant") return;
-      const content = turn.role === "user"
-        ? modelUserContent(turn.content, turn.hidden || "")
-        : withoutThinkTags(turn.content);
-      if (!content.trim()) return;
-      body.messages.push({ role: turn.role, content });
+    const body = chatBody(turns, {
+      model,
+      effort,
+      mode: modelMode,
+      sys,
+      fresh,
+      spoken,
     });
 
     let response: Response | null = null;
@@ -1392,7 +1398,7 @@ async function sendText(
           textAccum = payload.pi_replace ? delta : textAccum + delta;
           const visible = withoutThinkTags(textAccum);
           live.setText(visible);
-          if (spoken && !voiced && noteSpokenDelta(textAccum)) voiced = true;
+          if (spoken && !voiced && noteSpokenDelta(textAccum, lastAssistantText())) voiced = true;
         }
         if (payload.pi_think) streamedEffort = payload.pi_think;
         if (payload.pi_mode) streamedMode = payload.pi_mode;
@@ -1429,19 +1435,36 @@ async function sendText(
     } else {
       closeThought();
       const search = searchNow();
-      turns.push({
-        role: "assistant",
-        content: withoutThinkTags(textAccum),
-        effort: streamedEffort,
-        search,
-        stages,
-        mode: streamedMode,
-        route: streamedRoute,
-        thought: thoughtAccum.trim(),
-        thoughtSeconds: thoughtAccum.trim() ? thoughtSeconds() : 0,
-      });
-      paint();
-      if (spoken && speakText(textAccum)) voiced = true;
+      const reply = withoutThinkTags(textAccum);
+      const previousReply = lastAssistantText();
+      const repeated = Boolean(speechKey(reply))
+        && speechKey(reply) === speechKey(previousReply)
+        && speechKey(text) !== speechKey(userBeforeCurrent());
+      const acceptRepeat = !repeated || fresh || !shouldSoftRetry(attempt);
+      if (repeated && !fresh) {
+        const last = turns[turns.length - 1];
+        if (last && last.role === "user" && echoOfSpeech(text, previousReply)) last.echo = true;
+      }
+      if (!acceptRepeat) {
+        stopSpeaking();
+        live.root.remove();
+        followUp = "retry";
+        freshNext = true;
+      } else {
+        turns.push({
+          role: "assistant",
+          content: reply,
+          effort: streamedEffort,
+          search,
+          stages,
+          mode: streamedMode,
+          route: streamedRoute,
+          thought: thoughtAccum.trim(),
+          thoughtSeconds: thoughtAccum.trim() ? thoughtSeconds() : 0,
+        });
+        paint();
+        if (spoken && speakText(textAccum)) voiced = true;
+      }
     }
     }
   } catch (err) {
@@ -1487,7 +1510,7 @@ async function sendText(
       armResumeSend(text, spoken);
       return;
     }
-    await sendText(text, true, spoken, extra, attempt + 1);
+    await sendText(text, true, spoken, extra, attempt + 1, freshNext);
     return;
   }
   if (followUp === "resume") armResumeSend(text, spoken);
@@ -1848,12 +1871,16 @@ function takeBarge(text: string): void {
 
 function armBarge(): void {
   if (bargeHandle || !voiceOn || listening) return;
+  let heardAt = 0;
   bargeHandle = startListening({
     onInterim(text) {
-      if (shouldBargeIn(text, speakingLine, speechPending())) takeBarge(text);
+      if (!heardAt) heardAt = Date.now();
+      const held = Date.now() - heardAt;
+      if (shouldBargeIn(text, currentSpeech(), speechPending(), held)) takeBarge(text);
     },
     onFinal(text) {
-      if (shouldBargeIn(text, speakingLine, speechPending())) takeBarge(text);
+      const held = heardAt ? Date.now() - heardAt : 0;
+      if (shouldBargeIn(text, currentSpeech(), speechPending(), held)) takeBarge(text);
     },
     onError() {
       stopBarge();
@@ -1909,12 +1936,16 @@ function toggleVoiceMode(): void {
 
 function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
   if (!voiceOn || listening || voiceHold || sending) return;
+  heardConfidence = 1;
   const hold = existing ?? createUtteranceHold((text) => {
     if (isSoloStop(text)) {
       endVoiceMode();
       return;
     }
-    const turn = turnFromRecognition(text);
+    const turn = turnFromRecognition(text, {
+      confidence: heardConfidence,
+      lastAssistant: lastAssistantText(),
+    });
     voiceHold = Boolean(turn);
     const active = listenHandle;
     listenHandle = null;
@@ -1924,7 +1955,17 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
     paintVoice();
     if (!turn) {
       voiceHold = false;
+      voiceNote("Didn't catch that");
+      window.setTimeout(() => {
+        const note = document.getElementById("voiceNote");
+        if (note && note.textContent === "Didn't catch that") voiceNote("");
+      }, 1200);
       if (voiceOn) beginVoice();
+      return;
+    }
+    if (sending) {
+      queueDraft(turn.content, "", null);
+      voiceHold = false;
       return;
     }
     voiceCaption("Thinking");
@@ -1939,7 +1980,12 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
       setHeard(Boolean(line));
       voiceCaption(line || "Listening");
     },
-    onFinal(text) {
+    onFinal(text, confidence) {
+      if (typeof confidence === "number") heardConfidence = confidence;
+      const echoAge = voiceEchoUntil
+        ? POST_TTS_ECHO_MS - (voiceEchoUntil - Date.now())
+        : POST_TTS_ECHO_MS;
+      if (dropPostSpeechEcho(text, lastAssistantText(), echoAge)) return;
       const line = hold.final(text);
       if (isSoloStop(line)) {
         hold.cancel();
@@ -2009,7 +2055,11 @@ function releaseVoice(): void {
   }
   if (!voiceOn || listening) return;
   voiceCaption("Listening");
-  beginVoice();
+  window.setTimeout(() => {
+    if (!voiceOn || listening || sending || voiceHold) return;
+    voiceEchoUntil = Date.now() + POST_TTS_ECHO_MS;
+    beginVoice();
+  }, POST_TTS_DEAF_MS);
 }
 
 byId("go").onclick = () => {
@@ -2286,16 +2336,13 @@ export function ringDashOffset(used: number, numCtx: number): number {
 }
 
 function memoryMessages(): { role: string; content: string }[] {
-  const rows: { role: string; content: string }[] = [];
-  for (const turn of turns) {
-    if (turn.role !== "user" && turn.role !== "assistant") continue;
-    const content = turn.role === "user"
-      ? modelUserContent(turn.content, turn.hidden || "")
-      : withoutThinkTags(turn.content);
-    if (!content.trim()) continue;
-    rows.push({ role: turn.role, content });
-  }
-  return rows.slice(-64);
+  const body = chatBody(turns, {
+    model: modeModel(),
+    effort: thinking || "medium",
+    mode: modelMode,
+    sys: "",
+  });
+  return body.messages.filter((row) => row.role === "user" || row.role === "assistant").slice(-64);
 }
 
 function paintMemory(facts: { id: string; text: string }[]) {
