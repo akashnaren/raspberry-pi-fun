@@ -538,6 +538,7 @@ def health_document() -> dict:
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
         "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
         "cooling": COOLING_NOTE,
+        "memory": _memory_stats(),
         "services": {
             "brain": _service_row(peers, "brain", "pi4"),
             "search": _service_row(peers, "health", "pi2"),
@@ -550,6 +551,24 @@ def health_document() -> dict:
     if temp is not None:
         doc["temp_c"] = temp
     return doc
+
+
+def _memory_stats() -> dict:
+    try:
+        from pair import memory
+
+        return memory.stats()
+    except Exception:
+        return {"used": 0, "num_ctx": 0, "compactions": 0, "last_compact_ms": 0}
+
+
+def _memory_prompt() -> tuple[str, str]:
+    try:
+        from pair import memory
+
+        return memory.facts_block(), memory.summary_text()
+    except Exception:
+        return "", ""
 
 
 def public_health(doc: dict) -> dict:
@@ -746,6 +765,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/tools/health":
             self._tool_health()
+            return
+        if path == "/v1/memory":
+            self._memory_get()
             return
         if path == "/api/health":
             self._api_health()
@@ -1358,6 +1380,7 @@ class Handler(BaseHTTPRequestHandler):
                         getattr(self, "_cancel", None),
                         job=search_job,
                     )
+                fact_text, summary_text = _memory_prompt()
                 outbound = shape_messages(
                     outbound,
                     prompt,
@@ -1365,6 +1388,8 @@ class Handler(BaseHTTPRequestHandler):
                     think_name,
                     _prompt_note(search_note),
                     hints=hint,
+                    facts=fact_text,
+                    summary=summary_text,
                 )
                 stages = ["thinking"]
                 if do_search:
@@ -1517,6 +1542,75 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         safe_write(self, body)
+
+    def _touch_memory(self, messages) -> None:
+        """Record the real prompt size and fold old turns only while decode is idle."""
+        from pair.compact import schedule, should_compact
+        from pair.context import ledger_for
+
+        ctx = 2048
+        try:
+            ctx = int((_tuned_knobs("") or {}).get("num_ctx") or 2048)
+        except Exception:
+            ctx = 2048
+        chat_id = (self.headers.get("X-Pi-Chat") or "").strip() or "default"
+        book = ledger_for(chat_id, ctx)
+        count = int((getattr(self, "_usage", {}) or {}).get("prompt_eval_count") or 0)
+        if count:
+            book.observe(count)
+        else:
+            text = "\n".join(
+                str(row.get("content") or "")
+                for row in messages or []
+                if isinstance(row, dict)
+            )
+            book.note_estimate(text)
+        if not should_compact(book.used(), book.num_ctx, runtime.gate.waiting() > 0):
+            return
+        schedule(
+            [row for row in messages or [] if isinstance(row, dict)],
+            book.num_ctx,
+            idle=lambda: runtime.gate.in_flight() == 0 and runtime.gate.waiting() == 0,
+        )
+
+    def _memory_get(self) -> None:
+        from pair import memory
+
+        body = json.dumps(
+            {"facts": memory.list_facts(), "summary": memory.summary_text()}
+        ).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _memory_delete(self, fact_id: str) -> None:
+        from pair import memory
+
+        if fact_id:
+            memory.delete_fact(fact_id)
+        else:
+            memory.clear_facts()
+        body = json.dumps({"ok": True, "facts": memory.list_facts()}).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def do_DELETE(self) -> None:
+        path = self.path.split("?")[0]
+        if path == "/v1/memory":
+            self._memory_delete("")
+            return
+        if path.startswith("/v1/memory/"):
+            self._memory_delete(path.split("/")[-1])
+            return
+        self.send_response(404)
+        self.end_headers()
 
     def _tool_health(self) -> None:
         from pair.nodes.worker import health_body
@@ -2028,6 +2122,7 @@ class Handler(BaseHTTPRequestHandler):
             answer_extra["pi_sources"] = search_note["sources"]
         if not emit_status("answering", answer_extra or None):
             return
+        fact_text, summary_text = _memory_prompt()
         messages = shape_messages(
             messages,
             prompt,
@@ -2035,6 +2130,8 @@ class Handler(BaseHTTPRequestHandler):
             think_name,
             _prompt_note(search_note),
             hints=structure_hint(prompt) or "",
+            facts=fact_text,
+            summary=summary_text,
         )
         if grounded is not None:
             self._emit_ready_answer(
@@ -2342,6 +2439,7 @@ class Handler(BaseHTTPRequestHandler):
                     prompt, answer, chip=chip, peer=peer["name"], train=trainable
                 )
             remember_completion(prompt, answer, chip, peer["name"])
+            self._touch_memory(messages)
             apply_tier(self, final)
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
@@ -2459,6 +2557,7 @@ class Handler(BaseHTTPRequestHandler):
         if train:
             note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
         remember_completion(prompt, content, chip, peer["name"])
+        self._touch_memory(messages)
         elapsed = int((time.time() - started) * 1000)
         message = {"role": "assistant", "content": content}
         reasoning = getattr(self, "_last_reasoning", "") or ""

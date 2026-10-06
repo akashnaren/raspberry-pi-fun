@@ -28,6 +28,7 @@ try {
       <span class="brand-name" id="brandName">OpenPi — MicroAstra</span>
     </div>
     <div class="flex items-center">
+    <button class="head-btn" id="btnMemory" type="button" aria-label="Memory">M</button>
     <button class="head-btn" id="btnNew" type="button" aria-label="New chat">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
     </button>
@@ -36,6 +37,11 @@ try {
     </button>
     </div>
   </header>
+  <div id="memoryPanel" class="memory-panel" hidden>
+    <p class="memory-title">Memory</p>
+    <ul id="memoryList"></ul>
+    <button type="button" id="memoryClear">Clear</button>
+  </div>
   <div id="log"><div class="empty" id="empty"><p>Ask anything.</p></div></div>
   <div id="voiceStage" class="voice-stage" aria-hidden="true">
     <div class="voice-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>

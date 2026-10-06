@@ -188,6 +188,22 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
   &:hover { color: var(--ink); background: var(--hover); }
 }
 
+.memory-panel {
+  width: min(100%, var(--col));
+  margin: 0 auto;
+  padding: 8px 20px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.memory-panel[hidden] { display: none; }
+.memory-title { margin: 0 0 6px; }
+#memoryList { list-style: none; margin: 0; padding: 0; }
+#memoryList li { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+#memoryList button, #memoryClear {
+  min-width: 32px;
+  min-height: 32px;
+}
+
 #log {
   flex: 1 1 auto;
   min-height: 0;

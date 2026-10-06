@@ -495,10 +495,21 @@ def shape_messages(
     effort: str = "",
     notes: str = "",
     hints: str = "",
+    facts: str = "",
+    summary: str = "",
 ) -> list:
-    """Persona, then verbatim turns, then one tail note, then the last user."""
+    """Persona, facts, summary, verbatim turns, one tail note, then the last user."""
     rows = fence_messages(messages, knobs)
     rows = add_persona(rows, prompt, "", knobs)
+    stable = []
+    fact_text = (facts or "").strip()
+    summary_text = (summary or "").strip()
+    if fact_text:
+        stable.append({"role": "system", "content": fact_text})
+    if summary_text:
+        stable.append({"role": "system", "content": "Summary:\n" + summary_text})
+    if stable:
+        rows = [rows[0], *stable, *rows[1:]]
     calc = notes_for(user_question(prompt)) or ""
     combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
     rows = add_notes(rows, tail_note(effort, combined, hints))
