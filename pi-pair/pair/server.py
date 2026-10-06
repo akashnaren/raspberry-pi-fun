@@ -558,8 +558,7 @@ def public_health(doc: dict) -> dict:
     for peer in doc.get("peers") or []:
         if not isinstance(peer, dict):
             continue
-        models = peer.get("models") if isinstance(peer.get("models"), list) else []
-        peers.append({"ok": bool(peer.get("ok")), "models": models})
+        peers.append({"ok": bool(peer.get("ok"))})
     shown = {
         "ok": bool(doc.get("ok")),
         "slots": doc.get("slots"),
@@ -575,10 +574,9 @@ def public_health(doc: dict) -> dict:
 
 
 def index_body() -> bytes:
-    """Fill the page from config: default model, plus Flash and Pro tip text."""
+    """Fill the page from config: Flash and Pro tip text. Model tags stay off it."""
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     tips = mode_tips()
-    html = html.replace("__MODEL__", runtime.MODEL)
     html = html.replace("__FLASH_TIP__", tips["flash"])
     html = html.replace("__PRO_TIP__", tips["pro"])
     return html.encode("utf-8")

@@ -11,12 +11,6 @@ import { BIG_LINE, friendlyError, WAITING_LINE } from "./errors";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
-declare global {
-  interface Window {
-    MESH_DEFAULT_MODEL?: string;
-  }
-}
-
 type Role = "user" | "assistant";
 type StageName = "loading" | "waiting" | "thinking" | "searching" | "answering";
 
@@ -70,9 +64,7 @@ interface LiveTurn {
   armPro: () => void;
 }
 
-const DEFAULT_MODEL = window.MESH_DEFAULT_MODEL || "qwen3:0.6b";
-const FLASH_TAG = "qwen3:0.6b";
-const PRO_TAG = "qwen3:1.7b";
+let healthAfterSend = false;
 const FLASH_TIP = "Fast answers for everyday questions.";
 const PRO_TIP = "Slower, more careful answers for harder questions.";
 const turns: Turn[] = [];
@@ -129,9 +121,7 @@ function byId<T extends HTMLElement>(id: string): T {
 }
 
 function modeModel(): string {
-  if (modelMode === "pro") return PRO_TAG;
-  if (modelMode === "flash") return FLASH_TAG;
-  return DEFAULT_MODEL;
+  return modelMode === "pro" ? "pro" : "flash";
 }
 
 function withoutThinkTags(text: string): string {
@@ -263,31 +253,6 @@ function visibleReply(text: string): boolean {
   return text.trim().length > 0;
 }
 
-function fillModels(rows: { models?: string[] }[]): void {
-  const select = document.getElementById("modelSel") as HTMLSelectElement | null;
-  if (!select) return;
-  const prev = select.value || DEFAULT_MODEL;
-  const set = new Set<string>([DEFAULT_MODEL]);
-  (rows || []).forEach((row) => {
-    (row.models || []).forEach((model) => {
-      if (model) set.add(model);
-    });
-  });
-  const list = [...set].sort((a, b) => {
-    if (a === DEFAULT_MODEL) return -1;
-    if (b === DEFAULT_MODEL) return 1;
-    return a.localeCompare(b);
-  });
-  select.replaceChildren();
-  list.forEach((model) => {
-    const option = document.createElement("option");
-    option.value = model;
-    option.textContent = model;
-    select.appendChild(option);
-  });
-  select.value = list.includes(prev) ? prev : DEFAULT_MODEL;
-}
-
 function thumbIcon(): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -306,7 +271,7 @@ function thumbIcon(): SVGSVGElement {
 }
 
 function showOffline(): void {
-  if (suppressOfflineBanner(document.hidden, resumedAt, Date.now())) return;
+  if (suppressOfflineBanner(document.hidden, resumedAt, Date.now(), undefined, sending)) return;
   const banner = byId("banner");
   if (banner.classList.contains("on")) return;
   banner.className = "on";
@@ -346,13 +311,13 @@ async function refresh(): Promise<void> {
       const banner = byId("banner");
       banner.className = "";
       banner.replaceChildren();
-      fillModels(body.peers || []);
       paintModelTips();
       paintServices(body);
       return;
     } catch {
-      if (suppressOfflineBanner(document.hidden, resumedAt, Date.now())) {
-        refreshAfterGrace();
+      if (suppressOfflineBanner(document.hidden, resumedAt, Date.now(), undefined, sending)) {
+        if (sending) healthAfterSend = true;
+        else refreshAfterGrace();
         return;
       }
       if (shouldSoftRetry(attempt)) {
@@ -1300,6 +1265,7 @@ async function sendText(
       if (followUp !== "retry") byId<HTMLTextAreaElement>("q").focus();
       if (followUp !== "retry" && voiceOn && !speechPending()) releaseVoice();
     }
+    if (followUp !== "retry") flushDeferredHealth();
   }
   if (!mine()) return;
   if (followUp === "retry") {
@@ -1313,6 +1279,12 @@ async function sendText(
     return;
   }
   if (followUp === "resume") armResumeSend(text, spoken);
+}
+
+function flushDeferredHealth(): void {
+  if (!healthAfterSend) return;
+  healthAfterSend = false;
+  if (shouldPollHealth(document.hidden)) void refresh();
 }
 
 async function send(): Promise<void> {

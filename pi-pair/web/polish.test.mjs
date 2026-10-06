@@ -88,6 +88,12 @@ if (renderMarkdown("No diagram here.").includes("pi-diagram")) {
 if (!suppressOfflineBanner(true, 0, 1000)) throw new Error("a hidden tab showed offline");
 if (!suppressOfflineBanner(false, 1000, 1200)) throw new Error("a fresh resume showed offline");
 if (suppressOfflineBanner(false, 1000, 5000)) throw new Error("a visible outage was hidden");
+if (!suppressOfflineBanner(false, 0, 5000, 2500, true)) {
+  throw new Error("a live reply showed the offline banner");
+}
+if (suppressOfflineBanner(false, 0, 5000, 2500, false)) {
+  throw new Error("an idle outage stayed hidden");
+}
 if (shouldPollHealth(true)) throw new Error("a hidden tab still polled health");
 if (!shouldPollHealth(false)) throw new Error("a visible tab skipped health");
 if (!shouldSoftRetry(0) || !shouldSoftRetry(1) || shouldSoftRetry(2)) {

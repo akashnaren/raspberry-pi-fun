@@ -601,8 +601,9 @@ class PairHttp(unittest.TestCase):
         self.assertIn('aria-label="Voice"', html)
         self.assertNotIn("jsdelivr", html)
         self.assertNotIn("katex", html.lower())
-        self.assertIn(runtime.MODEL, html)
+        self.assertNotIn("MESH_DEFAULT_MODEL", html)
         self.assertNotIn("__MODEL__", html)
+        self.assertNotIn("qwen", html.lower())
         self.assertIn('data-think="low"', html)
         self.assertIn('data-think="medium"', html)
         self.assertIn('data-think="high"', html)
@@ -622,7 +623,6 @@ class PairHttp(unittest.TestCase):
         ) as response:
             script = response.read().decode()
         for needle in (
-            "MESH_DEFAULT_MODEL",
             "/v1/flywheel/feedback",
             "Thumbs up",
             "Thumbs down",
@@ -641,6 +641,8 @@ class PairHttp(unittest.TestCase):
             "Stop",
         ):
             self.assertIn(needle, script, needle)
+        self.assertNotIn("MESH_DEFAULT_MODEL", script)
+        self.assertNotIn("qwen", script.lower())
         self.assertNotIn("Loading Pro", script)
         source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
         self.assertIn('if (event.key !== "Enter") return;', source)

@@ -850,8 +850,11 @@ class Exposure(unittest.TestCase):
         self.assertNotIn('"host"', text)
         self.assertNotIn('"port"', text)
         self.assertNotIn("pi4", text)
+        self.assertNotIn("qwen", text.lower())
         self.assertIn("waiting", body)
-        self.assertEqual(body["peers"][0]["models"], ["qwen3:0.6b"])
+        self.assertTrue(body["peers"][0]["ok"])
+        self.assertNotIn("models", body["peers"][0])
+        self.assertNotIn("model", body["peers"][0])
         self.assertNotIn("name", body["peers"][0])
         self.assertIsInstance(body["services"]["brain"], bool)
 
