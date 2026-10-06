@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 
 from pair import runtime
 from pair import server as pair_server
-from pair.errors import BAD_MESSAGE, BUSY
+from pair.errors import ASK_FIRST, BAD_MESSAGE, BUSY, TOO_BIG
 from pair.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
 from pair.server import make_server
 
@@ -651,6 +651,70 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(payload["model"], runtime.MODEL)
         self.assertEqual(payload["think"], "medium")
         self.assertNotIn("mode", payload)
+
+
+class ChatHygiene(unittest.TestCase):
+    """Bad JSON, oversized bodies, and empty chats never reach a model."""
+
+    def setUp(self):
+        self.httpd = make_server("127.0.0.1", 0)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.port = self.httpd.server_address[1]
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def _raw(self, body: bytes, path: str = "/v1/chat/completions", timeout: float = 5):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=body,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.status, response.read()
+        except urllib.error.HTTPError as error:
+            return error.code, error.read()
+
+    def test_bad_json_is_a_json_400(self):
+        status, raw = self._raw(b"{bad")
+        self.assertEqual(status, 400)
+        body = json.loads(raw.decode())
+        self.assertEqual(body["error"], BAD_MESSAGE)
+
+    def test_five_megabyte_body_is_413_without_a_slot(self):
+        before = runtime.gate.in_flight()
+        payload = (
+            b'{"messages":[{"role":"user","content":"' + (b"a" * 5_000_000) + b'"}]}'
+        )
+        started = time.monotonic()
+        status, raw = self._raw(payload, timeout=2)
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertEqual(status, 413)
+        self.assertEqual(json.loads(raw.decode())["error"], TOO_BIG)
+        self.assertEqual(runtime.gate.in_flight(), before)
+        self.assertEqual(runtime.gate.in_flight(), 0)
+
+    def test_empty_and_malformed_chats_ask_first(self):
+        cases = [
+            {},
+            {"messages": []},
+            {"messages": "hi"},
+            {"messages": [{"role": "user", "content": None}]},
+            {"messages": [{"role": "user", "content": "   \n"}]},
+        ]
+        for payload in cases:
+            status, raw = self._raw(json.dumps(payload).encode())
+            body = json.loads(raw.decode())
+            self.assertEqual(status, 400, payload)
+            self.assertEqual(body["error"], ASK_FIRST, payload)
+        status, raw = self._raw(b"")
+        body = json.loads(raw.decode())
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], BAD_MESSAGE)
 
 
 if __name__ == "__main__":

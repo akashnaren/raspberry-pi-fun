@@ -44,9 +44,12 @@ from pair.chat import (
 from pair.config import STATIC_DIR
 from pair.docfit import fit_outbound
 from pair.errors import (
+    ASK_FIRST,
     BUSY,
     FLASH_WARMING,
+    GENERIC,
     MODEL_MISSING,
+    TOO_BIG,
     WAITING,
     friendly_body,
     friendly_error,
@@ -121,6 +124,9 @@ PRO_SOURCE_CAP = 8
 SEARCH_BUDGET_S = 4.0
 KEEPALIVE_S = 5.0
 SEARCH_BODY_CAP = 4096
+CHAT_BODY_CAP = 1_000_000
+_DRAIN_CAP = 8 * 1024 * 1024
+_CHAT_ROLES = {"system", "user", "assistant"}
 
 _LAST_LOCK = threading.Lock()
 _LAST = {"prompt": "", "answer": "", "chip": "", "peer": ""}
@@ -710,7 +716,93 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    def _drain_body(self, length: int) -> None:
+        """Read a rejected body so the client is not left hanging. Over 8 MB, skip it."""
+        if length <= 0 or length > _DRAIN_CAP:
+            return
+        try:
+            self.connection.settimeout(10)
+        except OSError:
+            pass
+        left = length
+        while left > 0:
+            try:
+                chunk = self.rfile.read(min(65536, left))
+            except (TimeoutError, OSError):
+                return
+            if not chunk:
+                return
+            left -= len(chunk)
+
+    def _read_json(
+        self,
+        cap: int = CHAT_BODY_CAP,
+        label: str = "chat body",
+        oversize: str = "",
+        empty_ok: bool = False,
+    ) -> dict | None:
+        """Read one JSON object, or send 400/413 and return None."""
+        raw_length = self.headers.get("content-length")
+        if raw_length is None or str(raw_length).strip() == "":
+            length = 0
+        else:
+            try:
+                length = int(str(raw_length).strip())
+            except ValueError:
+                self._error(f"{label} must be JSON", status=400)
+                return None
+        if length < 0:
+            self._error(f"{label} must be JSON", status=400)
+            return None
+        if length > cap:
+            self._drain_body(length)
+            self._error(oversize or TOO_BIG, status=413)
+            return None
+        if length == 0 and not empty_ok:
+            self._error(f"{label} must be JSON", status=400)
+            return None
+        try:
+            blob = self.rfile.read(length) if length else b""
+            text = blob.decode("utf-8")
+            data = json.loads(text or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._error(f"{label} must be JSON", status=400)
+            return None
+        if not isinstance(data, dict):
+            self._error(f"{label} must be an object", status=400)
+            return None
+        return data
+
+    def _validate_chat(self, data: dict) -> bool:
+        """False after a 400. A chat needs one non-empty user message."""
+        messages = data.get("messages")
+        if not isinstance(messages, list) or not messages:
+            self._error(ASK_FIRST, status=400)
+            return False
+        for message in messages:
+            if not isinstance(message, dict):
+                self._error(ASK_FIRST, status=400)
+                return False
+            role = message.get("role", "user")
+            if role not in _CHAT_ROLES:
+                self._error(ASK_FIRST, status=400)
+                return False
+            content = message.get("content")
+            if not isinstance(content, (str, list)):
+                self._error(ASK_FIRST, status=400)
+                return False
+        if not last_user_text(messages).strip():
+            self._error(ASK_FIRST, status=400)
+            return False
+        return True
+
     def do_POST(self) -> None:
+        try:
+            self._dispatch_post()
+        except Exception:
+            self._error(GENERIC, status=500)
+
+    def _dispatch_post(self) -> None:
         path = self.path.split("?")[0]
         if path == "/v1/search":
             self._search()
@@ -731,31 +823,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        length = int(self.headers.get("content-length") or 0)
-        raw = self.rfile.read(length)
-        data = json.loads(raw.decode() or "{}")
-        self._serve_chat(data, raw)
+        data = self._read_json()
+        if data is None or not self._validate_chat(data):
+            return
+        self._serve_chat(data, json.dumps(data).encode())
 
     def _api_chat(self) -> None:
         rejected = authorize(self.headers)
         if rejected is not None:
             self._reject_api(*rejected)
             return
-        length = int(self.headers.get("content-length") or 0)
-        if length > 1_000_000:
-            self._error("chat body is too large", status=413)
-            return
-        try:
-            data = json.loads(self.rfile.read(length).decode() or "{}")
-        except json.JSONDecodeError:
-            self._error("chat body must be JSON", status=400)
-            return
-        if not isinstance(data, dict):
-            self._error("chat body must be an object", status=400)
-            return
-        messages = data.get("messages")
-        if not isinstance(messages, list) or not last_user_text(messages).strip():
-            self._error("chat needs a user message", status=400)
+        data = self._read_json()
+        if data is None or not self._validate_chat(data):
             return
         try:
             self.public_mode = apply_mode(data)
@@ -1309,21 +1388,13 @@ class Handler(BaseHTTPRequestHandler):
         if node_role() != "health":
             self._error("search is served on the health host", status=403)
             return
-        try:
-            length = int(self.headers.get("content-length") or 0)
-        except ValueError:
-            self._error("search body must be JSON", status=400)
-            return
-        if length < 0 or length > SEARCH_BODY_CAP:
-            self._error("search query is too long", status=413)
-            return
-        try:
-            row = json.loads(self.rfile.read(length).decode() or "{}")
-        except json.JSONDecodeError:
-            self._error("search body must be JSON", status=400)
-            return
-        if not isinstance(row, dict):
-            self._error("search body must be an object", status=400)
+        row = self._read_json(
+            cap=SEARCH_BODY_CAP,
+            label="search body",
+            oversize="search query is too long",
+            empty_ok=True,
+        )
+        if row is None:
             return
         query = str(row.get("q") or row.get("query") or "")
         found = lookup_web(query)
@@ -1347,14 +1418,8 @@ class Handler(BaseHTTPRequestHandler):
         if node_role() != "dataset":
             self._error("train queue is accepted only on the dataset host", status=403)
             return
-        length = int(self.headers.get("content-length") or 0)
-        try:
-            row = json.loads(self.rfile.read(length).decode() or "{}")
-        except json.JSONDecodeError:
-            self._error("queue row must be JSON", status=400)
-            return
-        if not isinstance(row, dict):
-            self._error("queue row must be an object", status=400)
+        row = self._read_json(label="queue row", empty_ok=True)
+        if row is None:
             return
         prompt = str(row.get("prompt") or "").strip()
         answer = str(row.get("answer") or "").strip()
@@ -1378,14 +1443,8 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, body)
 
     def _feedback(self) -> None:
-        length = int(self.headers.get("content-length") or 0)
-        try:
-            row = json.loads(self.rfile.read(length).decode() or "{}")
-        except json.JSONDecodeError:
-            self._error("feedback must be JSON", status=400)
-            return
-        if not isinstance(row, dict):
-            self._error("feedback must be an object", status=400)
+        row = self._read_json(label="feedback", empty_ok=True)
+        if row is None:
             return
         prompt = str(row.get("prompt") or "").strip()
         answer = str(row.get("answer") or "").strip()
