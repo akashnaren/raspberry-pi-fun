@@ -1,3 +1,4 @@
+import fs from "fs";
 import { parseHTML } from "linkedom";
 import { docExcerpt, modelUserContent, userMessagePieces } from "./src/attach.ts";
 import { flowchartSvg, mountDiagrams } from "./src/diagram.ts";
@@ -177,5 +178,16 @@ const later = serviceView({
 });
 if (later.signature !== view.signature) throw new Error("uptime ticks rewrote the status log");
 if (!later.now.startsWith("Up 1h 3m")) throw new Error("live uptime did not move");
+
+const page = fs.readFileSync(new URL("./index.html", import.meta.url), "utf8");
+const builtPage = fs.readFileSync(new URL("../static/index.html", import.meta.url), "utf8");
+const builtCss = fs.readFileSync(new URL("../static/mesh.css", import.meta.url), "utf8");
+if (page.includes("voice-dots") || builtPage.includes("voice-dots")) {
+  throw new Error("the page still has the five voice dots");
+}
+const reducedAt = builtCss.indexOf("prefers-reduced-motion");
+if (reducedAt < 0 || !builtCss.slice(reducedAt, reducedAt + 800).includes("#voiceStage")) {
+  throw new Error("reduced motion does not cover the voice stage");
+}
 
 console.log("ok");

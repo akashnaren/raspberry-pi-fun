@@ -58,10 +58,11 @@ try {
     <button type="button" id="memoryClear">Clear</button>
   </div>
   <div id="log"><div class="empty" id="empty"><p>Ask anything.</p></div></div>
-  <div id="voiceStage" class="voice-stage" aria-hidden="true">
-    <div class="voice-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-    <p class="voice-live" id="voiceLive"></p>
+  <div id="voiceStage" class="voice-stage" role="status" aria-hidden="true" aria-label="idle">
+    <canvas id="voiceOrb" width="220" height="220" aria-hidden="true"></canvas>
+    <p class="voice-live" id="voiceLive" aria-live="polite"></p>
     <button type="button" class="voice-send" id="voiceSend" hidden>Tap to send</button>
+    <button type="button" class="voice-end" id="voiceEnd" hidden>End voice</button>
   </div>
   <footer>
     <div class="composer-wrap">
