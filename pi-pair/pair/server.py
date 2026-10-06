@@ -89,6 +89,7 @@ from pair.search import lookup_web
 from pair import runtime
 from pair.stream import iter_ollama_channels, stream_llamacpp, stream_ollama
 from pair.think import peel_think
+from pair.timing import assemble, present
 from pair.turn import (
     degraded_answer,
     needs_web,
@@ -944,6 +945,36 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         safe_write(self, body)
 
+    def _reset_timing(self) -> None:
+        self._queue_ms = 0
+        self._search_ms = 0
+        self._usage = {}
+        self._queue_t0 = None
+
+    def _mark_queue(self) -> None:
+        started = getattr(self, "_queue_t0", None)
+        if started is None:
+            return
+        self._queue_ms = int((time.perf_counter() - started) * 1000)
+
+    def _timed_search(self, *args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return _with_search(*args, **kwargs)
+        finally:
+            self._search_ms = int(
+                getattr(self, "_search_ms", 0) + (time.perf_counter() - started) * 1000
+            )
+
+    def _attach_timing(self, payload: dict, started: float) -> None:
+        timing = assemble(
+            queue_ms=getattr(self, "_queue_ms", 0),
+            search_ms=getattr(self, "_search_ms", 0),
+            usage=getattr(self, "_usage", None),
+            total_ms=int((time.time() - started) * 1000),
+        )
+        payload["pi_timing"] = present(timing, self._public())
+
     def _effort_name(self) -> str:
         """Low, Medium, or High when the turn named one. Empty otherwise."""
         plan = getattr(self, "_decode_plan", None)
@@ -1167,6 +1198,7 @@ class Handler(BaseHTTPRequestHandler):
         started = time.time()
         want_stream = bool(data.get("stream"))
         self._searched = False
+        self._reset_timing()
         refused = _block(prompt)
         if refused:
             self._policy_refusal(prompt, want_stream, started, refused)
@@ -1243,7 +1275,7 @@ class Handler(BaseHTTPRequestHandler):
             images: list[dict] = []
             if do_search and not want_stream:
                 self._searched = True
-                outbound, search_note = _with_search(
+                outbound, search_note = self._timed_search(
                     outbound, prompt, images, model, getattr(self, "_cancel", None)
                 )
             elif not want_stream:
@@ -1288,7 +1320,10 @@ class Handler(BaseHTTPRequestHandler):
         use_model = grounded is None
         slot = {"held": False, "waiting": False}
         if use_model:
+            self._queue_t0 = time.perf_counter()
             outcome = runtime.gate.reserve()
+            if outcome == "ready":
+                self._mark_queue()
             if outcome == "full":
                 self._error(BUSY, status=503)
                 return
@@ -1325,6 +1360,8 @@ class Handler(BaseHTTPRequestHandler):
                 ):
                     self._error(BUSY, status=503)
                     return
+                if slot["held"]:
+                    self._mark_queue()
                 stages = ["thinking"]
                 if do_search:
                     stages.append("searching")
@@ -1796,6 +1833,7 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, json.JSONDecodeError) as error:
             self._last_reasoning = ""
             return degraded_answer(search_note, error), model, False
+        self._usage = dict(meta.get("usage") or {})
         content = content or ""
         answer, leaked = peel_think(content)
         reasoning = "\n".join(
@@ -1991,6 +2029,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 safe_write(self, b"data: [DONE]\n\n", flush=True)
                 return
+            self._mark_queue()
 
         think_extra = {"pi_think": think_name} if think_name else None
         if not emit_status("thinking", think_extra):
@@ -2004,7 +2043,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if not searched:
                 fresh: list[dict] = []
-                messages, search_note = _with_search(
+                messages, search_note = self._timed_search(
                     messages, prompt, fresh, model, getattr(self, "_cancel", None)
                 )
                 images = fresh
@@ -2133,6 +2172,7 @@ class Handler(BaseHTTPRequestHandler):
                     max_tokens,
                     plan=plan,
                     cancel=self._cancel,
+                    usage=self._usage,
                 )
             else:
                 channels = (
@@ -2145,6 +2185,7 @@ class Handler(BaseHTTPRequestHandler):
                         max_tokens,
                         plan=plan,
                         cancel=self._cancel,
+                        usage=self._usage,
                     )
                 )
             closed = False
@@ -2408,6 +2449,7 @@ class Handler(BaseHTTPRequestHandler):
                 final["pi_sources"] = search_note["sources"]
             _put_images(final, images)
             final["pi_stages"] = list(stages)
+            self._attach_timing(final, started)
             final.update(note)
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
             if not policy:
@@ -2503,6 +2545,7 @@ class Handler(BaseHTTPRequestHandler):
             final["pi_search"] = search_note["status"]
             final["pi_sources"] = search_note["sources"]
         _put_images(final, images or [])
+        self._attach_timing(final, started)
         final.update(mode_fields(mode_name, route_name, resident_name))
         apply_tier(self, final)
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
@@ -2569,6 +2612,7 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
+        self._attach_timing(resp, started)
         if think_name:
             resp["pi_think"] = think_name
         if search_note:
