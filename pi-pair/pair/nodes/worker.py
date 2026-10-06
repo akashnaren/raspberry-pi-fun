@@ -96,6 +96,17 @@ def _memory(payload: dict) -> dict:
     return apply(payload)
 
 
+def _images(payload: dict) -> dict:
+    """Wikipedia photo cards. This route does not generate text."""
+    from pair.images import cards
+
+    found = cards(payload if isinstance(payload, dict) else {})
+    rows = found.get("cards") if isinstance(found, dict) else None
+    if not isinstance(rows, list):
+        rows = []
+    return {"ok": True, "cards": rows}
+
+
 _HANDLERS = {
     "/tools/extract": _extract,
     "/tools/search": _search,
@@ -104,6 +115,7 @@ _HANDLERS = {
     "/tools/tokenize": _tokenize,
     "/tools/compact_plan": _compact_plan,
     "/tools/memory": _memory,
+    "/tools/images": _images,
 }
 
 

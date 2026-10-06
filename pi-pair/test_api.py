@@ -925,5 +925,321 @@ class Exposure(unittest.TestCase):
         self.assertEqual(headers.get_all("X-Pi-Mode"), ["flash"])
 
 
+class _ImagePeer(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        return
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length") or 0)
+        raw = self.rfile.read(length) if length else b""
+        self.server.hits.append({"path": self.path.split("?")[0], "body": raw})
+        hold = getattr(self.server, "hold", None)
+        if hold is not None:
+            hold.wait(5)
+        body = json.dumps(
+            {"ok": True, "cards": list(getattr(self.server, "cards", []) or [])}
+        ).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class ImageRoute(unittest.TestCase):
+    def setUp(self):
+        pair_server.reset_image_admission()
+        self._peers = [dict(peer) for peer in runtime.PEERS]
+        self._role = os.environ.get("PI_PAIR_ROLE")
+        self.servers = []
+        self.threads = []
+        self.pi2 = self._peer()
+        self.pi3 = self._peer()
+        self.pi4 = self._peer()
+        self._use_peers()
+        self.httpd = make_server("127.0.0.1", 0)
+        self.servers.append(self.httpd)
+        _start(self.httpd)
+        self.port = self.httpd.server_address[1]
+
+    def tearDown(self):
+        for httpd in self.servers:
+            hold = getattr(httpd, "hold", None)
+            if hold is not None:
+                hold.set()
+        for thread in self.threads:
+            thread.join(3)
+        for httpd in self.servers:
+            httpd.shutdown()
+            httpd.server_close()
+        runtime.set_peers(self._peers)
+        pair_server.reset_image_admission()
+        if self._role is None:
+            os.environ.pop("PI_PAIR_ROLE", None)
+        else:
+            os.environ["PI_PAIR_ROLE"] = self._role
+
+    def _peer(self):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), _ImagePeer)
+        httpd.hits = []
+        httpd.cards = []
+        httpd.hold = None
+        self.servers.append(httpd)
+        _start(httpd)
+        return httpd
+
+    def _use_peers(self, pi2_port=None, pi3_port=None):
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi2",
+                    "host": "127.0.0.1",
+                    "port": self.pi2.server_address[1]
+                    if pi2_port is None
+                    else pi2_port,
+                    "role": "health",
+                    "generative": False,
+                },
+                {
+                    "name": "pi3",
+                    "host": "127.0.0.1",
+                    "port": self.pi3.server_address[1]
+                    if pi3_port is None
+                    else pi3_port,
+                    "role": "dataset",
+                    "generative": False,
+                },
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": self.pi4.server_address[1],
+                    "role": "brain",
+                    "generative": True,
+                },
+            ]
+        )
+
+    def _json(self, payload, headers=None, timeout=5):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/v1/images",
+            data=json.dumps(payload).encode(),
+            headers=headers
+            or {"content-type": "application/json", "X-Pi-Client": "image-tests"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.status, json.loads(response.read().decode() or "{}")
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read().decode() or "{}")
+
+    def _good_card(self):
+        return {
+            "url": "https://upload.wikimedia.org/wikipedia/commons/a/a8/Tour.jpg",
+            "alt": "Eiffel Tower",
+            "title": "Eiffel Tower",
+            "source": "https://en.wikipedia.org/wiki/Eiffel_Tower",
+            "width": 320,
+            "height": 480,
+        }
+
+    def test_forward_stays_off_pi4_and_off_the_decode_slot(self):
+        self.pi2.cards = [
+            self._good_card(),
+            {
+                "url": "http://127.0.0.1/secret.jpg",
+                "alt": "secret",
+                "title": "secret",
+            },
+        ]
+        flying = runtime.gate.in_flight()
+        waiting = runtime.gate.waiting()
+        with (
+            patch.object(
+                runtime.gate, "reserve", side_effect=AssertionError("reserve")
+            ),
+            patch.object(
+                runtime.gate, "try_acquire", side_effect=AssertionError("acquire")
+            ),
+            patch.object(
+                runtime.gate,
+                "acquire_reserved",
+                side_effect=AssertionError("reserved"),
+            ),
+            patch("pair.memory.remember_user", side_effect=AssertionError("memory")),
+            patch("pair.memory.save_summary", side_effect=AssertionError("summary")),
+            patch("pair.server.append_row", side_effect=AssertionError("queue")),
+            patch("pair.server.note_exchange", side_effect=AssertionError("exchange")),
+            patch(
+                "pair.server.remember_completion",
+                side_effect=AssertionError("completion"),
+            ),
+        ):
+            status, body = self._json(
+                {
+                    "question": "what does the tower look like",
+                    "answer": "It stands in Paris.",
+                    "sources": ["https://en.wikipedia.org/wiki/Eiffel_Tower"],
+                }
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_images"], [self._good_card()])
+        self.assertEqual(len(self.pi2.hits), 1)
+        self.assertEqual(self.pi2.hits[0]["path"], "/tools/images")
+        self.assertEqual(self.pi3.hits, [])
+        self.assertEqual(self.pi4.hits, [])
+        forwarded = json.loads(self.pi2.hits[0]["body"].decode())
+        self.assertEqual(forwarded["question"], "what does the tower look like")
+        self.assertNotIn("/api/chat", self.pi2.hits[0]["path"])
+        self.assertNotIn("/v1/chat/completions", self.pi2.hits[0]["path"])
+        self.assertEqual(runtime.gate.in_flight(), flying)
+        self.assertEqual(runtime.gate.waiting(), waiting)
+
+    def test_pi2_down_fails_over_to_pi3_and_both_down_is_empty(self):
+        self.pi3.cards = [self._good_card()]
+        self._use_peers(pi2_port=1)
+        status, body = self._json(
+            {"question": "tower", "answer": "It stands in Paris.", "sources": []}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["pi_images"], [self._good_card()])
+        self.assertEqual(self.pi2.hits, [])
+        self.assertEqual(len(self.pi3.hits), 1)
+        self.assertEqual(self.pi4.hits, [])
+
+        self._use_peers(pi2_port=1, pi3_port=1)
+        started = time.monotonic()
+        status, body = self._json(
+            {"question": "tower", "answer": "It stands in Paris.", "sources": []},
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Client": "image-down",
+            },
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"pi_images": []})
+        self.assertLess(elapsed, 1.5)
+        self.assertEqual(self.pi4.hits, [])
+
+    def test_oversize_and_field_caps(self):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/v1/images",
+            data=b"{" + b"x" * 9000,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=5)
+        self.assertEqual(raised.exception.code, 413)
+        status, body = self._json(
+            {"question": "q" * 501, "answer": "ok", "sources": []},
+            headers={"content-type": "application/json", "X-Pi-Client": "image-cap"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("error", body)
+        status, body = self._json(
+            {"question": "q", "answer": "a" * 4001, "sources": []},
+            headers={"content-type": "application/json", "X-Pi-Client": "image-cap"},
+        )
+        self.assertEqual(status, 400)
+        status, body = self._json(
+            {"question": "q", "answer": "ok", "sources": ["https://example.com"] * 9},
+            headers={"content-type": "application/json", "X-Pi-Client": "image-cap"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(self.pi2.hits, [])
+
+    def test_per_client_minute_and_in_flight_caps(self):
+        for _index in range(20):
+            status, body = self._json(
+                {"question": "q", "answer": "an answer here", "sources": []},
+                headers={"content-type": "application/json", "X-Pi-Client": "burst"},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(body, {"pi_images": []})
+        self.assertEqual(len(self.pi2.hits), 20)
+        status, body = self._json(
+            {"question": "q", "answer": "an answer here", "sources": []},
+            headers={"content-type": "application/json", "X-Pi-Client": "burst"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"pi_images": []})
+        self.assertEqual(len(self.pi2.hits), 20)
+
+        self.pi2.hold = threading.Event()
+        box = {}
+
+        def once():
+            box["result"] = self._json(
+                {"question": "q", "answer": "an answer here", "sources": []},
+                headers={"content-type": "application/json", "X-Pi-Client": "held"},
+                timeout=8,
+            )
+
+        thread = threading.Thread(target=once, daemon=True)
+        self.threads.append(thread)
+        thread.start()
+        deadline = time.monotonic() + 2
+        while len(self.pi2.hits) < 21 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(len(self.pi2.hits), 21)
+        status, body = self._json(
+            {"question": "q", "answer": "an answer here", "sources": []},
+            headers={"content-type": "application/json", "X-Pi-Client": "held"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"pi_images": []})
+        self.assertEqual(len(self.pi2.hits), 21)
+        self.pi2.hold.set()
+        thread.join(3)
+        self.assertEqual(box["result"][0], 200)
+
+    def test_global_in_flight_cap_is_four(self):
+        self.pi2.hold = threading.Event()
+        for index in range(4):
+            thread = threading.Thread(
+                target=self._json,
+                args=({"question": "q", "answer": "an answer here", "sources": []},),
+                kwargs={
+                    "headers": {
+                        "content-type": "application/json",
+                        "X-Pi-Client": f"global-{index}",
+                    },
+                    "timeout": 8,
+                },
+                daemon=True,
+            )
+            self.threads.append(thread)
+            thread.start()
+        deadline = time.monotonic() + 2
+        while len(self.pi2.hits) < 4 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(len(self.pi2.hits), 4)
+        status, body = self._json(
+            {"question": "q", "answer": "an answer here", "sources": []},
+            headers={"content-type": "application/json", "X-Pi-Client": "global-extra"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"pi_images": []})
+        self.assertEqual(len(self.pi2.hits), 4)
+        self.assertEqual(self.pi4.hits, [])
+        self.pi2.hold.set()
+
+    def test_brain_refuses_the_tool_route(self):
+        os.environ["PI_PAIR_ROLE"] = "brain"
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/tools/images",
+            data=json.dumps({"question": "hi there", "answer": "hello there"}).encode(),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=5)
+        self.assertEqual(raised.exception.code, 403)
+        self.assertEqual(self.pi2.hits, [])
+        self.assertEqual(self.pi4.hits, [])
+
+
 if __name__ == "__main__":
     unittest.main()

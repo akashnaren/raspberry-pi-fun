@@ -42,6 +42,31 @@ window.requestAnimationFrame = (fn) => window.setTimeout(() => fn(0), 16);
 window.cancelAnimationFrame = window.clearTimeout;
 
 const streams = [];
+const chatBodies = [];
+const pendingImages = [];
+let imageCalls = 0;
+let imageCards = [];
+
+class FakeImage {
+  constructor() {
+    this.onload = null;
+    this.onerror = null;
+    this.referrerPolicy = "";
+    this._src = "";
+  }
+
+  set src(value) {
+    this._src = value;
+    pendingImages.push(this);
+  }
+
+  get src() {
+    return this._src;
+  }
+}
+
+globalThis.Image = FakeImage;
+window.Image = FakeImage;
 
 function openStream() {
   const encoder = new TextEncoder();
@@ -91,7 +116,7 @@ function openStream() {
   };
 }
 
-globalThis.fetch = async (input) => {
+globalThis.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input.url;
   if (url.includes("/health")) {
     return new Response(JSON.stringify({ peers: [{ models: ["qwen3:0.6b"] }] }), {
@@ -100,11 +125,19 @@ globalThis.fetch = async (input) => {
     });
   }
   if (url.includes("/v1/chat/completions")) {
+    if (init && typeof init.body === "string") chatBodies.push(init.body);
     const stream = openStream();
     streams.push(stream);
     return new Response(stream.readable, {
       status: 200,
       headers: { "content-type": "text/event-stream" },
+    });
+  }
+  if (url.includes("/v1/images")) {
+    imageCalls += 1;
+    return new Response(JSON.stringify({ pi_images: imageCards }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
     });
   }
   return new Response("missing", { status: 404 });
@@ -195,6 +228,9 @@ await waitFor("rest of the token", () => {
   const bubble = streamingBubble();
   return Boolean(bubble && bubble.textContent.includes("east window"));
 });
+if (imageCalls !== 0) {
+  throw new Error("image request started before the answer finished");
+}
 first.end();
 await waitFor("finished answer", () => {
   return !document.querySelector(".msg.streaming")
@@ -204,6 +240,12 @@ await waitFor("finished answer", () => {
 assertNoBlankBubble("after the answer");
 if (assistantBubbles().length !== 1) {
   throw new Error("finished turn created an extra assistant bubble");
+}
+if (imageCalls !== 1) {
+  throw new Error("finished answer should ask for images once, got " + imageCalls);
+}
+if (document.querySelector(".image-cards")) {
+  throw new Error("empty image reply mounted a strip");
 }
 
 const second = await sendTurn("Anything else?");
@@ -226,6 +268,72 @@ await waitFor("empty turn finished", () => {
 assertNoBlankBubble("after stages with no tokens");
 if (assistantBubbles().length !== 1 || !assistantBubbles()[0].textContent.includes("east window")) {
   throw new Error("a turn with only stages left a new or blank assistant bubble");
+}
+if (imageCalls !== 1) {
+  throw new Error("a turn with no visible text requested images");
+}
+
+const photo =
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/Tour_Eiffel_Wikimedia_Commons.jpg/320px-Tour_Eiffel_Wikimedia_Commons.jpg";
+imageCards = [
+  {
+    url: photo,
+    alt: "Eiffel Tower. Lattice tower in Paris",
+    title: "Eiffel Tower",
+    caption: "Lattice tower in Paris",
+    source: "https://en.wikipedia.org/wiki/Eiffel_Tower",
+    width: 320,
+    height: 480,
+  },
+];
+const pictured = await sendTurn("What does the tower look like?");
+await waitFor("picture live row", () => document.querySelector(".msg.bot.streaming"));
+if (imageCalls !== 1) {
+  throw new Error("image request started before the pictured answer finished");
+}
+pictured.push({ choices: [{ index: 0, delta: { content: "The tower stands in Paris." } }] });
+pictured.end();
+await waitFor("pictured answer", () => {
+  return !document.querySelector(".msg.streaming")
+    && assistantBubbles().some((node) => node.textContent.includes("stands in Paris"));
+});
+await waitFor("image preload", () => pendingImages.length >= 1);
+if (document.querySelector(".image-cards")) {
+  throw new Error("strip mounted before the image loaded");
+}
+pendingImages[0].onload();
+await waitFor("image strip", () => document.querySelector(".image-cards"));
+const picturedRow = [...document.querySelectorAll(".msg.bot")].find((node) =>
+  node.textContent.includes("stands in Paris"),
+);
+const picturedBody = picturedRow && picturedRow.querySelector(".body");
+const strip = picturedRow && picturedRow.querySelector(".image-cards");
+if (!picturedBody || !strip || picturedBody.nextElementSibling !== strip) {
+  throw new Error("strip should sit after the answer text");
+}
+if (picturedBody.querySelector(".image-cards")) {
+  throw new Error("cards were written into the answer text");
+}
+
+const pictures = document.getElementById("pictures");
+if (!pictures || !pictures.checked) throw new Error("pictures should default on");
+pictures.checked = false;
+pictures.dispatchEvent(new window.Event("change"));
+const callsBeforeToggle = imageCalls;
+const quiet = await sendTurn("Explain recursion briefly");
+await waitFor("quiet live row", () => document.querySelector(".msg.bot.streaming"));
+quiet.push({ choices: [{ index: 0, delta: { content: "A function can call itself." } }] });
+quiet.end();
+await waitFor("quiet answer", () => {
+  return !document.querySelector(".msg.streaming")
+    && assistantBubbles().some((node) => node.textContent.includes("call itself"));
+});
+if (imageCalls !== callsBeforeToggle) {
+  throw new Error("pictures off still requested images");
+}
+const lastChat = chatBodies[chatBodies.length - 1] || "";
+if (lastChat.includes("upload.wikimedia.org") || lastChat.includes("pi_images")) {
+  throw new Error("image cards were sent back to chat");
 }
 
 for (const id of timers) rawClearInterval(id);

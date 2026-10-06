@@ -1,4 +1,5 @@
 import { docExcerpt, modelUserContent, userMessagePieces, type DocCard } from "./attach";
+import { cardsFrom, fetchImages, revealImageStrip, type ImageCard } from "./images";
 import { mountCharts } from "./chart";
 import { mountDiagrams } from "./diagram";
 import { mountDocs } from "./doc";
@@ -41,6 +42,8 @@ interface Turn {
   route?: string;
   thought?: string;
   thoughtSeconds?: number;
+  images?: ImageCard[];
+  stopped?: boolean;
 }
 
 interface HealthBody extends HealthSnapshot {
@@ -80,6 +83,7 @@ let pageSettings: PageSettings = loadSettings(browserStorage("local"));
 let thinking: ThinkLevel = pageSettings.thinking;
 let modelMode: ModelChoice = pageSettings.mode;
 let enterToSend = pageSettings.enterToSend;
+let picturesOn = pageSettings.pictures !== false;
 let listening = false;
 let dictating = false;
 let dictated = "";
@@ -107,6 +111,10 @@ let voiceUtterance: ReturnType<typeof createUtteranceHold> | null = null;
 const ATTACH_BYTES = 4 * 1024 * 1024;
 const CLIENT_KEY = "pi-client";
 const CHAT_KEY = "pi-chat";
+const TURNS_KEY = "openpi.transcript";
+const imageJobs = new Set<AbortController>();
+const imageJob = new WeakMap<Turn, AbortController>();
+const imagePending = new WeakSet<Turn>();
 
 function freshId(): string {
   const raw = typeof crypto !== "undefined" && crypto.randomUUID
@@ -188,6 +196,7 @@ function persistSettings(): void {
     thinking,
     voiceSilenceMs: endOfUtteranceSilence(),
     enterToSend,
+    pictures: picturesOn,
   };
   saveSettings(browserStorage("local"), pageSettings);
 }
@@ -519,6 +528,133 @@ function trail(stages: StageName[] | undefined, search: SearchInfo | null): HTML
   return row;
 }
 
+function abortImageJobs(): void {
+  for (const job of imageJobs) job.abort();
+  imageJobs.clear();
+}
+
+function abortTurnImages(item: Turn): void {
+  const job = imageJob.get(item);
+  if (!job) return;
+  job.abort();
+  imageJobs.delete(job);
+  imageJob.delete(item);
+}
+
+function imageWordCount(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function wantsImages(item: Turn): boolean {
+  if (!picturesOn || item.stopped || item.role !== "assistant") return false;
+  if (!visibleReply(item.content) || imageWordCount(item.content) < 2) return false;
+  if (item.content.trim().startsWith("I can't help with that.")) return false;
+  return true;
+}
+
+function persistTurns(): void {
+  const store = browserStorage("session");
+  if (!store) return;
+  if (!turns.length) {
+    store.removeItem(TURNS_KEY);
+    return;
+  }
+  const slim = turns.slice(-40).map((item) => ({
+    role: item.role,
+    content: item.content,
+    hidden: item.hidden || "",
+    effort: item.effort || "",
+    search: item.search || null,
+    stages: item.stages || [],
+    mode: item.mode || "",
+    route: item.route || "",
+    thought: item.thought || "",
+    thoughtSeconds: item.thoughtSeconds || 0,
+    images: item.images || null,
+    stopped: Boolean(item.stopped),
+    attachment: item.attachment || null,
+  }));
+  try {
+    store.setItem(TURNS_KEY, JSON.stringify(slim));
+  } catch {
+    /* the tab can refuse a large transcript */
+  }
+}
+
+function restoreTurns(): void {
+  const store = browserStorage("session");
+  const raw = store?.getItem(TURNS_KEY) || "";
+  if (!raw || turns.length) return;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return;
+    for (const row of parsed.slice(-40)) {
+      if (!row || typeof row !== "object") continue;
+      const item = row as Record<string, unknown>;
+      if (item.role !== "user" && item.role !== "assistant") continue;
+      if (typeof item.content !== "string") continue;
+      const turn: Turn = {
+        role: item.role,
+        content: item.content,
+        hidden: typeof item.hidden === "string" ? item.hidden : "",
+        effort: typeof item.effort === "string" ? item.effort : "",
+        search: item.search && typeof item.search === "object" ? (item.search as SearchInfo) : null,
+        stages: Array.isArray(item.stages) ? (item.stages as StageName[]) : [],
+        mode: typeof item.mode === "string" ? item.mode : "",
+        route: typeof item.route === "string" ? item.route : "",
+        thought: typeof item.thought === "string" ? item.thought : "",
+        thoughtSeconds: typeof item.thoughtSeconds === "number" ? item.thoughtSeconds : 0,
+        stopped: item.stopped === true,
+      };
+      if (item.role === "assistant" && Array.isArray(item.images)) turn.images = cardsFrom(item.images);
+      if (item.attachment && typeof item.attachment === "object") {
+        const card = item.attachment as DocCard;
+        if (typeof card.name === "string" && typeof card.route === "string") turn.attachment = card;
+      }
+      turns.push(turn);
+    }
+  } catch {
+    /* ignore a broken transcript */
+  }
+}
+
+function scheduleImages(row: HTMLElement, item: Turn): void {
+  if (item.images && item.images.length) {
+    revealImageStrip(row, item.images);
+    return;
+  }
+  if (item.images || !wantsImages(item)) return;
+  void loadImages(item);
+}
+
+async function loadImages(item: Turn): Promise<void> {
+  if (imagePending.has(item) || item.images || !wantsImages(item)) return;
+  imagePending.add(item);
+  const ctrl = new AbortController();
+  imageJobs.add(ctrl);
+  imageJob.set(item, ctrl);
+  const question = promptBefore(turns.indexOf(item));
+  try {
+    const found = await fetchImages({
+      question,
+      answer: item.content,
+      sources: item.search?.sources || [],
+      signal: ctrl.signal,
+      headers: sessionHeaders(),
+    });
+    if (ctrl.signal.aborted || !turns.includes(item)) return;
+    item.images = found;
+    persistTurns();
+    const index = turns.indexOf(item);
+    const row = document.querySelector('.msg.bot[data-index="' + index + '"]');
+    if (row && row.isConnected && found.length) revealImageStrip(row as HTMLElement, found);
+  } finally {
+    imagePending.delete(item);
+    imageJobs.delete(ctrl);
+    imageJob.delete(item);
+  }
+}
+
 function paint(): void {
   const log = byId("log");
   log.replaceChildren();
@@ -527,6 +663,7 @@ function paint(): void {
     empty.id = "empty";
     empty.appendChild(el("p", "", "Ask anything."));
     log.appendChild(empty);
+    persistTurns();
     return;
   }
   turns.forEach((item, index) => {
@@ -534,6 +671,7 @@ function paint(): void {
     else addFinishedBot(item, index);
   });
   log.lastElementChild?.scrollIntoView({ block: "end" });
+  persistTurns();
 }
 
 function docCardNode(card: DocCard): HTMLElement {
@@ -598,6 +736,7 @@ function beginEdit(index: number): void {
     if (!next && !item.hidden) return;
     const hidden = item.hidden || "";
     const attachment = item.attachment || null;
+    for (const gone of turns.slice(index)) abortTurnImages(gone);
     turns.splice(index);
     void sendText(next, false, false, { hidden, attachment });
   };
@@ -635,6 +774,7 @@ function addFinishedBot(item: Turn, index: number): HTMLElement {
     labels.appendChild(retryButton(() => regenerate()));
   }
   byId("log").appendChild(row);
+  scheduleImages(row, item);
   return row;
 }
 
@@ -668,6 +808,7 @@ function retryButton(onClick: () => void): HTMLButtonElement {
 function regenerate(): void {
   if (sending) return;
   if (!turns.length || turns[turns.length - 1].role !== "assistant") return;
+  abortTurnImages(turns[turns.length - 1]);
   turns.pop();
   const last = turns[turns.length - 1];
   if (!last || last.role !== "user") return;
@@ -949,6 +1090,7 @@ function keepPartial(
       route,
       thought,
       thoughtSeconds,
+      stopped: true,
     });
     paint();
     return;
@@ -2047,6 +2189,7 @@ function dismissPopovers(event?: Event): void {
 }
 
 function newChat(): void {
+  abortImageJobs();
   clearFollowQueue();
   chatId = freshId();
   browserStorage("session")?.setItem(CHAT_KEY, chatId);
@@ -2093,6 +2236,13 @@ const enterBox = byId<HTMLInputElement>("enterSend");
 enterBox.checked = enterToSend;
 enterBox.addEventListener("change", () => {
   enterToSend = enterBox.checked;
+  persistSettings();
+});
+const picturesBox = byId<HTMLInputElement>("pictures");
+picturesBox.checked = picturesOn;
+picturesBox.addEventListener("change", () => {
+  picturesOn = picturesBox.checked;
+  if (!picturesOn) abortImageJobs();
   persistSettings();
 });
 applyTheme(pageSettings.theme);
@@ -2204,6 +2354,8 @@ composer.addEventListener("paste", (event) => {
   }
 });
 
+restoreTurns();
+if (turns.length) paint();
 void refresh();
 window.setInterval(() => {
   if (!shouldPollHealth(document.hidden)) return;
