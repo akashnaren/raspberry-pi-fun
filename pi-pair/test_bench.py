@@ -23,6 +23,18 @@ class VmBench(unittest.TestCase):
         self.assertLess(turns["second_ttft_ms"], turns["first_ttft_ms"])
         self.assertIn("llama_server", result["llama"])
 
+    def test_router_unit_stays_on_core_zero(self):
+        path = (
+            Path(__file__).resolve().parent
+            / "configs"
+            / "runtime"
+            / "pi-pair.service.d"
+            / "router.conf"
+        )
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("CPUAffinity=0", text)
+        self.assertIn("Nice=5", text)
+
 
 if __name__ == "__main__":
     unittest.main()
