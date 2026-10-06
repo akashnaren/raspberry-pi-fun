@@ -34,6 +34,13 @@ class SourcesAndShell(unittest.TestCase):
         )
         self.assertIn("ok", completed.stdout)
 
+    def test_follow_up_queue_is_fifo_and_capped(self):
+        completed = _node("follow-queue.test.mjs")
+        self.assertEqual(
+            completed.returncode, 0, completed.stdout + "\n" + completed.stderr
+        )
+        self.assertIn("ok", completed.stdout)
+
     def test_friendly_error_sentences(self):
         completed = _node("errors.test.mjs")
         self.assertEqual(

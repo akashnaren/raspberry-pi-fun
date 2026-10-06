@@ -8,6 +8,7 @@ import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettin
 import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
 import { scrubAssistant } from "./copy";
 import { BIG_LINE, friendlyError, WAITING_LINE } from "./errors";
+import { dropFollow, enqueueFollow, renderFollowQueue, takeFollow, type FollowItem } from "./follow-queue";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
@@ -96,6 +97,9 @@ const serviceLines: string[] = [];
 let attachSerial = 0;
 let uploading = false;
 let attachError = false;
+let followQueue: FollowItem[] = [];
+let followNextId = 1;
+const followExtra = new Map<number, { text: string; hidden: string; attachment: DocCard | null }>();
 let voiceUtterance: ReturnType<typeof createUtteranceHold> | null = null;
 
 const ATTACH_BYTES = 4 * 1024 * 1024;
@@ -1266,6 +1270,7 @@ async function sendText(
       if (followUp !== "retry" && voiceOn && !speechPending()) releaseVoice();
     }
     if (followUp !== "retry") flushDeferredHealth();
+    if (mine() && followUp !== "retry" && followUp !== "resume") flushFollowQueue();
   }
   if (!mine()) return;
   if (followUp === "retry") {
@@ -1287,6 +1292,62 @@ function flushDeferredHealth(): void {
   if (shouldPollHealth(document.hidden)) void refresh();
 }
 
+function paintFollowQueue(): void {
+  renderFollowQueue(byId("followQueue"), followQueue, (id) => {
+    followQueue = dropFollow(followQueue, id);
+    followExtra.delete(id);
+    paintFollowQueue();
+    syncSend();
+  });
+}
+
+function clearFollowQueue(): void {
+  followQueue = [];
+  followExtra.clear();
+  paintFollowQueue();
+}
+
+function queueDraft(text: string, hidden: string, attachment: DocCard | null): void {
+  const label = text || (attachment && attachment.name) || "Attachment";
+  const result = enqueueFollow(followQueue, label, followNextId);
+  if (!result.added) {
+    voiceNote("Three messages are already waiting.");
+    return;
+  }
+  followQueue = result.items;
+  followNextId = result.nextId;
+  const item = result.items[result.items.length - 1];
+  followExtra.set(item.id, { text, hidden: hidden.trim(), attachment });
+  const box = byId<HTMLTextAreaElement>("q");
+  if (hidden.trim() || attachment) clearAttach();
+  box.value = "";
+  autoGrow(box);
+  paintBrand();
+  paintFollowQueue();
+  syncSend();
+}
+
+function flushFollowQueue(): void {
+  if (sending) return;
+  const taken = takeFollow(followQueue);
+  if (!taken.next) return;
+  followQueue = taken.rest;
+  const extra = followExtra.get(taken.next.id);
+  followExtra.delete(taken.next.id);
+  paintFollowQueue();
+  void sendText(extra ? extra.text : taken.next.text, false, false, {
+    hidden: extra?.hidden || "",
+    attachment: extra?.attachment || null,
+  });
+}
+
+function stopCurrent(): void {
+  if (!sending) return;
+  stopAsked = true;
+  stopSpeaking();
+  turnCtrl?.abort();
+}
+
 async function send(): Promise<void> {
   voiceNote("");
   const box = byId<HTMLTextAreaElement>("q");
@@ -1294,6 +1355,10 @@ async function send(): Promise<void> {
   const hidden = box.dataset.attachText || "";
   const attachment = pendingDoc;
   if (!text && !hidden.trim()) return;
+  if (sending) {
+    queueDraft(text, hidden, attachment);
+    return;
+  }
   if (hidden || attachment) clearAttach();
   box.value = "";
   autoGrow(box);
@@ -1308,11 +1373,14 @@ function composerHasDraft(): boolean {
 
 function syncSend(): void {
   const go = byId<HTMLButtonElement>("go");
+  const stop = byId<HTMLButtonElement>("stop");
   const kind = primaryKind(sending, composerHasDraft());
   go.classList.remove("voice", "send", "stop");
   go.classList.add(kind);
   go.disabled = uploading || attachError;
   go.setAttribute("aria-label", uploading ? "Uploading" : primaryLabel(kind));
+  stop.hidden = !(sending && kind === "send");
+  stop.disabled = uploading || attachError;
 }
 
 function autoGrow(box: HTMLTextAreaElement): void {
@@ -1739,10 +1807,8 @@ function releaseVoice(): void {
 
 byId("go").onclick = () => {
   if (uploading || attachError) return;
-  if (sending) {
-    stopAsked = true;
-    stopSpeaking();
-    turnCtrl?.abort();
+  if (sending && !composerHasDraft()) {
+    stopCurrent();
     return;
   }
   if (!composerHasDraft()) {
@@ -1750,6 +1816,10 @@ byId("go").onclick = () => {
     return;
   }
   void send();
+};
+byId("stop").onclick = () => {
+  if (uploading || attachError) return;
+  stopCurrent();
 };
 const composer = byId<HTMLTextAreaElement>("q");
 composer.addEventListener("input", () => {
@@ -1913,6 +1983,7 @@ function dismissPopovers(event?: Event): void {
 }
 
 function newChat(): void {
+  clearFollowQueue();
   chatEpoch += 1;
   stopAsked = true;
   turnCtrl?.abort();
