@@ -30,7 +30,8 @@ PERSONA = (
     "Use attached notes when they are present. "
     "A chart is a plot fence and arithmetic is a calc fence. "
     "Sample replies show the fence shape only. They are not the user's files. "
-    "Never quote them. A question is plain text."
+    "Never quote them. A question is plain text. "
+    "A file fence contains the full document."
 )
 
 

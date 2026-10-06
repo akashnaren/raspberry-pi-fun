@@ -139,6 +139,18 @@ class LockerMemory(unittest.TestCase):
 
 
 class FileAndChart(unittest.TestCase):
+    def setUp(self):
+        self._docs = tempfile.TemporaryDirectory()
+        self._old_data = os.environ.get("PI_PAIR_DATA")
+        os.environ["PI_PAIR_DATA"] = self._docs.name
+
+    def tearDown(self):
+        if self._old_data is None:
+            os.environ.pop("PI_PAIR_DATA", None)
+        else:
+            os.environ["PI_PAIR_DATA"] = self._old_data
+        self._docs.cleanup()
+
     def test_a_file_type_word_does_not_make_a_download(self):
         prose = "DOCX is editable. PDF is a fixed page."
         for prompt in (
@@ -251,6 +263,37 @@ class FileAndChart(unittest.TestCase):
         closed = settle_blocks(open_md, MD)
         self.assertEqual(parse_fences(closed)[0]["name"], "doc")
         self.assertIn("Mix flour and milk.", closed)
+
+    def test_a_label_or_restatement_stays_chat_text(self):
+        question = "Summarize this PDF in two lines."
+        stub = "```pdf\nPDF content\n```"
+        settled = settle_blocks(stub, question)
+        self.assertNotIn("```", settled)
+        self.assertIn("PDF content", settled)
+        self.assertEqual(parse_fences(settled), [])
+        self.assertEqual(clean_reply(stub, question).count("```"), 0)
+        self.assertIn("PDF content", clean_reply(stub, question))
+        repeated = settle_blocks(f"```pdf\n{question}\n```", question)
+        self.assertNotIn("```", repeated)
+        self.assertNotIn("```", settle_blocks("```pdf\npdf\n```", question))
+        self.assertNotIn("```", settle_blocks("```plot\nplot\n```", CHART))
+        self.assertNotIn("```", settle_blocks("```chart\nchart\n```", CHART))
+        prose = (
+            "```pdf\nThe paper finds that small models copy the prompt.\n"
+            "A second line names the limit.\n```"
+        )
+        kept = settle_blocks(prose, question)
+        self.assertIn("```pdf", kept)
+        self.assertIn("small models copy the prompt.", kept)
+        fence = parse_fences(kept)[0]
+        self.assertEqual(fence["name"], "doc")
+        self.assertIn("kind: pdf", fence["body"])
+        self.assertEqual(tool_notes(stub, search=lambda _q: {}, prompt=question), "")
+        self.assertEqual(
+            tool_notes("```chart\nchart\n```", search=lambda _q: {}, prompt=CHART),
+            "",
+        )
+        self.assertEqual(list(Path(self._docs.name).glob("docs/*")), [])
 
 
 class LocalAnswers(unittest.TestCase):
