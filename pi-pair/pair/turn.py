@@ -1,9 +1,11 @@
 """Shape one turn before pi4 decodes it.
 
-Search runs only when the question asks for it or names something current.
-Attachment text and search notes are untrusted data: control tokens and role
-labels are stripped, the file and the notes are fenced, and the whole prompt
-is cut so a 2048-token context still has room to answer.
+With ground_all, search runs unless the turn is an attachment, only
+arithmetic, shorter than three words, or a short follow-up with no question
+mark. With the knob off, search is a time cue. Attachment text and search
+notes are untrusted data: control tokens and role labels are stripped, the
+file and the notes are fenced, and the whole prompt is cut so a 2048-token
+context still has room to answer.
 """
 
 from __future__ import annotations
@@ -11,8 +13,9 @@ from __future__ import annotations
 import functools
 import json
 import re
+from datetime import date
 
-from pair.calc import notes_for
+from pair.calc import fully_answers, notes_for
 from pair.errors import friendly_error
 from pair.knobs import attachment_limit, inference_knobs
 
@@ -52,10 +55,11 @@ _PLOT = re.compile(
     re.I,
 )
 _FRESH = re.compile(r"\b(?:news|latest|current)\b", re.I)
-_SEARCH = re.compile(
-    r"\b(?:search for|look up|lookup|latest news|news about|sources for|find articles|find sources)\b",
+_RECENCY = re.compile(
+    r"\b(?:recent|now|today|yesterday|newest|still|yet|this\s+(?:year|week|month))\b",
     re.I,
 )
+_YEAR = re.compile(r"\b(\d{4})\b")
 _CONTROL = re.compile(
     r"<\|/?im_start\|>|<\|/?im_end\|>|<<\/?SYS>>|\[\/?INST\]|</?s>|<\|/?system\|>",
     re.I,
@@ -165,18 +169,39 @@ def is_plot(prompt: str) -> bool:
     return bool(_PLOT.search(user_question(prompt)))
 
 
-@functools.lru_cache(maxsize=256)
-def needs_web(prompt: str) -> bool:
-    """True when the user asks to look something up, or names something current.
+def _time_sensitive(question: str) -> bool:
+    """A time cue, not a topic list. Years are recent when they are last year or newer."""
+    if _FRESH.search(question) or _RECENCY.search(question):
+        return True
+    floor = date.today().year - 1
+    return any(int(match.group(1)) >= floor for match in _YEAR.finditer(question))
 
-    Plots and attachments stay on the model unless they explicitly ask to search.
-    """
+
+@functools.lru_cache(maxsize=256)
+def _needs_web(prompt: str, follow_up: bool, ground_all: bool) -> bool:
     question = user_question(prompt)
-    if attachment_tail(prompt) and not _SEARCH.search(question):
+    if attachment_tail(prompt):
         return False
-    if is_plot(prompt):
-        return False
-    return bool(_SEARCH.search(question) or _FRESH.search(question))
+    if ground_all:
+        if fully_answers(question):
+            return False
+        if len(question.split()) < 3:
+            return False
+        if follow_up and len(question) <= 60 and "?" not in question:
+            return False
+        return True
+    return _time_sensitive(question)
+
+
+def needs_web(prompt: str, follow_up: bool = False) -> bool:
+    """Search unless the turn is local, or only when the question is current.
+
+    `ground_all` searches every question except an attachment, a message that
+    is only arithmetic, fewer than three words, or a short follow-up with no
+    question mark. When the knob is off, search is a time cue.
+    """
+    ground_all = bool(inference_knobs().get("ground_all", True))
+    return _needs_web(prompt or "", bool(follow_up), ground_all)
 
 
 def fence_user_text(content: str, limit: int) -> str:

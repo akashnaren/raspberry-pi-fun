@@ -15,10 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.assist import (
-    HELPFUL_NUDGE,
     is_harmful,
-    is_soft_refusal,
-    may_retry_refusal,
     scrub_reply,
     settle_reply,
     stream_release,
@@ -1316,7 +1313,7 @@ class Handler(BaseHTTPRequestHandler):
                 bool(mesh and node_role() == "brain")
                 and ready is None
                 and not structured
-                and needs_web(prompt)
+                and needs_web(prompt, follow_up=not one_user_turn(messages))
             )
             tuned = _tuned_knobs(used if kind != "llamacpp" else model)
             ctx = int(tuned.get("num_ctx") or 2048)
@@ -1913,9 +1910,7 @@ class Handler(BaseHTTPRequestHandler):
             peer, kind, model, messages, temperature, max_tokens, prompt, content
         )
         if not _block(prompt):
-            content = self._guard_reply(
-                peer, kind, model, messages, temperature, max_tokens, prompt, content
-            )
+            content = settle_reply(prompt, content, lambda: "")
         refused = _block(content)
         if refused:
             self._last_reasoning = ""
@@ -1923,47 +1918,6 @@ class Handler(BaseHTTPRequestHandler):
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
-
-    def _ask(self, peer, kind, model, messages, temperature, max_tokens) -> str:
-        try:
-            if kind == "llamacpp":
-                more, _used = chat_llamacpp(
-                    peer, model, messages, temperature, max_tokens, cancel=self._cancel
-                )
-            else:
-                more, _used = chat_ollama(
-                    peer, model, messages, temperature, max_tokens, cancel=self._cancel
-                )
-        except (OSError, json.JSONDecodeError):
-            return ""
-        return more or ""
-
-    def _guard_reply(
-        self,
-        peer,
-        kind,
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        prompt: str,
-        content: str,
-    ) -> str:
-        """Nudge once. The model's words stay if the nudge is still a refusal."""
-
-        def again() -> str:
-            follow = shape_messages(
-                [
-                    *list(messages or []),
-                    {"role": "assistant", "content": content or ""},
-                    {"role": "user", "content": HELPFUL_NUDGE},
-                ],
-                prompt,
-                effort=self._effort_name(),
-            )
-            return self._ask(peer, kind, model, follow, temperature, max_tokens)
-
-        return settle_reply(prompt, content, again)
 
     def _repair_chart(
         self,
@@ -2323,8 +2277,6 @@ class Handler(BaseHTTPRequestHandler):
                             closed = True
                         break
                     thinking_parts.append(delta)
-                    if release == "hold":
-                        continue
                     joined_thought = "".join(thinking_parts)
                     piece = joined_thought[thinking_flushed:]
                     thinking_flushed = len(joined_thought)
@@ -2342,8 +2294,6 @@ class Handler(BaseHTTPRequestHandler):
                     if not clear_reasoning():
                         closed = True
                     break
-                if release == "hold":
-                    continue
                 old = flushed
                 if "<" in joined and "think" in joined.lower():
                     visible, leaked = peel_think(joined)
@@ -2432,50 +2382,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
             else:
                 answer = "".join(parts)
-            if (
-                not policy
-                and held
-                and may_retry_refusal(prompt)
-                and is_soft_refusal(answer)
-            ):
-                answer = self._guard_reply(
-                    peer,
-                    kind,
-                    model,
-                    messages,
-                    temperature,
-                    max_tokens,
-                    prompt,
-                    answer,
-                )
-                if answer and not safe_write(
-                    self,
-                    (
-                        "data: "
-                        + json.dumps(
-                            {
-                                "id": "pi-pair",
-                                "object": "chat.completion.chunk",
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {"content": answer},
-                                        "finish_reason": None,
-                                    }
-                                ],
-                            }
-                        )
-                        + "\n\n"
-                    ).encode(),
-                    flush=True,
-                ):
-                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                    note_exchange(
-                        prompt, answer, chip=chip, peer=peer["name"], train=True
-                    )
-                    remember_completion(prompt, answer, chip, peer["name"])
-                    return
-            elif not policy and not is_harmful(prompt):
+            if not policy and not is_harmful(prompt):
                 answer = scrub_reply(answer) or answer
             trainable = not policy
             if not policy and not str(answer).strip():

@@ -107,6 +107,14 @@ def _display(span: str) -> str:
     return re.sub(r"(?<=\d),(?=\d)", "", compact)
 
 
+def fully_answers(text: str) -> bool:
+    """True when the whole message is arithmetic this module can finish."""
+    raw = (text or "").strip()
+    if not raw or notes_for(raw) is None:
+        return False
+    return all(char in _ALLOWED for char in raw)
+
+
 def notes_for(text: str) -> str | None:
     """Calculator lines for arithmetic spans, or None when nothing is safe."""
     lines: list[str] = []

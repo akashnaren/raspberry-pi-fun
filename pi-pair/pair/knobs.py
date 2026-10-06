@@ -43,6 +43,9 @@ _DEFAULTS = {
     # Local harmful-content filter. Off leaves refusal to a separate stack
     # that replaces pair.moderate.moderate. On restores the in-process gate.
     "safety_filter": False,
+    # Search every question except attachments, bare arithmetic, very short
+    # lines, and short follow-ups. Off keeps search to time cues only.
+    "ground_all": True,
 }
 
 

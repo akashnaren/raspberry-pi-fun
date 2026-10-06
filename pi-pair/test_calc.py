@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from pair.calc import notes_for
+from pair.calc import fully_answers, notes_for
 from pair.turn import shape_messages
 
 
@@ -13,6 +13,12 @@ class CalculatorNotes(unittest.TestCase):
         self.assertIn("847*23 = 19481", notes_for("847*23") or "")
         self.assertIn("1234+5678-999 = 5913", notes_for("1234+5678-999") or "")
         self.assertIn("(2+3)^2 = 25", notes_for("(2+3)^2") or "")
+
+    def test_only_arithmetic_counts_as_a_full_answer(self):
+        self.assertTrue(fully_answers("847*23"))
+        self.assertTrue(fully_answers("  (2+3)^2 "))
+        self.assertFalse(fully_answers("what is 847*23?"))
+        self.assertFalse(fully_answers("847*23 please"))
 
     def test_unsafe_spans_are_skipped(self):
         self.assertIsNone(notes_for("2**99999"))
