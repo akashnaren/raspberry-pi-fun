@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import unittest
 
 from pair import memory
@@ -66,6 +67,41 @@ class CompactTests(unittest.TestCase):
         self.assertFalse(busy["ok"])
         self.assertEqual(busy["reason"], "busy")
         self.assertEqual(memory.list_facts(), [])
+
+    def test_summary_waits_until_the_slot_is_free(self):
+        import time
+
+        from pair import runtime
+        from pair.sched import InferenceGate
+
+        previous = runtime.gate
+        gate = InferenceGate(1, queue_limit=4)
+        runtime.gate = gate
+        started = threading.Event()
+        try:
+            _status, holder = gate.reserve_ticket("hold")
+            turns = [{"role": "user", "content": "the locker code is 4182"}]
+            for index in range(8):
+                turns.append(
+                    {"role": "user", "content": f"turn {index} talks about the weather"}
+                )
+
+            def generate(draft: str) -> str:
+                started.set()
+                return draft
+
+            self.assertTrue(schedule(turns, 64, idle=lambda: True, generate=generate))
+            time.sleep(0.05)
+            self.assertFalse(started.is_set())
+            self.assertEqual(memory.list_facts(), [])
+            gate.release(holder)
+            self.assertTrue(started.wait(1))
+            deadline = time.perf_counter() + 1
+            while time.perf_counter() < deadline and not memory.list_facts():
+                time.sleep(0.02)
+            self.assertTrue(any("4182" in row["text"] for row in memory.list_facts()))
+        finally:
+            runtime.gate = previous
 
     def test_forty_turns_keep_the_needle_after_two_compactions(self):
         needle = "the locker code is 4182"

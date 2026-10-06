@@ -6,10 +6,10 @@ Flash when the slot stays free. An interruption keeps the draft.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 
-from pair.context import verbatim_budget
 from pair.turn import estimate_tokens
 
 SUMMARY_CAP = 160
@@ -24,58 +24,17 @@ def should_compact(used: int, num_ctx: int, busy: bool) -> bool:
     return (used / num_ctx) >= limit
 
 
-def _numbers_and_quotes(text: str) -> list[str]:
-    import re
-
-    found = re.findall(
-        r'"([^"]{1,160})"|\'([^\']{1,160})\'|\b\d[\d,]*(?:\.\d+)?\b', text or ""
-    )
-    rows = []
-    for groups in found:
-        if isinstance(groups, str):
-            piece = groups
-        else:
-            piece = next((part for part in groups if part), "")
-        piece = piece.strip()
-        if piece:
-            rows.append(piece)
-    return rows
-
-
 def plan(turns: list[dict], num_ctx: int) -> dict:
-    """Pick turns to fold. Recent turns that fit in 40% of the context stay verbatim."""
-    budget = verbatim_budget(num_ctx)
-    keep: list[dict] = []
-    spent = 0
-    for row in reversed(turns):
-        if not isinstance(row, dict):
-            continue
-        cost = estimate_tokens(str(row.get("content") or ""))
-        if keep and spent + cost > budget:
-            break
-        keep.append(row)
-        spent += cost
-    keep.reverse()
-    folded = turns[: max(0, len(turns) - len(keep))]
-    facts = []
-    for row in folded:
-        if str(row.get("role") or "") != "user":
-            continue
-        text = " ".join(str(row.get("content") or "").split())
-        if text:
-            facts.append(text)
-    draft_bits = []
-    for row in folded:
-        content = str(row.get("content") or "").strip()
-        if not content:
-            continue
-        bits = _numbers_and_quotes(content)
-        if bits:
-            draft_bits.append(" ".join(bits))
-        elif str(row.get("role") or "") == "user":
-            draft_bits.append(content[:240])
-    draft = "\n".join(draft_bits).strip()
-    return {"keep": keep, "fold": folded, "facts": facts, "draft": draft}
+    """Pick turns to fold. pi3's compact_plan tool is the same planner."""
+    from pair.nodes.compact_plan import plan_turns
+
+    planned = plan_turns(turns, num_ctx)
+    return {
+        "keep": planned["keep"],
+        "fold": planned["fold"],
+        "facts": planned["facts"],
+        "draft": planned["draft"],
+    }
 
 
 def _clip_summary(text: str) -> str:
@@ -123,15 +82,89 @@ def run_compact(
     }
 
 
+def _flash_summary(cancel):
+    """Rewrite the draft with Flash. An empty string keeps the draft."""
+
+    def write(draft: str) -> str:
+        if cancel.is_set() or not str(draft or "").strip():
+            return ""
+        from pair import runtime
+        from pair.guard import may_generate
+        from pair.modes import FLASH, mode_table
+
+        peer = next((row for row in runtime.PEERS if may_generate(row)), None)
+        model = str(mode_table().get(FLASH) or "")
+        if peer is None or not model:
+            return ""
+        from pair.cancel import Cancel, ClientGone
+        from pair.chat import open_json, ollama_payload
+
+        flag = Cancel()
+        stop = threading.Event()
+
+        def watch() -> None:
+            while not stop.is_set():
+                if cancel.wait(0.05):
+                    flag.set()
+                    return
+
+        threading.Thread(target=watch, name="summary-cancel", daemon=True).start()
+        url = f"http://{peer['host']}:{peer['port']}/api/chat"
+        payload = ollama_payload(
+            model,
+            [
+                {"role": "system", "content": "Summarize the notes in fewer words."},
+                {"role": "user", "content": draft},
+            ],
+            0.0,
+            SUMMARY_CAP,
+            False,
+        )
+        try:
+            with open_json(url, payload, timeout=30, cancel=flag) as response:
+                data = json.loads(response.read().decode())
+        except ClientGone:
+            return ""
+        except Exception:
+            return ""
+        finally:
+            stop.set()
+        if cancel.is_set():
+            return ""
+        return str((data.get("message") or {}).get("content") or "")
+
+    return write
+
+
 def schedule(turns: list[dict], num_ctx: int, idle, generate=None) -> bool:
-    """Start compaction off the request. False when a decode is already running."""
+    """Enqueue a summary. False when the caller says a decode is already running.
+
+    The scheduler waits until the slot is free, holds it for this job, and
+    cancels the job when an interactive request arrives. The extractive draft
+    is what gets stored if Flash is interrupted or absent.
+    """
     if not idle():
         return False
+    from pair import runtime
 
-    def work() -> None:
+    def job(cancel) -> None:
         from pair import memory
 
-        result = run_compact(turns, num_ctx, idle=idle, generate=generate)
+        class _Gone:
+            def gone(self) -> bool:
+                return bool(cancel.is_set())
+
+        def still() -> bool:
+            return bool(idle()) and not cancel.is_set()
+
+        writer = generate if generate is not None else _flash_summary(cancel)
+        result = run_compact(
+            turns,
+            num_ctx,
+            idle=still,
+            generate=writer,
+            cancel=_Gone(),
+        )
         if not result.get("ok"):
             return
         memory.remember_user(result.get("facts") or [])
@@ -139,5 +172,4 @@ def schedule(turns: list[dict], num_ctx: int, idle, generate=None) -> bool:
             result.get("summary") or "", int(result.get("elapsed_ms") or 0)
         )
 
-    threading.Thread(target=work, name="compact", daemon=True).start()
-    return True
+    return bool(runtime.gate.enqueue_background(job))

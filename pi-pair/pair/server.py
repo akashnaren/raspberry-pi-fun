@@ -1544,7 +1544,7 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, body)
 
     def _touch_memory(self, messages) -> None:
-        """Record the real prompt size and fold old turns only while decode is idle."""
+        """Record the real prompt size and enqueue a summary for when the slot is free."""
         from pair.compact import schedule, should_compact
         from pair.context import ledger_for
 
@@ -1570,7 +1570,7 @@ class Handler(BaseHTTPRequestHandler):
         schedule(
             [row for row in messages or [] if isinstance(row, dict)],
             book.num_ctx,
-            idle=lambda: runtime.gate.in_flight() == 0 and runtime.gate.waiting() == 0,
+            idle=lambda: True,
         )
 
     def _memory_get(self) -> None:
