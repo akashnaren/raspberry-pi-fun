@@ -45,15 +45,29 @@ def _search(payload: dict) -> dict:
 
 
 def _render_doc(payload: dict) -> dict:
-    """Placeholder until PR4 writes the file. The route still does not generate."""
+    """Markdown to a file. The route still does not generate."""
+    from pair.docs import render_document, save_document
+
     markdown = str(payload.get("markdown") or "")
-    kind = str(payload.get("kind") or "md")
-    return {"ok": True, "kind": kind, "bytes": len(markdown.encode("utf-8"))}
+    data, ext = render_document(markdown, str(payload.get("kind") or "md"))
+    meta = save_document(data, ext, str(payload.get("name") or "document"))
+    return {
+        "ok": True,
+        "kind": ext,
+        "bytes": len(data),
+        "id": meta["id"],
+        "name": meta["name"],
+        "data": base64.b64encode(data).decode("ascii"),
+    }
 
 
 def _render_chart(payload: dict) -> dict:
-    table = str(payload.get("table") or "")
-    return {"ok": bool(table.strip()), "table": table}
+    from pair.charts import render_chart
+
+    return render_chart(
+        table=str(payload.get("table") or ""),
+        plot=str(payload.get("plot") or payload.get("expression") or ""),
+    )
 
 
 def _tokenize(payload: dict) -> dict:

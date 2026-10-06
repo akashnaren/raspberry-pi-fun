@@ -7,6 +7,7 @@ and topic rules are out of scope. A bad span is skipped, never raised.
 from __future__ import annotations
 
 import ast
+import math
 import re
 
 _MAX_EXPRESSIONS = 3
@@ -23,6 +24,16 @@ _OPS = {
     ast.FloorDiv: lambda left, right: left // right,
     ast.Mod: lambda left, right: left % right,
 }
+_CALLS = {
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "sqrt": math.sqrt,
+    "abs": abs,
+    "log": math.log,
+    "exp": math.exp,
+}
+_CONST = {"pi": math.pi, "e": math.e}
 
 
 def _spans(text: str) -> list[str]:
@@ -67,30 +78,55 @@ def _operand(value: float | int) -> float | int:
     return value
 
 
-def _walk(node: ast.AST) -> float | int:
+def _walk(node: ast.AST, names: dict | None = None) -> float | int:
+    bound = dict(_CONST)
+    for key, value in (names or {}).items():
+        if key in ("x", "pi", "e"):
+            bound[key] = value
     if isinstance(node, ast.Constant):
         return _operand(node.value)
+    if isinstance(node, ast.Name):
+        if node.id not in bound:
+            raise ValueError("name")
+        return _operand(bound[node.id])
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-        return _operand(-_walk(node.operand))
+        return _operand(-_walk(node.operand, names))
     if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
-        left = _walk(node.left)
-        right = _walk(node.right)
+        left = _walk(node.left, names)
+        right = _walk(node.right, names)
         _operand(left)
         _operand(right)
         return _operand(_OPS[type(node.op)](left, right))
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
-        left = _walk(node.left)
-        right = _walk(node.right)
+        left = _walk(node.left, names)
+        right = _walk(node.right, names)
         if isinstance(right, float) or right < 0 or right > _MAX_EXPONENT:
             raise ValueError("exponent")
         return _operand(left**right)
+    if isinstance(node, ast.Call):
+        func = node.func
+        if (
+            isinstance(func, ast.Name)
+            and func.id in _CALLS
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            return _operand(_CALLS[func.id](_walk(node.args[0], names)))
     raise ValueError("unsupported")
 
 
-def _evaluate(expr: str) -> str | None:
+def evaluate_expr(expr: str, variables: dict | None = None) -> str | None:
+    """One expression, same whitelist as the calculator, plus `x` and basic calls."""
+    raw = (expr or "").strip()
+    if not raw or len(raw) > 240 or "\n" in raw:
+        return None
+    return _evaluate(raw.replace("^", "**"), variables or {})
+
+
+def _evaluate(expr: str, names: dict | None = None) -> str | None:
     try:
         tree = ast.parse(expr, mode="eval")
-        value = _walk(tree.body)
+        value = _walk(tree.body, names)
     except (SyntaxError, ValueError, ZeroDivisionError, OverflowError, TypeError):
         return None
     if isinstance(value, float):

@@ -1,5 +1,7 @@
 import { docExcerpt, modelUserContent, userMessagePieces, type DocCard } from "./attach";
+import { mountCharts } from "./chart";
 import { mountDiagrams } from "./diagram";
+import { mountDocs } from "./doc";
 import { renderMarkdown, renderStreamingMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
 import { HEALTH_POLL_MS, serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner, VISIBILITY_SETTLE_MS, type HealthSnapshot } from "./presence";
@@ -180,6 +182,10 @@ function setBodyContent(node: HTMLElement, text: string, asMd: boolean, streamin
     node.classList.add("md");
     node.innerHTML = streaming ? renderStreamingMarkdown(shown) : renderMarkdown(shown);
     mountDiagrams(node);
+    if (!streaming) {
+      mountCharts(node);
+      mountDocs(node);
+    }
   } else {
     node.classList.remove("md");
     node.textContent = shown;

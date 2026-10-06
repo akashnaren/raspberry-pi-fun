@@ -1,5 +1,7 @@
 import katex from "katex";
+import { plotBlock, tableChart } from "./chart.ts";
 import { mermaidFence } from "./diagram.ts";
+import { docCard } from "./doc.ts";
 import { isTableRule, markdownTable } from "./table.ts";
 
 function escapeHtml(text: string): string {
@@ -80,6 +82,8 @@ export function renderMarkdown(source: string): string {
   const fenced = text.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_all, lang: string, code: string) => {
     const flow = mermaidFence(lang, code);
     if (flow) return stash(flow);
+    if (lang === "plot") return stash(plotBlock(code));
+    if (lang === "doc") return stash(docCard(code));
     return stash(`<pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);
   });
   const withDisplay = fenced
@@ -114,7 +118,7 @@ export function renderMarkdown(source: string): string {
       if (table) {
         flushParagraph(paragraph);
         closeList();
-        out.push(stash(table));
+        out.push(stash(table + tableChart(line, body)));
         i = j - 1;
         continue;
       }
