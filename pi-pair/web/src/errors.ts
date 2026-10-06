@@ -15,7 +15,6 @@ export const FILE_LINE = "That file type is not supported.";
 export const FILE_SEND_LINE = "That file could not be sent. Try again.";
 export const EMPTY_LINE = "That file is empty.";
 export const PDF_LINE = "That PDF could not be read. Try a text file or a photo.";
-export const PICTURE_LINE = "Pictures could not be loaded.";
 export const SEARCH_LINE = "Search is not available from here.";
 
 const BANNED = /\b(pi[234]|ollama|traceback|generations in flight)\b|\bHTTP\b|\{|\[/i;

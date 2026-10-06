@@ -485,21 +485,18 @@ class PairHttp(unittest.TestCase):
         OllamaFake.catalog = ["qwen3:0.6b"]
         self.search_calls = []
         self._lookup_web = pair_server.lookup_web
-        self._lookup_images = pair_server.lookup_images
 
         def _stub_search(query, opener=None):
             self.search_calls.append(query)
             return {"status": "failed", "sources": [], "context": ""}
 
         pair_server.lookup_web = _stub_search
-        pair_server.lookup_images = lambda query, opener=None: []
 
     def tearDown(self):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
         pair_server.lookup_web = self._lookup_web
-        pair_server.lookup_images = self._lookup_images
         runtime.PEERS = self._peers
         runtime.reset_health()
         os.environ.pop("PI_PAIR_DATA", None)
@@ -604,8 +601,9 @@ class PairHttp(unittest.TestCase):
         self.assertIn('aria-label="Voice"', html)
         self.assertNotIn("jsdelivr", html)
         self.assertNotIn("katex", html.lower())
-        self.assertIn(runtime.MODEL, html)
+        self.assertNotIn("MESH_DEFAULT_MODEL", html)
         self.assertNotIn("__MODEL__", html)
+        self.assertNotIn("qwen", html.lower())
         self.assertIn('data-think="low"', html)
         self.assertIn('data-think="medium"', html)
         self.assertIn('data-think="high"', html)
@@ -625,7 +623,6 @@ class PairHttp(unittest.TestCase):
         ) as response:
             script = response.read().decode()
         for needle in (
-            "MESH_DEFAULT_MODEL",
             "/v1/flywheel/feedback",
             "Thumbs up",
             "Thumbs down",
@@ -644,6 +641,8 @@ class PairHttp(unittest.TestCase):
             "Stop",
         ):
             self.assertIn(needle, script, needle)
+        self.assertNotIn("MESH_DEFAULT_MODEL", script)
+        self.assertNotIn("qwen", script.lower())
         self.assertNotIn("Loading Pro", script)
         source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
         self.assertIn('if (event.key !== "Enter") return;', source)
@@ -710,8 +709,9 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertEqual(body["pi_peer"], "pi4")
         self.assertEqual(body["pi_chip"], "brain: pi4")
-        self.assertNotIn("pi_search", body)
-        self.assertEqual(self.search_calls, [])
+        self.assertEqual(body["pi_search"], "failed")
+        self.assertIn("searching", body["pi_stages"])
+        self.assertEqual(self.search_calls, ["Say hi in five words."])
         self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 1536)
         self.assertEqual(OllamaFake.last_payload["keep_alive"], -1)
         self.assertIsInstance(OllamaFake.last_payload["keep_alive"], int)
@@ -743,11 +743,13 @@ class PairHttp(unittest.TestCase):
             self.assertIsNone(response.headers.get("X-Pi-Search"))
         self.assertEqual(OllamaFake.last_payload["keep_alive"], -1)
         self.assertIs(OllamaFake.last_payload["stream"], True)
-        self.assertEqual(_statuses(raw), ["thinking", "answering"])
+        self.assertEqual(
+            _statuses(raw), ["thinking", "searching", "searching", "answering"]
+        )
         self.assertLess(raw.index('"pi_status": "answering"'), raw.index("hel"))
         self.assertIn("hel", raw)
-        self.assertNotIn('"pi_search"', raw)
-        self.assertNotIn('"pi_tool": "search"', raw)
+        self.assertIn('"pi_search"', raw)
+        self.assertIn('"pi_tool": "search"', raw)
         self.assertIn("lo", raw)
         self.assertIn("data: [DONE]", raw)
         conn = HTTPConnection("127.0.0.1", port, timeout=5)
@@ -968,9 +970,9 @@ class PairHttp(unittest.TestCase):
         )
         port = self._pair()
         expected = {
-            "low": (False, 0.7, 0.8, 64),
-            "medium": (False, 0.7, 0.8, 384),
-            "high": (False, 0.7, 0.8, 768),
+            "low": (False, 0.3, 0.8, 160),
+            "medium": (False, 0.3, 0.8, 256),
+            "high": (False, 0.3, 0.8, 512),
         }
         seen = {}
         for level, (think, temperature, top_p, num_predict) in expected.items():
@@ -997,7 +999,7 @@ class PairHttp(unittest.TestCase):
             self.assertEqual(options["temperature"], temperature)
             self.assertEqual(options["top_p"], top_p)
             self.assertEqual(options["top_k"], 20)
-            self.assertEqual(options["presence_penalty"], 1.5)
+            self.assertEqual(options["presence_penalty"], 0)
             self.assertEqual(options["num_predict"], num_predict)
         self.assertEqual(len(set(seen.values())), 3)
         status, _headers, _body = self._post(
@@ -1012,8 +1014,8 @@ class PairHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertFalse(OllamaFake.last_payload["think"])
-        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.7)
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 384)
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 256)
 
     def test_feedback_rates_the_last_completion(self):
         self._pi3_accepts_forwarded_rows()
@@ -1145,8 +1147,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("X-Pi-Think"), "high")
         self.assertEqual(body["pi_think"], "high")
-        self.assertEqual(LlamaFake.last_payload["temperature"], 0.7)
-        self.assertEqual(LlamaFake.last_payload["max_tokens"], 768)
+        self.assertEqual(LlamaFake.last_payload["temperature"], 0.3)
+        self.assertEqual(LlamaFake.last_payload["max_tokens"], 512)
         self.assertNotIn("think", LlamaFake.last_payload)
 
     def _pi4(self):
@@ -1257,84 +1259,6 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn(
             "Web search notes", json.dumps(OllamaFake.last_payload["messages"])
         )
-
-    def test_visual_miss_adds_public_image_cards_and_a_lookup_failure_does_not(self):
-        poster = {
-            "url": "https://upload.wikimedia.org/wikipedia/en/2/2e/Inception_%282010%29_theatrical_poster.jpg",
-            "alt": "Inception. 2010 film by Christopher Nolan",
-            "title": "Inception",
-            "caption": "2010 film by Christopher Nolan",
-            "source": "https://en.wikipedia.org/wiki/Inception",
-            "width": 220,
-            "height": 326,
-        }
-        prompt = "Tell me about the movie Inception"
-        calls = []
-
-        def fake(query, opener=None):
-            calls.append(query)
-            return [
-                {
-                    "url": "http://127.0.0.1/secret.jpg",
-                    "alt": "secret",
-                    "title": "secret",
-                },
-                dict(poster),
-                {
-                    "url": "https://evil.example/poster.jpg",
-                    "alt": "nope",
-                    "title": "nope",
-                },
-            ]
-
-        pair_server.lookup_images = fake
-        port = self._pi4()
-        status, _headers, body = self._post(
-            port,
-            {
-                "model": "qwen3:0.6b",
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-            },
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(calls, [prompt])
-        self.assertEqual(body["pi_images"], [poster])
-        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
-        self.assertNotIn(poster["url"], json.dumps(OllamaFake.last_payload))
-
-        def boom(query, opener=None):
-            raise RuntimeError("wiki down")
-
-        pair_server.lookup_images = boom
-        status, _headers, body = self._post(
-            port,
-            {
-                "model": "qwen3:0.6b",
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-            },
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200)
-        self.assertNotIn("pi_images", body)
-        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
-
-        pair_server.lookup_images = fake
-        calls.clear()
-        _headers, raw = self._stream_raw(
-            port,
-            prompt,
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(_statuses(raw), ["thinking", "answering"])
-        pictured = [item for item in _sse_payloads(raw) if item.get("pi_images")]
-        self.assertGreaterEqual(len(pictured), 2)
-        self.assertEqual(pictured[0]["pi_images"], [poster])
-        self.assertEqual(pictured[-1]["pi_images"], [poster])
-        self.assertNotIn("127.0.0.1", raw)
-        self.assertNotIn("evil.example", raw)
 
     def test_followup_keeps_earlier_turns_on_pi4(self):
         port = self._pi4()
@@ -1651,7 +1575,7 @@ class PairHttp(unittest.TestCase):
         from pair.knobs import search_note_limit
 
         limit = search_note_limit()
-        self.assertEqual(limit, 640)
+        self.assertEqual(limit, 720)
         prompt = "Search for how wide the east window is."
         page = "snippet " * 400
 
@@ -1680,12 +1604,17 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_stages"], ["thinking", "searching", "answering"])
         self.assertEqual(body["pi_sources"][0]["url"], "https://example.com/window")
         self.assertEqual(headers.get("X-Pi-Search"), "ok")
-        system = OllamaFake.last_payload["messages"][0]
-        self.assertEqual(system["role"], "system")
-        self.assertLessEqual(len(system["content"]), limit)
-        self.assertTrue(system["content"].startswith("Web search notes."))
-        self.assertIn("snippet", system["content"])
-        self.assertLess(len(system["content"]), len(page))
+        messages = OllamaFake.last_payload["messages"]
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertTrue(messages[0]["content"].startswith("You are OpenPi"))
+        notes = messages[-2]
+        self.assertEqual(messages[-1]["role"], "user")
+        self.assertEqual(notes["role"], "system")
+        self.assertTrue(notes["content"].startswith("Notes:"))
+        self.assertIn("Web search notes.", notes["content"])
+        self.assertLessEqual(len(notes["content"]), limit + len("Notes:\n"))
+        self.assertIn("snippet", notes["content"])
+        self.assertLess(len(notes["content"]), len(page))
 
     def test_math_is_answered_by_the_model(self):
         prompt = (
@@ -1720,10 +1649,10 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertGreaterEqual(OllamaFake.posts, 1)
-        self.assertEqual(self.search_calls, [])
-        self.assertNotIn("searching", body["pi_stages"])
+        self.assertEqual(self.search_calls, [prompt])
+        self.assertIn("searching", body["pi_stages"])
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
-        self.assertIsNone(headers.get("X-Pi-Search"))
+        self.assertEqual(headers.get("X-Pi-Search"), "ok")
 
         OllamaFake.posts = 0
         self.search_calls.clear()
@@ -1760,11 +1689,13 @@ class PairHttp(unittest.TestCase):
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
-        self.assertEqual(_statuses(raw), ["thinking", "answering"])
+        self.assertEqual(
+            _statuses(raw), ["thinking", "searching", "searching", "answering"]
+        )
         self.assertIn("hel", raw)
         self.assertIn("lo from peer", raw)
         self.assertEqual(OllamaFake.posts, 1)
-        self.assertEqual(self.search_calls, [])
+        self.assertEqual(self.search_calls, [prompt])
 
     def _brain(self):
         peer_port = self._listen(OllamaFake)
@@ -1870,11 +1801,11 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_think"], "high")
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
         self.assertFalse(OllamaFake.last_payload["think"])
-        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.7)
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
         self.assertEqual(OllamaFake.last_payload["options"]["top_p"], 0.8)
         self.assertEqual(OllamaFake.last_payload["options"]["top_k"], 20)
-        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 1.5)
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
+        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 0)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 512)
         status, headers, body = self._post(
             port,
             {
@@ -1890,7 +1821,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(headers.get("X-Pi-Route"), "pro")
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:1.7b")
         self.assertFalse(OllamaFake.last_payload["think"])
-        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 1.5)
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.5)
+        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 0.5)
         os.environ["OLLAMA_MAX_LOADED_MODELS"] = "3"
         runtime.reset_health()
         status, _headers, body = self._post(

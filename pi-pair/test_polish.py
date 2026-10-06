@@ -1,4 +1,4 @@
-"""Charts, lists, document excerpts, and the Pro preload."""
+"""Diagrams, document excerpts, and the Pro preload."""
 
 from __future__ import annotations
 
@@ -14,16 +14,8 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.charts import (  # noqa: E402
-    CHART_FALLBACK,
-    chart_json_ok,
-    is_structured_request,
-    parabola_chart,
-    repair_chart_reply,
-    structure_hint,
-)
 from pair.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
-from pair.images import cards_for_answer, item_names, visual_mode  # noqa: E402
+from pair.turn import is_structured_request, structure_hint  # noqa: E402
 from pair.preload import (  # noqa: E402
     PRELOAD_TIMEOUT_S,
     pro_preload_payload,
@@ -31,136 +23,19 @@ from pair.preload import (  # noqa: E402
 )
 
 
-class Charts(unittest.TestCase):
-    def test_parabola_is_a_chart_fence(self):
-        fence = parabola_chart("Plot me a parabolic curve")
-        self.assertIsNotNone(fence)
-        spec = json.loads(fence.split("\n", 1)[1].rsplit("\n", 1)[0])
-        series = spec["data"][0]
-        self.assertEqual(series["type"], "scatter")
-        self.assertEqual(series["y"], [25, 16, 9, 4, 1, 0, 1, 4, 9, 16, 25])
-        self.assertIsNone(structure_hint("Plot me a parabolic curve"))
-
-    def test_other_plots_skip_search_and_keep_a_hint(self):
-        self.assertTrue(is_structured_request("graph the temperature this week"))
-        self.assertIsNone(parabola_chart("graph the temperature this week"))
-        hint = structure_hint("graph the temperature this week")
-        self.assertIn("```chart", hint)
-        self.assertIn("Do not mention Desmos", hint)
-        self.assertTrue(is_structured_request("make a table of name and year"))
-        self.assertIn("```table", structure_hint("make a table of name and year"))
+class Diagrams(unittest.TestCase):
+    def test_only_a_diagram_skips_search_and_gets_a_hint(self):
+        self.assertFalse(is_structured_request("graph the temperature this week"))
+        self.assertIsNone(structure_hint("graph the temperature this week"))
+        self.assertFalse(is_structured_request("make a table of name and year"))
+        self.assertIsNone(structure_hint("make a table of name and year"))
+        self.assertFalse(is_structured_request("Plot me a parabolic curve"))
         self.assertTrue(is_structured_request("draw a flowchart of the login steps"))
-        self.assertIn("mermaid", structure_hint("draw a flowchart of the login steps"))
+        hint = structure_hint("draw a flowchart of the login steps")
+        self.assertIn("mermaid", hint)
+        self.assertNotIn("```chart", hint)
+        self.assertNotIn("```table", hint)
         self.assertFalse(is_structured_request("where is the hall bench"))
-
-    def test_valid_chart_is_kept_and_invalid_retries_once(self):
-        prompt = "plot a bar chart of the fruit stand"
-        good = 'Apples lead.\n```chart\n{"title":"Fruit","data":[{"type":"bar","y":[1,2]}]}\n```'
-        calls = {"n": 0}
-
-        def retry():
-            calls["n"] += 1
-            return good
-
-        self.assertTrue(
-            chart_json_ok('{"title":"Fruit","data":[{"type":"pie","values":[1,2]}]}')
-        )
-        self.assertFalse(chart_json_ok('{"data":[{"type":"bar","points":[1,2]}]}'))
-        self.assertEqual(repair_chart_reply(good, retry, prompt=prompt), good)
-        self.assertEqual(calls["n"], 0)
-        bad = '```json\n{"title":"Fruit","data":[{"type":"bar","points":[1,2]}]}\n```'
-        self.assertEqual(repair_chart_reply(bad, retry, prompt=prompt), good)
-        self.assertEqual(calls["n"], 1)
-
-        def still_bad():
-            calls["n"] += 1
-            return '```chart\n{"data":[{"type":"scatter","x":[1]}]}\n```'
-
-        sentence = repair_chart_reply(bad, still_bad, prompt=prompt)
-        self.assertEqual(sentence, CHART_FALLBACK)
-        self.assertNotIn("```", sentence)
-        self.assertEqual(calls["n"], 2)
-        self.assertEqual(sentence.count("."), 1)
-
-    def test_salvageable_json_is_a_chart_fence(self):
-        prompt = "Plot the fruit stand"
-        body = '{"title":"Fruit","data":[{"type":"bar","y":[1, 2]}]}'
-        fence = "```chart\n" + body + "\n```"
-        calls = {"n": 0}
-
-        def retry():
-            calls["n"] += 1
-            return "unused"
-
-        fenced = "Here.\n```json\n" + body + "\n```\n"
-        self.assertEqual(repair_chart_reply(fenced, retry, prompt=prompt), fence)
-        self.assertEqual(
-            repair_chart_reply("```JSON\n" + body + "\n```", retry, prompt=prompt),
-            fence,
-        )
-        self.assertEqual(repair_chart_reply(body, retry, prompt=prompt), fence)
-        self.assertEqual(
-            repair_chart_reply("```json\r\n" + body + "\r\n```", retry, prompt=prompt),
-            fence,
-        )
-        self.assertEqual(calls["n"], 0)
-        self.assertTrue(chart_json_ok(body))
-
-        pie = '{"data":[{"type":"pie","values":[1,2]}]}'
-        self.assertEqual(
-            repair_chart_reply("```json\n" + pie + "\n```", retry, prompt=prompt),
-            "```chart\n" + pie + "\n```",
-        )
-        plotly = "```plotly\n" + body + "\n```"
-        self.assertEqual(repair_chart_reply(plotly, retry, prompt=prompt), plotly)
-        chart = "Apples lead.\n" + fence
-        self.assertEqual(repair_chart_reply(chart, retry, prompt=prompt), chart)
-        mixed = fence + "\n```json\n" + body + "\n```"
-        self.assertEqual(
-            repair_chart_reply(mixed, retry, prompt=prompt), fence + "\n" + fence
-        )
-        self.assertNotIn(
-            "```json", repair_chart_reply(mixed, retry, prompt=prompt).lower()
-        )
-        python = '```python\n{"data":[{"type":"bar","y":[1]}]}\n```'
-        self.assertEqual(repair_chart_reply(python, retry, prompt=prompt), python)
-        self.assertEqual(
-            repair_chart_reply('{"host":"pi4"}', retry, prompt=prompt), '{"host":"pi4"}'
-        )
-        self.assertEqual(
-            repair_chart_reply("No points were given.", retry, prompt=prompt),
-            "No points were given.",
-        )
-        kept = repair_chart_reply(fenced, retry, prompt="what host is this")
-        self.assertEqual(kept, fenced)
-        self.assertIn("```json", kept)
-        self.assertEqual(calls["n"], 0)
-
-        bad = '```json\n{"title":"Fruit","data":[{"type":"bar","points":[1,2]}]}\n```'
-        loose = '```JSON\n{"title":"Picnic","data":[{"type":"Bar","y":[2, 4,],}]}\n```'
-
-        def salvage():
-            calls["n"] += 1
-            return "```json\n" + body + "\n```"
-
-        self.assertEqual(repair_chart_reply(bad, salvage, prompt=prompt), fence)
-        self.assertEqual(calls["n"], 1)
-
-        def bare():
-            calls["n"] += 1
-            return "  " + body + "  "
-
-        self.assertEqual(repair_chart_reply(loose, bare, prompt=prompt), fence)
-        self.assertEqual(calls["n"], 2)
-
-        def prose():
-            calls["n"] += 1
-            return "I drew it in my head."
-
-        sentence = repair_chart_reply(bad, prose, prompt=prompt)
-        self.assertEqual(sentence, CHART_FALLBACK)
-        self.assertNotIn("```json", sentence)
-        self.assertEqual(calls["n"], 3)
 
 
 class Documents(unittest.TestCase):
@@ -220,8 +95,8 @@ class Preload(unittest.TestCase):
         self.assertEqual(payload["keep_alive"], -1)
         self.assertNotEqual(payload["keep_alive"], 0)
         self.assertEqual(payload["options"]["num_predict"], 1)
-        self.assertEqual(payload["options"]["num_ctx"], 2048)
-        self.assertEqual(payload["options"]["num_batch"], 64)
+        self.assertEqual(payload["options"]["num_ctx"], 1536)
+        self.assertEqual(payload["options"]["num_batch"], 128)
         self.assertEqual(payload["options"]["num_thread"], 4)
         flash = pro_preload_payload("qwen3:0.6b")
         self.assertEqual(flash["options"]["num_ctx"], 1536)
@@ -273,59 +148,6 @@ class Preload(unittest.TestCase):
                     rewarm_pro_if_evicted()
         self.assertEqual([item["model"] for item in seen], ["qwen3:1.7b"])
         self.assertEqual(seen[0]["keep_alive"], -1)
-
-
-class VisualLists(unittest.TestCase):
-    def test_each_item_gets_a_card_and_math_does_not(self):
-        self.assertEqual(visual_mode("top 5 cars"), "each")
-        self.assertEqual(visual_mode("Tell me about the movie Inception"), "one")
-        self.assertEqual(visual_mode("what is the derivative of x squared"), "none")
-        self.assertEqual(visual_mode("top 10 prime numbers"), "none")
-        answer = "1. Dune — desert\n2. Arrival — language"
-        self.assertEqual(item_names(answer, 5), ["Dune", "Arrival"])
-
-        def opener(request, timeout=None):
-            url = request.full_url
-            title = "Dune" if "Dune" in url else "Arrival"
-            if "list=search" in url:
-                return _Resp(
-                    json.dumps({"query": {"search": [{"title": title + " (film)"}]}})
-                )
-            return _Resp(
-                json.dumps(
-                    {
-                        "type": "standard",
-                        "title": title,
-                        "description": "film",
-                        "thumbnail": {
-                            "source": f"https://upload.wikimedia.org/wikipedia/en/{title}.jpg",
-                            "width": 100,
-                            "height": 140,
-                        },
-                        "content_urls": {
-                            "desktop": {
-                                "page": f"https://en.wikipedia.org/wiki/{title}"
-                            }
-                        },
-                    }
-                )
-            )
-
-        cards = cards_for_answer("top 2 movies", answer, opener=opener)
-        self.assertEqual([card["title"] for card in cards], ["Dune", "Arrival"])
-        self.assertEqual(cards_for_answer("top 10 prime numbers", "1. 2\n2. 3"), [])
-
-
-class _Resp:
-    def __init__(self, body: str):
-        self._body = body.encode()
-
-    def read(self, _n=-1):
-        data, self._body = self._body, b""
-        return data
-
-    def close(self):
-        return None
 
 
 class WebPolish(unittest.TestCase):

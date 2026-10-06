@@ -253,7 +253,6 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
     line-height: 1.65;
   }
 
-  &:has(.pi-chart),
   &:has(.pi-diagram),
   &:has(.pi-table) {
     width: 100%;
@@ -469,18 +468,6 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
   hr { border: none; border-top: 1px solid var(--line); margin: 1em 0; }
 }
 
-.pi-chart {
-  width: 100%;
-  min-height: 280px;
-  margin: 0.75em 0;
-}
-
-.pi-chart-failed {
-  min-height: 0;
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .thought {
   width: min(100%, 38rem);
   margin: 0 0 8px;
@@ -526,77 +513,6 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
 
 .search-kicker { color: var(--dim); }
 
-.image-cards {
-  display: flex;
-  gap: 10px;
-  margin: 0 0 10px;
-  max-width: 100%;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scroll-snap-type: x proximity;
-}
-
-.image-card {
-  flex: 0 0 auto;
-  width: 148px;
-  scroll-snap-align: start;
-  display: flex;
-  flex-direction: column;
-  text-decoration: none;
-  color: inherit;
-  background: #1c1c1c;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  overflow: hidden;
-
-  img {
-    width: 100%;
-    height: 196px;
-    object-fit: contain;
-    background: #111;
-    display: block;
-  }
-
-  .image-card-copy {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 8px 10px 10px;
-  }
-
-  .image-card-title {
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.3;
-    color: var(--ink);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .image-card-caption {
-    font-size: 11px;
-    line-height: 1.35;
-    color: var(--muted);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  &:hover { border-color: rgba(124, 184, 255, 0.45); }
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  &:only-child {
-    width: min(100%, 220px);
-
-    img { height: 280px; }
-  }
-}
 .search-failed {
   color: #ffb0aa;
   font-size: 13px;
@@ -868,12 +784,6 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
 
   svg { display: block; width: 16px; height: 16px; flex: none; }
   &:hover { color: var(--ink); background: var(--hover); }
-}
-
-.image-miss {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--muted);
 }
 
 .info-slot {
@@ -1194,8 +1104,10 @@ body.voice-session {
   #q,
   #btnAttach,
   #go,
+  #stop,
   #btnVoice,
   .file-tag,
+  .follow-queue,
   .voice-note { display: none; }
 
   .voice-stage { display: flex; }
@@ -1222,6 +1134,52 @@ body.voice-session {
 @keyframes speak-halo {
   0%, 100% { opacity: 0.72; transform: translate(-50%, -50%) scale(0.9); }
   50% { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
+}
+
+.follow-queue {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 8px;
+
+  &[hidden] { display: none; }
+}
+
+.follow-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px 4px 4px 10px;
+  border-radius: 14px;
+  background: var(--elev);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.follow-tag {
+  flex: none;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.follow-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.follow-drop {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  color: var(--dim);
+  font-size: 18px;
+  line-height: 1;
 }
 
 .file-tag {
@@ -1444,6 +1402,8 @@ body.voice-session {
   &.send .send-mark,
   &.stop .stop-mark { opacity: 1; transform: none; }
 }
+
+#stop[hidden] { display: none; }
 
 .edit-box {
   width: min(32rem, 100%);
@@ -1731,12 +1691,6 @@ html[data-theme="light"] {
     color: var(--ink);
   }
   .user .body, .bot .body, .edit-box { border-color: rgba(0, 0, 0, 0.08); }
-  .image-card {
-    background: #fff;
-    border-color: rgba(0, 0, 0, 0.1);
-
-    img { background: #f3f1eb; }
-  }
   .sources-fav, .sources-links a .sources-fav {
     border-color: #fff;
     background: #dedcd4;

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import threading
 import time
 import urllib.request
@@ -19,10 +21,54 @@ from pair.config import PI2_ALT_PORTS
 from pair.guard import may_generate
 from pair import runtime
 
+COOLING_NOTE = "A heatsink and a fan keep the Pi from slowing down under load."
+
 # Peer /health and /api/tags budget. Callers treat a miss past this as down.
 PEER_PROBE_S = 2.5
 # One timed-out poll stays inside this window. The next miss can drop peers_up.
 PEER_GRACE_S = 12.0
+
+
+def parse_temp_c(text: str) -> float | None:
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)", text or "")
+    if not match:
+        return None
+    return float(match.group(1))
+
+
+def parse_throttled(text: str) -> str | None:
+    match = re.search(r"0x[0-9a-fA-F]+", text or "")
+    if not match:
+        return None
+    return match.group(0)
+
+
+def _vcgencmd(args: list[str]) -> str:
+    try:
+        done = subprocess.run(
+            ["vcgencmd", *args],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if done.returncode != 0:
+        return ""
+    return done.stdout or ""
+
+
+def board_thermal() -> dict:
+    """SoC temperature and throttle flags when vcgencmd is installed."""
+    out: dict = {}
+    temp = parse_temp_c(_vcgencmd(["measure_temp"]))
+    if temp is not None:
+        out["temp_c"] = temp
+    flags = parse_throttled(_vcgencmd(["get_throttled"]))
+    if flags is not None:
+        out["throttled"] = flags
+    return out
 
 
 def _get_json(url: str, timeout: float = PEER_PROBE_S):

@@ -15,10 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.assist import (
-    HELPFUL_NUDGE,
     is_harmful,
-    is_soft_refusal,
-    may_retry_refusal,
     scrub_reply,
     settle_reply,
     stream_release,
@@ -27,14 +24,6 @@ from pair.assist import (
 from pair.moderate import moderate
 from pair.cancel import Cancel, ClientGone, peer_closed
 from pair.canned import lookup
-from pair.charts import (
-    CHART_NUDGE,
-    is_chart_request,
-    is_structured_request,
-    ready_chart,
-    repair_chart_reply,
-    structure_hint,
-)
 from pair.chat import (
     chat_llamacpp,
     chat_ollama,
@@ -56,8 +45,7 @@ from pair.errors import (
     friendly_error,
 )
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
-from pair.health import snapshot_peers
-from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
+from pair.health import COOLING_NOTE, board_thermal, snapshot_peers
 from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
 from pair.modes import (
     mode_table,
@@ -88,13 +76,16 @@ from pair.mesh import lookup_for_brain
 from pair.search import lookup_web
 from pair import runtime
 from pair.stream import iter_ollama_channels, stream_llamacpp, stream_ollama
-from pair.think import peel_think
+from pair.think import decode_plan, peel_think
+from pair.timing import assemble, present
 from pair.turn import (
     degraded_answer,
+    is_structured_request,
     needs_web,
     prepare_search_note,
     public_failure,
     shape_messages,
+    structure_hint,
 )
 from pair.upload import UploadRejected, ingest, read_limited
 
@@ -330,42 +321,55 @@ def _join_cancel(thread, timeout: float | None, cancel=None) -> None:
         thread.join(0.25)
 
 
-def _with_search(
-    messages, prompt: str, images: list | None = None, model: str = "", cancel=None
-):
-    """On pi4, attach public notes when a lookup already ran. Failures stay local.
-
-    The lookup is capped so a slow page cannot hold the first token. Image
-    cards and an in-flight model warm run beside the lookup.
-    """
-    warm = warm_in_flight()
-    worker = None
-    if images is not None:
-
-        def _load_images() -> None:
-            images.extend(_image_cards(prompt))
-
-        worker = threading.Thread(
-            target=_load_images, name="search-images", daemon=True
-        )
-        worker.start()
-    if not (prompt or "").strip():
-        _join_cancel(worker, None, cancel)
-        _join_cancel(warm, 40, cancel)
-        return messages, None
-    query = prompt
+def _begin_lookup(prompt: str, model: str) -> dict:
+    """Start the lookup before the decode slot, so it overlaps the queue wait."""
     cap = _source_cap(model)
     holder: dict = {}
+    started = time.perf_counter()
+    deadline = time.monotonic() + SEARCH_BUDGET_S
 
     def _lookup() -> None:
         try:
-            holder["found"] = lookup_for_brain(query, local=lookup_web, limit=cap)
+            holder["found"] = lookup_for_brain(
+                prompt, local=lookup_web, limit=cap, deadline=deadline
+            )
         except Exception:
             holder["found"] = None
 
     lookup = threading.Thread(target=_lookup, name="search-lookup", daemon=True)
     lookup.start()
-    _join_cancel(lookup, SEARCH_BUDGET_S, cancel)
+    return {
+        "thread": lookup,
+        "holder": holder,
+        "deadline": deadline,
+        "started": started,
+        "cap": cap,
+    }
+
+
+def _with_search(
+    messages,
+    prompt: str,
+    model: str = "",
+    cancel=None,
+    job: dict | None = None,
+):
+    """On pi4, attach public notes when a lookup already ran. Failures stay local.
+
+    The lookup is capped so a slow search cannot hold the first token. An
+    in-flight model warm runs beside the join.
+    """
+    warm = warm_in_flight()
+    if not (prompt or "").strip():
+        _join_cancel(warm, 40, cancel)
+        return messages, None
+    if job is None:
+        job = _begin_lookup(prompt, model)
+    lookup = job["thread"]
+    holder = job["holder"]
+    cap = int(job["cap"])
+    remain = max(0.0, float(job["deadline"]) - time.monotonic())
+    _join_cancel(lookup, remain, cancel)
     found = holder.get("found") if not lookup.is_alive() else None
     if not isinstance(found, dict):
         found = {"status": "failed", "sources": [], "context": ""}
@@ -385,52 +389,34 @@ def _with_search(
         sources.append({"title": title[:120], "url": url})
     full = str(found.get("context") or "").strip()
     shown = prepare_search_note(full, search_note_limit())
+    note = {"status": status, "sources": sources, "context": full}
     if status == "ok" and shown:
-        messages = [{"role": "system", "content": shown}, *messages]
-    _join_cancel(worker, None, cancel)
+        note["prompt_note"] = shown
     _join_cancel(warm, 40, cancel)
-    return messages, {"status": status, "sources": sources, "context": full}
+    return messages, note
 
 
-def _image_cards(prompt: str, answer: str = "") -> list[dict]:
-    """Public cards for this turn. A list of visual items waits for the answer."""
-    mode = visual_mode(prompt)
-    if mode == "none":
-        return []
-    try:
-        if mode == "each":
-            if not (answer or "").strip():
-                return []
-            found = cards_for_answer(prompt, answer)
-        else:
-            found = lookup_images(prompt)
-    except Exception:
-        return []
-    if not isinstance(found, list):
-        return []
-    cap = 8 if mode == "each" else 3
-    cards = []
-    for item in found:
-        clean = sanitize_card(item)
-        if not clean:
-            continue
-        cards.append(clean)
-        if len(cards) >= cap:
-            break
-    return cards
+def _prompt_note(search_note) -> str:
+    if not isinstance(search_note, dict):
+        return ""
+    return str(search_note.get("prompt_note") or "")
 
 
-def _cards_after(prompt: str, answer: str, images: list[dict]) -> list[dict]:
-    """One card per listed car, movie, product, or place. Other turns keep theirs."""
-    if visual_mode(prompt) != "each":
-        return images
-    fresh = _image_cards(prompt, answer)
-    return fresh or images
-
-
-def _put_images(payload: dict, images: list[dict]) -> None:
-    if images:
-        payload["pi_images"] = images
+def _apply_model_sample(handler, model: str, temperature: float, max_tokens: int):
+    """Flash and Pro use different temperatures once the tag is final."""
+    plan = getattr(handler, "_decode_plan", None)
+    if plan is None:
+        return temperature, max_tokens
+    table = mode_table()
+    pro_tag = str(table.get("pro") or "")
+    flash_tag = str(table.get("flash") or "")
+    name = str(model or "")
+    pro = bool(pro_tag) and name == pro_tag and name != flash_tag
+    tuned = decode_plan(getattr(plan, "name", ""), pro=pro)
+    if tuned is None:
+        return temperature, max_tokens
+    handler._decode_plan = tuned
+    return tuned.temperature, tuned.num_predict
 
 
 def listed_chat_models() -> list[str] | None:
@@ -535,7 +521,7 @@ def health_document() -> dict:
     up = sum(1 for peer in peers if isinstance(peer, dict) and peer.get("ok"))
     table = mode_table()
     pro_model = str(table.get("pro") or "").strip()
-    return {
+    doc = {
         "ok": True,
         "model": runtime.MODEL,
         "pro_model": pro_model,
@@ -548,6 +534,7 @@ def health_document() -> dict:
         "waiting": runtime.gate.waiting(),
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
         "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
+        "cooling": COOLING_NOTE,
         "services": {
             "brain": _service_row(peers, "brain", "pi4"),
             "search": _service_row(peers, "health", "pi2"),
@@ -555,6 +542,8 @@ def health_document() -> dict:
             "peers": len(peers),
         },
     }
+    doc.update(board_thermal())
+    return doc
 
 
 def public_health(doc: dict) -> dict:
@@ -569,25 +558,25 @@ def public_health(doc: dict) -> dict:
     for peer in doc.get("peers") or []:
         if not isinstance(peer, dict):
             continue
-        models = peer.get("models") if isinstance(peer.get("models"), list) else []
-        peers.append({"ok": bool(peer.get("ok")), "models": models})
-    return {
+        peers.append({"ok": bool(peer.get("ok"))})
+    shown = {
         "ok": bool(doc.get("ok")),
         "slots": doc.get("slots"),
         "in_flight": doc.get("in_flight"),
         "waiting": doc.get("waiting", runtime.gate.waiting()),
         "uptime_s": doc.get("uptime_s"),
+        "cooling": COOLING_NOTE,
         "peers_up": doc.get("peers_up"),
         "services": services,
         "peers": peers,
     }
+    return shown
 
 
 def index_body() -> bytes:
-    """Fill the page from config: default model, plus Flash and Pro tip text."""
+    """Fill the page from config: Flash and Pro tip text. Model tags stay off it."""
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     tips = mode_tips()
-    html = html.replace("__MODEL__", runtime.MODEL)
     html = html.replace("__FLASH_TIP__", tips["flash"])
     html = html.replace("__PRO_TIP__", tips["pro"])
     return html.encode("utf-8")
@@ -944,6 +933,35 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         safe_write(self, body)
 
+    def _reset_timing(self) -> None:
+        self._queue_ms = 0
+        self._search_ms = 0
+        self._usage = {}
+        self._queue_t0 = None
+
+    def _mark_queue(self) -> None:
+        started = getattr(self, "_queue_t0", None)
+        if started is None:
+            return
+        self._queue_ms = int((time.perf_counter() - started) * 1000)
+
+    def _timed_search(self, *args, job=None, **kwargs):
+        started = time.perf_counter()
+        try:
+            return _with_search(*args, job=job, **kwargs)
+        finally:
+            origin = job["started"] if isinstance(job, dict) else started
+            self._search_ms = int((time.perf_counter() - origin) * 1000)
+
+    def _attach_timing(self, payload: dict, started: float) -> None:
+        timing = assemble(
+            queue_ms=getattr(self, "_queue_ms", 0),
+            search_ms=getattr(self, "_search_ms", 0),
+            usage=getattr(self, "_usage", None),
+            total_ms=int((time.time() - started) * 1000),
+        )
+        payload["pi_timing"] = present(timing, self._public())
+
     def _effort_name(self) -> str:
         """Low, Medium, or High when the turn named one. Empty otherwise."""
         plan = getattr(self, "_decode_plan", None)
@@ -1167,6 +1185,7 @@ class Handler(BaseHTTPRequestHandler):
         started = time.time()
         want_stream = bool(data.get("stream"))
         self._searched = False
+        self._reset_timing()
         refused = _block(prompt)
         if refused:
             self._policy_refusal(prompt, want_stream, started, refused)
@@ -1226,31 +1245,20 @@ class Handler(BaseHTTPRequestHandler):
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             structured = is_structured_request(prompt)
-            ready = ready_chart(prompt)
             do_search = (
                 bool(mesh and node_role() == "brain")
-                and ready is None
                 and not structured
-                and needs_web(prompt)
+                and needs_web(prompt, follow_up=not one_user_turn(messages))
             )
             tuned = _tuned_knobs(used if kind != "llamacpp" else model)
             ctx = int(tuned.get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
-            hint = None if ready else structure_hint(prompt)
+            hint = structure_hint(prompt)
             if hint:
                 outbound = [{"role": "system", "content": hint}, *outbound]
             search_note = None
-            images: list[dict] = []
-            if do_search and not want_stream:
-                self._searched = True
-                outbound, search_note = _with_search(
-                    outbound, prompt, images, model, getattr(self, "_cancel", None)
-                )
-            elif not want_stream:
-                images = _image_cards(prompt)
-            if not want_stream:
-                outbound = shape_messages(outbound, prompt, tuned, think_name)
-            grounded = ready
+            search_job = _begin_lookup(prompt, model) if do_search else None
+            grounded = None
         except ClientGone:
             raise
         except Exception as error:
@@ -1285,10 +1293,16 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._error(MODEL_MISSING)
                     return
+        temperature, max_tokens = _apply_model_sample(
+            self, model, temperature, max_tokens
+        )
         use_model = grounded is None
         slot = {"held": False, "waiting": False}
         if use_model:
+            self._queue_t0 = time.perf_counter()
             outcome = runtime.gate.reserve()
+            if outcome == "ready":
+                self._mark_queue()
             if outcome == "full":
                 self._error(BUSY, status=503)
                 return
@@ -1312,12 +1326,12 @@ class Handler(BaseHTTPRequestHandler):
                     do_search,
                     searched=False,
                     search_note=None,
-                    images=[],
                     mode_name=mode_name,
                     route_name=route_name,
                     resident_name=resident_name,
                     ready_answer=grounded,
                     slot=slot,
+                    search_job=search_job,
                 )
             else:
                 if slot["waiting"] and not _claim_wait(
@@ -1325,6 +1339,20 @@ class Handler(BaseHTTPRequestHandler):
                 ):
                     self._error(BUSY, status=503)
                     return
+                if slot["held"]:
+                    self._mark_queue()
+                if do_search:
+                    self._searched = True
+                    outbound, search_note = self._timed_search(
+                        outbound,
+                        prompt,
+                        model,
+                        getattr(self, "_cancel", None),
+                        job=search_job,
+                    )
+                outbound = shape_messages(
+                    outbound, prompt, tuned, think_name, _prompt_note(search_note)
+                )
                 stages = ["thinking"]
                 if do_search:
                     stages.append("searching")
@@ -1341,7 +1369,6 @@ class Handler(BaseHTTPRequestHandler):
                     think_name,
                     search_note,
                     stages,
-                    images,
                     mode_name,
                     route_name,
                     resident_name,
@@ -1769,7 +1796,7 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         search_note: dict | None,
     ) -> tuple[str, str, bool]:
-        """One completion. A failed decode is one sentence. A chart may be repaired once."""
+        """One completion. A failed decode is one sentence."""
         meta: dict = {}
         try:
             if kind == "llamacpp":
@@ -1796,6 +1823,7 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, json.JSONDecodeError) as error:
             self._last_reasoning = ""
             return degraded_answer(search_note, error), model, False
+        self._usage = dict(meta.get("usage") or {})
         content = content or ""
         answer, leaked = peel_think(content)
         reasoning = "\n".join(
@@ -1807,13 +1835,8 @@ class Handler(BaseHTTPRequestHandler):
             return refused, used, False
         self._last_reasoning = reasoning
         content = answer
-        content = self._repair_chart(
-            peer, kind, model, messages, temperature, max_tokens, prompt, content
-        )
         if not _block(prompt):
-            content = self._guard_reply(
-                peer, kind, model, messages, temperature, max_tokens, prompt, content
-            )
+            content = settle_reply(prompt, content, lambda: "")
         refused = _block(content)
         if refused:
             self._last_reasoning = ""
@@ -1821,95 +1844,6 @@ class Handler(BaseHTTPRequestHandler):
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
-
-    def _ask(self, peer, kind, model, messages, temperature, max_tokens) -> str:
-        try:
-            if kind == "llamacpp":
-                more, _used = chat_llamacpp(
-                    peer, model, messages, temperature, max_tokens, cancel=self._cancel
-                )
-            else:
-                more, _used = chat_ollama(
-                    peer, model, messages, temperature, max_tokens, cancel=self._cancel
-                )
-        except (OSError, json.JSONDecodeError):
-            return ""
-        return more or ""
-
-    def _guard_reply(
-        self,
-        peer,
-        kind,
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        prompt: str,
-        content: str,
-    ) -> str:
-        """Nudge once. The model's words stay if the nudge is still a refusal."""
-
-        def again() -> str:
-            follow = shape_messages(
-                [
-                    *list(messages or []),
-                    {"role": "assistant", "content": content or ""},
-                    {"role": "user", "content": HELPFUL_NUDGE},
-                ],
-                prompt,
-                effort=self._effort_name(),
-            )
-            return self._ask(peer, kind, model, follow, temperature, max_tokens)
-
-        return settle_reply(prompt, content, again)
-
-    def _repair_chart(
-        self,
-        peer,
-        kind,
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        prompt: str,
-        content: str,
-    ) -> str:
-        """One strict-JSON retry when a chart fence is invalid, else one sentence."""
-
-        def again() -> str:
-            follow = shape_messages(
-                [
-                    *list(messages or []),
-                    {"role": "assistant", "content": content},
-                    {"role": "user", "content": CHART_NUDGE},
-                ],
-                prompt,
-                effort=self._effort_name(),
-            )
-            try:
-                if kind == "llamacpp":
-                    more, _used = chat_llamacpp(
-                        peer,
-                        model,
-                        follow,
-                        temperature,
-                        max_tokens,
-                        cancel=self._cancel,
-                    )
-                else:
-                    more, _used = chat_ollama(
-                        peer,
-                        model,
-                        follow,
-                        temperature,
-                        max_tokens,
-                        cancel=self._cancel,
-                    )
-            except (OSError, json.JSONDecodeError):
-                return ""
-            return more or ""
-
-        return repair_chart_reply(content, again, prompt=prompt)
 
     def _stream(
         self,
@@ -1926,12 +1860,12 @@ class Handler(BaseHTTPRequestHandler):
         do_search: bool = False,
         searched: bool = False,
         search_note: dict | None = None,
-        images: list[dict] | None = None,
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
         ready_answer: str | None = None,
         slot: dict | None = None,
+        search_job: dict | None = None,
     ) -> None:
         self.send_response(200)
         self._cors()
@@ -1991,28 +1925,27 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 safe_write(self, b"data: [DONE]\n\n", flush=True)
                 return
+            self._mark_queue()
 
         think_extra = {"pi_think": think_name} if think_name else None
         if not emit_status("thinking", think_extra):
             return
-        images = list(images or [])
-        if not do_search:
-            images = _image_cards(prompt)
         if do_search:
             self._searched = True
             if not emit_status("searching", {"pi_tool": "search"}):
                 return
             if not searched:
-                fresh: list[dict] = []
-                messages, search_note = _with_search(
-                    messages, prompt, fresh, model, getattr(self, "_cancel", None)
+                messages, search_note = self._timed_search(
+                    messages,
+                    prompt,
+                    model,
+                    getattr(self, "_cancel", None),
+                    job=search_job,
                 )
-                images = fresh
             found = {"pi_tool": "search"}
             if search_note:
                 found["pi_search"] = search_note["status"]
                 found["pi_sources"] = search_note["sources"]
-            _put_images(found, images)
             if not emit_status("searching", found):
                 return
         grounded = ready_answer
@@ -2020,10 +1953,11 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             answer_extra["pi_search"] = search_note["status"]
             answer_extra["pi_sources"] = search_note["sources"]
-        _put_images(answer_extra, images)
         if not emit_status("answering", answer_extra or None):
             return
-        messages = shape_messages(messages, prompt, _tuned_knobs(model), think_name)
+        messages = shape_messages(
+            messages, prompt, _tuned_knobs(model), think_name, _prompt_note(search_note)
+        )
         if grounded is not None:
             self._emit_ready_answer(
                 peer,
@@ -2035,49 +1969,10 @@ class Handler(BaseHTTPRequestHandler):
                 think_name,
                 search_note,
                 stages,
-                images,
                 mode_name,
                 route_name,
                 resident_name,
             )
-            return
-        if is_chart_request(prompt):
-            content, used, train = self._decode_reply(
-                peer,
-                kind,
-                model,
-                messages,
-                temperature,
-                max_tokens,
-                prompt,
-                search_note,
-            )
-            if train:
-                self._emit_ready_answer(
-                    peer,
-                    kind,
-                    used,
-                    prompt,
-                    content,
-                    started,
-                    think_name,
-                    search_note,
-                    stages,
-                    images,
-                    mode_name,
-                    route_name,
-                    resident_name,
-                )
-                return
-            chunk = {
-                "id": "pi-pair",
-                "object": "chat.completion.chunk",
-                "choices": [
-                    {"index": 0, "delta": {"content": content}, "finish_reason": None}
-                ],
-            }
-            safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
-            safe_write(self, b"data: [DONE]\n\n", flush=True)
             return
         if not self._public():
             safe_write(
@@ -2105,7 +2000,6 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             first["pi_search"] = search_note["status"]
             first["pi_sources"] = search_note["sources"]
-        _put_images(first, images)
         first.update(note)
         apply_tier(self, first)
         safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
@@ -2133,6 +2027,7 @@ class Handler(BaseHTTPRequestHandler):
                     max_tokens,
                     plan=plan,
                     cancel=self._cancel,
+                    usage=self._usage,
                 )
             else:
                 channels = (
@@ -2145,6 +2040,7 @@ class Handler(BaseHTTPRequestHandler):
                         max_tokens,
                         plan=plan,
                         cancel=self._cancel,
+                        usage=self._usage,
                     )
                 )
             closed = False
@@ -2210,8 +2106,6 @@ class Handler(BaseHTTPRequestHandler):
                             closed = True
                         break
                     thinking_parts.append(delta)
-                    if release == "hold":
-                        continue
                     joined_thought = "".join(thinking_parts)
                     piece = joined_thought[thinking_flushed:]
                     thinking_flushed = len(joined_thought)
@@ -2229,8 +2123,6 @@ class Handler(BaseHTTPRequestHandler):
                     if not clear_reasoning():
                         closed = True
                     break
-                if release == "hold":
-                    continue
                 old = flushed
                 if "<" in joined and "think" in joined.lower():
                     visible, leaked = peel_think(joined)
@@ -2319,50 +2211,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
             else:
                 answer = "".join(parts)
-            if (
-                not policy
-                and held
-                and may_retry_refusal(prompt)
-                and is_soft_refusal(answer)
-            ):
-                answer = self._guard_reply(
-                    peer,
-                    kind,
-                    model,
-                    messages,
-                    temperature,
-                    max_tokens,
-                    prompt,
-                    answer,
-                )
-                if answer and not safe_write(
-                    self,
-                    (
-                        "data: "
-                        + json.dumps(
-                            {
-                                "id": "pi-pair",
-                                "object": "chat.completion.chunk",
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {"content": answer},
-                                        "finish_reason": None,
-                                    }
-                                ],
-                            }
-                        )
-                        + "\n\n"
-                    ).encode(),
-                    flush=True,
-                ):
-                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                    note_exchange(
-                        prompt, answer, chip=chip, peer=peer["name"], train=True
-                    )
-                    remember_completion(prompt, answer, chip, peer["name"])
-                    return
-            elif not policy and not is_harmful(prompt):
+            if not policy and not is_harmful(prompt):
                 answer = scrub_reply(answer) or answer
             trainable = not policy
             if not policy and not str(answer).strip():
@@ -2383,7 +2232,6 @@ class Handler(BaseHTTPRequestHandler):
                     chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
                     remember_completion(prompt, answer, chip, peer["name"])
                     return
-            images = _cards_after(prompt, answer, images)
             elapsed = int((time.time() - started) * 1000)
             final = {
                 "id": "pi-pair",
@@ -2406,8 +2254,8 @@ class Handler(BaseHTTPRequestHandler):
             if search_note:
                 final["pi_search"] = search_note["status"]
                 final["pi_sources"] = search_note["sources"]
-            _put_images(final, images)
             final["pi_stages"] = list(stages)
+            self._attach_timing(final, started)
             final.update(note)
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
             if not policy:
@@ -2460,7 +2308,6 @@ class Handler(BaseHTTPRequestHandler):
         think_name: str,
         search_note: dict | None,
         stages: list[str],
-        images: list[dict] | None = None,
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
@@ -2478,7 +2325,6 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
-        _put_images(chunk, images or [])
         chunk.update(mode_fields(mode_name, route_name, resident_name))
         apply_tier(self, chunk)
         if not safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True):
@@ -2502,7 +2348,7 @@ class Handler(BaseHTTPRequestHandler):
         if search_note:
             final["pi_search"] = search_note["status"]
             final["pi_sources"] = search_note["sources"]
-        _put_images(final, images or [])
+        self._attach_timing(final, started)
         final.update(mode_fields(mode_name, route_name, resident_name))
         apply_tier(self, final)
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
@@ -2521,7 +2367,6 @@ class Handler(BaseHTTPRequestHandler):
         think_name: str = "",
         search_note: dict | None = None,
         stages: list[str] | None = None,
-        images: list[dict] | None = None,
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
@@ -2543,7 +2388,6 @@ class Handler(BaseHTTPRequestHandler):
                 prompt,
                 search_note,
             )
-            images = _cards_after(prompt, content, list(images or []))
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
         if train:
             note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
@@ -2569,12 +2413,12 @@ class Handler(BaseHTTPRequestHandler):
             "pi_model": used,
             "pi_kind": kind,
         }
+        self._attach_timing(resp, started)
         if think_name:
             resp["pi_think"] = think_name
         if search_note:
             resp["pi_search"] = search_note["status"]
             resp["pi_sources"] = search_note["sources"]
-        _put_images(resp, images or [])
         if stages:
             resp["pi_stages"] = stages
         resp.update(mode_fields(mode_name, route_name, resident_name))

@@ -13,7 +13,7 @@ from pair.config import (
     load_peers,
 )
 from pair.gate import InferenceGate
-from pair.knobs import clamp_parallel
+from pair.knobs import clamp_parallel, queue_limit
 
 PEERS: list[dict] = []
 MODEL = default_model()
@@ -31,7 +31,7 @@ _health_cache = {
     "refreshing": False,
     "thread": None,
 }
-gate = InferenceGate(INFER_SLOTS)
+gate = InferenceGate(INFER_SLOTS, queue_limit=queue_limit())
 # Live turns, keyed by X-Pi-Request-Id, so a retry can cancel the one before it.
 requests: dict = {}
 
@@ -45,7 +45,7 @@ def configure() -> None:
     PORT = listen_port()
     INFER_SLOTS = infer_slots()
     HEALTH_CACHE_TTL = health_ttl()
-    gate = InferenceGate(INFER_SLOTS)
+    gate = InferenceGate(INFER_SLOTS, queue_limit=queue_limit())
     requests.clear()
     reset_health()
 
@@ -54,7 +54,7 @@ def set_infer_slots(limit: int) -> None:
     """Pin the cap. Tests use this so they do not depend on process env."""
     global INFER_SLOTS, gate
     INFER_SLOTS = clamp_parallel(int(limit))
-    gate = InferenceGate(INFER_SLOTS)
+    gate = InferenceGate(INFER_SLOTS, queue_limit=queue_limit())
 
 
 def set_peers(peers: list[dict]) -> None:

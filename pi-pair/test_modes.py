@@ -284,11 +284,11 @@ class ModeHttp(unittest.TestCase):
     def test_pro_keeps_flash_and_applies_thinking(self):
         port = self._boot()
         levels = {
-            "low": (False, 0.7, 0.8, 64),
-            "medium": (False, 0.7, 0.8, 384),
-            "high": (False, 0.7, 0.8, 768),
+            "low": (False, 0.5, 0.8, 160, 0),
+            "medium": (False, 0.5, 0.8, 256, 0.5),
+            "high": (False, 0.5, 0.8, 512, 0.5),
         }
-        for level, (think, temperature, top_p, num_predict) in levels.items():
+        for level, (think, temperature, top_p, num_predict, penalty) in levels.items():
             _reset_fake()
             ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
             status, headers, body = self._post(
@@ -324,14 +324,14 @@ class ModeHttp(unittest.TestCase):
             self.assertEqual(chats[0]["options"]["temperature"], temperature, level)
             self.assertEqual(chats[0]["options"]["top_p"], top_p, level)
             self.assertEqual(chats[0]["options"]["top_k"], 20, level)
-            self.assertEqual(chats[0]["options"]["presence_penalty"], 1.5, level)
+            self.assertEqual(chats[0]["options"]["presence_penalty"], penalty, level)
             self.assertEqual(chats[0]["options"]["num_predict"], num_predict, level)
             for name in ("qwen3:0.6b", "qwen3:1.7b"):
                 self.assertIn(name, ModeOllama.loaded, level)
 
     def test_every_mode_and_level_sends_think_false(self):
         port = self._boot()
-        budgets = {"low": 64, "medium": 384, "high": 768}
+        budgets = {"low": 160, "medium": 256, "high": 512}
         models = {"flash": "qwen3:0.6b", "pro": "qwen3:1.7b", "auto": "qwen3:0.6b"}
         for mode, model in models.items():
             for level, predict in budgets.items():
@@ -361,10 +361,13 @@ class ModeHttp(unittest.TestCase):
                 self.assertFalse(chats[0]["think"], label)
                 self.assertEqual(chats[0]["model"], model, label)
                 options = chats[0]["options"]
-                self.assertEqual(options["temperature"], 0.7, label)
+                self.assertEqual(
+                    options["temperature"], 0.5 if mode == "pro" else 0.3, label
+                )
                 self.assertEqual(options["top_p"], 0.8, label)
                 self.assertEqual(options["top_k"], 20, label)
-                self.assertEqual(options["presence_penalty"], 1.5, label)
+                penalty = 0.5 if mode == "pro" and level != "low" else 0
+                self.assertEqual(options["presence_penalty"], penalty, label)
                 self.assertEqual(options["num_predict"], predict, label)
                 self.assertIn(
                     EFFORT_HINT[level], json.dumps(chats[0]["messages"]), label
@@ -767,8 +770,8 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(len(warm), 1)
         self.assertEqual(warm[0]["model"], "qwen3:1.7b")
         self.assertEqual(warm[0]["keep_alive"], -1)
-        self.assertEqual(warm[0]["options"]["num_ctx"], 2048)
-        self.assertEqual(warm[0]["options"]["num_batch"], 64)
+        self.assertEqual(warm[0]["options"]["num_ctx"], 1536)
+        self.assertEqual(warm[0]["options"]["num_batch"], 128)
         self.assertEqual(warm[0]["options"]["num_thread"], 4)
         self.assertIn("qwen3:0.6b", ModeOllama.loaded)
         self.assertIn("qwen3:1.7b", ModeOllama.loaded)
@@ -849,37 +852,6 @@ class ModeHttp(unittest.TestCase):
         self.assertNotIn("Loading Pro", json.dumps(body))
         self.assertNotIn("loading", body["pi_stages"])
 
-    def test_parabola_is_a_chart_and_skips_search(self):
-        port = self._boot()
-        self.search_calls.clear()
-        status, _headers, body = self._post(
-            port,
-            {
-                "messages": [{"role": "user", "content": "Plot me a parabolic curve"}],
-                "stream": False,
-            },
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200, body)
-        content = body["choices"][0]["message"]["content"]
-        self.assertIn("```chart", content)
-        self.assertIn("[25,16,9,4,1,0,1,4,9,16,25]", content)
-        self.assertNotIn("Desmos", content)
-        self.assertEqual(self.search_calls, [])
-        chats = [
-            item
-            for item in ModeOllama.calls
-            if item[0] == "POST" and item[1] == "/api/chat"
-        ]
-        self.assertEqual(chats, [])
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/health", timeout=5
-        ) as response:
-            health = json.loads(response.read().decode())
-        self.assertGreaterEqual(health["uptime_s"], 0)
-        self.assertIn("brain", health["services"])
-        self.assertIn("search", health["services"])
-
     def test_numbered_list_raises_the_budget_and_continues(self):
         port = self._boot()
         status, _headers, body = self._post(
@@ -904,7 +876,8 @@ class ModeHttp(unittest.TestCase):
             for row in chats[0]["messages"]
             if isinstance(row, dict)
         )
-        self.assertIn("one item on each line", blob)
+        self.assertIn("OpenPi", blob)
+        self.assertNotIn("each line", blob)
         self.assertNotIn("Stop at item", blob)
         self.assertEqual(self.search_calls, [])
 

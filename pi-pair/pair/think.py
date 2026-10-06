@@ -1,10 +1,12 @@
 """Qwen3 decode levels for Ollama.
 
-Low, Medium, and High are direct answers (`think` false). They share the
-non-thinking sample: temperature 0.7, top_p 0.8, top_k 20, presence_penalty
-1.5. The level changes the answer budget and a system-prompt sentence, not
-Ollama's thinking switch. A measured High think on the Pi spent the token
-budget on reasoning and often returned an empty answer.
+Low, Medium, and High are direct answers (`think` false). Flash samples at
+temperature 0.3 with presence_penalty 0. Pro samples at temperature 0.5,
+with presence_penalty 0 at Low and 0.5 at Medium and High. Both keep
+top_p 0.8 and top_k 20. The level changes the answer budget and a
+system-prompt sentence, not Ollama's thinking switch. A measured High think
+on the Pi spent the token budget on reasoning and often returned an empty
+answer.
 
 If a caller still builds a thinking plan, the stream stops that pass and
 asks once more with `think` false. `<think>` tags are removed. An empty
@@ -16,18 +18,21 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-NON_THINK_TEMPERATURE = 0.7
+FLASH_TEMPERATURE = 0.3
+PRO_TEMPERATURE = 0.5
+FLASH_PRESENCE = 0.0
+PRO_PRESENCE_LOW = 0.0
+PRO_PRESENCE = 0.5
+NON_THINK_TEMPERATURE = FLASH_TEMPERATURE
 NON_THINK_TOP_P = 0.8
 THINK_TEMPERATURE = 0.6
 THINK_TOP_P = 0.95
 TOP_K = 20
-PRESENCE_PENALTY = 1.5
+PRESENCE_PENALTY = FLASH_PRESENCE
 
-LOW_PREDICT = 64
-# The old medium answer was 256. Thinking no longer spends that budget,
-# so the direct reply gets the extra room.
-MEDIUM_PREDICT = 384
-HIGH_PREDICT = 768
+LOW_PREDICT = 160
+MEDIUM_PREDICT = 256
+HIGH_PREDICT = 512
 HIGH_THINK_BUDGET = 192
 HIGH_THINK_SECONDS = 25.0
 
@@ -60,16 +65,22 @@ class DecodePlan:
         return answer
 
 
-def _direct(name: str, num_predict: int) -> DecodePlan:
+def _direct(name: str, num_predict: int, *, pro: bool = False) -> DecodePlan:
+    if pro:
+        temperature = PRO_TEMPERATURE
+        penalty = PRO_PRESENCE_LOW if name == "low" else PRO_PRESENCE
+    else:
+        temperature = FLASH_TEMPERATURE
+        penalty = FLASH_PRESENCE
     return DecodePlan(
         name,
         False,
-        NON_THINK_TEMPERATURE,
+        temperature,
         NON_THINK_TOP_P,
         TOP_K,
         num_predict,
         0,
-        presence_penalty=PRESENCE_PENALTY,
+        presence_penalty=penalty,
     )
 
 
@@ -87,32 +98,33 @@ def _thinking(name: str, num_predict: int, budget: int, seconds: float) -> Decod
 
 
 def sample_knobs(plan: DecodePlan | None) -> tuple[float, int, float | None]:
-    """Qwen3 sample. No plan, and every level, uses the non-thinking card.
+    """Qwen3 sample. No plan uses the Flash card, including presence_penalty 0.
 
-    A hand-built thinking plan leaves presence_penalty unset. The answer call
-    sets the penalty itself.
+    A hand-built thinking plan still carries its own penalty, and 0 is sent.
     """
     if plan is None:
-        return NON_THINK_TOP_P, TOP_K, PRESENCE_PENALTY
-    penalty = float(plan.presence_penalty) if plan.presence_penalty else None
-    return plan.top_p, plan.top_k, penalty
+        return NON_THINK_TOP_P, TOP_K, FLASH_PRESENCE
+    return plan.top_p, plan.top_k, float(plan.presence_penalty)
 
 
-def decode_plan(name: str | None, prompt: str = "") -> DecodePlan | None:
-    """Map a level to a direct Ollama call and the Qwen3 non-thinking sample.
+def decode_plan(
+    name: str | None, prompt: str = "", *, pro: bool = False
+) -> DecodePlan | None:
+    """Map a level to a direct Ollama call.
 
     Unknown or blank names return None so a caller-supplied temperature stays.
-    Low, Medium, and High all set `think` false. They differ by `num_predict`.
-    `prompt` is accepted so callers can pass the line without a second lookup.
+    Low, Medium, and High all set `think` false. Flash and Pro differ by
+    temperature and presence_penalty. `prompt` is accepted so callers can pass
+    the line without a second lookup.
     """
     del prompt
     key = (name or "").strip().lower()
     if key == "low":
-        return _direct(key, LOW_PREDICT)
+        return _direct(key, LOW_PREDICT, pro=pro)
     if key == "medium":
-        return _direct(key, MEDIUM_PREDICT)
+        return _direct(key, MEDIUM_PREDICT, pro=pro)
     if key == "high":
-        return _direct(key, HIGH_PREDICT)
+        return _direct(key, HIGH_PREDICT, pro=pro)
     return None
 
 

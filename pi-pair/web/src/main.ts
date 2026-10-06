@@ -1,7 +1,5 @@
 import { docExcerpt, modelUserContent, userMessagePieces, type DocCard } from "./attach";
-import { failChart, drawChart } from "./chart";
 import { mountDiagrams } from "./diagram";
-import { cardsFrom, renderImageCardsHtml, type ImageCard } from "./images";
 import { renderMarkdown, renderStreamingMarkdown } from "./markdown";
 import { paintMicButton } from "./mic-button";
 import { HEALTH_POLL_MS, serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner, VISIBILITY_SETTLE_MS, type HealthSnapshot } from "./presence";
@@ -9,23 +7,10 @@ import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
 import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
 import { scrubAssistant } from "./copy";
-import { BIG_LINE, friendlyError, PICTURE_LINE, WAITING_LINE } from "./errors";
+import { BIG_LINE, friendlyError, WAITING_LINE } from "./errors";
+import { dropFollow, enqueueFollow, renderFollowQueue, takeFollow, type FollowItem } from "./follow-queue";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
-
-declare global {
-  interface Window {
-    MESH_DEFAULT_MODEL?: string;
-    Plotly?: {
-      newPlot: (
-        node: HTMLElement,
-        data: Record<string, unknown>[],
-        layout: Record<string, unknown>,
-        config: Record<string, unknown>,
-      ) => void | Promise<unknown>;
-    };
-  }
-}
 
 type Role = "user" | "assistant";
 type StageName = "loading" | "waiting" | "thinking" | "searching" | "answering";
@@ -50,7 +35,6 @@ interface Turn {
   effort?: string;
   search?: SearchInfo | null;
   stages?: StageName[];
-  images?: ImageCard[];
   mode?: string;
   route?: string;
   thought?: string;
@@ -76,15 +60,12 @@ interface LiveTurn {
   setText: (text: string) => void;
   setThought: (text: string, live: boolean, seconds: number) => void;
   clearThought: () => void;
-  showImages: (cards: ImageCard[]) => void;
   finish: (text: string, failed: boolean, prompt: string, search: SearchInfo | null, stages: StageName[]) => void;
   markErr: () => void;
   armPro: () => void;
 }
 
-const DEFAULT_MODEL = window.MESH_DEFAULT_MODEL || "qwen3:0.6b";
-const FLASH_TAG = "qwen3:0.6b";
-const PRO_TAG = "qwen3:1.7b";
+let healthAfterSend = false;
 const FLASH_TIP = "Fast answers for everyday questions.";
 const PRO_TIP = "Slower, more careful answers for harder questions.";
 const turns: Turn[] = [];
@@ -116,6 +97,9 @@ const serviceLines: string[] = [];
 let attachSerial = 0;
 let uploading = false;
 let attachError = false;
+let followQueue: FollowItem[] = [];
+let followNextId = 1;
+const followExtra = new Map<number, { text: string; hidden: string; attachment: DocCard | null }>();
 let voiceUtterance: ReturnType<typeof createUtteranceHold> | null = null;
 
 const ATTACH_BYTES = 4 * 1024 * 1024;
@@ -141,9 +125,7 @@ function byId<T extends HTMLElement>(id: string): T {
 }
 
 function modeModel(): string {
-  if (modelMode === "pro") return PRO_TAG;
-  if (modelMode === "flash") return FLASH_TAG;
-  return DEFAULT_MODEL;
+  return modelMode === "pro" ? "pro" : "flash";
 }
 
 function withoutThinkTags(text: string): string {
@@ -192,46 +174,11 @@ function setSettingsOpen(on: boolean): void {
   byId("overlay").classList.toggle("open", on || sourcesOpen);
 }
 
-const PLOTLY_SRC = "/static/plotly.min.js";
-let plotlyLoader: Promise<NonNullable<Window["Plotly"]> | null> | null = null;
-
-function loadPlotly(): Promise<NonNullable<Window["Plotly"]> | null> {
-  if (window.Plotly?.newPlot) return Promise.resolve(window.Plotly);
-  if (!plotlyLoader) {
-    plotlyLoader = new Promise((resolve) => {
-      const script = document.createElement("script");
-      script.src = PLOTLY_SRC;
-      script.async = true;
-      script.onload = () => resolve(window.Plotly?.newPlot ? window.Plotly : null);
-      script.onerror = () => {
-        plotlyLoader = null;
-        resolve(null);
-      };
-      document.head.appendChild(script);
-    });
-  }
-  return plotlyLoader;
-}
-
-function mountCharts(root: ParentNode): void {
-  const nodes = [...root.querySelectorAll(".pi-chart")].filter(
-    (node): node is HTMLElement => node instanceof HTMLElement,
-  );
-  if (!nodes.length) return;
-  void loadPlotly().then((api) => {
-    nodes.forEach((node) => {
-      if (!node.isConnected) return;
-      if (!api || !drawChart(node, api.newPlot.bind(api))) failChart(node);
-    });
-  });
-}
-
 function setBodyContent(node: HTMLElement, text: string, asMd: boolean, streaming = false): void {
   const shown = scrubAssistant(withoutThinkTags(text));
   if (asMd) {
     node.classList.add("md");
     node.innerHTML = streaming ? renderStreamingMarkdown(shown) : renderMarkdown(shown);
-    mountCharts(node);
     mountDiagrams(node);
   } else {
     node.classList.remove("md");
@@ -280,34 +227,14 @@ function showSearch(parent: HTMLElement, status: string, sources: SourceLink[], 
   parent.appendChild(pill);
 }
 
-function mountImageCards(row: HTMLElement, before: Node | null, raw: unknown): void {
-  row.querySelector(".image-cards")?.remove();
-  const html = renderImageCardsHtml(raw);
-  if (!html) return;
-  const holder = document.createElement("div");
-  holder.innerHTML = html;
-  const strip = holder.firstElementChild as HTMLElement | null;
-  if (!strip) return;
-  strip.querySelectorAll("img").forEach((node) => {
-    node.addEventListener("error", () => {
-      node.closest(".image-card")?.remove();
-      if (!strip.querySelector(".image-card")) {
-        strip.replaceChildren(el("p", "image-miss", PICTURE_LINE));
-      }
-    });
-  });
-  if (before && before.parentNode === row) row.insertBefore(strip, before);
-  else row.appendChild(strip);
-}
-
 function waitingCopy(queue: { position?: number; eta_s?: number } | null): string {
   const ahead = Number(queue?.position);
   const eta = Number(queue?.eta_s);
   if (!Number.isFinite(ahead) || ahead <= 0 || !Number.isFinite(eta) || eta <= 0) {
     return WAITING_LINE;
   }
-  const minutes = Math.max(1, Math.round(eta / 60));
-  return "Waiting · " + Math.round(ahead) + " ahead · about " + minutes + " min";
+  const seconds = Math.max(1, Math.round(eta));
+  return "You're #" + Math.round(ahead) + ", about " + seconds + " s";
 }
 
 function stageText(name: StageName, search: SearchInfo | null): string {
@@ -330,31 +257,6 @@ function visibleReply(text: string): boolean {
   return text.trim().length > 0;
 }
 
-function fillModels(rows: { models?: string[] }[]): void {
-  const select = document.getElementById("modelSel") as HTMLSelectElement | null;
-  if (!select) return;
-  const prev = select.value || DEFAULT_MODEL;
-  const set = new Set<string>([DEFAULT_MODEL]);
-  (rows || []).forEach((row) => {
-    (row.models || []).forEach((model) => {
-      if (model) set.add(model);
-    });
-  });
-  const list = [...set].sort((a, b) => {
-    if (a === DEFAULT_MODEL) return -1;
-    if (b === DEFAULT_MODEL) return 1;
-    return a.localeCompare(b);
-  });
-  select.replaceChildren();
-  list.forEach((model) => {
-    const option = document.createElement("option");
-    option.value = model;
-    option.textContent = model;
-    select.appendChild(option);
-  });
-  select.value = list.includes(prev) ? prev : DEFAULT_MODEL;
-}
-
 function thumbIcon(): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -373,7 +275,7 @@ function thumbIcon(): SVGSVGElement {
 }
 
 function showOffline(): void {
-  if (suppressOfflineBanner(document.hidden, resumedAt, Date.now())) return;
+  if (suppressOfflineBanner(document.hidden, resumedAt, Date.now(), undefined, sending)) return;
   const banner = byId("banner");
   if (banner.classList.contains("on")) return;
   banner.className = "on";
@@ -413,13 +315,13 @@ async function refresh(): Promise<void> {
       const banner = byId("banner");
       banner.className = "";
       banner.replaceChildren();
-      fillModels(body.peers || []);
       paintModelTips();
       paintServices(body);
       return;
     } catch {
-      if (suppressOfflineBanner(document.hidden, resumedAt, Date.now())) {
-        refreshAfterGrace();
+      if (suppressOfflineBanner(document.hidden, resumedAt, Date.now(), undefined, sending)) {
+        if (sending) healthAfterSend = true;
+        else refreshAfterGrace();
         return;
       }
       if (shouldSoftRetry(attempt)) {
@@ -680,7 +582,6 @@ function addFinishedBot(item: Turn, index: number): HTMLElement {
     setBodyContent(body, item.content, true);
     row.appendChild(body);
   }
-  if (item.images?.length) mountImageCards(row, body, item.images);
   const asked = promptBefore(index);
   if (item.search) showSearch(row, item.search.status, item.search.sources, item.stages || [], asked);
   if (asked) attachLabel(row, asked, item.content);
@@ -936,9 +837,6 @@ function addLiveBot(expectPro = false): LiveTurn {
     clearThought() {
       row.querySelector("details.thought")?.remove();
     },
-    showImages(cards) {
-      mountImageCards(row, body, cards);
-    },
     finish(text, failed, prompt, search, stages) {
       row.classList.remove("streaming");
       if (visibleReply(text)) {
@@ -956,7 +854,6 @@ function addLiveBot(expectPro = false): LiveTurn {
       row.classList.add("err");
       row.classList.remove("streaming");
       stagesEl.removeAttribute("aria-busy");
-      row.querySelector(".image-cards")?.remove();
     },
     armPro() {
       holdPro = true;
@@ -972,7 +869,6 @@ function keepPartial(
   effort: string,
   search: SearchInfo | null,
   stages: StageName[],
-  images: ImageCard[],
   mode = "",
   route = "",
   thought = "",
@@ -986,7 +882,6 @@ function keepPartial(
       effort,
       search,
       stages,
-      images,
       mode,
       route,
       thought,
@@ -1063,14 +958,7 @@ async function sendText(
   };
   let searchStatus = "";
   let searchSources: SourceLink[] = [];
-  let imageCards: ImageCard[] = [];
   const stages: StageName[] = [];
-  const noteImages = (raw: unknown) => {
-    const next = cardsFrom(raw);
-    if (!next.length) return;
-    imageCards = next;
-    live.showImages(imageCards);
-  };
   const showTurnError = (msg: string): void => {
     live.setText(msg);
     live.markErr();
@@ -1156,7 +1044,7 @@ async function sendText(
     );
     if (!mine()) return;
     if (stopAsked) {
-      keepPartial(live, textAccum, text, effort, searchNow(), stages, imageCards, modelMode, "");
+      keepPartial(live, textAccum, text, effort, searchNow(), stages, modelMode, "");
       return;
     }
     if (lastErr || !response) throw lastErr || new Error("no response");
@@ -1176,7 +1064,6 @@ async function sendText(
         pi_route?: string;
         pi_search?: string;
         pi_sources?: SourceLink[];
-        pi_images?: unknown;
         pi_stages?: StageName[];
         choices?: { message?: { content?: string } }[];
       } = {};
@@ -1194,7 +1081,6 @@ async function sendText(
       const answer = payload.choices?.[0]?.message?.content || "";
       const search = searchFrom(payload, searchNow());
       const doneStages = Array.isArray(payload.pi_stages) ? payload.pi_stages : stages;
-      noteImages(payload.pi_images);
       if (!mine()) return;
       if (unreadable || !visibleReply(answer)) {
         missOrRetry();
@@ -1208,7 +1094,6 @@ async function sendText(
           effort: payload.pi_think || streamedEffort,
           search,
           stages: doneStages,
-          images: imageCards,
           mode: payload.pi_mode || streamedMode,
           route: payload.pi_route || streamedRoute,
           thought: nonStreamThought,
@@ -1254,7 +1139,6 @@ async function sendText(
           pi_route?: string;
           pi_search?: string;
           pi_sources?: SourceLink[];
-          pi_images?: unknown;
           pi_stages?: StageName[];
           pi_replace?: boolean;
           pi_reasoning_clear?: boolean;
@@ -1270,7 +1154,6 @@ async function sendText(
           searchStatus = payload.pi_search;
           if (Array.isArray(payload.pi_sources)) searchSources = payload.pi_sources;
         }
-        if (Array.isArray(payload.pi_images)) noteImages(payload.pi_images);
         if (payload.pi_status) {
           live.pushStatus(payload.pi_status, searchNow(), payload.pi_queue || null);
           if (!stages.includes(payload.pi_status)) stages.push(payload.pi_status);
@@ -1323,7 +1206,6 @@ async function sendText(
         streamedEffort || effort,
         searchNow(),
         stages,
-        imageCards,
         streamedMode,
         streamedRoute,
         thoughtAccum,
@@ -1347,7 +1229,6 @@ async function sendText(
         effort: streamedEffort,
         search,
         stages,
-        images: imageCards,
         mode: streamedMode,
         route: streamedRoute,
         thought: thoughtAccum.trim(),
@@ -1360,13 +1241,13 @@ async function sendText(
   } catch (err) {
     if (!mine()) return;
     if (stopAsked) {
-      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
+      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, modelMode, "");
       return;
     }
     if (await quietNetwork()) {
       if (!mine()) return;
       if (visibleReply(textAccum)) {
-        keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
+        keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, modelMode, "");
       } else {
         live.root.remove();
         followUp = "resume";
@@ -1375,7 +1256,7 @@ async function sendText(
       live.root.remove();
       followUp = "retry";
     } else if (visibleReply(textAccum)) {
-      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
+      keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, modelMode, "");
     } else {
       showTurnError(shownError(err));
     }
@@ -1388,6 +1269,8 @@ async function sendText(
       if (followUp !== "retry") byId<HTMLTextAreaElement>("q").focus();
       if (followUp !== "retry" && voiceOn && !speechPending()) releaseVoice();
     }
+    if (followUp !== "retry") flushDeferredHealth();
+    if (mine() && followUp !== "retry" && followUp !== "resume") flushFollowQueue();
   }
   if (!mine()) return;
   if (followUp === "retry") {
@@ -1403,6 +1286,68 @@ async function sendText(
   if (followUp === "resume") armResumeSend(text, spoken);
 }
 
+function flushDeferredHealth(): void {
+  if (!healthAfterSend) return;
+  healthAfterSend = false;
+  if (shouldPollHealth(document.hidden)) void refresh();
+}
+
+function paintFollowQueue(): void {
+  renderFollowQueue(byId("followQueue"), followQueue, (id) => {
+    followQueue = dropFollow(followQueue, id);
+    followExtra.delete(id);
+    paintFollowQueue();
+    syncSend();
+  });
+}
+
+function clearFollowQueue(): void {
+  followQueue = [];
+  followExtra.clear();
+  paintFollowQueue();
+}
+
+function queueDraft(text: string, hidden: string, attachment: DocCard | null): void {
+  const label = text || (attachment && attachment.name) || "Attachment";
+  const result = enqueueFollow(followQueue, label, followNextId);
+  if (!result.added) {
+    voiceNote("Three messages are already waiting.");
+    return;
+  }
+  followQueue = result.items;
+  followNextId = result.nextId;
+  const item = result.items[result.items.length - 1];
+  followExtra.set(item.id, { text, hidden: hidden.trim(), attachment });
+  const box = byId<HTMLTextAreaElement>("q");
+  if (hidden.trim() || attachment) clearAttach();
+  box.value = "";
+  autoGrow(box);
+  paintBrand();
+  paintFollowQueue();
+  syncSend();
+}
+
+function flushFollowQueue(): void {
+  if (sending) return;
+  const taken = takeFollow(followQueue);
+  if (!taken.next) return;
+  followQueue = taken.rest;
+  const extra = followExtra.get(taken.next.id);
+  followExtra.delete(taken.next.id);
+  paintFollowQueue();
+  void sendText(extra ? extra.text : taken.next.text, false, false, {
+    hidden: extra?.hidden || "",
+    attachment: extra?.attachment || null,
+  });
+}
+
+function stopCurrent(): void {
+  if (!sending) return;
+  stopAsked = true;
+  stopSpeaking();
+  turnCtrl?.abort();
+}
+
 async function send(): Promise<void> {
   voiceNote("");
   const box = byId<HTMLTextAreaElement>("q");
@@ -1410,6 +1355,10 @@ async function send(): Promise<void> {
   const hidden = box.dataset.attachText || "";
   const attachment = pendingDoc;
   if (!text && !hidden.trim()) return;
+  if (sending) {
+    queueDraft(text, hidden, attachment);
+    return;
+  }
   if (hidden || attachment) clearAttach();
   box.value = "";
   autoGrow(box);
@@ -1424,11 +1373,14 @@ function composerHasDraft(): boolean {
 
 function syncSend(): void {
   const go = byId<HTMLButtonElement>("go");
+  const stop = byId<HTMLButtonElement>("stop");
   const kind = primaryKind(sending, composerHasDraft());
   go.classList.remove("voice", "send", "stop");
   go.classList.add(kind);
   go.disabled = uploading || attachError;
   go.setAttribute("aria-label", uploading ? "Uploading" : primaryLabel(kind));
+  stop.hidden = !(sending && kind === "send");
+  stop.disabled = uploading || attachError;
 }
 
 function autoGrow(box: HTMLTextAreaElement): void {
@@ -1855,10 +1807,8 @@ function releaseVoice(): void {
 
 byId("go").onclick = () => {
   if (uploading || attachError) return;
-  if (sending) {
-    stopAsked = true;
-    stopSpeaking();
-    turnCtrl?.abort();
+  if (sending && !composerHasDraft()) {
+    stopCurrent();
     return;
   }
   if (!composerHasDraft()) {
@@ -1866,6 +1816,10 @@ byId("go").onclick = () => {
     return;
   }
   void send();
+};
+byId("stop").onclick = () => {
+  if (uploading || attachError) return;
+  stopCurrent();
 };
 const composer = byId<HTMLTextAreaElement>("q");
 composer.addEventListener("input", () => {
@@ -2029,6 +1983,7 @@ function dismissPopovers(event?: Event): void {
 }
 
 function newChat(): void {
+  clearFollowQueue();
   chatEpoch += 1;
   stopAsked = true;
   turnCtrl?.abort();

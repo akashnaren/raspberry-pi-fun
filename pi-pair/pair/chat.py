@@ -13,6 +13,7 @@ from pair.http_pool import open_json_request
 from pair.knobs import inference_knobs, keep_alive, ollama_options
 from pair.modes import FLASH, PRO, mode_table
 from pair.think import sample_knobs, split_ollama_message
+from pair.timing import from_ollama
 
 _WARM_THREAD: threading.Thread | None = None
 
@@ -55,7 +56,7 @@ def ollama_payload(
         options["top_p"] = float(top_p)
     if top_k is not None:
         options["top_k"] = int(top_k)
-    if presence_penalty:
+    if presence_penalty is not None:
         options["presence_penalty"] = float(presence_penalty)
     return {
         "model": model,
@@ -91,6 +92,7 @@ def chat_ollama(
 
         answer_parts: list[str] = []
         thinking_parts: list[str] = []
+        taken: dict = {}
         for kind, text in iter_ollama_channels(
             peer,
             model,
@@ -99,6 +101,7 @@ def chat_ollama(
             max_tokens,
             plan=plan,
             cancel=cancel,
+            usage=taken,
         ):
             if kind == "thinking" and text:
                 thinking_parts.append(text)
@@ -108,6 +111,7 @@ def chat_ollama(
         if meta is not None:
             meta["done_reason"] = "stop"
             meta["reasoning"] = "".join(thinking_parts).strip()
+            meta["usage"] = taken
         return answer, model
     knobs = inference_knobs()
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
@@ -130,6 +134,7 @@ def chat_ollama(
     if meta is not None:
         meta["done_reason"] = str(out.get("done_reason") or "")
         meta["reasoning"] = thinking
+        meta["usage"] = from_ollama(out)
     return answer, model
 
 

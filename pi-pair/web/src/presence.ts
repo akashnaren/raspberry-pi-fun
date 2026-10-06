@@ -40,8 +40,9 @@ export function suppressOfflineBanner(
   resumedAt: number,
   now: number,
   grace = RESUME_GRACE_MS,
+  streaming = false,
 ): boolean {
-  if (pageHidden) return true;
+  if (pageHidden || streaming) return true;
   return resumedAt > 0 && now - resumedAt < grace;
 }
 

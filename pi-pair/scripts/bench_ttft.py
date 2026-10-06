@@ -196,7 +196,7 @@ def bench_mock(runs: int) -> list[dict]:
     os.environ["PI_PAIR_CANNED"] = str(canned)
 
     import pair.runtime as runtime
-    from pair.server import lookup_images, lookup_web, make_server
+    from pair.server import lookup_web, make_server
 
     ollama = ThreadingHTTPServer(("127.0.0.1", 0), _Drip)
     _start(ollama)
@@ -235,7 +235,6 @@ def bench_mock(runs: int) -> list[dict]:
     import pair.server as server
 
     server.lookup_web = slow_search
-    server.lookup_images = lambda query, opener=None: []
     router = make_server("127.0.0.1", 0)
     _start(router)
     url = f"http://127.0.0.1:{router.server_address[1]}/v1/chat/completions"
@@ -251,7 +250,6 @@ def bench_mock(runs: int) -> list[dict]:
         router.shutdown()
         ollama.shutdown()
         server.lookup_web = lookup_web
-        server.lookup_images = lookup_images
         tmp.cleanup()
 
 

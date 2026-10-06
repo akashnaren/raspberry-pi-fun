@@ -11,7 +11,6 @@ from pair.search import (
     DEFAULT_RESULTS,
     MAX_RESULTS,
     PAGE_READ_CAP,
-    PAGE_TIMEOUT,
     SEARCH_TIMEOUT,
     _fetch,
     _public_http,
@@ -96,12 +95,13 @@ class SearchParse(unittest.TestCase):
         self.assertEqual(result["sources"][0]["title"], "Bench note")
         self.assertEqual(result["sources"][0]["url"], "https://example.com/bench")
         self.assertIn("a short snippet about the bench", result["context"])
-        self.assertIn("Bench page body text.", result["context"])
+        self.assertNotIn("Bench page body text.", result["context"])
+        self.assertNotIn("Text from the first page", result["context"])
         self.assertNotIn("secret()", result["context"])
         self.assertNotIn("https://example.com/login", json.dumps(result["sources"]))
         self.assertNotIn("127.0.0.1", json.dumps(result))
         pages = [url for url in fetched if "duckduckgo.com" not in url]
-        self.assertEqual(pages, ["https://example.com/bench"])
+        self.assertEqual(pages, [])
         self.assertEqual(
             [item["url"] for item in result["sources"]],
             ["https://example.com/bench", "https://example.com/other"],
@@ -140,20 +140,16 @@ class SearchParse(unittest.TestCase):
                     }
                 )
                 return _Resp(body, headers={"Content-Type": "application/json"})
-            if request.full_url == "https://example.com/bench":
-                return _Resp("<html><body>from instant</body></html>")
             raise AssertionError(request.full_url)
 
         result = lookup_web("bench height", opener=opener)
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["sources"][0]["url"], "https://example.com/bench")
         self.assertIn("a short snippet about the bench", result["context"])
-        self.assertIn("from instant", result["context"])
+        self.assertNotIn("Text from the first page", result["context"])
 
-    def test_default_keeps_more_than_three_from_one_page(self):
-        self.assertGreaterEqual(DEFAULT_RESULTS, 6)
-        self.assertLessEqual(DEFAULT_RESULTS, 8)
-        self.assertGreater(DEFAULT_RESULTS, 3)
+    def test_default_keeps_three_snippets_and_skips_the_page(self):
+        self.assertEqual(DEFAULT_RESULTS, 3)
         self.assertGreaterEqual(MAX_RESULTS, DEFAULT_RESULTS)
         self.assertLessEqual(MAX_RESULTS, 10)
         calls = []
@@ -163,8 +159,6 @@ class SearchParse(unittest.TestCase):
             calls.append((url, timeout))
             if "duckduckgo.com/html" in url:
                 return _Resp(_many_html())
-            if url == "https://example.com/p0":
-                return _Resp(PAGE)
             raise AssertionError(url)
 
         result = lookup_web("bench height", opener=opener)
@@ -184,9 +178,11 @@ class SearchParse(unittest.TestCase):
         pages = [
             (url, timeout) for url, timeout in calls if "duckduckgo.com" not in url
         ]
-        self.assertEqual(pages, [("https://example.com/p0", PAGE_TIMEOUT)])
+        self.assertEqual(pages, [])
         search_calls = [timeout for url, timeout in calls if "duckduckgo.com" in url]
         self.assertEqual(search_calls, [SEARCH_TIMEOUT])
+        self.assertLessEqual(len(result["context"]), 720)
+        self.assertNotIn("Text from the first page", result["context"])
 
     def test_hard_cap_and_explicit_limit(self):
         def opener(request, timeout=None):
@@ -259,10 +255,8 @@ class SearchParse(unittest.TestCase):
         )
 
     def test_pi_timeouts_stay_one_fetch(self):
-        self.assertGreaterEqual(SEARCH_TIMEOUT, 2)
-        self.assertGreaterEqual(PAGE_TIMEOUT, 1)
-        self.assertLessEqual(SEARCH_TIMEOUT + PAGE_TIMEOUT, 12)
-        self.assertLessEqual((2 * SEARCH_TIMEOUT) + PAGE_TIMEOUT, 15)
+        self.assertEqual(SEARCH_TIMEOUT, 3)
+        self.assertLessEqual(SEARCH_TIMEOUT, 4)
 
     def test_page_reads_block_private_ranges_and_cap_the_body(self):
         blocked = (
@@ -310,12 +304,11 @@ class SearchParse(unittest.TestCase):
             "100.127.255.9",
         ):
             self.assertNotIn(marker, blob)
-        self.assertEqual(page.given, PAGE_READ_CAP)
-        self.assertLessEqual(blob.count("P"), PAGE_READ_CAP)
         self.assertEqual(
             [url for url in fetched if "duckduckgo.com" not in url],
-            ["https://example.com/ok"],
+            [],
         )
+        self.assertNotIn("Text from the first page", result["context"])
 
         def redirect(request, timeout=None):
             url = request.full_url
@@ -415,12 +408,11 @@ class SearchParse(unittest.TestCase):
         result = lookup_web("bench height", opener=opener)
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["sources"][0]["url"], "https://public.example/bench")
-        self.assertIn("from the pinned page", result["context"])
+        self.assertNotIn("from the pinned page", result["context"])
         self.assertEqual(
             seen,
             [
                 ("https://html.duckduckgo.com/html/?q=bench+height", "8.8.8.8"),
-                ("https://public.example/bench", "1.1.1.1"),
             ],
         )
 
@@ -487,8 +479,8 @@ class SearchParse(unittest.TestCase):
         self.assertNotIn("10.9.9.9", json.dumps(blocked))
         self.assertNotIn("Text from the first page", blocked["context"])
         self.assertNotIn("https://evil.example/secret", [url for url, _pin in seen])
-        self.assertEqual(seen[-1][0], "https://public.example/go")
-        self.assertEqual(seen[-1][1], "1.1.1.1")
+        self.assertNotIn("https://public.example/go", [url for url, _pin in seen])
+        self.assertTrue(all("duckduckgo.com" in url for url, _pin in seen))
 
         seen.clear()
         seen_tail["on"] = True
@@ -519,5 +511,5 @@ class SearchParse(unittest.TestCase):
 
         seen.clear()
         hopped = lookup_web("bench height", opener=follow)
-        self.assertIn("second hop", hopped["context"])
-        self.assertEqual(seen[-1], ("https://next.example/ok", "9.9.9.9"))
+        self.assertNotIn("second hop", hopped["context"])
+        self.assertTrue(all("duckduckgo.com" in url for url, _pin in seen))

@@ -11,7 +11,8 @@ if (primaryKind(false, false) !== "voice" || primaryLabel("voice") !== "Voice mo
 if (primaryKind(false, true) !== "send" || primaryLabel("send") !== "Send") {
   throw new Error("typed composer is not send");
 }
-if (primaryKind(true, true) !== "stop") throw new Error("in-flight composer is not stop");
+if (primaryKind(true, false) !== "stop") throw new Error("in-flight composer is not stop");
+if (primaryKind(true, true) !== "send") throw new Error("a draft during a reply is not send");
 if (!shouldPlaySplash(null, "navigate")) throw new Error("first load skipped the splash");
 if (shouldPlaySplash("1", "navigate")) throw new Error("session replayed the splash");
 if (!shouldPlaySplash("1", "reload")) throw new Error("reload could not replay the splash");
@@ -85,7 +86,8 @@ function openStream() {
     pull(controller) {
       if (queued.length) {
         const next = queued.shift();
-        if (next == null) controller.close();
+        if (next instanceof Error) controller.error(next);
+        else if (next == null) controller.close();
         else controller.enqueue(next);
         return;
       }
@@ -109,6 +111,17 @@ function openStream() {
       if (pending) pending.enqueue(bytes);
       else queued.push(bytes);
     },
+    abort() {
+      const error = new Error("Aborted");
+      error.name = "AbortError";
+      if (pending) {
+        const controller = pending;
+        pending = null;
+        controller.error(error);
+        return;
+      }
+      queued.push(error);
+    },
   };
 }
 
@@ -128,6 +141,11 @@ globalThis.fetch = async (input, init) => {
     if (init && init.headers) sentHeaders.push(init.headers);
     const stream = openStream();
     streams.push(stream);
+    const signal = init && init.signal;
+    if (signal && typeof signal.addEventListener === "function") {
+      if (signal.aborted) stream.abort();
+      else signal.addEventListener("abort", () => stream.abort(), { once: true });
+    }
     return new Response(stream.readable, {
       status: 200,
       headers: { "content-type": "text/event-stream", "X-Pi-Mode": "auto", "X-Pi-Route": "flash" },
@@ -294,7 +312,7 @@ if (!document.body.textContent.includes("Waiting for a free slot")) {
 }
 live.push({ pi_status: "waiting", pi_queue: { position: 2, eta_s: 120 } });
 await new Promise((resolve) => setTimeout(resolve, 20));
-if (!document.body.textContent.includes("Waiting · 2 ahead · about 2 min")) {
+if (!document.body.textContent.includes("You're #2, about 120 s")) {
   throw new Error("queue line missing: " + document.body.textContent);
 }
 live.push({ pi_status: "thinking", pi_mode: "auto", pi_route: "flash" });
@@ -485,6 +503,84 @@ const finished = streams[streams.length - 1];
 finished.push({ choices: [{ delta: { content: "ok" } }] });
 finished.end();
 await new Promise((resolve) => setTimeout(resolve, 80));
+
+box.value = "streaming now";
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+const streamingNow = streams[streams.length - 1];
+box.value = "via enter";
+box.dispatchEvent(new window.Event("input"));
+if (box.disabled) throw new Error("composer disabled during a stream");
+if (go.getAttribute("aria-label") !== "Send" || go.classList.contains("stop")) {
+  throw new Error("send did not stay available while streaming");
+}
+const stopBtn = document.getElementById("stop");
+if (!stopBtn || stopBtn.hidden) throw new Error("stop hid while a follow-up was waiting");
+box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+await new Promise((resolve) => setTimeout(resolve, 20));
+const enterChip = document.querySelector(".follow-chip");
+if (!enterChip || !enterChip.textContent.includes("Queued") || !enterChip.textContent.includes("via enter")) {
+  throw new Error("enter did not queue: " + (enterChip && enterChip.textContent));
+}
+if (box.value) throw new Error("composer kept the queued draft");
+enterChip.querySelector("button").click();
+if (document.querySelector(".follow-chip")) throw new Error("remove left the queued chip");
+
+box.value = "after this";
+box.dispatchEvent(new window.Event("input"));
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 20));
+if (!document.querySelector(".follow-chip")?.textContent.includes("after this")) {
+  throw new Error("send did not queue the follow-up");
+}
+const beforeDone = sentBodies.length;
+streamingNow.push({ choices: [{ delta: { content: "done" } }] });
+streamingNow.end();
+await new Promise((resolve) => setTimeout(resolve, 80));
+if (!sentBodies.slice(beforeDone).some((body) => body.includes("after this"))) {
+  throw new Error("queue did not send when the reply finished");
+}
+if (document.querySelector(".follow-chip")) throw new Error("chip stayed after it sent");
+const afterDone = streams[streams.length - 1];
+afterDone.push({ choices: [{ delta: { content: "next" } }] });
+afterDone.end();
+await new Promise((resolve) => setTimeout(resolve, 40));
+
+box.value = "stop me";
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+box.value = "still queued";
+box.dispatchEvent(new window.Event("input"));
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 20));
+const atStop = sentBodies.length;
+if (go.getAttribute("aria-label") !== "Stop") throw new Error("stop did not return once the draft was queued");
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 80));
+if (!sentBodies.slice(atStop).some((body) => body.includes("still queued"))) {
+  throw new Error("stop did not send the queued follow-up");
+}
+if (document.querySelector(".follow-chip")) throw new Error("chip stayed after stop");
+const afterStop = streams[streams.length - 1];
+afterStop.push({ choices: [{ delta: { content: "stopped" } }] });
+afterStop.end();
+await new Promise((resolve) => setTimeout(resolve, 40));
+
+box.value = "fresh stream";
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+box.value = "forget this";
+box.dispatchEvent(new window.Event("input"));
+document.getElementById("go").click();
+await new Promise((resolve) => setTimeout(resolve, 20));
+if (!document.querySelector(".follow-chip")) throw new Error("new-chat setup missed the chip");
+document.getElementById("btnNew").click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+if (document.querySelector(".follow-chip")) throw new Error("new chat left a queued message");
+if (sentBodies.some((body) => body.includes("forget this"))) {
+  throw new Error("new chat sent the queued message");
+}
+
 const realFetch = globalThis.fetch;
 let blown = false;
 globalThis.fetch = async (input, init) => {

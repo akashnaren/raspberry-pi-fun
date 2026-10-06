@@ -1,9 +1,11 @@
 """Shape one turn before pi4 decodes it.
 
-Search runs only when the question asks for it or names something current.
-Attachment text and search notes are untrusted data: control tokens and role
-labels are stripped, the file and the notes are fenced, and the whole prompt
-is cut so a 2048-token context still has room to answer.
+With ground_all, search runs unless the turn is an attachment, only
+arithmetic, shorter than three words, or a short follow-up with no question
+mark. With the knob off, search is a time cue. Attachment text and search
+notes are untrusted data: control tokens and role labels are stripped, the
+file and the notes are fenced, and the whole prompt is cut so a 2048-token
+context still has room to answer.
 """
 
 from __future__ import annotations
@@ -11,7 +13,9 @@ from __future__ import annotations
 import functools
 import json
 import re
+from datetime import date
 
+from pair.calc import fully_answers, notes_for
 from pair.errors import friendly_error
 from pair.knobs import attachment_limit, inference_knobs
 
@@ -20,12 +24,14 @@ SLOW_ANSWER = "That took too long. Ask again in a moment."
 SHORT_ANSWER = "I could not finish that. Ask again with a shorter question."
 NOTES_ANSWER = "I could not finish a full answer. From the notes: "
 
-ANSWER_HINT = (
-    "Answer the user's question directly. "
-    "When a list is wanted, put one item on each line. "
-    "Web notes, when they are included, are context: use them, and do not "
-    "invent fresh prices, scores, or news they do not support. "
-    "Do not mention model choice, routing, or the mesh."
+PERSONA = (
+    "You are OpenPi, a helpful assistant that runs on a Raspberry Pi. "
+    "OpenPi was made by Akash. Answer accurately and directly, in plain sentences. "
+    "Use a list only when the user asks for several items. Reply in the user's language. "
+    "When notes are provided, rely on them and do not add facts they do not support. "
+    "If you are not sure of a fact, say so instead of guessing. "
+    "Never say you lack internet or real-time access. "
+    "When asked to summarize, give only the main points, in far fewer words than the original."
 )
 
 # Length lives in the prompt. None of these turn Qwen3 thinking on.
@@ -35,24 +41,24 @@ EFFORT_HINT = {
     "high": "Give a fuller answer.",
 }
 
-CHART_HINT = (
-    "Chart replies use one fenced block and no other plot format.\n"
-    "```chart\n"
-    '{"title":"Title","data":[{"type":"bar","x":["a","b"],"y":[1,2]}]}\n'
-    "```\n"
-    "type is bar, scatter, line, or pie. Finite numbers only. "
-    "If the user gave no numbers, say so."
+FLOW_HINT = (
+    "The user wants a flowchart or diagram. Reply with one ```mermaid fence and at most one short sentence. "
+    "Use flowchart TD. Example:\n```mermaid\nflowchart TD\n"
+    "A[Start] --> B{Choice}\nB -->|yes| C[Done]\nB -->|no| D[Stop]\n```\n"
+    "Do not send the user to another site."
 )
 
-_PLOT = re.compile(
-    r"\b(?:plot|chart|graph|histogram|scatter|pie chart|bar chart)\b",
+_FLOW = re.compile(
+    r"\b(?:flowchart|flow chart|diagram|sequence diagram)\b|"
+    r"\b(?:draw|sketch|show)\b.{0,40}\b(?:flow|diagram|steps)\b",
     re.I,
 )
 _FRESH = re.compile(r"\b(?:news|latest|current)\b", re.I)
-_SEARCH = re.compile(
-    r"\b(?:search for|look up|lookup|latest news|news about|sources for|find articles|find sources)\b",
+_RECENCY = re.compile(
+    r"\b(?:recent|now|today|yesterday|newest|still|yet|this\s+(?:year|week|month))\b",
     re.I,
 )
+_YEAR = re.compile(r"\b(\d{4})\b")
 _CONTROL = re.compile(
     r"<\|/?im_start\|>|<\|/?im_end\|>|<<\/?SYS>>|\[\/?INST\]|</?s>|<\|/?system\|>",
     re.I,
@@ -157,23 +163,55 @@ def attachment_tail(prompt: str) -> str:
     return tail
 
 
-@functools.lru_cache(maxsize=256)
-def is_plot(prompt: str) -> bool:
-    return bool(_PLOT.search(user_question(prompt)))
+def is_flow_request(prompt: str) -> bool:
+    return bool(_FLOW.search(prompt or ""))
+
+
+def is_structured_request(prompt: str) -> bool:
+    """A diagram. These skip grounded web search."""
+    return is_flow_request(prompt)
+
+
+def structure_hint(prompt: str) -> str | None:
+    """One short system hint for a diagram. Plots and tables get none."""
+    if is_flow_request(prompt):
+        return FLOW_HINT
+    return None
+
+
+def _time_sensitive(question: str) -> bool:
+    """A time cue, not a topic list. Years are recent when they are last year or newer."""
+    if _FRESH.search(question) or _RECENCY.search(question):
+        return True
+    floor = date.today().year - 1
+    return any(int(match.group(1)) >= floor for match in _YEAR.finditer(question))
 
 
 @functools.lru_cache(maxsize=256)
-def needs_web(prompt: str) -> bool:
-    """True when the user asks to look something up, or names something current.
-
-    Plots and attachments stay on the model unless they explicitly ask to search.
-    """
+def _needs_web(prompt: str, follow_up: bool, ground_all: bool) -> bool:
     question = user_question(prompt)
-    if attachment_tail(prompt) and not _SEARCH.search(question):
+    if attachment_tail(prompt):
         return False
-    if is_plot(prompt):
-        return False
-    return bool(_SEARCH.search(question) or _FRESH.search(question))
+    if ground_all:
+        if fully_answers(question):
+            return False
+        if len(question.split()) < 3:
+            return False
+        if follow_up and len(question) <= 60 and "?" not in question:
+            return False
+        return True
+    return _time_sensitive(question)
+
+
+def needs_web(prompt: str, follow_up: bool = False) -> bool:
+    """Search unless the turn is local, or only when the question is current.
+
+    `ground_all` searches every question except an attachment, a message that
+    is only arithmetic, fewer than three words, or a short follow-up with no
+    question mark. When the knob is off, search is a time cue.
+    """
+    ground_all = bool(inference_knobs().get("ground_all", True))
+    return _needs_web(prompt or "", bool(follow_up), ground_all)
 
 
 def fence_user_text(content: str, limit: int) -> str:
@@ -264,49 +302,71 @@ def fence_messages(messages, knobs: dict | None = None) -> list:
     return out
 
 
-def _chart_row(row: dict) -> bool:
-    return row.get("role") == "system" and "```chart" in str(row.get("content") or "")
-
-
 def _search_row(row: dict) -> bool:
-    return str(row.get("content") or "").startswith("Web search notes")
+    content = str(row.get("content") or "")
+    return content.startswith("Web search notes") or content.startswith("Notes:")
 
 
-def add_chart_hint(messages, prompt: str) -> list:
-    if not is_plot(prompt):
-        return list(messages or [])
-    rows = list(messages or [])
-    if any(_chart_row(row) for row in rows if isinstance(row, dict)):
-        return rows
-    return [{"role": "system", "content": CHART_HINT}, *rows]
+def persona_text(knobs: dict | None = None) -> str:
+    """Identity prompt. A `persona` knob replaces the built-in sentence."""
+    row = inference_knobs() if knobs is None else knobs
+    custom = ""
+    if isinstance(row, dict):
+        custom = str(row.get("persona") or "").strip()
+    return custom or PERSONA
 
 
-def add_answer_hint(messages, prompt: str, effort: str = "") -> list:
-    """One system note for every non-chart turn. Search notes stay in front.
+def _persona_row(row: dict, text: str) -> bool:
+    return row.get("role") == "system" and str(row.get("content") or "") == text
 
-    `effort` adds one sentence about length. It does not enable thinking.
+
+def add_persona(
+    messages, prompt: str, effort: str = "", knobs: dict | None = None
+) -> list:
+    """Persona is always message 0 so the prefix cache can reuse it.
+
+    The effort sentence is the next system message. It does not enable thinking.
     """
-    if is_plot(prompt):
-        return list(messages or [])
+    text = persona_text(knobs)
+    rows = [
+        row
+        for row in list(messages or [])
+        if not (isinstance(row, dict) and _persona_row(row, text))
+    ]
+    head = [{"role": "system", "content": text}]
     extra = EFFORT_HINT.get((effort or "").strip().lower(), "")
-    hint = f"{ANSWER_HINT} {extra}" if extra else ANSWER_HINT
+    if extra:
+        head.append({"role": "system", "content": extra})
+    return [*head, *rows]
+
+
+def add_notes(messages, note: str) -> list:
+    """One Notes message immediately before the last user turn."""
+    text = (note or "").strip()
+    if not text:
+        return list(messages or [])
+    if not text.startswith("Notes:"):
+        text = "Notes:\n" + text
     rows = list(messages or [])
-    for row in rows:
-        if (
-            isinstance(row, dict)
-            and row.get("role") == "system"
-            and hint in str(row.get("content") or "")
-        ):
-            return rows
-    index = 0
-    while (
-        index < len(rows)
-        and isinstance(rows[index], dict)
-        and rows[index].get("role") == "system"
-    ):
-        index += 1
-    rows.insert(index, {"role": "system", "content": hint})
+    index = len(rows)
+    for cursor in range(len(rows) - 1, -1, -1):
+        row = rows[cursor]
+        if isinstance(row, dict) and row.get("role") == "user":
+            index = cursor
+            break
+    rows.insert(index, {"role": "system", "content": text})
     return rows
+
+
+def _num_ctx(knobs: dict | None = None) -> int:
+    row = inference_knobs() if knobs is None else knobs
+    try:
+        ctx = int(row.get("num_ctx") or 2048)
+    except (TypeError, ValueError):
+        ctx = 2048
+    if ctx < 256:
+        ctx = 256
+    return ctx
 
 
 def char_budget(knobs: dict | None = None, reserve_tokens: int = 768) -> int:
@@ -315,13 +375,7 @@ def char_budget(knobs: dict | None = None, reserve_tokens: int = 768) -> int:
     Two characters per token is the cautious side for OCR. High effort asks
     for 768 new tokens, so that many stay out of the prompt budget.
     """
-    row = inference_knobs() if knobs is None else knobs
-    try:
-        ctx = int(row.get("num_ctx") or 2048)
-    except (TypeError, ValueError):
-        ctx = 2048
-    if ctx < 256:
-        ctx = 256
+    ctx = _num_ctx(knobs)
     reserve = max(128, min(int(reserve_tokens), ctx // 2))
     return max(600, (ctx - reserve) * 2)
 
@@ -352,7 +406,7 @@ def _clip_text(text: str, keep: int) -> str:
             clipped = (prefix + suffix)[: keep - len(mark)].rstrip() + mark
         if len(clipped) <= keep:
             return clipped
-    if text.startswith("Web search notes"):
+    if text.startswith("Web search notes") or text.startswith("Notes:"):
         return clip_words(text, keep)
     room = keep - len(mark)
     if room < 1:
@@ -361,13 +415,17 @@ def _clip_text(text: str, keep: int) -> str:
 
 
 def fit_messages(messages, knobs: dict | None = None) -> list:
-    """Cut search notes and attachment text first. Keep a chart hint and the last turn."""
+    """Cut search notes and attachment text first. Keep the persona and the last turn."""
     rows = []
     for item in messages or []:
         if isinstance(item, dict) and str(item.get("content") or "").strip():
             rows.append(dict(item))
     if not rows:
         return []
+    # Two characters per token. An input that fits num_ctx stays whole.
+    if (_size(rows) + 1) // 2 <= _num_ctx(knobs):
+        return rows
+    persona = persona_text(knobs)
     budget = char_budget(knobs)
     guard = 0
     while _size(rows) > budget and guard < 16:
@@ -387,7 +445,11 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
             continue
         if len(rows) > 1:
             drop_at = next(
-                (index for index, row in enumerate(rows[:-1]) if not _chart_row(row)),
+                (
+                    index
+                    for index, row in enumerate(rows[:-1])
+                    if not _persona_row(row, persona)
+                ),
                 None,
             )
             if drop_at is not None:
@@ -396,7 +458,8 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
         plain = [
             row
             for row in rows
-            if not _chart_row(row) and len(str(row.get("content") or "")) > 80
+            if not _persona_row(row, persona)
+            and len(str(row.get("content") or "")) > 80
         ]
         pool = plain or rows
         target = max(pool, key=lambda row: len(str(row.get("content") or "")))
@@ -410,11 +473,17 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
 
 
 def shape_messages(
-    messages, prompt: str, knobs: dict | None = None, effort: str = ""
+    messages,
+    prompt: str,
+    knobs: dict | None = None,
+    effort: str = "",
+    notes: str = "",
 ) -> list:
     rows = fence_messages(messages, knobs)
-    rows = add_chart_hint(rows, prompt)
-    rows = add_answer_hint(rows, prompt, effort)
+    rows = add_persona(rows, prompt, effort, knobs)
+    calc = notes_for(user_question(prompt)) or ""
+    combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
+    rows = add_notes(rows, combined)
     return fit_messages(rows, knobs)
 
 

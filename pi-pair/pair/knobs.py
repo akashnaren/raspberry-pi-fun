@@ -16,33 +16,36 @@ _DEFAULTS = {
     # Sequences in flight on the chat tag being decoded. Ollama sizes that
     # model's key/value cache as num_ctx * this value. Flash is the default
     # tag. Pro is a separate resident tag and uses the same router slot gate.
-    # Clamped to 1..4. Default 2. Four sequences at num_ctx 2048 stayed
-    # under 1 GB RSS on the previous Flash tag, but that cap was too slow
-    # on pi4 (p95 34.9s).
-    "ollama_num_parallel": 2,
+    # Clamped to 1..4. One sequence. Two decodes on four cores were slower
+    # than waiting for the single slot.
+    "ollama_num_parallel": 1,
+    "ollama_max_queue": 8,
     # Pi 4 is four Cortex-A72 cores. Ollama forwards num_thread as llama.cpp -t
     # only when the request sets it; otherwise the runner auto-detects.
     "num_thread": 4,
     # Prompt-ingest batch. Ollama's default is 512, which is wider than this
     # board's 1MB L2 wants while a search note is being prefilled.
     "num_batch": 128,
-    # Flash is the common path. A shorter context is a smaller key/value cache
-    # on the four Pi 4 cores. Pro keeps the full window for code and math.
+    # Flash and Pro both use a 1536 context and a 128 prompt batch. A shorter
+    # context is a smaller key/value cache on the four Pi 4 cores.
     "flash_num_ctx": 1536,
-    "pro_num_ctx": 2048,
+    "pro_num_ctx": 1536,
     "flash_num_thread": 4,
     "pro_num_thread": 4,
     "flash_num_batch": 128,
-    "pro_num_batch": 64,
+    "pro_num_batch": 128,
     # Characters of search notes pasted into the prompt. Sources on the page
     # are not cut. A shorter note is a shorter prefill.
-    "search_note_chars": 640,
+    "search_note_chars": 720,
     # Characters of one attachment kept in the prompt. The upload route may
     # return more for the composer. The model sees this cut, inside a fence.
     "attachment_chars": 1200,
     # Local harmful-content filter. Off leaves refusal to a separate stack
     # that replaces pair.moderate.moderate. On restores the in-process gate.
     "safety_filter": False,
+    # Search every question except attachments, bare arithmetic, very short
+    # lines, and short follow-ups. Off keeps search to time cues only.
+    "ground_all": True,
 }
 
 
@@ -77,8 +80,8 @@ def mode_limits(model: str, knobs: dict | None = None) -> dict:
     name = str(model or "")
     if pro and name == pro and name != flash:
         prefix = "pro"
-        batch_fallback = 64
-        ctx_fallback = _as_int(row.get("num_ctx"), 2048)
+        batch_fallback = _as_int(row.get("num_batch"), 128)
+        ctx_fallback = 1536
     else:
         prefix = "flash"
         batch_fallback = _as_int(row.get("num_batch"), 128)
@@ -166,6 +169,20 @@ def clamp_parallel(value: int) -> int:
         return PARALLEL_MIN
     if value > PARALLEL_MAX:
         return PARALLEL_MAX
+    return value
+
+
+def queue_limit(knobs: dict | None = None) -> int:
+    """How many chats may wait behind the running decode."""
+    row = knobs if knobs is not None else inference_knobs()
+    try:
+        value = int(row.get("ollama_max_queue"))
+    except (TypeError, ValueError):
+        value = int(_DEFAULTS["ollama_max_queue"])
+    if value < 0:
+        return 0
+    if value > 64:
+        return 64
     return value
 
 

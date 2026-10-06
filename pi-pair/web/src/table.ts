@@ -1,4 +1,4 @@
-/** A ```table fence or a markdown table. Light HTML, no extra package. */
+/** A markdown table. Light HTML, no extra package. */
 
 function escapeHtml(text: string): string {
   return text
@@ -25,24 +25,6 @@ export function tableHtml(title: string, columns: string[], rows: string[][]): s
   const caption = title.trim() ? `<caption>${cell(title)}</caption>` : "";
   const head = `<thead><tr>${heads.map((item) => `<th>${item}</th>`).join("")}</tr></thead>`;
   return `<div class="pi-table"><table>${caption}${head}<tbody>${body.join("")}</tbody></table></div>`;
-}
-
-export function tableFence(lang: string, code: string): string | null {
-  if (lang.trim().toLowerCase() !== "table") return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(code.trim());
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-  const spec = parsed as { title?: unknown; columns?: unknown; rows?: unknown };
-  if (!Array.isArray(spec.columns) || !Array.isArray(spec.rows)) return null;
-  const columns = spec.columns.map((item) => String(item ?? ""));
-  const rows = spec.rows
-    .filter((row): row is unknown[] => Array.isArray(row))
-    .map((row) => row.map((item) => String(item ?? "")));
-  return tableHtml(String(spec.title ?? ""), columns, rows);
 }
 
 export function markdownTable(header: string, rows: string[]): string | null {

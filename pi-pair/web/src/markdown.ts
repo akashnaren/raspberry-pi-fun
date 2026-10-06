@@ -1,7 +1,6 @@
 import katex from "katex";
-import { chartBlock, chartFence } from "./chart.ts";
 import { mermaidFence } from "./diagram.ts";
-import { isTableRule, markdownTable, tableFence } from "./table.ts";
+import { isTableRule, markdownTable } from "./table.ts";
 
 function escapeHtml(text: string): string {
   return text
@@ -72,11 +71,6 @@ function unwrapSoleMarkdownFence(text: string): string {
 
 export function renderMarkdown(source: string): string {
   const text = unwrapSoleMarkdownFence(String(source ?? "").replace(/\r\n/g, "\n"));
-  const trimmed = text.trim();
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    const only = chartBlock(trimmed);
-    if (only) return only;
-  }
   const blocks: string[] = [];
   const stash = (html: string) => {
     const token = `@@BLOCK${blocks.length}@@`;
@@ -84,10 +78,6 @@ export function renderMarkdown(source: string): string {
     return token;
   };
   const fenced = text.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_all, lang: string, code: string) => {
-    const chart = chartFence(lang, code);
-    if (chart) return stash(chart);
-    const table = tableFence(lang, code);
-    if (table) return stash(table);
     const flow = mermaidFence(lang, code);
     if (flow) return stash(flow);
     return stash(`<pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);

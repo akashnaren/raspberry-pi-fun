@@ -9,6 +9,7 @@ from pair.cancel import ClientGone
 from pair.chat import llamacpp_model, ollama_payload, open_json
 from pair.guard import require_generative
 from pair.knobs import inference_knobs
+from pair.timing import from_ollama
 from pair.think import (
     NON_THINK_TEMPERATURE,
     NON_THINK_TOP_P,
@@ -25,17 +26,18 @@ from pair.think import (
 
 
 def ollama_parts(line: str):
-    """Return (content, thinking, done, skip, done_reason).
+    """Return (content, thinking, done, skip, done_reason, usage).
 
     `thinking` is Ollama's separate channel. It is not answer text.
+    `usage` is Ollama's eval counters on the done line, else None.
     """
     line = line.strip()
     if not line:
-        return "", "", False, True, ""
+        return "", "", False, True, "", None
     try:
         obj = json.loads(line)
     except json.JSONDecodeError:
-        return "", "", False, True, ""
+        return "", "", False, True, "", None
     message = obj.get("message") if isinstance(obj.get("message"), dict) else {}
     content = message.get("content") or ""
     thinking = message.get("thinking") or ""
@@ -45,12 +47,13 @@ def ollama_parts(line: str):
         thinking = ""
     done = bool(obj.get("done"))
     reason = str(obj.get("done_reason") or "") if done else ""
-    return content, thinking, done, False, reason
+    usage = from_ollama(obj) if done else None
+    return content, thinking, done, False, reason, usage
 
 
 def ollama_delta(line: str):
     """Return (text, done, skip). skip means the line was not a JSON object."""
-    content, _thinking, done, skip, _reason = ollama_parts(line)
+    content, _thinking, done, skip, _reason, _usage = ollama_parts(line)
     return content, done, skip
 
 
@@ -146,8 +149,22 @@ def _read_ndjson(response, cancel=None):
             cancel.detach(token)
 
 
+def _keep_usage(sink: dict | None, usage: dict | None) -> None:
+    if sink is None or not usage:
+        return
+    sink.clear()
+    sink.update(usage)
+
+
 def iter_ollama_channels(
-    peer, model, messages, temperature=0.7, max_tokens=256, plan=None, cancel=None
+    peer,
+    model,
+    messages,
+    temperature=0.7,
+    max_tokens=256,
+    plan=None,
+    cancel=None,
+    usage: dict | None = None,
 ):
     """Yield ('thinking', text) or ('content', text) from Ollama.
 
@@ -188,9 +205,10 @@ def iter_ollama_channels(
     try:
         with open_json(url, payload, timeout=first_timeout, cancel=cancel) as response:
             for line in _read_ndjson(response, cancel):
-                content, thinking, done, skip, _reason = ollama_parts(line)
+                content, thinking, done, skip, _reason, frame_usage = ollama_parts(line)
                 if skip:
                     continue
+                _keep_usage(usage, frame_usage)
                 now = time.monotonic()
                 if thinking and not capped:
                     merged = accumulated + thinking
@@ -248,9 +266,12 @@ def iter_ollama_channels(
     try:
         with open_json(url, forced, timeout=180, cancel=cancel) as response:
             for line in _read_ndjson(response, cancel):
-                content, _thinking, done, skip, _reason = ollama_parts(line)
+                content, _thinking, done, skip, _reason, frame_usage = ollama_parts(
+                    line
+                )
                 if skip:
                     continue
+                _keep_usage(usage, frame_usage)
                 if content:
                     follow_parts.append(content)
                     if peel_think("".join(follow_parts))[0].strip():
@@ -267,14 +288,28 @@ def iter_ollama_channels(
 
 
 def stream_ollama(
-    peer, model, messages, temperature=0.7, max_tokens=256, plan=None, cancel=None
+    peer,
+    model,
+    messages,
+    temperature=0.7,
+    max_tokens=256,
+    plan=None,
+    cancel=None,
+    usage: dict | None = None,
 ):
     """Yield answer deltas from Ollama /api/chat with stream:true (NDJSON)."""
 
     def produce(stream: TextStream):
         del stream
         for kind, text in iter_ollama_channels(
-            peer, model, messages, temperature, max_tokens, plan=plan, cancel=cancel
+            peer,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            plan=plan,
+            cancel=cancel,
+            usage=usage,
         ):
             if kind == "content" and text:
                 yield text

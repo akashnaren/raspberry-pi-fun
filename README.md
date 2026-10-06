@@ -232,8 +232,6 @@ The composer keeps the whole session. Each new line is sent with the earlier tur
 
 When the map misses, the reply shows a sources pill: up to three favicons and the exact count. The pill opens a side panel with the thinking step, the search count, and each source link the router kept, at most eight. If the lookup fails, the note says search failed and the answer is still from the local model.
 
-When that question suits a picture, such as a movie, the miss can also include image cards. The pictures are public HTTP images from Wikipedia. The field is `pi_images`, documented in [pi-pair/docs/IMAGES.md](pi-pair/docs/IMAGES.md). If none are found, the field is left off and the text answer is unchanged.
-
 Under a finished answer there is a thumbs up, a thumbs down, and Correct. Correct is an optional replacement sentence. Those controls call `POST /v1/flywheel/feedback`.
 
 | Who | Page | Model port |

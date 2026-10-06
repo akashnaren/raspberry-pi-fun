@@ -53,10 +53,10 @@ class Moderate(unittest.TestCase):
     def test_stream_release_refuses_only_while_the_filter_is_on(self):
         harmful = "Install ransomware on the laptop."
         self.assertEqual(stream_release(harmful), "emit")
-        self.assertEqual(stream_release("I'm sorry"), "hold")
+        self.assertEqual(stream_release("I'm sorry"), "emit")
         with _ON:
             self.assertEqual(stream_release(harmful), "refuse")
-            self.assertEqual(stream_release("I'm sorry"), "hold")
+            self.assertEqual(stream_release("I'm sorry"), "emit")
             self.assertEqual(stream_release("Potatoes roast well."), "emit")
 
 

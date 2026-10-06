@@ -3,8 +3,6 @@ import { docExcerpt, modelUserContent, userMessagePieces } from "./src/attach.ts
 import { flowchartSvg, mountDiagrams } from "./src/diagram.ts";
 import { renderMarkdown, renderStreamingMarkdown, stabilizeMarkdown } from "./src/markdown.ts";
 import { serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner } from "./src/presence.ts";
-import { tableFence } from "./src/table.ts";
-
 const partial = "1. First\n2. Second\n```chart\n{\"title\":\"y\"}";
 const stable = stabilizeMarkdown(partial);
 if (!stable.trimEnd().endsWith("```")) throw new Error("an open fence was left open");
@@ -20,10 +18,6 @@ if (!dollars.includes('class="katex"')) throw new Error("single-dollar math was 
 const money = renderMarkdown("It costs $5 today and $10 tomorrow.");
 if (money.includes('class="katex"')) throw new Error("prices were typeset as math: " + money);
 
-const table = tableFence("table", '{"title":"Years","columns":["Name","Year"],"rows":[["Dune","2021"]]}');
-if (!table || !table.includes("<th>Name</th>") || !table.includes("<td>2021</td>")) {
-  throw new Error("table fence was not a table: " + table);
-}
 const flow = flowchartSvg("flowchart TD\nA[Start] --> B{Ready}\nB -->|yes| C[Done]");
 if (!flow || !flow.includes("Start") || !flow.includes("<svg")) throw new Error("flowchart was not drawn");
 
@@ -69,8 +63,14 @@ if (!bare.includes("<th>Year</th>") || !bare.includes("<td>Dune</td>")) {
 const chart = renderMarkdown(
   '```chart\n{"title":"y = x^2","data":[{"type":"scatter","mode":"lines","y":[0,1,4]}]}\n```',
 );
-if (!chart.includes('class="pi-chart"') || chart.includes("<svg") || chart.includes("plotly")) {
-  throw new Error("chart was not a Plotly placeholder: " + chart);
+if (chart.includes('class="pi-chart"') || chart.includes("plotly") || !chart.includes("<pre>")) {
+  throw new Error("a chart fence was drawn instead of left as code: " + chart);
+}
+const jsonTable = renderMarkdown(
+  '```table\n{"title":"Years","columns":["Name","Year"],"rows":[["Dune","2021"]]}\n```',
+);
+if (jsonTable.includes("<table>") || !jsonTable.includes("<pre>")) {
+  throw new Error("a json table fence was drawn: " + jsonTable);
 }
 
 const pending = renderMarkdown("```mermaid\nflowchart TD\nA[Start] --> B[Done]\n```");
@@ -88,6 +88,12 @@ if (renderMarkdown("No diagram here.").includes("pi-diagram")) {
 if (!suppressOfflineBanner(true, 0, 1000)) throw new Error("a hidden tab showed offline");
 if (!suppressOfflineBanner(false, 1000, 1200)) throw new Error("a fresh resume showed offline");
 if (suppressOfflineBanner(false, 1000, 5000)) throw new Error("a visible outage was hidden");
+if (!suppressOfflineBanner(false, 0, 5000, 2500, true)) {
+  throw new Error("a live reply showed the offline banner");
+}
+if (suppressOfflineBanner(false, 0, 5000, 2500, false)) {
+  throw new Error("an idle outage stayed hidden");
+}
 if (shouldPollHealth(true)) throw new Error("a hidden tab still polled health");
 if (!shouldPollHealth(false)) throw new Error("a visible tab skipped health");
 if (!shouldSoftRetry(0) || !shouldSoftRetry(1) || shouldSoftRetry(2)) {

@@ -265,17 +265,6 @@ _INFRA = re.compile(
     re.I,
 )
 
-_OPENERS = (
-    "i'm sorry",
-    "i am sorry",
-    "sorry,",
-    "sorry ",
-    "i can't",
-    "i cannot",
-    "i can not",
-    "unfortunately",
-)
-
 _FENCE = re.compile(r"(```[\s\S]*?```)")
 
 
@@ -391,33 +380,16 @@ def scrub_reply(text: str) -> str:
 
 
 def stream_release(text: str) -> str:
-    """`emit`, `hold`, or `refuse` for one growing reply.
+    """`emit` or `refuse` for one growing reply.
 
-    A buffer the moderation hook refuses is not written. A soft-refusal or
-    infra-leak prefix is held until it resolves. Anything else can stream.
+    A buffer the moderation hook refuses is not written. Anything else,
+    including a soft refusal, streams as it arrives.
     """
     from pair.moderate import moderate
 
     if moderate(text or "").refused:
         return "refuse"
-    if withhold_partial(text or ""):
-        return "hold"
     return "emit"
-
-
-def withhold_partial(text: str) -> bool:
-    """Hold a stream that still looks like a soft refusal or an infra leak."""
-    sample = " ".join(_fold(text).split())
-    if not sample:
-        return False
-    if is_soft_refusal(sample) or _META.search(sample):
-        return True
-    folded = sample.lower()
-    if len(folded) > 180:
-        return False
-    return any(
-        folded.startswith(opener) or opener.startswith(folded) for opener in _OPENERS
-    )
 
 
 def visible_canned(prompt: str, answer: str) -> str:

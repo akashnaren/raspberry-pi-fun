@@ -1,9 +1,11 @@
-/** Rightmost composer button: voice waveform, send, or stop. */
+/** Rightmost composer button: voice waveform, send, or stop.
+ * A draft during a reply is Send, which queues. Stop stays a separate control.
+ */
 
 export type PrimaryKind = "voice" | "send" | "stop";
 
 export function primaryKind(sending: boolean, hasDraft: boolean): PrimaryKind {
-  if (sending) return "stop";
+  if (sending && !hasDraft) return "stop";
   if (hasDraft) return "send";
   return "voice";
 }
