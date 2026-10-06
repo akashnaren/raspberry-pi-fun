@@ -87,7 +87,9 @@ class ModeOllama(BaseHTTPRequestHandler):
                 + b"\n"
             )
             self.wfile.write(
-                json.dumps({"message": {"content": "lo"}, "done": True}).encode()
+                json.dumps(
+                    {"message": {"content": "lo from peer"}, "done": True}
+                ).encode()
                 + b"\n"
             )
             return
@@ -856,14 +858,15 @@ class ModeHttp(unittest.TestCase):
             for item in ModeOllama.calls
             if item[0] == "POST" and item[1] == "/api/chat"
         ]
-        self.assertEqual(len(chats), 2)
-        self.assertGreaterEqual(chats[0]["options"]["num_predict"], 448)
-        note = chats[1]["messages"][-1]["content"]
-        self.assertIn("from 1 to 10", note)
-        self.assertIn("Stop at item 10", note)
-        self.assertTrue(
-            all(row.get("role") != "assistant" for row in chats[1]["messages"])
+        self.assertEqual(len(chats), 1)
+        self.assertEqual(chats[0]["options"]["num_predict"], 256)
+        blob = "\n".join(
+            row.get("content", "")
+            for row in chats[0]["messages"]
+            if isinstance(row, dict)
         )
+        self.assertIn("one item on each line", blob)
+        self.assertNotIn("Stop at item", blob)
         self.assertEqual(self.search_calls, [])
 
 

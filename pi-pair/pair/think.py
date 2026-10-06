@@ -84,6 +84,18 @@ def _thinking(name: str, num_predict: int, budget: int, seconds: float) -> Decod
     )
 
 
+def sample_knobs(plan: DecodePlan | None) -> tuple[float, int, float | None]:
+    """Qwen3 sample. No plan uses the non-thinking card, including presence_penalty.
+
+    A thinking plan leaves presence_penalty unset. Ollama's default is enough
+    while the model is reasoning; the answer call sets the penalty itself.
+    """
+    if plan is None:
+        return NON_THINK_TOP_P, TOP_K, PRESENCE_PENALTY
+    penalty = float(plan.presence_penalty) if plan.presence_penalty else None
+    return plan.top_p, plan.top_k, penalty
+
+
 def decode_plan(name: str | None, prompt: str = "") -> DecodePlan | None:
     """Map a think level to Ollama's `think` flag and Qwen3 sampling.
 

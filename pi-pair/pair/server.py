@@ -17,7 +17,6 @@ from pathlib import Path
 from pair.assist import (
     HELPFUL_NUDGE,
     is_harmful,
-    is_honest_miss,
     is_soft_refusal,
     may_retry_refusal,
     scrub_reply,
@@ -56,29 +55,10 @@ from pair.errors import (
     friendly_body,
     friendly_error,
 )
-from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
-from pair.lists import (
-    answer_count,
-    category_query,
-    clip_repeat,
-    continuation_messages,
-    dedupe_lines,
-    distinct_items,
-    finish_numbered,
-    ground_category_list,
-    is_grounded_list,
-    list_budget,
-    list_count,
-    needs_exact_n,
-    placeholder_only,
-    ranked_entities,
-    source_titles,
-)
-from pair.sequences import sequence_answer
 from pair.modes import (
     mode_table,
     mode_tips,
@@ -110,10 +90,7 @@ from pair import runtime
 from pair.stream import iter_ollama_channels, stream_llamacpp, stream_ollama
 from pair.think import peel_think
 from pair.turn import (
-    asks_continuation,
-    continuation_messages as plain_continuation,
     degraded_answer,
-    join_continuation,
     needs_web,
     prepare_search_note,
     public_failure,
@@ -356,11 +333,10 @@ def _join_cancel(thread, timeout: float | None, cancel=None) -> None:
 def _with_search(
     messages, prompt: str, images: list | None = None, model: str = "", cancel=None
 ):
-    """On pi4, after a miss, attach public notes. Failures stay on the local model.
+    """On pi4, attach public notes when a lookup already ran. Failures stay local.
 
-    A real-world list searches a ranking query. The lookup is capped so a
-    slow page cannot hold the first token. Image cards and an in-flight
-    model warm run beside the lookup.
+    The lookup is capped so a slow page cannot hold the first token. Image
+    cards and an in-flight model warm run beside the lookup.
     """
     warm = warm_in_flight()
     worker = None
@@ -377,7 +353,7 @@ def _with_search(
         _join_cancel(worker, None, cancel)
         _join_cancel(warm, 40, cancel)
         return messages, None
-    query = category_query(prompt) if is_grounded_list(prompt) else prompt
+    query = prompt
     cap = _source_cap(model)
     holder: dict = {}
 
@@ -416,20 +392,6 @@ def _with_search(
     return messages, {"status": status, "sources": sources, "context": full}
 
 
-def _search_context(note, rows) -> str:
-    """Full notes when the lookup returned them, else the fenced row."""
-    if isinstance(note, dict):
-        text = str(note.get("context") or "").strip()
-        if text:
-            return text
-    for row in rows or []:
-        if isinstance(row, dict) and str(row.get("content") or "").startswith(
-            "Web search notes"
-        ):
-            return str(row.get("content") or "")
-    return ""
-
-
 def _image_cards(prompt: str, answer: str = "") -> list[dict]:
     """Public cards for this turn. A list of visual items waits for the answer."""
     mode = visual_mode(prompt)
@@ -464,16 +426,6 @@ def _cards_after(prompt: str, answer: str, images: list[dict]) -> list[dict]:
         return images
     fresh = _image_cards(prompt, answer)
     return fresh or images
-
-
-def _list_suffix(shown: str, finished: str) -> str:
-    """Text the stream has not already sent. Empty when the list did not grow."""
-    if not finished or finished == shown:
-        return ""
-    trimmed = shown.rstrip()
-    if finished.startswith(trimmed):
-        return finished[len(trimmed) :]
-    return ""
 
 
 def _put_images(payload: dict, images: list[dict]) -> None:
@@ -1214,7 +1166,6 @@ class Handler(BaseHTTPRequestHandler):
         if refused:
             self._policy_refusal(prompt, want_stream, started, refused)
             return
-        canned_partial = ""
         try:
             if target and target != "auto":
                 named = next(
@@ -1230,24 +1181,18 @@ class Handler(BaseHTTPRequestHandler):
                 hit = lookup(prompt)
                 if hit is not None:
                     hit = visible_canned(prompt, hit)
-                    # A short Top-N map hit is not finished. Flash continues it once.
-                    if needs_exact_n(prompt, hit):
-                        canned_partial = hit
-                    else:
-                        note_exchange(
-                            prompt, hit, chip="cache", peer="cache", train=False
-                        )
-                        remember_completion(prompt, hit, "cache", "cache")
-                        cached_mode, cached_route = self._remember_canned_mode(data)
-                        self._cached(
-                            hit,
-                            want_stream,
-                            started,
-                            think_name,
-                            cached_mode,
-                            cached_route,
-                        )
-                        return
+                    note_exchange(prompt, hit, chip="cache", peer="cache", train=False)
+                    remember_completion(prompt, hit, "cache", "cache")
+                    cached_mode, cached_route = self._remember_canned_mode(data)
+                    self._cached(
+                        hit,
+                        want_stream,
+                        started,
+                        think_name,
+                        cached_mode,
+                        cached_route,
+                    )
+                    return
         except ClientGone:
             raise
         except Exception as error:
@@ -1276,14 +1221,13 @@ class Handler(BaseHTTPRequestHandler):
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             structured = is_structured_request(prompt)
-            ready = sequence_answer(prompt) or ready_chart(prompt)
+            ready = ready_chart(prompt)
             do_search = (
                 bool(mesh and node_role() == "brain")
                 and ready is None
                 and not structured
                 and needs_web(prompt)
             )
-            max_tokens = list_budget(prompt, max_tokens)
             tuned = _tuned_knobs(used if kind != "llamacpp" else model)
             ctx = int(tuned.get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
@@ -1297,17 +1241,11 @@ class Handler(BaseHTTPRequestHandler):
                 outbound, search_note = _with_search(
                     outbound, prompt, images, model, getattr(self, "_cancel", None)
                 )
+            elif not want_stream:
+                images = _image_cards(prompt)
             if not want_stream:
                 outbound = shape_messages(outbound, prompt, tuned)
             grounded = ready
-            if grounded is None and search_note is not None:
-                grounded = answer_from_search(
-                    prompt, str(search_note.get("context") or "")
-                )
-            # A finished sequence or chart stays. A short canned list still
-            # continues once when the ready text is missing or incomplete.
-            if canned_partial and (grounded is None or needs_exact_n(prompt, grounded)):
-                grounded = canned_partial
         except ClientGone:
             raise
         except Exception as error:
@@ -1342,10 +1280,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._error(MODEL_MISSING)
                     return
-        # A finished map hit already returned. A short list still needs one
-        # Flash continuation, and that continuation takes a generation slot.
-        finish_list = bool(grounded) and needs_exact_n(prompt, grounded)
-        use_model = grounded is None or finish_list
+        use_model = grounded is None
         slot = {"held": False, "waiting": False}
         if use_model:
             outcome = runtime.gate.reserve()
@@ -1818,79 +1753,6 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)
         safe_write(self, b"data: [DONE]\n\n", flush=True)
 
-    def _extend_list(
-        self,
-        peer,
-        kind,
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        prompt: str,
-        text: str,
-    ) -> str:
-        """Ask once more for exactly N. A real-world category is searched first.
-
-        When the notes already list N titles, those titles are the reply and
-        the model is not asked to continue. One continuation still runs when
-        the notes are short. A title the notes contradict is dropped.
-        """
-        rows = list(messages or [])
-        context = ""
-        try:
-            if (
-                is_grounded_list(prompt)
-                and self._mesh_search_on()
-                and not getattr(self, "_searched", False)
-            ):
-                noted = any(
-                    isinstance(row, dict)
-                    and str(row.get("content") or "").startswith("Web search notes")
-                    for row in rows
-                )
-                note = None
-                if not noted:
-                    rows, note = _with_search(
-                        rows, prompt, model=model, cancel=getattr(self, "_cancel", None)
-                    )
-                context = _search_context(note, rows)
-
-            def more(partial: str, count: int) -> str:
-                follow = continuation_messages(rows, partial, count)
-                if kind == "llamacpp":
-                    nxt, _used = chat_llamacpp(
-                        peer,
-                        model,
-                        follow,
-                        temperature,
-                        max_tokens,
-                        cancel=self._cancel,
-                    )
-                else:
-                    nxt, _used = chat_ollama(
-                        peer,
-                        model,
-                        follow,
-                        temperature,
-                        max_tokens,
-                        cancel=self._cancel,
-                    )
-                return nxt
-
-            current = text
-            if context and source_titles(context):
-                current = ground_category_list(prompt, text, context)
-            extended = finish_numbered(prompt, current, more)
-            if context and source_titles(context):
-                extended = ground_category_list(prompt, extended, context)
-        except ClientGone:
-            raise
-        except Exception:
-            return text
-        if extended != text or list_count(prompt):
-            return extended
-        return text
-
     def _decode_reply(
         self,
         peer,
@@ -1902,7 +1764,7 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         search_note: dict | None,
     ) -> tuple[str, str, bool]:
-        """One completion. A plain list may continue once. A failed decode is one sentence."""
+        """One completion. A failed decode is one sentence. A chart may be repaired once."""
         meta: dict = {}
         try:
             if kind == "llamacpp":
@@ -1940,41 +1802,6 @@ class Handler(BaseHTTPRequestHandler):
             return refused, used, False
         self._last_reasoning = reasoning
         content = answer
-        if may_retry_refusal(prompt) and is_soft_refusal(content):
-            content = self._guard_reply(
-                peer, kind, model, messages, temperature, max_tokens, prompt, content
-            )
-        elif not list_count(prompt) and asks_continuation(
-            prompt, content, str(meta.get("done_reason") or "")
-        ):
-            follow = shape_messages(plain_continuation(messages, content), prompt)
-            more = ""
-            try:
-                if kind == "llamacpp":
-                    more, used = chat_llamacpp(
-                        peer,
-                        model,
-                        follow,
-                        temperature,
-                        max_tokens,
-                        cancel=self._cancel,
-                    )
-                else:
-                    more, used = chat_ollama(
-                        peer,
-                        model,
-                        follow,
-                        temperature,
-                        max_tokens,
-                        cancel=self._cancel,
-                    )
-            except (OSError, json.JSONDecodeError):
-                more = ""
-            content = join_continuation(content, more or "")
-        else:
-            content = self._extend_list(
-                peer, kind, model, messages, temperature, max_tokens, prompt, content
-            )
         content = self._repair_chart(
             peer, kind, model, messages, temperature, max_tokens, prompt, content
         )
@@ -1986,97 +1813,9 @@ class Handler(BaseHTTPRequestHandler):
         if refused:
             self._last_reasoning = ""
             return refused, used, False
-        if is_grounded_list(prompt):
-            content, used = self._settle_grounded(
-                peer,
-                kind,
-                used,
-                messages,
-                temperature,
-                max_tokens,
-                prompt,
-                content,
-                search_note,
-            )
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
-
-    def _settle_grounded(
-        self,
-        peer,
-        kind,
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        prompt: str,
-        content: str,
-        search_note,
-    ) -> tuple[str, str]:
-        """Prefer N source names. A short or looping Flash list is asked of Pro."""
-        if not getattr(self, "_searched", False):
-            return dedupe_lines(content or ""), model
-        context = _search_context(search_note, messages)
-        cleaned = dedupe_lines(content or "")
-        grounded = ground_category_list(prompt, cleaned, context)
-        count = answer_count(prompt) or 0
-        if count and len(ranked_entities(context)) >= count:
-            return grounded, model
-        if distinct_items(cleaned) >= count:
-            return grounded, model
-        promoted = self._promote_list(
-            peer, kind, model, messages, temperature, max_tokens, prompt, context
-        )
-        if promoted:
-            return promoted
-        return grounded, model
-
-    def _promote_list(
-        self,
-        peer,
-        kind,
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        prompt: str,
-        context: str,
-    ) -> tuple[str, str] | None:
-        """One Pro answer when Flash could not ground a list. No cold load."""
-        if kind == "llamacpp":
-            return None
-        pro = str(mode_table().get("pro") or "")
-        if not pro or pro == model:
-            return None
-        if not tag_ready(peer.get("models") or [], "pro", pro):
-            return None
-        host = str(peer.get("host") or "127.0.0.1")
-        try:
-            port = int(peer.get("port") or 0)
-        except (TypeError, ValueError):
-            port = 0
-        if port:
-            resident = resident_models(host, port)
-            if resident is not None and pro not in resident:
-                schedule_pro_warm(host, port, pro)
-                if not wait_for_resident(host, port, pro):
-                    return None
-        try:
-            text, used = chat_ollama(
-                peer,
-                pro,
-                messages,
-                temperature,
-                max_tokens,
-                plan=getattr(self, "_decode_plan", None),
-                cancel=self._cancel,
-            )
-        except (OSError, json.JSONDecodeError):
-            return None
-        text = dedupe_lines(text or "")
-        grounded = ground_category_list(prompt, text, context)
-        return grounded or text, used
 
     def _ask(self, peer, kind, model, messages, temperature, max_tokens) -> str:
         try:
@@ -2103,7 +1842,7 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         content: str,
     ) -> str:
-        """Nudge once. A second soft refusal may use search notes or Pro, not a canned list."""
+        """Nudge once. The model's words stay if the nudge is still a refusal."""
 
         def again() -> str:
             follow = shape_messages(
@@ -2116,72 +1855,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             return self._ask(peer, kind, model, follow, temperature, max_tokens)
 
-        def ground() -> str:
-            return self._recover_refusal(
-                peer, kind, model, messages, temperature, max_tokens, prompt
-            )
-
-        return settle_reply(prompt, content, again, ground)
-
-    def _mesh_search_on(self) -> bool:
-        mesh = (self.headers.get("X-Pi-Mesh") or "on").strip().lower()
-        return mesh != "off" and node_role() == "brain"
-
-    def _recover_refusal(
-        self,
-        peer,
-        kind,
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        prompt: str,
-    ) -> str:
-        """One recovery after the nudge: pi2/local search notes, or a Pro tag.
-
-        Search wins when it returns notes. Pro is the other path, used when
-        search is off, already ran, or came back empty. Neither invents items.
-        """
-        rows = list(messages or [])
-        already = any(
-            isinstance(row, dict)
-            and str(row.get("content") or "").startswith("Web search notes")
-            for row in rows
-        )
-        outbound = rows
-        note = None
-        if (
-            not already
-            and self._mesh_search_on()
-            and not is_structured_request(prompt)
-            and not getattr(self, "_searched", False)
-        ):
-            outbound, note = _with_search(
-                rows, prompt, model=model, cancel=getattr(self, "_cancel", None)
-            )
-        context = ""
-        if isinstance(note, dict) and note.get("status") == "ok":
-            context = str(note.get("context") or "").strip()
-        if not context:
-            context = _search_context(None, outbound)
-            if not str(context).startswith("Web search notes"):
-                context = ""
-        if context and self._mesh_search_on() and not is_structured_request(prompt):
-            follow = shape_messages(
-                [*outbound, {"role": "user", "content": HELPFUL_NUDGE}],
-                prompt,
-            )
-            return self._ask(peer, kind, model, follow, temperature, max_tokens)
-        pro_tag = mode_table().get("pro") or ""
-        if not pro_tag or pro_tag == model:
-            return ""
-        if not tag_ready(peer.get("models") or [], "pro", pro_tag):
-            return ""
-        follow = shape_messages(
-            [*rows, {"role": "user", "content": HELPFUL_NUDGE}],
-            prompt,
-        )
-        return self._ask(peer, kind, pro_tag, follow, temperature, max_tokens)
+        return settle_reply(prompt, content, again)
 
     def _repair_chart(
         self,
@@ -2315,6 +1989,8 @@ class Handler(BaseHTTPRequestHandler):
         if not emit_status("thinking", think_extra):
             return
         images = list(images or [])
+        if not do_search:
+            images = _image_cards(prompt)
         if do_search:
             self._searched = True
             if not emit_status("searching", {"pi_tool": "search"}):
@@ -2333,8 +2009,6 @@ class Handler(BaseHTTPRequestHandler):
             if not emit_status("searching", found):
                 return
         grounded = ready_answer
-        if grounded is None and search_note is not None:
-            grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         answer_extra = dict(think_extra or {})
         if search_note:
             answer_extra["pi_search"] = search_note["status"]
@@ -2344,17 +2018,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         messages = shape_messages(messages, prompt, _tuned_knobs(model))
         if grounded is not None:
-            if needs_exact_n(prompt, grounded):
-                grounded = self._extend_list(
-                    peer,
-                    kind,
-                    model,
-                    messages,
-                    temperature,
-                    max_tokens,
-                    prompt,
-                    grounded,
-                )
             self._emit_ready_answer(
                 peer,
                 kind,
@@ -2371,7 +2034,7 @@ class Handler(BaseHTTPRequestHandler):
                 resident_name,
             )
             return
-        if is_chart_request(prompt) or is_grounded_list(prompt):
+        if is_chart_request(prompt):
             content, used, train = self._decode_reply(
                 peer,
                 kind,
@@ -2551,10 +2214,6 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 parts.append(delta)
                 joined = "".join(parts)
-                clipped, repeated = clip_repeat(joined)
-                if repeated:
-                    parts[:] = [clipped]
-                    joined = clipped
                 release = stream_release(joined)
                 if release == "refuse":
                     policy = _block(joined)
@@ -2586,8 +2245,6 @@ class Handler(BaseHTTPRequestHandler):
                     flushed = len(joined)
                     held = False
                 if not piece:
-                    if repeated:
-                        break
                     continue
                 chunk = {
                     "id": "pi-pair",
@@ -2602,8 +2259,6 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 if not write_json(chunk):
                     closed = True
-                    break
-                if repeated:
                     break
             if not closed and not policy:
                 raw_answer = "".join(parts)
@@ -2661,30 +2316,18 @@ class Handler(BaseHTTPRequestHandler):
                 not policy
                 and held
                 and may_retry_refusal(prompt)
-                and (is_soft_refusal(answer) or placeholder_only(answer))
+                and is_soft_refusal(answer)
             ):
-                if placeholder_only(answer) and not is_soft_refusal(answer):
-                    answer = self._extend_list(
-                        peer,
-                        kind,
-                        model,
-                        messages,
-                        temperature,
-                        max_tokens,
-                        prompt,
-                        answer,
-                    )
-                else:
-                    answer = self._guard_reply(
-                        peer,
-                        kind,
-                        model,
-                        messages,
-                        temperature,
-                        max_tokens,
-                        prompt,
-                        answer,
-                    )
+                answer = self._guard_reply(
+                    peer,
+                    kind,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    prompt,
+                    answer,
+                )
                 if answer and not safe_write(
                     self,
                     (
@@ -2714,43 +2357,6 @@ class Handler(BaseHTTPRequestHandler):
                     return
             elif not policy and not is_harmful(prompt):
                 answer = scrub_reply(answer) or answer
-            skip_extend = policy or (
-                is_soft_refusal(answer)
-                or is_honest_miss(answer)
-                or placeholder_only(answer)
-            )
-            finished = (
-                answer
-                if skip_extend
-                else self._extend_list(
-                    peer, kind, model, messages, temperature, max_tokens, prompt, answer
-                )
-            )
-            if not policy and _block(finished):
-                finished = answer
-            extra = _list_suffix(answer, finished)
-            if extra:
-                more = {
-                    "id": "pi-pair",
-                    "object": "chat.completion.chunk",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": extra},
-                            "finish_reason": None,
-                        }
-                    ],
-                }
-                if not safe_write(
-                    self, f"data: {json.dumps(more)}\n\n".encode(), flush=True
-                ):
-                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
-                    note_exchange(
-                        prompt, answer, chip=chip, peer=peer["name"], train=True
-                    )
-                    remember_completion(prompt, answer, chip, peer["name"])
-                    return
-                answer = finished
             images = _cards_after(prompt, answer, images)
             elapsed = int((time.time() - started) * 1000)
             final = {
@@ -2780,8 +2386,6 @@ class Handler(BaseHTTPRequestHandler):
             chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
             if not policy:
                 raw_answer = "".join(parts)
-                # A short Flash list is extended after the first tokens. Keep
-                # that longer text. Putting the raw decode back drops item N.
                 if not held and answer == raw_answer:
                     answer = (
                         scrub_reply(raw_answer) or raw_answer
@@ -2896,23 +2500,9 @@ class Handler(BaseHTTPRequestHandler):
         ready_answer: str | None = None,
     ) -> None:
         grounded = ready_answer
-        if grounded is None and search_note is not None:
-            grounded = answer_from_search(prompt, str(search_note.get("context") or ""))
         train = True
         if grounded is not None:
-            if needs_exact_n(prompt, grounded):
-                content = self._extend_list(
-                    peer,
-                    kind,
-                    model,
-                    messages,
-                    temperature,
-                    max_tokens,
-                    prompt,
-                    grounded,
-                )
-            else:
-                content = grounded
+            content = grounded
             used = model
         else:
             content, used, train = self._decode_reply(

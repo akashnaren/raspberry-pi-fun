@@ -17,6 +17,7 @@ from pair.think import (
     TOP_K,
     clip_reasoning,
     reasoning_tokens,
+    sample_knobs,
     stop_thinking,
     with_force,
 )
@@ -160,9 +161,7 @@ def iter_ollama_channels(
     budget = int(plan.think_budget) if think and plan else 0
     seconds = float(plan.think_seconds) if think and plan else 0.0
     predict = int(plan.ollama_predict(max_tokens)) if plan else int(max_tokens)
-    top_p = plan.top_p if plan else None
-    top_k = plan.top_k if plan else None
-    penalty = plan.presence_penalty if plan and plan.presence_penalty else None
+    top_p, top_k, penalty = sample_knobs(plan)
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
     payload = ollama_payload(
         model,

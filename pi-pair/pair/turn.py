@@ -1,10 +1,9 @@
 """Shape one turn before pi4 decodes it.
 
-Plot and plain list prompts do not need a web round trip. Attachment text
-and search notes are untrusted data: control tokens and role labels are
-stripped, the file and the notes are fenced, and the whole prompt is cut
-so a 2048-token context still has room to answer. A list that hits the
-token cap can be continued once.
+Search runs only when the question asks for it or names something current.
+Attachment text and search notes are untrusted data: control tokens and role
+labels are stripped, the file and the notes are fenced, and the whole prompt
+is cut so a 2048-token context still has room to answer.
 """
 
 from __future__ import annotations
@@ -13,18 +12,21 @@ import functools
 import json
 import re
 
-from pair.assist import answer_hint_for
 from pair.errors import friendly_error
-from pair.ground import is_grounded_problem
 from pair.knobs import attachment_limit, inference_knobs
 
 ATTACH_MARK = "\n\n---\n"
-CONTINUE_NUDGE = (
-    "Continue the list from the next item. Do not repeat items already written."
-)
 SLOW_ANSWER = "That took too long. Ask again in a moment."
 SHORT_ANSWER = "I could not finish that. Ask again with a shorter question."
 NOTES_ANSWER = "I could not finish a full answer. From the notes: "
+
+ANSWER_HINT = (
+    "Answer the user's question directly. "
+    "When a list is wanted, put one item on each line. "
+    "Web notes, when they are included, are context: use them, and do not "
+    "invent fresh prices, scores, or news they do not support. "
+    "Do not mention model choice, routing, or the mesh."
+)
 
 CHART_HINT = (
     "Chart replies use one fenced block and no other plot format.\n"
@@ -39,24 +41,9 @@ _PLOT = re.compile(
     r"\b(?:plot|chart|graph|histogram|scatter|pie chart|bar chart)\b",
     re.I,
 )
-_LIST = re.compile(r"\b(?:bullet list|checklist|enumerate|list)\b", re.I)
-_RANK = re.compile(r"\btop\s+\d{1,2}\b|\b\d{1,2}\s+best\b|\brank(?:ing)?\b", re.I)
 _FRESH = re.compile(r"\b(?:news|latest|current)\b", re.I)
-_FACT = re.compile(
-    r"\b(?:who|what|when|where|why|how|which|tell me about)\b",
-    re.I,
-)
 _SEARCH = re.compile(
     r"\b(?:search for|look up|lookup|latest news|news about|sources for|find articles|find sources)\b",
-    re.I,
-)
-# Stable facts and display-math explanations do not need a page fetch.
-_KNOWN_FACT = re.compile(
-    r"\b(?:capital|population|currency|language|continent) of\b",
-    re.I,
-)
-_EXPLAIN_MATH = re.compile(
-    r"\b(?:euler(?:'s)?\s+identity|gaussian\s+integral|display\s+math|latex)\b",
     re.I,
 )
 _CONTROL = re.compile(
@@ -169,52 +156,17 @@ def is_plot(prompt: str) -> bool:
 
 
 @functools.lru_cache(maxsize=256)
-def is_plain_list(prompt: str) -> bool:
-    question = user_question(prompt)
-    if _SEARCH.search(question):
-        return False
-    return bool(_LIST.search(question))
-
-
-@functools.lru_cache(maxsize=256)
-def is_list_intent(prompt: str) -> bool:
-    """List, top-N, N-best, and rank lines skip search unless they ask for news.
-
-    "latest", "current", and "news" still look the web up. Plot, table, and
-    diagram asks are a separate skip and are not decided here.
-    """
-    question = user_question(prompt)
-    if _SEARCH.search(question) or _FRESH.search(question):
-        return False
-    return bool(_LIST.search(question) or _RANK.search(question))
-
-
-@functools.lru_cache(maxsize=256)
 def needs_web(prompt: str) -> bool:
-    """True for fresh facts, grounded math, and real-world lists.
+    """True when the user asks to look something up, or names something current.
 
-    Plots, attachments, plain lists, and chit-chat stay on the model.
+    Plots and attachments stay on the model unless they explicitly ask to search.
     """
-    from pair.lists import is_grounded_list
-
     question = user_question(prompt)
-    if _EXPLAIN_MATH.search(question):
-        return False
-    if _KNOWN_FACT.search(question) and not _FRESH.search(question):
-        return False
-    if is_grounded_problem(question):
-        return True
     if attachment_tail(prompt) and not _SEARCH.search(question):
         return False
     if is_plot(prompt):
         return False
-    if _SEARCH.search(question) or _FRESH.search(question):
-        return True
-    if is_grounded_list(question):
-        return True
-    if is_list_intent(prompt):
-        return False
-    return bool(_FACT.search(question))
+    return bool(_SEARCH.search(question) or _FRESH.search(question))
 
 
 def fence_user_text(content: str, limit: int) -> str:
@@ -323,12 +275,10 @@ def add_chart_hint(messages, prompt: str) -> list:
 
 
 def add_answer_hint(messages, prompt: str) -> list:
-    """Ask for a direct answer. Search notes and chart hints stay in front."""
+    """One system note for every non-chart turn. Search notes stay in front."""
     if is_plot(prompt):
         return list(messages or [])
-    hint = answer_hint_for(prompt)
-    if not hint:
-        return list(messages or [])
+    hint = ANSWER_HINT
     rows = list(messages or [])
     for row in rows:
         if (
@@ -453,36 +403,6 @@ def shape_messages(messages, prompt: str, knobs: dict | None = None) -> list:
     rows = add_chart_hint(rows, prompt)
     rows = add_answer_hint(rows, prompt)
     return fit_messages(rows, knobs)
-
-
-def asks_continuation(prompt: str, answer: str, reason: str) -> bool:
-    """One more decode when a list stopped on the token cap or a dangling item."""
-    if not is_plain_list(prompt):
-        return False
-    text = (answer or "").strip()
-    if not text:
-        return False
-    if str(reason or "").strip().lower() in {"length", "max_tokens"}:
-        return True
-    return text[-1] in ",:;—"
-
-
-def continuation_messages(messages, answer: str) -> list:
-    return [
-        *list(messages or []),
-        {"role": "assistant", "content": answer},
-        {"role": "user", "content": CONTINUE_NUDGE},
-    ]
-
-
-def join_continuation(first: str, more: str) -> str:
-    extra = (more or "").strip()
-    if not extra:
-        return first or ""
-    base = first or ""
-    if base.endswith("\n"):
-        return base + extra
-    return base.rstrip() + "\n" + extra
 
 
 def _is_timeout(error: BaseException | None) -> bool:

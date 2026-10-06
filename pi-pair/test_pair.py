@@ -93,7 +93,9 @@ class OllamaFake(BaseHTTPRequestHandler):
                 + b"\n"
             )
             self.wfile.write(
-                json.dumps({"message": {"content": "lo"}, "done": True}).encode()
+                json.dumps(
+                    {"message": {"content": "lo from peer"}, "done": True}
+                ).encode()
                 + b"\n"
             )
             return
@@ -125,7 +127,17 @@ class LlamaFake(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
         type(self).last_payload = payload
-        content = "llama:" + payload.get("model", "")
+        content = "llama:" + str(payload.get("model") or "")
+        if payload.get("stream"):
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.end_headers()
+            chunk = {
+                "choices": [{"delta": {"content": content}, "finish_reason": "stop"}]
+            }
+            self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+            return
         body = json.dumps(
             {"choices": [{"message": {"role": "assistant", "content": content}}]}
         ).encode()
@@ -1159,7 +1171,7 @@ class PairHttp(unittest.TestCase):
 
     def test_miss_puts_search_snippets_in_the_prompt(self):
         self._pi3_accepts_forwarded_rows()
-        prompt = "How tall is the bench in the hall?"
+        prompt = "Search for how tall the bench in the hall is"
 
         def fake(query, opener=None):
             self.search_calls.append(query)
@@ -1203,7 +1215,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(row["answer"], "hello from peer")
 
     def test_failed_search_still_answers_locally(self):
-        prompt = "What is the weather on the far pier?"
+        prompt = "What is the latest weather on the far pier?"
 
         def boom(query, opener=None):
             self.search_calls.append(query)
@@ -1319,9 +1331,7 @@ class PairHttp(unittest.TestCase):
             prompt,
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
-        self.assertEqual(
-            _statuses(raw), ["thinking", "searching", "searching", "answering"]
-        )
+        self.assertEqual(_statuses(raw), ["thinking", "answering"])
         pictured = [item for item in _sse_payloads(raw) if item.get("pi_images")]
         self.assertGreaterEqual(len(pictured), 2)
         self.assertEqual(pictured[0]["pi_images"], [poster])
@@ -1554,7 +1564,7 @@ class PairHttp(unittest.TestCase):
         port = self._pi4()
         headers, raw = self._stream_raw(
             port,
-            "where is the hall bench",
+            "Search for where the hall bench is",
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
@@ -1615,7 +1625,7 @@ class PairHttp(unittest.TestCase):
             {
                 "model": "qwen3:0.6b",
                 "messages": [
-                    {"role": "user", "content": "How tall is the hall bench?"}
+                    {"role": "user", "content": "Search for how tall the hall bench is"}
                 ],
                 "stream": False,
             },
@@ -1645,7 +1655,7 @@ class PairHttp(unittest.TestCase):
 
         limit = search_note_limit()
         self.assertEqual(limit, 640)
-        prompt = "How wide is the east window?"
+        prompt = "Search for how wide the east window is."
         page = "snippet " * 400
 
         def fake(query, opener=None):
@@ -1680,18 +1690,11 @@ class PairHttp(unittest.TestCase):
         self.assertIn("snippet", system["content"])
         self.assertLess(len(system["content"]), len(page))
 
-    def test_math_miss_is_the_page_and_not_the_model(self):
-        from pair.ground import MISS
-
+    def test_math_is_answered_by_the_model(self):
         prompt = (
             "A spherical balloon is being inflated with gas at a constant rate of "
             "12 cubic centimeters per second. Find the exact rate at which the radius "
             "is increasing when the surface area is 36 pi square centimeters."
-        )
-        page = (
-            "The balloon gains 12 cubic centimeters per second. "
-            "When the surface area is 36 pi square centimeters, r = 3. "
-            "dr/dt = 1/(3 pi) centimeters per second."
         )
 
         def fake(query, opener=None):
@@ -1701,12 +1704,13 @@ class PairHttp(unittest.TestCase):
                 "sources": [
                     {"title": "Balloon note", "url": "https://example.com/balloon"}
                 ],
-                "context": "Text from the first page:\n" + page,
+                "context": "Text from the first page:\ndr/dt = 1/(3 pi)",
             }
 
         pair_server.lookup_web = fake
         port = self._pi4()
         OllamaFake.posts = 0
+        self.search_calls.clear()
         status, headers, body = self._post(
             port,
             {
@@ -1717,40 +1721,12 @@ class PairHttp(unittest.TestCase):
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 200)
-        answer = body["choices"][0]["message"]["content"]
-        self.assertIn(answer, page)
-        self.assertIn("dr/dt = 1/(3 pi)", answer)
-        self.assertNotEqual(answer, "hello from peer")
-        self.assertEqual(OllamaFake.posts, 0)
-        self.assertEqual(body["pi_stages"], ["thinking", "searching", "answering"])
-        self.assertEqual(body["pi_search"], "ok")
-        self.assertEqual(body["pi_sources"][0]["url"], "https://example.com/balloon")
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertGreaterEqual(OllamaFake.posts, 1)
+        self.assertEqual(self.search_calls, [])
+        self.assertNotIn("searching", body["pi_stages"])
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
-        self.assertEqual(headers.get("X-Pi-Search"), "ok")
-
-        def thin(query, opener=None):
-            self.search_calls.append(query)
-            return {
-                "status": "ok",
-                "sources": [{"title": "Index", "url": "https://example.com/rates"}],
-                "context": "Text from the first page:\nRelated rates include ladders and balloons.",
-            }
-
-        pair_server.lookup_web = thin
-        OllamaFake.posts = 0
-        status, headers, body = self._post(
-            port,
-            {
-                "model": "qwen3:0.6b",
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-            },
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(body["choices"][0]["message"]["content"], MISS)
-        self.assertEqual(OllamaFake.posts, 0)
-        self.assertEqual(body["pi_stages"], ["thinking", "searching", "answering"])
+        self.assertIsNone(headers.get("X-Pi-Search"))
 
         OllamaFake.posts = 0
         self.search_calls.clear()
@@ -1761,47 +1737,37 @@ class PairHttp(unittest.TestCase):
         )
         self.assertEqual(_statuses(direct), ["thinking", "answering"])
         self.assertNotIn('"pi_status": "searching"', direct)
+        self.assertIn("hel", direct)
+        self.assertIn("lo from peer", direct)
         self.assertEqual(self.search_calls, [])
         self.assertEqual(OllamaFake.posts, 1)
 
-    def test_math_stream_reads_the_page(self):
+    def test_math_stream_uses_the_model(self):
         prompt = (
             "A spherical balloon is inflated at 12 cubic centimeters per second. "
             "Find the exact rate at which the radius grows when the surface area "
             "is 36 pi square centimeters."
         )
-        page = (
-            "Inflated at 12 cubic centimeters per second. "
-            "Surface area 36 pi square centimeters gives r = 3. "
-            "dr/dt = 1/(3 pi) centimeters per second."
-        )
 
         def fake(query, opener=None):
             self.search_calls.append(query)
-            return {
-                "status": "ok",
-                "sources": [
-                    {"title": "Balloon note", "url": "https://example.com/balloon"}
-                ],
-                "context": "Text from the first page:\n" + page,
-            }
+            return {"status": "ok", "sources": [], "context": "dr/dt = 1/(3 pi)"}
 
         pair_server.lookup_web = fake
         port = self._pi4()
         OllamaFake.posts = 0
+        self.search_calls.clear()
         headers, raw = self._stream_raw(
             port,
             prompt,
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
-        self.assertEqual(
-            _statuses(raw), ["thinking", "searching", "searching", "answering"]
-        )
-        self.assertIn("dr/dt = 1/(3 pi)", raw)
-        self.assertNotIn('"content": "hel"', raw)
-        self.assertEqual(OllamaFake.posts, 0)
-        self.assertEqual(self.search_calls, [prompt])
+        self.assertEqual(_statuses(raw), ["thinking", "answering"])
+        self.assertIn("hel", raw)
+        self.assertIn("lo from peer", raw)
+        self.assertEqual(OllamaFake.posts, 1)
+        self.assertEqual(self.search_calls, [])
 
     def _brain(self):
         peer_port = self._listen(OllamaFake)
@@ -1958,7 +1924,7 @@ class PairHttp(unittest.TestCase):
             {
                 "model": "qwen3:0.6b",
                 "messages": [
-                    {"role": "user", "content": "where is the long bench today"}
+                    {"role": "user", "content": "where is the current long bench"}
                 ],
                 "stream": False,
             },
@@ -1988,7 +1954,7 @@ class PairHttp(unittest.TestCase):
                 "mode": "pro",
                 "model": "qwen3:1.7b",
                 "messages": [
-                    {"role": "user", "content": "where is the long bench today"}
+                    {"role": "user", "content": "where is the current long bench"}
                 ],
                 "stream": False,
             },

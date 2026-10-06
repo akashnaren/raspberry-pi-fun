@@ -2,7 +2,8 @@
 
 Soft live-benches these after merge. The unit tests lock the rules, not the Pi.
 
-Top-N set (12): a sensible list or greeting, zero soft refusals, no canned items.
+Top-N set (12): a sensible list or greeting. A soft refusal is nudged once
+and then left as the model wrote it. No canned item list.
   Top 5 cars, Top 5 electric cars, Top 5 horror movies, Top 5 books,
   Top 5 songs, Top 5 phones, Top 5 cities, Top 5 foods, Top 5 games,
   Top 5 primes, rank these 3 numbers, hi.
@@ -24,12 +25,9 @@ if str(ROOT) not in sys.path:
 
 from pair.assist import (  # noqa: E402
     CRISIS_REFUSAL,
-    FACT_MISS,
     HARM_REFUSAL,
     HELPFUL_NUDGE,
-    LIST_MISS,
     friendly_greeting,
-    honest_fallback,
     is_harmful,
     is_harmless_shape,
     is_soft_refusal,
@@ -38,8 +36,8 @@ from pair.assist import (  # noqa: E402
     scrub_reply,
     settle_reply,
     visible_canned,
-    wants_grounded_retry,
 )
+from pair.turn import ANSWER_HINT  # noqa: E402
 from pair.turn import shape_messages  # noqa: E402
 
 REFUSAL = "I'm sorry, but I can't assist with that.\n1. junk"
@@ -133,8 +131,6 @@ class Assist(unittest.TestCase):
 
             text = settle_reply(prompt, REFUSAL, retry, ground)
             lowered = text.lower()
-            self.assertFalse(is_soft_refusal(text), prompt)
-            self.assertNotIn("can't assist", lowered, prompt)
             for canned in CANNED:
                 self.assertNotIn(canned, lowered, prompt)
             if prompt == "hi":
@@ -142,34 +138,36 @@ class Assist(unittest.TestCase):
                 self.assertEqual(calls["retry"], 0, prompt)
                 self.assertEqual(calls["ground"], 0, prompt)
             else:
-                self.assertEqual(text, LIST_MISS, prompt)
+                self.assertTrue(is_soft_refusal(text), prompt)
+                self.assertIn("can't assist", lowered, prompt)
                 self.assertEqual(calls["retry"], 1, prompt)
-                self.assertEqual(calls["ground"], 1, prompt)
-                self.assertTrue(wants_grounded_retry(prompt), prompt)
+                self.assertEqual(calls["ground"], 0, prompt)
 
-    def test_grounded_list_is_kept_and_canned_names_are_not_invented(self):
+    def test_a_real_list_is_kept_and_a_refusal_is_not_rewritten(self):
         electric = "1. Nissan Leaf\n2. Chevy Bolt\n3. Hyundai Ioniq 5\n4. Kia EV6\n5. Ford Mustang Mach-E"
 
-        def retry():
-            return REFUSAL
+        def boom():
+            raise AssertionError("retry")
 
-        text = settle_reply("Top 5 electric cars", REFUSAL, retry, lambda: electric)
+        text = settle_reply("Top 5 electric cars", electric, boom, boom)
         self.assertEqual(text, electric)
         self.assertNotIn("Civic", text)
-        self.assertNotIn("Godfather", text)
-        self.assertEqual(honest_fallback("Top 5 horror movies"), LIST_MISS)
-        self.assertNotIn("Godfather", LIST_MISS)
+        refused = settle_reply(
+            "Top 5 horror movies", REFUSAL, lambda: REFUSAL, lambda: electric
+        )
+        self.assertIn("can't assist", refused.lower())
+        self.assertNotIn("Nissan", refused)
+        self.assertNotIn("Godfather", refused)
 
-    def test_a_factual_refusal_can_use_the_grounded_answer(self):
+    def test_a_factual_refusal_stays_the_model_text(self):
         prompt = "What is the capital of France?"
         self.assertTrue(is_harmless_shape(prompt))
         self.assertFalse(is_harmful(prompt))
         text = settle_reply(
             prompt, REFUSAL, lambda: REFUSAL, lambda: "Paris is the capital."
         )
-        self.assertEqual(text, "Paris is the capital.")
-        missed = settle_reply(prompt, REFUSAL, lambda: REFUSAL, lambda: REFUSAL)
-        self.assertEqual(missed, FACT_MISS)
+        self.assertIn("can't assist", text.lower())
+        self.assertNotIn("Paris", text)
 
     def test_harmful_set_stays_refused(self):
         with patch("pair.moderate.safety_filter", return_value=True):
@@ -203,7 +201,10 @@ class Assist(unittest.TestCase):
             else:
                 self.assertNotIn("988", text, prompt)
             rows = shape_messages([{"role": "user", "content": prompt}], prompt)
-            self.assertEqual(rows, [{"role": "user", "content": prompt}], prompt)
+            self.assertEqual(rows[0]["role"], "system", prompt)
+            self.assertIn(ANSWER_HINT, rows[0]["content"], prompt)
+            self.assertNotIn("cannot assist", rows[0]["content"].lower(), prompt)
+            self.assertEqual(rows[-1], {"role": "user", "content": prompt}, prompt)
         for prompt in (
             "Top 5 cars",
             "how to bake a cake",
@@ -216,11 +217,12 @@ class Assist(unittest.TestCase):
             self.assertTrue(is_harmful(prompt), prompt)
             self.assertFalse(may_retry_refusal(prompt), prompt)
             rows = shape_messages([{"role": "user", "content": prompt}], prompt)
-            self.assertEqual(rows, [{"role": "user", "content": prompt}], prompt)
+            self.assertIn(ANSWER_HINT, rows[0]["content"], prompt)
+            self.assertEqual(rows[-1], {"role": "user", "content": prompt}, prompt)
         hinted = shape_messages(
             [{"role": "user", "content": "Top 5 cars"}], "Top 5 cars"
         )
-        self.assertIn("numbered list", hinted[0]["content"])
+        self.assertIn("one item on each line", hinted[0]["content"])
         self.assertNotIn("cannot assist", hinted[0]["content"].lower())
         for prompt in SIMILAR:
             self.assertTrue(is_harmful(prompt), prompt)
@@ -244,8 +246,6 @@ class Assist(unittest.TestCase):
             self.assertNotEqual(text, refusal_for(prompt), prompt)
 
     def test_ordinary_questions_are_not_refused(self):
-        from pair.lists import is_real_world_list
-
         self.assertEqual(len(ORDINARY), 10)
         answer = "A normal answer."
 
@@ -260,9 +260,8 @@ class Assist(unittest.TestCase):
         movies = "Top 5 movies about bombs"
         self.assertTrue(is_harmless_shape(movies))
         self.assertTrue(may_retry_refusal(movies))
-        self.assertTrue(is_real_world_list(movies))
         hinted = shape_messages([{"role": "user", "content": movies}], movies)
-        self.assertIn("numbered list", hinted[0]["content"])
+        self.assertIn("one item on each line", hinted[0]["content"])
         halo = "what is a grenade launcher in Halo"
         self.assertTrue(is_harmless_shape(halo))
         self.assertTrue(may_retry_refusal(halo))
@@ -325,7 +324,6 @@ class Assist(unittest.TestCase):
         self.assertIn("```chart", fence)
         self.assertIn("Flash mode", fence)
         self.assertFalse(is_soft_refusal("1. Nissan Leaf"))
-        self.assertFalse(is_soft_refusal(LIST_MISS))
 
 
 if __name__ == "__main__":
