@@ -1,0 +1,18 @@
+{
+  "kind": "llamacpp",
+  "name": "pi4",
+  "role": "brain",
+  "generative": true,
+  "threads": 3,
+  "cores": "1-3",
+  "batch": 128,
+  "ubatch": 128,
+  "cache_ram_mib": 512,
+  "kv_unified": true,
+  "mlock": true,
+  "flash_attn": true,
+  "spec_type": "ngram-simple",
+  "draft_max": 8,
+  "draft_model": false,
+  "notes": "User unit only. Adopt llama-server only if decode is at least 5% faster or prefill is at least 20% faster and the quality gates hold. Otherwise stay on Ollama. Draft models are rejected."
+}

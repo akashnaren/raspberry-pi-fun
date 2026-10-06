@@ -1,0 +1,27 @@
+{
+  "where": "vm",
+  "llama_server": "not installed",
+  "measured_tok_s": false,
+  "decision": "ollama",
+  "reason": "no pi4 timings; llama-server comparison was not run",
+  "gates": {
+    "decode_gain": 0.05,
+    "prefill_gain": 0.2,
+    "kl_limit": 0.01
+  },
+  "examples": {
+    "decode_5_7_to_6_3": "llama-server",
+    "within_5_percent": "ollama",
+    "faster_but_quality_fails": "ollama",
+    "kl_0_005_ok": true,
+    "output_layer_0_02_rejected": false
+  },
+  "targets": {
+    "flash_tok_s": 6.3,
+    "flash_tok_s_overclock": 6.8,
+    "pro_tok_s": 3.4,
+    "flash_ttft_s": 1.5,
+    "pro_ttft_s": 3.0
+  },
+  "ok": true
+}
