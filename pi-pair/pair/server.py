@@ -1292,20 +1292,28 @@ class Handler(BaseHTTPRequestHandler):
         temperature, max_tokens = _apply_model_sample(
             self, model, temperature, max_tokens
         )
+        self._answer_cap = int(max_tokens or 0)
         use_model = grounded is None
         slot = {"held": False, "waiting": False}
         if use_model:
             self._queue_t0 = time.perf_counter()
-            outcome = runtime.gate.reserve()
+            outcome = runtime.gate.reserve(self._client_key())
             if outcome == "ready":
                 self._mark_queue()
             if outcome == "full":
-                self._error(BUSY, status=503)
+                self._error(
+                    BUSY,
+                    status=503,
+                    headers={"Retry-After": str(runtime.gate.retry_after_s())},
+                )
                 return
             if outcome == "ready":
                 slot["held"] = True
             else:
                 slot["waiting"] = True
+                from pair.sched import overlap, prepare_prefix
+
+                overlap(lambda: prepare_prefix(outbound))
         try:
             if want_stream:
                 self._stream(
@@ -1333,7 +1341,11 @@ class Handler(BaseHTTPRequestHandler):
                 if slot["waiting"] and not _claim_wait(
                     slot, cancel=getattr(self, "_cancel", None)
                 ):
-                    self._error(BUSY, status=503)
+                    self._error(
+                        BUSY,
+                        status=503,
+                        headers={"Retry-After": str(runtime.gate.retry_after_s())},
+                    )
                     return
                 if slot["held"]:
                     self._mark_queue()
@@ -1380,6 +1392,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(str(error))
         finally:
+            self._observe_rates()
             if slot["held"]:
                 runtime.gate.release()
             elif slot["waiting"]:
@@ -1697,7 +1710,30 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         safe_write(self, body)
 
-    def _error(self, message: str, status: int = 502) -> None:
+    def _client_key(self) -> str:
+        """Header id when the caller set one, otherwise the socket address."""
+        header = ""
+        headers = getattr(self, "headers", None)
+        if headers is not None:
+            header = str(headers.get("X-Pi-Client") or "").strip()
+        if header:
+            return header[:80]
+        address = getattr(self, "client_address", None)
+        if not address:
+            return ""
+        return str(address[0])[:80]
+
+    def _observe_rates(self) -> None:
+        from pair.sched import observe_usage
+
+        observe_usage(
+            getattr(self, "_usage", None) or {},
+            int(getattr(self, "_answer_cap", 0) or 0),
+        )
+
+    def _error(
+        self, message: str, status: int = 502, headers: dict | None = None
+    ) -> None:
         body = json.dumps({"error": friendly_error(message)}).encode()
         try:
             self.send_response(status)
@@ -1706,6 +1742,8 @@ class Handler(BaseHTTPRequestHandler):
             if status == 413:
                 self.close_connection = True
                 self.send_header("connection", "close")
+            for key, value in (headers or {}).items():
+                self.send_header(str(key), str(value))
             self.send_header("content-length", str(len(body)))
             self.end_headers()
             safe_write(self, body)
