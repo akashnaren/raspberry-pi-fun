@@ -7,7 +7,7 @@ import { paintMicButton } from "./mic-button";
 import { HEALTH_POLL_MS, serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner, VISIBILITY_SETTLE_MS, type HealthSnapshot } from "./presence";
 import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
-import { renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
+import { linkCitations, renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
 import { scrubAssistant } from "./copy";
 import { BIG_LINE, friendlyError, WAITING_LINE } from "./errors";
 import { dropFollow, enqueueFollow, renderFollowQueue, takeFollow, type FollowItem } from "./follow-queue";
@@ -176,11 +176,18 @@ function setSettingsOpen(on: boolean): void {
   byId("overlay").classList.toggle("open", on || sourcesOpen);
 }
 
-function setBodyContent(node: HTMLElement, text: string, asMd: boolean, streaming = false): void {
+function setBodyContent(
+  node: HTMLElement,
+  text: string,
+  asMd: boolean,
+  streaming = false,
+  sourceCount = 0,
+): void {
   const shown = scrubAssistant(withoutThinkTags(text));
   if (asMd) {
     node.classList.add("md");
-    node.innerHTML = streaming ? renderStreamingMarkdown(shown) : renderMarkdown(shown);
+    const html = streaming ? renderStreamingMarkdown(shown) : renderMarkdown(shown);
+    node.innerHTML = streaming ? html : linkCitations(html, sourceCount);
     mountDiagrams(node);
     if (!streaming) {
       mountCharts(node);
@@ -869,7 +876,7 @@ function addLiveBot(expectPro = false): LiveTurn {
       mdTimer = 0;
       row.classList.remove("streaming");
       if (visibleReply(text)) {
-        setBodyContent(body, text, !failed);
+        setBodyContent(body, text, !failed, false, search?.sources?.length || 0);
         revealReply(text);
       }
       if (!failed && search) showSearch(row, search.status, search.sources, stages, prompt);

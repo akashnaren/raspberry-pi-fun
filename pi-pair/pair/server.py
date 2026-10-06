@@ -14,6 +14,13 @@ from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from pair.abilities import (
+    JSON_RETRY,
+    ground_citations,
+    needs_json_retry,
+    tail_hints,
+    tool_notes,
+)
 from pair.assist import (
     is_harmful,
     scrub_reply,
@@ -1316,7 +1323,7 @@ class Handler(BaseHTTPRequestHandler):
             tuned = _tuned_knobs(used if kind != "llamacpp" else model)
             ctx = int(tuned.get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
-            hint = structure_hint(prompt) or ""
+            hint = tail_hints(prompt, structure_hint(prompt) or "")
             search_note = None
             search_job = _begin_lookup(prompt, model) if do_search else None
             if do_search and os.environ.get("PI_PAIR_PREFIX_PRIME") == "1":
@@ -2087,7 +2094,75 @@ class Handler(BaseHTTPRequestHandler):
             return refused, used, False
         if not str(content).strip():
             raise DecodeFailed(friendly_error(""))
+        content = self._one_more_round(
+            peer,
+            kind,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            prompt,
+            search_note,
+            content,
+        )
+        if search_note is not None:
+            sources = (
+                search_note.get("sources") if isinstance(search_note, dict) else []
+            )
+            count = len(sources) if isinstance(sources, list) else 0
+            content = ground_citations(content, count)
+        if not str(content).strip():
+            raise DecodeFailed(friendly_error(""))
         return content, used, True
+
+    def _one_more_round(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        search_note: dict | None,
+        content: str,
+    ) -> str:
+        """At most one extra decode: tool results, or a single JSON schema retry."""
+        if getattr(self, "_extra_call", False):
+            return content
+        notes = tool_notes(content)
+        retry = needs_json_retry(prompt, content) and not notes
+        if not notes and not retry:
+            return content
+        follow = list(messages or [])
+        follow.append({"role": "assistant", "content": content})
+        follow.append(
+            {"role": "system", "content": notes or JSON_RETRY},
+        )
+        self._extra_call = True
+        try:
+            nxt, _used, _train = self._decode_reply(
+                peer,
+                kind,
+                model,
+                follow,
+                temperature,
+                max_tokens,
+                prompt,
+                search_note,
+            )
+        except DecodeFailed:
+            return content
+        finally:
+            self._extra_call = False
+        nxt = (nxt or "").strip()
+        if not nxt:
+            return content
+        if retry and not needs_json_retry(prompt, nxt):
+            return nxt
+        if notes:
+            return content.rstrip() + "\n\n" + nxt
+        return content
 
     def _stream(
         self,
@@ -2206,7 +2281,7 @@ class Handler(BaseHTTPRequestHandler):
             _tuned_knobs(model),
             think_name,
             _prompt_note(search_note),
-            hints=structure_hint(prompt) or "",
+            hints=tail_hints(prompt, structure_hint(prompt) or ""),
             facts=fact_text,
             summary=summary_text,
         )
@@ -2467,6 +2542,38 @@ class Handler(BaseHTTPRequestHandler):
                 answer = "".join(parts)
             if not policy and not is_harmful(prompt):
                 answer = scrub_reply(answer) or answer
+                more = self._one_more_round(
+                    peer,
+                    kind,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    prompt,
+                    search_note,
+                    answer,
+                )
+                if more != answer:
+                    replaced = not more.startswith(answer)
+                    piece = more if replaced else more[len(answer) :]
+                    if piece.strip():
+                        extra = {
+                            "id": "pi-pair",
+                            "object": "chat.completion.chunk",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": piece},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        if replaced:
+                            extra["pi_replace"] = True
+                        safe_write(
+                            self, f"data: {json.dumps(extra)}\n\n".encode(), flush=True
+                        )
+                    answer = more
             trainable = not policy
             if not policy and not str(answer).strip():
                 err = {"error": friendly_error("")}

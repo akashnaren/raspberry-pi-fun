@@ -41,6 +41,17 @@ function httpSource(value: string): string {
   return text;
 }
 
+/** Link [n] only when that snippet is in the source list. Other numbers stay text. */
+export function linkCitations(html: string, count: number): string {
+  const limit = Math.max(0, Math.floor(count));
+  if (!limit) return html;
+  return html.replace(/\[(\d+)\]/g, (all, raw: string) => {
+    const n = Number(raw);
+    if (n < 1 || n > limit) return all;
+    return `<a href="#pi-src-${n}">[${n}]</a>`;
+  });
+}
+
 export function validSources(sources: SourceLink[]): SourceLink[] {
   const out: SourceLink[] = [];
   (sources || []).forEach((src) => {
@@ -219,8 +230,9 @@ export function renderSourcesPanelBody(doc: Document, detail: PanelDetail): HTML
   if (links.length) {
     const list = doc.createElement("ul");
     list.className = "sources-links";
-    links.forEach((src) => {
+    links.forEach((src, index) => {
       const item = doc.createElement("li");
+      item.id = `pi-src-${index + 1}`;
       const link = doc.createElement("a");
       link.href = src.url;
       link.target = "_blank";

@@ -84,7 +84,9 @@ export function renderMarkdown(source: string): string {
     if (flow) return stash(flow);
     if (lang === "plot") return stash(plotBlock(code));
     if (lang === "doc") return stash(docCard(code));
-    return stash(`<pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);
+    const token = /^[A-Za-z0-9_+-]{1,16}$/.test(lang) ? lang : "";
+    const klass = token ? ` class="language-${token}"` : "";
+    return stash(`<pre><code${klass}>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);
   });
   const withDisplay = fenced
     .replace(/\\\[([\s\S]*?)\\\]/g, (_all, tex: string) => stash(renderTex(tex, true)))
