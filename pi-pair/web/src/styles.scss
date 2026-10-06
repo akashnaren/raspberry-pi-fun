@@ -203,6 +203,14 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
   margin: 0 auto;
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
 }
 
 .msg {

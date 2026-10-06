@@ -159,7 +159,7 @@ def lookup_remote(query: str) -> dict | None:
     return _valid_search(raw)
 
 
-def lookup_for_brain(query: str, *, local=None) -> dict:
+def lookup_for_brain(query: str, *, local=None, limit: int | None = None) -> dict:
     """pi4 chat search. Remote pi2 first, then the local lookup if pi2 is down."""
     local_fn = local or lookup_web
     if remote_search_enabled():
@@ -168,7 +168,10 @@ def lookup_for_brain(query: str, *, local=None) -> dict:
             copied = dict(found)
             copied["via"] = "pi2"
             return copied
-    result = local_fn(query)
+    if limit is not None and local_fn is lookup_web:
+        result = local_fn(query, limit=limit)
+    else:
+        result = local_fn(query)
     if isinstance(result, dict):
         copied = dict(result)
         copied["via"] = "local"

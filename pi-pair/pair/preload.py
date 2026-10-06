@@ -16,10 +16,12 @@ import urllib.request
 
 from pair.config import ollama_base, on_pi4
 from pair.http_pool import open_json_request
-from pair.knobs import keep_alive
+from pair.knobs import keep_alive, mode_limits
 from pair.modes import mode_table
 
-PRELOAD_TIMEOUT_S = 3.0
+PRELOAD_TIMEOUT_S = 180.0
+COLD_WAIT_S = 60.0
+COLD_POLL_S = 0.05
 RESIDENT_TIMEOUT_S = 0.6
 REWARM_PAUSE_S = 30.0
 
@@ -44,13 +46,20 @@ def pro_preload_payload(model: str | None = None) -> dict:
     alive = keep_alive()
     if alive == 0:
         alive = -1
+    limits = mode_limits(tag)
     return {
         "model": tag,
         "prompt": " ",
         "stream": False,
         "keep_alive": alive,
         "think": False,
-        "options": {"num_predict": 1, "temperature": 0},
+        "options": {
+            "num_predict": 1,
+            "temperature": 0,
+            "num_ctx": limits["num_ctx"],
+            "num_batch": limits["num_batch"],
+            "num_thread": limits["num_thread"],
+        },
     }
 
 
@@ -79,6 +88,23 @@ def resident_models(host: str, port: int) -> list[str] | None:
         if name:
             names.append(name)
     return names
+
+
+def wait_for_resident(
+    host: str, port: int, model: str, timeout: float | None = None
+) -> bool:
+    """Poll /api/ps until `model` is loaded or the wait budget runs out."""
+    limit = COLD_WAIT_S if timeout is None else timeout
+    deadline = time.monotonic() + max(0.0, limit)
+    tag = (model or "").strip()
+    while tag:
+        resident = resident_models(host, port)
+        if resident is not None and tag in resident:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(COLD_POLL_S)
+    return False
 
 
 def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:

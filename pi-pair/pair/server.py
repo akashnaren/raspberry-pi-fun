@@ -43,22 +43,34 @@ from pair.chat import (
 )
 from pair.config import STATIC_DIR
 from pair.docfit import fit_outbound
-from pair.errors import BUSY, MODEL_MISSING, WAITING, friendly_body, friendly_error
+from pair.errors import (
+    BUSY,
+    FLASH_WARMING,
+    MODEL_MISSING,
+    WAITING,
+    friendly_body,
+    friendly_error,
+)
 from pair.ground import answer_from_search
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 from pair.health import snapshot_peers
 from pair.images import cards_for_answer, lookup_images, sanitize_card, visual_mode
 from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
 from pair.lists import (
+    answer_count,
     category_query,
+    clip_repeat,
     continuation_messages,
+    dedupe_lines,
+    distinct_items,
     finish_numbered,
     ground_category_list,
-    is_real_world_list,
+    is_grounded_list,
     list_budget,
     list_count,
     needs_exact_n,
     placeholder_only,
+    ranked_entities,
     source_titles,
 )
 from pair.sequences import sequence_answer
@@ -71,7 +83,12 @@ from pair.modes import (
     tag_ready,
 )
 from pair.peers import pick
-from pair.preload import resident_models, schedule_pro_warm, start_pro_warm
+from pair.preload import (
+    resident_models,
+    schedule_pro_warm,
+    start_pro_warm,
+    wait_for_resident,
+)
 from pair.public_api import (
     FLASH_MODE,
     apply_mode,
@@ -99,7 +116,10 @@ from pair.turn import (
 )
 from pair.upload import UploadRejected, ingest, read_limited
 
-SOURCE_CAP = 8
+FLASH_SOURCE_CAP = 3
+PRO_SOURCE_CAP = 8
+SEARCH_BUDGET_S = 4.0
+KEEPALIVE_S = 5.0
 SEARCH_BODY_CAP = 4096
 
 _LAST_LOCK = threading.Lock()
@@ -148,13 +168,21 @@ def encoded_body(handler, body: bytes) -> tuple[bytes, str | None]:
 
 
 def safe_write(handler, body: bytes, flush: bool = False) -> bool:
-    try:
-        handler.wfile.write(body)
-        if flush:
-            handler.wfile.flush()
-        return True
-    except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
-        return False
+    lock = getattr(handler, "_sse_lock", None)
+
+    def _write() -> bool:
+        try:
+            handler.wfile.write(body)
+            if flush:
+                handler.wfile.flush()
+            return True
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+            return False
+
+    if lock is None:
+        return _write()
+    with lock:
+        return _write()
 
 
 def static_file(url_path: str) -> Path | None:
@@ -288,11 +316,20 @@ def _tuned_knobs(model: str) -> dict:
     return tuned
 
 
-def _with_search(messages, prompt: str, images: list | None = None):
+def _source_cap(model: str) -> int:
+    """Flash reads fewer pages. Pro keeps the wider set."""
+    pro = str(mode_table().get("pro") or "")
+    if pro and str(model or "") == pro:
+        return PRO_SOURCE_CAP
+    return FLASH_SOURCE_CAP
+
+
+def _with_search(messages, prompt: str, images: list | None = None, model: str = ""):
     """On pi4, after a miss, attach public notes. Failures stay on the local model.
 
-    A real-world Top-N searches the category. Horror movies become horror films.
-    Image cards and an in-flight model warm run beside the lookup.
+    A real-world list searches a ranking query. The lookup is capped so a
+    slow page cannot hold the first token. Image cards and an in-flight
+    model warm run beside the lookup.
     """
     warm = warm_in_flight()
     worker = None
@@ -311,11 +348,20 @@ def _with_search(messages, prompt: str, images: list | None = None):
         if warm is not None:
             warm.join(timeout=40)
         return messages, None
-    query = category_query(prompt) if is_real_world_list(prompt) else prompt
-    try:
-        found = lookup_for_brain(query, local=lookup_web)
-    except Exception:
-        found = None
+    query = category_query(prompt) if is_grounded_list(prompt) else prompt
+    cap = _source_cap(model)
+    holder: dict = {}
+
+    def _lookup() -> None:
+        try:
+            holder["found"] = lookup_for_brain(query, local=lookup_web, limit=cap)
+        except Exception:
+            holder["found"] = None
+
+    lookup = threading.Thread(target=_lookup, name="search-lookup", daemon=True)
+    lookup.start()
+    lookup.join(SEARCH_BUDGET_S)
+    found = holder.get("found") if not lookup.is_alive() else None
     if not isinstance(found, dict):
         found = {"status": "failed", "sources": [], "context": ""}
     status = found.get("status")
@@ -323,7 +369,7 @@ def _with_search(messages, prompt: str, images: list | None = None):
         status = "failed"
     sources = []
     for item in found.get("sources") or []:
-        if len(sources) >= SOURCE_CAP:
+        if len(sources) >= cap:
             break
         if not isinstance(item, dict):
             continue
@@ -940,6 +986,7 @@ class Handler(BaseHTTPRequestHandler):
             )
         started = time.time()
         want_stream = bool(data.get("stream"))
+        self._searched = False
         refused = _block(prompt)
         if refused:
             self._policy_refusal(prompt, want_stream, started, refused)
@@ -1021,7 +1068,8 @@ class Handler(BaseHTTPRequestHandler):
             search_note = None
             images: list[dict] = []
             if do_search and not want_stream:
-                outbound, search_note = _with_search(outbound, prompt, images)
+                self._searched = True
+                outbound, search_note = _with_search(outbound, prompt, images, model)
             if not want_stream:
                 outbound = shape_messages(outbound, prompt, tuned)
             grounded = ready
@@ -1058,6 +1106,10 @@ class Handler(BaseHTTPRequestHandler):
                     used = model
                     route_name = "flash"
                     self.pi_route = "flash"
+                elif route_name != "pro":
+                    if not wait_for_resident(host, peer_port, model):
+                        self._warming(want_stream, FLASH_WARMING, started)
+                        return
                 else:
                     self._error(MODEL_MISSING)
                     return
@@ -1382,6 +1434,54 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         safe_write(self, body)
 
+    def finish(self) -> None:
+        stop = getattr(self, "_stop_beat", None)
+        if stop is not None:
+            stop.set()
+        self._sse_lock = None
+        super().finish()
+
+    def _warming(self, want_stream: bool, message: str, started: float) -> None:
+        """A cold Flash tag is a wait, not a 502 and not a larger-model error."""
+        if want_stream:
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            chunk = {
+                "id": "pi-pair",
+                "object": "chat.completion.chunk",
+                "choices": [
+                    {"index": 0, "delta": {"content": message}, "finish_reason": None}
+                ],
+                "pi_detail": message,
+            }
+            safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
+            safe_write(self, b"data: [DONE]\n\n", flush=True)
+            return
+        body = json.dumps(
+            {
+                "id": "pi-pair",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": message},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "pi_detail": message,
+                "pi_ms": int((time.time() - started) * 1000),
+            }
+        ).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
     def _error(self, message: str, status: int = 502) -> None:
         body = json.dumps({"error": friendly_error(message)}).encode()
         try:
@@ -1525,7 +1625,11 @@ class Handler(BaseHTTPRequestHandler):
         rows = list(messages or [])
         context = ""
         try:
-            if is_real_world_list(prompt) and self._mesh_search_on():
+            if (
+                is_grounded_list(prompt)
+                and self._mesh_search_on()
+                and not getattr(self, "_searched", False)
+            ):
                 noted = any(
                     isinstance(row, dict)
                     and str(row.get("content") or "").startswith("Web search notes")
@@ -1533,7 +1637,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 note = None
                 if not noted:
-                    rows, note = _with_search(rows, prompt)
+                    rows, note = _with_search(rows, prompt, model=model)
                 context = _search_context(note, rows)
 
             def more(partial: str, count: int) -> str:
@@ -1638,9 +1742,96 @@ class Handler(BaseHTTPRequestHandler):
         if refused:
             self._last_reasoning = ""
             return refused, used, False
+        if is_grounded_list(prompt):
+            content, used = self._settle_grounded(
+                peer,
+                kind,
+                used,
+                messages,
+                temperature,
+                max_tokens,
+                prompt,
+                content,
+                search_note,
+            )
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
+
+    def _settle_grounded(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        content: str,
+        search_note,
+    ) -> tuple[str, str]:
+        """Prefer N source names. A short or looping Flash list is asked of Pro."""
+        if not getattr(self, "_searched", False):
+            return dedupe_lines(content or ""), model
+        context = _search_context(search_note, messages)
+        cleaned = dedupe_lines(content or "")
+        grounded = ground_category_list(prompt, cleaned, context)
+        count = answer_count(prompt) or 0
+        if count and len(ranked_entities(context)) >= count:
+            return grounded, model
+        if distinct_items(cleaned) >= count:
+            return grounded, model
+        promoted = self._promote_list(
+            peer, kind, model, messages, temperature, max_tokens, prompt, context
+        )
+        if promoted:
+            return promoted
+        return grounded, model
+
+    def _promote_list(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        context: str,
+    ) -> tuple[str, str] | None:
+        """One Pro answer when Flash could not ground a list. No cold load."""
+        if kind == "llamacpp":
+            return None
+        pro = str(mode_table().get("pro") or "")
+        if not pro or pro == model:
+            return None
+        if not tag_ready(peer.get("models") or [], "pro", pro):
+            return None
+        host = str(peer.get("host") or "127.0.0.1")
+        try:
+            port = int(peer.get("port") or 0)
+        except (TypeError, ValueError):
+            port = 0
+        if port:
+            resident = resident_models(host, port)
+            if resident is not None and pro not in resident:
+                schedule_pro_warm(host, port, pro)
+                if not wait_for_resident(host, port, pro):
+                    return None
+        try:
+            text, used = chat_ollama(
+                peer,
+                pro,
+                messages,
+                temperature,
+                max_tokens,
+                plan=getattr(self, "_decode_plan", None),
+            )
+        except (OSError, json.JSONDecodeError):
+            return None
+        text = dedupe_lines(text or "")
+        grounded = ground_category_list(prompt, text, context)
+        return grounded or text, used
 
     def _ask(self, peer, kind, model, messages, temperature, max_tokens) -> str:
         try:
@@ -1712,17 +1903,28 @@ class Handler(BaseHTTPRequestHandler):
             and str(row.get("content") or "").startswith("Web search notes")
             for row in rows
         )
-        if not already and self._mesh_search_on() and not is_structured_request(prompt):
-            outbound, note = _with_search(rows, prompt)
-            context = ""
-            if isinstance(note, dict) and note.get("status") == "ok":
-                context = str(note.get("context") or "").strip()
-            if context:
-                follow = shape_messages(
-                    [*outbound, {"role": "user", "content": HELPFUL_NUDGE}],
-                    prompt,
-                )
-                return self._ask(peer, kind, model, follow, temperature, max_tokens)
+        outbound = rows
+        note = None
+        if (
+            not already
+            and self._mesh_search_on()
+            and not is_structured_request(prompt)
+            and not getattr(self, "_searched", False)
+        ):
+            outbound, note = _with_search(rows, prompt, model=model)
+        context = ""
+        if isinstance(note, dict) and note.get("status") == "ok":
+            context = str(note.get("context") or "").strip()
+        if not context:
+            context = _search_context(None, outbound)
+            if not str(context).startswith("Web search notes"):
+                context = ""
+        if context and self._mesh_search_on() and not is_structured_request(prompt):
+            follow = shape_messages(
+                [*outbound, {"role": "user", "content": HELPFUL_NUDGE}],
+                prompt,
+            )
+            return self._ask(peer, kind, model, follow, temperature, max_tokens)
         pro_tag = mode_table().get("pro") or ""
         if not pro_tag or pro_tag == model:
             return ""
@@ -1806,6 +2008,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Pi-Think", think_name)
         self._write_mode_headers(mode_name, route_name, resident_name)
         self.end_headers()
+        self._sse_lock = threading.Lock()
+        self._stop_beat = threading.Event()
+
+        def _beat() -> None:
+            while not self._stop_beat.wait(KEEPALIVE_S):
+                if not safe_write(self, b": keep-alive\n\n", flush=True):
+                    return
+
+        threading.Thread(target=_beat, name="sse-keepalive", daemon=True).start()
         stages: list[str] = []
         note = mode_fields(mode_name, route_name, resident_name)
 
@@ -1838,11 +2049,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         images = list(images or [])
         if do_search:
+            self._searched = True
             if not emit_status("searching", {"pi_tool": "search"}):
                 return
             if not searched:
                 fresh: list[dict] = []
-                messages, search_note = _with_search(messages, prompt, fresh)
+                messages, search_note = _with_search(messages, prompt, fresh, model)
                 images = fresh
             found = {"pi_tool": "search"}
             if search_note:
@@ -1890,7 +2102,7 @@ class Handler(BaseHTTPRequestHandler):
                 resident_name,
             )
             return
-        if is_chart_request(prompt) or is_real_world_list(prompt):
+        if is_chart_request(prompt) or is_grounded_list(prompt):
             content, used, train = self._decode_reply(
                 peer,
                 kind,
@@ -2052,6 +2264,10 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 parts.append(delta)
                 joined = "".join(parts)
+                clipped, repeated = clip_repeat(joined)
+                if repeated:
+                    parts[:] = [clipped]
+                    joined = clipped
                 release = stream_release(joined)
                 if release == "refuse":
                     policy = _block(joined)
@@ -2083,6 +2299,8 @@ class Handler(BaseHTTPRequestHandler):
                     flushed = len(joined)
                     held = False
                 if not piece:
+                    if repeated:
+                        break
                     continue
                 chunk = {
                     "id": "pi-pair",
@@ -2097,6 +2315,8 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 if not write_json(chunk):
                     closed = True
+                    break
+                if repeated:
                     break
             if not closed and not policy:
                 raw_answer = "".join(parts)

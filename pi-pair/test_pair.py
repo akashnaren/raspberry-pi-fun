@@ -700,8 +700,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertEqual(body["pi_peer"], "pi4")
         self.assertEqual(body["pi_chip"], "brain: pi4")
-        self.assertEqual(body["pi_search"], "failed")
-        self.assertEqual(self.search_calls, ["Say hi in five words."])
+        self.assertNotIn("pi_search", body)
+        self.assertEqual(self.search_calls, [])
         self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 1536)
         self.assertEqual(OllamaFake.last_payload["keep_alive"], -1)
         self.assertIsInstance(OllamaFake.last_payload["keep_alive"], int)
@@ -733,13 +733,11 @@ class PairHttp(unittest.TestCase):
             self.assertIsNone(response.headers.get("X-Pi-Search"))
         self.assertEqual(OllamaFake.last_payload["keep_alive"], -1)
         self.assertIs(OllamaFake.last_payload["stream"], True)
-        self.assertEqual(
-            _statuses(raw), ["thinking", "searching", "searching", "answering"]
-        )
+        self.assertEqual(_statuses(raw), ["thinking", "answering"])
         self.assertLess(raw.index('"pi_status": "answering"'), raw.index("hel"))
         self.assertIn("hel", raw)
-        self.assertIn('"pi_search": "failed"', raw)
-        self.assertIn('"pi_tool": "search"', raw)
+        self.assertNotIn('"pi_search"', raw)
+        self.assertNotIn('"pi_tool": "search"', raw)
         self.assertIn("lo", raw)
         self.assertIn("data: [DONE]", raw)
         conn = HTTPConnection("127.0.0.1", port, timeout=5)
@@ -989,6 +987,10 @@ class PairHttp(unittest.TestCase):
             self.assertEqual(options["temperature"], temperature)
             self.assertEqual(options["top_p"], top_p)
             self.assertEqual(options["top_k"], 20)
+            if not think:
+                self.assertEqual(options["presence_penalty"], 1.5)
+            else:
+                self.assertNotIn("presence_penalty", options)
             self.assertEqual(options["num_predict"], num_predict)
         self.assertEqual(len(set(seen.values())), 3)
         status, _headers, _body = self._post(
@@ -1614,7 +1616,9 @@ class PairHttp(unittest.TestCase):
             port,
             {
                 "model": "qwen3:0.6b",
-                "messages": [{"role": "user", "content": "status order on a miss"}],
+                "messages": [
+                    {"role": "user", "content": "How tall is the hall bench?"}
+                ],
                 "stream": False,
             },
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
@@ -1938,7 +1942,7 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn("pi_resident", body)
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
 
-    def test_search_sources_are_not_cut_to_three(self):
+    def test_flash_search_keeps_three_sources(self):
         def fake(query, opener=None):
             self.search_calls.append(query)
             return {
@@ -1962,8 +1966,8 @@ class PairHttp(unittest.TestCase):
             },
         )
         self.assertEqual(status, 200)
-        self.assertEqual(len(body["pi_sources"]), 5)
-        self.assertEqual(body["pi_sources"][4]["url"], "https://ex4.test/a")
+        self.assertEqual(len(body["pi_sources"]), 3)
+        self.assertEqual(body["pi_sources"][2]["url"], "https://ex2.test/a")
 
     def test_search_sources_stop_at_eight(self):
         def fake(query, opener=None):
@@ -1978,11 +1982,13 @@ class PairHttp(unittest.TestCase):
             }
 
         pair_server.lookup_web = fake
+        OllamaFake.catalog = ["qwen3:0.6b", "qwen3:1.7b"]
         port = self._brain()
         status, _headers, body = self._post(
             port,
             {
-                "model": "custom:tiny",
+                "mode": "pro",
+                "model": "qwen3:1.7b",
                 "messages": [
                     {"role": "user", "content": "where is the long bench today"}
                 ],
@@ -1993,8 +1999,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(len(body["pi_sources"]), 8)
         self.assertEqual(body["pi_sources"][0]["url"], "https://ex0.test/a")
         self.assertEqual(body["pi_sources"][7]["url"], "https://ex7.test/a")
-        self.assertEqual(body["pi_mode"], "flash")
-        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
+        self.assertEqual(body["pi_mode"], "pro")
+        self.assertEqual(OllamaFake.last_payload["model"], "qwen3:1.7b")
 
 
 class ProductCopy(unittest.TestCase):

@@ -33,7 +33,11 @@ from pair.lists import (  # noqa: E402
     list_count,
     merge_list,
 )
-from pair.preload import pro_preload_payload, rewarm_pro_if_evicted  # noqa: E402
+from pair.preload import (  # noqa: E402
+    PRELOAD_TIMEOUT_S,
+    pro_preload_payload,
+    rewarm_pro_if_evicted,
+)
 
 
 class Charts(unittest.TestCase):
@@ -240,8 +244,13 @@ class Lists(unittest.TestCase):
         self.assertIn("5. Item 5", listed)
 
     def test_a_short_list_retries_once_for_exact_n(self):
-        self.assertEqual(category_query("Top 5 horror movies"), "horror films")
-        self.assertEqual(category_query("Top 5 electric cars"), "electric cars")
+        self.assertEqual(
+            category_query("Top 5 horror movies"), "best horror movies of all time list"
+        )
+        self.assertEqual(
+            category_query("Top 5 electric cars"), "best electric cars of all time list"
+        )
+        self.assertEqual(category_query("top 5 movies"), "best movies of all time list")
         self.assertTrue(is_real_world_list("Top 5 horror movies"))
         self.assertFalse(is_real_world_list("Top 5 primes"))
         self.assertFalse(is_real_world_list("rank these 3 numbers"))
@@ -342,6 +351,14 @@ class Preload(unittest.TestCase):
         self.assertEqual(payload["keep_alive"], -1)
         self.assertNotEqual(payload["keep_alive"], 0)
         self.assertEqual(payload["options"]["num_predict"], 1)
+        self.assertEqual(payload["options"]["num_ctx"], 2048)
+        self.assertEqual(payload["options"]["num_batch"], 64)
+        self.assertEqual(payload["options"]["num_thread"], 4)
+        flash = pro_preload_payload("qwen3:0.6b")
+        self.assertEqual(flash["options"]["num_ctx"], 1536)
+        self.assertEqual(flash["options"]["num_batch"], 128)
+        self.assertEqual(flash["options"]["num_thread"], 4)
+        self.assertGreaterEqual(PRELOAD_TIMEOUT_S, 180)
         self.assertFalse(payload["think"])
         script = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn('"keep_alive":-1', script)

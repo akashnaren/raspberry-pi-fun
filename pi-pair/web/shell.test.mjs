@@ -367,6 +367,16 @@ if (!/html,\s*body\s*\{[^}]*overflow:\s*hidden/s.test(css)) {
 if (!/#log\s*\{[^}]*overflow-y:\s*auto/s.test(css) || !css.includes("overscroll-behavior: contain")) {
   throw new Error("the message list is not the scrollport");
 }
+const logRule = css.slice(css.indexOf("#log {"), css.indexOf("#log {") + 900);
+if (!/scrollbar-width:\s*none/.test(logRule) || !/-ms-overflow-style:\s*none/.test(logRule)) {
+  throw new Error("the message scroller still shows a scrollbar");
+}
+if (!/&::-webkit-scrollbar\s*\{[^}]*display:\s*none/s.test(logRule)) {
+  throw new Error("the webkit message scrollbar is still visible");
+}
+if (/html,\s*body\s*\{[^}]*scrollbar-width:\s*none/s.test(css)) {
+  throw new Error("the page scrollbar was hidden");
+}
 if (!css.includes(".info-dot") || !/\.info-dot\s*\{[^}]*min-width:\s*32px/s.test(css)) {
   throw new Error("info hit target is under 32px");
 }

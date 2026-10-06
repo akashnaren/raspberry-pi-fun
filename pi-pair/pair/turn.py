@@ -42,6 +42,10 @@ _PLOT = re.compile(
 _LIST = re.compile(r"\b(?:bullet list|checklist|enumerate|list)\b", re.I)
 _RANK = re.compile(r"\btop\s+\d{1,2}\b|\b\d{1,2}\s+best\b|\brank(?:ing)?\b", re.I)
 _FRESH = re.compile(r"\b(?:news|latest|current)\b", re.I)
+_FACT = re.compile(
+    r"\b(?:who|what|when|where|why|how|which|tell me about)\b",
+    re.I,
+)
 _SEARCH = re.compile(
     r"\b(?:search for|look up|lookup|latest news|news about|sources for|find articles|find sources)\b",
     re.I,
@@ -178,19 +182,26 @@ def is_list_intent(prompt: str) -> bool:
 
 @functools.lru_cache(maxsize=256)
 def needs_web(prompt: str) -> bool:
-    """False for a plot, a list-shaped ask, or an attachment the user already supplied.
+    """True for fresh facts, grounded math, and real-world lists.
 
-    Grounded math still looks pages up. A question that asks for sources,
-    news, latest, or current does too.
+    Plots, attachments, plain lists, and chit-chat stay on the model.
     """
+    from pair.lists import is_grounded_list
+
     question = user_question(prompt)
     if is_grounded_problem(question):
         return True
     if attachment_tail(prompt) and not _SEARCH.search(question):
         return False
-    if is_plot(prompt) or is_list_intent(prompt):
+    if is_plot(prompt):
         return False
-    return True
+    if _SEARCH.search(question) or _FRESH.search(question):
+        return True
+    if is_grounded_list(question):
+        return True
+    if is_list_intent(prompt):
+        return False
+    return bool(_FACT.search(question))
 
 
 def fence_user_text(content: str, limit: int) -> str:
