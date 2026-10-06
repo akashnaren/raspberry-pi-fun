@@ -83,6 +83,36 @@ class CannedExact(unittest.TestCase):
             self.assertNotIn("pair.embed", source, path.name)
             self.assertNotIn("snowflake", source, path.name)
             self.assertNotIn("/api/embed", source, path.name)
+        self._assert_embed_tags_stay_on_their_roles(script)
+
+    def _assert_embed_tags_stay_on_their_roles(self, script: str) -> None:
+        tag = "snowflake-arctic-embed:xs"
+        self.assertNotIn(
+            tag, script.split('elif [[ "$ROLE" == "dataset" ]]; then', 1)[0]
+        )
+        banner, after_banner = script.split('elif [[ "$ROLE" == "dataset" ]]; then', 1)[
+            1
+        ].split('if [[ "$ROLE" == "brain" ]]; then', 1)
+        self.assertIn(tag, banner)
+        self.assertNotIn(
+            tag, after_banner.split('elif [[ "$ROLE" == "dataset" ]]; then', 1)[0]
+        )
+        dataset, rest = after_banner.split('elif [[ "$ROLE" == "dataset" ]]; then', 1)[
+            1
+        ].split("\nelse\n", 1)
+        other = rest.split("\nfi\n", 1)[0]
+        self.assertIn('PI3_EMBED="snowflake-arctic-embed:xs"', dataset)
+        self.assertIn('ollama pull "$PI3_EMBED"', dataset)
+        self.assertIn(r"^qwen2\.5:", dataset)
+        self.assertIn("OLLAMA_HOST=127.0.0.1:11434", dataset)
+        self.assertIn("OLLAMA_KEEP_ALIVE=0", dataset)
+        self.assertNotIn("/api/generate", dataset)
+        self.assertIn(
+            "^snowflake-arctic-embed:",
+            after_banner.split('elif [[ "$ROLE" == "dataset" ]]; then', 1)[0],
+        )
+        self.assertNotIn(tag, other)
+        self.assertNotIn("ollama", other)
 
     def test_ollama_base_ignores_a_missing_embed_path(self):
         os.environ["PI_PAIR_OLLAMA"] = "http://127.0.0.1:11434"
