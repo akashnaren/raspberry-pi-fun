@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 
 _LIST = re.compile(
-    r"\b(?:top|list|name|give|rank|number)\b(?:\s+\w+){0,4}\s+(\d{1,2})\b|"
+    r"\b(?:top|list|name|give|rank)\b(?:\s+\w+){0,4}\s+(\d{1,2})\b|"
     r"\b(\d{1,2})\s+(?:movies|films|books|songs|items|things|reasons|ways|"
     r"examples|ideas|tips|points|steps|cars|places|products|shows)\b",
     re.I,
@@ -47,11 +47,46 @@ _RECOMMEND = re.compile(
     r"\b(?:best|top)\b|\bto\s+(?:watch|read|try)\b",
     re.I,
 )
+_GENRE = re.compile(
+    r"\b(horror|comedy|action|drama|sci-?fi|science fiction|romance|thriller|"
+    r"animated|documentary|fantasy|mystery|crime)\b",
+    re.I,
+)
+_CANON_SUBJECT = re.compile(r"\b(?:movies?|films?|books?|songs?|albums?)\b", re.I)
+_ALL_TIME = re.compile(r"\bof all time\b|\ball[- ]time\b", re.I)
+_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+_DIGITS = re.compile(r"^\d+$")
 
 
 def is_recommendation(prompt: str) -> bool:
     """'best X', 'top N', and 'X to watch/read/try' are recommendation asks."""
     return bool(_RECOMMEND.search(prompt or ""))
+
+
+def genre_words(prompt: str) -> list[str]:
+    """Genre words in the ask, lowercased, in first-seen order."""
+    found: list[str] = []
+    for match in _GENRE.finditer(prompt or ""):
+        word = match.group(1).lower()
+        if word == "science fiction":
+            word = "sci-fi"
+        if word not in found:
+            found.append(word)
+    return found
+
+
+def is_canon_list(prompt: str) -> bool:
+    """A well-known cultural Top-N, answered from knowledge plus a light search.
+
+    A year ("movies from 2019") or a genre ("horror") is a narrower ask and
+    stays on the ordinary route.
+    """
+    text = prompt or ""
+    if not _CANON_SUBJECT.search(text) or _YEAR.search(text) or genre_words(text):
+        return False
+    if _ALL_TIME.search(text):
+        return True
+    return bool(list_count(text))
 
 
 def is_real_world_list(prompt: str) -> bool:
@@ -296,9 +331,13 @@ def _candidates(blob: str) -> list[str]:
     return found
 
 
-def _source_blobs(context: str) -> list[str]:
-    """Snippet text per result, plus the fetched page. Result titles are dropped."""
-    blobs: list[str] = []
+def _source_blobs(context: str) -> list[tuple[str, bool]]:
+    """Snippet text per result, plus the fetched page. Result titles are dropped.
+
+    The second value is true for the fetched page. Numbered lines there are
+    the ranking. Snippet titles still have to match a named genre.
+    """
+    blobs: list[tuple[str, bool]] = []
     page = ""
     body = context or ""
     marker = "Text from the first page:"
@@ -308,31 +347,58 @@ def _source_blobs(context: str) -> list[str]:
         line = match.group(1).strip()
         _head, sep, snippet = line.partition("): ")
         if sep:
-            blobs.append(snippet)
+            blobs.append((snippet, False))
             continue
         if " (http" in line:
             continue
-        blobs.append(line)
+        blobs.append((line, False))
     if page.strip():
-        blobs.append(page)
+        blobs.append((page, True))
     if not blobs and body.strip():
-        blobs.append(body)
+        blobs.append((body, False))
     return blobs
 
 
-def ranked_entities(context: str) -> list[str]:
-    """Clean names from snippets. Names seen in more sources come first."""
+def _genre_window(blob: str, title: str, genres: list[str]) -> bool:
+    """True when a genre word sits next to the title in this snippet."""
+    low = (blob or "").lower()
+    folded = [genre for genre in genres if genre != "sci-fi"]
+    if "sci-fi" in genres:
+        folded.extend(["sci-fi", "scifi", "science fiction"])
+    pos = low.find((title or "").lower())
+    if pos < 0:
+        return False
+    window = low[max(0, pos - 96) : pos + len(title) + 96]
+    return any(word in window for word in folded)
+
+
+def ranked_entities(context: str, genres: list[str] | None = None) -> list[str]:
+    """Clean names from snippets. Names seen in more sources come first.
+
+    When the ask names a genre, a loose title has to sit next to that word.
+    A numbered line on the fetched page is the ranking itself and stays.
+    """
+    wanted = [word.lower() for word in (genres or [])]
     counts: dict[str, int] = {}
     order: dict[str, int] = {}
     display: dict[str, str] = {}
     seq = 0
-    for blob in _source_blobs(context or ""):
+    for blob, trusted in _source_blobs(context or ""):
+        numbered = {
+            _clean_title(raw).casefold()
+            for raw in (match.group(1) for match in _TITLE_LINE.finditer(blob))
+            if _clean_title(raw)
+        }
         seen_here: set[str] = set()
         for raw in _candidates(blob):
             title = _clean_title(raw)
             if not title:
                 continue
             key = title.casefold()
+            if wanted and not (
+                (trusted and key in numbered) or _genre_window(blob, title, wanted)
+            ):
+                continue
             if key in seen_here:
                 continue
             seen_here.add(key)
@@ -362,7 +428,11 @@ def _item_name(line: str) -> str:
 
 
 def clip_repeat(text: str) -> tuple[str, bool]:
-    """Cut a stream at the first repeated line or list item."""
+    """Cut a stream at the first repeated line or list item.
+
+    A numeric item ("1. 2" then "2. 3") is a math list. The number is not a
+    repeated title, so the stream is left intact.
+    """
     raw = text or ""
     lines = raw.splitlines(keepends=True)
     seen: set[str] = set()
@@ -370,6 +440,9 @@ def clip_repeat(text: str) -> tuple[str, bool]:
     for index, line in enumerate(lines):
         finished = line.endswith(("\n", "\r")) or index < len(lines) - 1
         key = (_item_name(line) or "").casefold()
+        if key and _DIGITS.fullmatch(key):
+            kept.append(line)
+            continue
         if key and key in seen:
             return "".join(kept), True
         if key and finished:
@@ -387,6 +460,8 @@ def dedupe_lines(text: str) -> str:
     if not rows:
         return text or ""
     numbered = all(re.match(r"\s*\d{1,3}[\.\)]\s+\S", line) for line in rows)
+    if numbered and all(_DIGITS.fullmatch(_item_name(line) or "") for line in rows):
+        return text or ""
     seen: set[str] = set()
     names: list[str] = []
     for line in rows:
@@ -419,7 +494,7 @@ def ground_category_list(prompt: str, text: str, context: str) -> str:
     count = answer_count(prompt)
     if not count or not is_grounded_list(prompt):
         return cleaned
-    titles = ranked_entities(context or "")
+    titles = ranked_entities(context or "", genre_words(prompt))
     if len(titles) >= count:
         return _numbered(titles[:count])
     return cleaned

@@ -38,6 +38,13 @@ _COUNTED = re.compile(
     _PREFIX + r"(\d{1,6})\s+" + _KIND + r"\s*[?.!]?\s*$",
     re.I,
 )
+_BETWEEN = re.compile(
+    _PREFIX
+    + r"(?:all\s+)?"
+    + _KIND
+    + r"\s+between\s+(?P<lo>\d{1,6})\s+and\s+(?P<hi>\d{1,6})\s*[?.!]?\s*$",
+    re.I,
+)
 _PLOT = re.compile(r"\b(?:plot|chart|graph)\b", re.I)
 
 
@@ -67,11 +74,13 @@ def _normalize(kind: str) -> str:
 
 
 def _parse(prompt: str) -> tuple[int, str, int] | None:
-    """(asked count, kind, parameter) or None when this is not a sequence."""
+    """(asked count, kind, parameter) or None when this is not a counted sequence."""
     from pair.assist import is_harmful
 
     text = " ".join((prompt or "").split())
     if not text or is_harmful(text) or _PLOT.search(text):
+        return None
+    if _BETWEEN.search(text):
         return None
     match = _ORDERED.search(text) or _COUNTED.search(text)
     if not match:
@@ -84,6 +93,27 @@ def _parse(prompt: str) -> tuple[int, str, int] | None:
         return None
     raw = match.group("step") or match.group("base") or "0"
     return asked, kind, int(raw)
+
+
+def _parse_range(prompt: str) -> tuple[str, int, int, int] | None:
+    """(kind, low, high, parameter) for 'primes between 1 and 50'."""
+    from pair.assist import is_harmful
+
+    text = " ".join((prompt or "").split())
+    if not text or is_harmful(text) or _PLOT.search(text):
+        return None
+    match = _BETWEEN.search(text)
+    if not match:
+        return None
+    kind = _normalize(match.group("kind"))
+    if not kind:
+        return None
+    low = int(match.group("lo"))
+    high = int(match.group("hi"))
+    if high < low:
+        low, high = high, low
+    raw = match.group("step") or match.group("base") or "0"
+    return kind, low, high, int(raw)
 
 
 def _sieve(limit: int) -> list[int]:
@@ -207,8 +237,32 @@ def _values(kind: str, count: int, param: int) -> list[int]:
     return [int(item) for item in islice(_stream(kind, param), count)]
 
 
+def _range_values(kind: str, low: int, high: int, param: int) -> list[int]:
+    """Numbers of this kind inside the inclusive bounds, capped."""
+    if high < low:
+        return []
+    if kind == "prime":
+        return [number for number in _sieve(high) if number >= low][:_CAP]
+    found: list[int] = []
+    for value in _stream(kind, param):
+        number = int(value)
+        if number > high:
+            break
+        if number >= low:
+            found.append(number)
+        if len(found) >= _CAP:
+            break
+        if number > high + 1_000_000:
+            break
+    return found
+
+
 def sequence_values(prompt: str) -> list[int] | None:
     """The numbers for this ask, capped, or None when it is not a sequence."""
+    span = _parse_range(prompt)
+    if span:
+        kind, low, high, param = span
+        return _range_values(kind, low, high, param)
     parsed = _parse(prompt)
     if not parsed:
         return None
@@ -216,8 +270,19 @@ def sequence_values(prompt: str) -> list[int] | None:
     return _values(kind, min(asked, _CAP), param)
 
 
+def _numbered(values: list[int]) -> str:
+    return "\n".join(f"{index}. {value}" for index, value in enumerate(values, 1))
+
+
 def sequence_answer(prompt: str) -> str | None:
-    """A numbered list of exactly the capped count, or None to use the model."""
+    """A numbered list of the sequence, or None to use the model."""
+    span = _parse_range(prompt)
+    if span:
+        kind, low, high, param = span
+        values = _range_values(kind, low, high, param)
+        if not values:
+            return None
+        return _numbered(values)
     parsed = _parse(prompt)
     if not parsed:
         return None
@@ -226,8 +291,7 @@ def sequence_answer(prompt: str) -> str | None:
     values = _values(kind, count, param)
     if len(values) != count:
         return None
-    lines = [f"{index}. {value}" for index, value in enumerate(values, 1)]
-    body = "\n".join(lines)
+    body = _numbered(values)
     if asked > _CAP:
         return f"Showing {_CAP} items (capped from {asked}).\n" + body
     return body

@@ -85,7 +85,8 @@ def answer_from_search(prompt: str, context: str) -> str | None:
     else:
         passage = _steps_passage(prompt, source)
     if not passage:
-        return MISS
+        # A thin page is not the answer. The model still gets a turn.
+        return None
     return passage
 
 

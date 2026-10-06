@@ -22,7 +22,7 @@ ATTACH_MARK = "\n\n---\n"
 CONTINUE_NUDGE = (
     "Continue the list from the next item. Do not repeat items already written."
 )
-SLOW_ANSWER = "That took too long. Ask again with a shorter question."
+SLOW_ANSWER = "That took too long. Ask again in a moment."
 SHORT_ANSWER = "I could not finish that. Ask again with a shorter question."
 NOTES_ANSWER = "I could not finish a full answer. From the notes: "
 
@@ -48,6 +48,15 @@ _FACT = re.compile(
 )
 _SEARCH = re.compile(
     r"\b(?:search for|look up|lookup|latest news|news about|sources for|find articles|find sources)\b",
+    re.I,
+)
+# Stable facts and display-math explanations do not need a page fetch.
+_KNOWN_FACT = re.compile(
+    r"\b(?:capital|population|currency|language|continent) of\b",
+    re.I,
+)
+_EXPLAIN_MATH = re.compile(
+    r"\b(?:euler(?:'s)?\s+identity|gaussian\s+integral|display\s+math|latex)\b",
     re.I,
 )
 _CONTROL = re.compile(
@@ -189,6 +198,10 @@ def needs_web(prompt: str) -> bool:
     from pair.lists import is_grounded_list
 
     question = user_question(prompt)
+    if _EXPLAIN_MATH.search(question):
+        return False
+    if _KNOWN_FACT.search(question) and not _FRESH.search(question):
+        return False
     if is_grounded_problem(question):
         return True
     if attachment_tail(prompt) and not _SEARCH.search(question):

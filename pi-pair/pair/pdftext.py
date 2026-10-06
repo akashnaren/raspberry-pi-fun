@@ -7,13 +7,68 @@ so the upload path can still OCR that file.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 import zlib
 
 _STREAM = re.compile(rb"stream\r?\n(.*?)\r?\n?endstream", re.S)
+_FILTER = re.compile(rb"/Filter\s*(\[[^\]]+\]|/[A-Za-z0-9]+)")
 _TJ = re.compile(rb"\((?:\\.|[^)\\])*\)\s*Tj")
 _ARRAY = re.compile(rb"\[(.*?)\]\s*TJ", re.S)
 _LIT = re.compile(rb"\((?:\\.|[^)\\])*\)")
+
+
+def _filter_names(head: bytes) -> list[bytes]:
+    match = _FILTER.search(head or b"")
+    if not match:
+        return []
+    return re.findall(rb"/([A-Za-z0-9]+)", match.group(1))
+
+
+def _inflate(raw: bytes) -> bytes | None:
+    for candidate in (raw, raw.strip(b"\r\n")):
+        for bits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+            try:
+                return zlib.decompress(candidate, bits)
+            except zlib.error:
+                continue
+    return None
+
+
+def _ascii85(raw: bytes) -> bytes | None:
+    body = raw.strip()
+    if body.startswith(b"<~"):
+        body = body[2:]
+    if body.endswith(b"~>"):
+        body = body[:-2]
+    try:
+        return base64.a85decode(body, adobe=False)
+    except (ValueError, binascii.Error):
+        return None
+
+
+def _apply_filters(raw: bytes, names: list[bytes]) -> bytes | None:
+    """Decode a content stream. ReportLab uses ASCII85 and then Flate."""
+    data = raw
+    if not names:
+        inflated = _inflate(data)
+        return inflated if inflated is not None else data
+    for name in names:
+        if name == b"ASCII85Decode":
+            data = _ascii85(data)
+        elif name == b"FlateDecode":
+            data = _inflate(data) if data is not None else None
+        elif name == b"ASCIIHexDecode" and data is not None:
+            try:
+                data = bytes.fromhex(data.decode("ascii").replace(">", ""))
+            except ValueError:
+                return None
+        else:
+            return None
+        if data is None:
+            return None
+    return data
 
 
 def extract_pdf_text(data: bytes) -> str:
@@ -23,13 +78,11 @@ def extract_pdf_text(data: bytes) -> str:
     parts: list[str] = []
     for match in _STREAM.finditer(data):
         raw = match.group(1)
-        head = data[max(0, match.start() - 240) : match.start()]
-        if b"FlateDecode" in head:
-            try:
-                raw = zlib.decompress(raw)
-            except zlib.error:
-                continue
-        found = _operators(raw)
+        head = data[max(0, match.start() - 480) : match.start()]
+        decoded = _apply_filters(raw, _filter_names(head))
+        if not decoded:
+            continue
+        found = _operators(decoded)
         if found:
             parts.append(found)
     return " ".join(parts).strip()

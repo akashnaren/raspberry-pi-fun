@@ -37,6 +37,11 @@ LIST_HINT = (
     "Reply with a numbered list, one item per line, numbered from 1. "
     "Answer helpfully if the request is safe."
 )
+PICK_HINT = (
+    "Name several specific titles, one per numbered line. "
+    "Do not tell the user to visit a website, guide, or catalog. "
+    "Answer helpfully if the request is safe."
+)
 
 _GREETING = re.compile(
     r"^(?:(?:hi|hello|hey|hiya|howdy|yo|sup)(?:\s+there)?|"
@@ -386,6 +391,10 @@ def answer_hint_for(prompt: str) -> str | None:
         or not is_harmless_shape(prompt)
     ):
         return None
+    from pair.lists import is_recommendation
+
+    if is_recommendation(prompt):
+        return PICK_HINT
     if is_list_shape(prompt):
         return LIST_HINT
     return ANSWER_HINT

@@ -7,12 +7,15 @@ queue, or a wait that runs out, is a busy line rather than an immediate error.
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import contextmanager
 
 from pair.errors import BUSY
 
 QUEUE_LIMIT = 8
-WAIT_TIMEOUT_S = 60.0
+# Answers often run for minutes. A one-minute wait drops the chat first.
+WAIT_TIMEOUT_S = 600.0
+_POLL_S = 0.4
 
 
 class AtCapacity(Exception):
@@ -66,11 +69,25 @@ class InferenceGate:
             self._waiting += 1
             return "wait"
 
-    def acquire_reserved(self, timeout: float | None = None) -> bool:
-        """Block for a slot. The caller already holds one wait reservation."""
+    def acquire_reserved(self, timeout: float | None = None, stop=None) -> bool:
+        """Block for a slot. The caller already holds one wait reservation.
+
+        `stop` is checked about every half second. A disconnect ends the wait
+        without taking a slot. The wait itself lasts until `timeout`.
+        """
         limit = self.wait_timeout if timeout is None else float(timeout)
+        deadline = time.monotonic() + max(0.0, limit)
+        got = False
         try:
-            got = self._sem.acquire(timeout=limit)
+            while True:
+                if stop is not None and stop():
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if self._sem.acquire(timeout=min(_POLL_S, remaining)):
+                    got = True
+                    break
         finally:
             with self._mu:
                 if self._waiting > 0:

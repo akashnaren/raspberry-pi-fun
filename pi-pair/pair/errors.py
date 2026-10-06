@@ -11,6 +11,15 @@ log.addHandler(logging.NullHandler())
 
 BUSY = "Too many chats are going at once. Try again in a moment."
 WAITING = "Waiting for a free slot…"
+ASK_FIRST = "Ask a question first."
+
+
+def queue_status(position: int) -> str:
+    """The line the page shows while a chat waits for a generation slot."""
+    slot = max(1, int(position))
+    return f"Waiting for a free slot (#{slot})"
+
+
 GENERIC = "Something went wrong. Try again."
 TIMEOUT = "That took too long. Try again."
 UNREACHABLE = "The chat service is not reachable. Try again."

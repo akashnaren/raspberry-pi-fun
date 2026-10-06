@@ -9,7 +9,7 @@ import re
 
 from pair.ground import is_grounded_problem
 from pair.knobs import inference_knobs
-from pair.lists import list_count
+from pair.lists import is_canon_list, list_count
 from pair.turn import is_plain_list, is_plot, user_question
 
 FLASH = "flash"
@@ -40,11 +40,11 @@ def mode_table(knobs: dict | None = None) -> dict[str, str]:
 
 
 def mode_tips(knobs: dict | None = None) -> dict[str, str]:
-    """Info-icon sentences. The tags come from mode_table, not from the page."""
-    table = mode_table(knobs)
+    """Info-icon sentences. Tags stay in /health for the operator, not the tip."""
+    del knobs
     return {
-        FLASH: f"{table[FLASH]}, the fast resident model.",
-        PRO: f"{table[PRO]}, loaded when the question needs it.",
+        FLASH: "The fast resident model.",
+        PRO: "The stronger resident model.",
     }
 
 
@@ -76,6 +76,8 @@ def task_tier(prompt: str) -> str:
     if _CODE.search(text) or is_grounded_problem(text):
         return PRO
     if is_plot(text) or is_plain_list(text):
+        return FLASH
+    if is_canon_list(text):
         return FLASH
     if _SEARCH.search(text) or _MULTI.search(text):
         return PRO
