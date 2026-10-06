@@ -139,7 +139,7 @@ class CompactTests(unittest.TestCase):
         memory.remember_user(["the code is 4182"])
         rows = memory.list_facts()
         self.assertEqual(len(rows), 1)
-        self.assertTrue(rows[0]["text"].startswith("user said"))
+        self.assertTrue(rows[0]["text"].startswith("The user said:"))
         self.assertTrue(memory.delete_fact(rows[0]["id"]))
         self.assertEqual(memory.list_facts(), [])
         memory.remember_user(["again"])
@@ -187,6 +187,7 @@ class CompactTests(unittest.TestCase):
         )
         blob = "\n".join(str(row["content"]) for row in shaped)
         self.assertIn("4417", blob)
+        self.assertIn("The user said:", blob)
         other = shape_messages(
             [{"role": "user", "content": asked}],
             asked,
@@ -216,6 +217,25 @@ class CompactTests(unittest.TestCase):
         stored = " ".join(row["text"] for row in memory.list_facts("codes"))
         self.assertIn("4417", stored)
         self.assertNotIn("1111", stored)
+
+    def test_idle_memory_files_expire_and_facts_json_is_removed(self):
+        import time
+        from pathlib import Path
+
+        memory.remember_user(["the locker code is 4417"], scope="keep-me")
+        memory.remember_user(["an old note"], scope="stale-chat")
+        folder = Path(self._tmp.name) / "memory"
+        stale = folder / "stale-chat.json"
+        old = time.time() - memory.MEMORY_TTL_S - 30
+        os.utime(stale, (old, old))
+        (folder / "facts.json").write_text("{}\n", encoding="utf-8")
+        removed = memory.purge_memory()
+        self.assertGreaterEqual(removed, 2)
+        self.assertFalse((folder / "facts.json").exists())
+        self.assertFalse(stale.exists())
+        kept = " ".join(row["text"] for row in memory.list_facts("keep-me"))
+        self.assertIn("4417", kept)
+        self.assertIn("The user said:", kept)
 
     def test_two_sessions_cannot_read_or_clear_each_other(self):
         alice = scope_key("chat-a", "client-a")

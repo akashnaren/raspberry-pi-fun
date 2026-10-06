@@ -1,7 +1,8 @@
 """Arithmetic notes from a standard-library ast whitelist.
 
-Spans of numbers, operators, and parentheses are evaluated. Word operators
-and topic rules are out of scope. A bad span is skipped, never raised.
+Spans of numbers, operators, and parentheses are evaluated. "N% of M" is
+rewritten to a product first. Other word operators stay out of scope. A bad
+span is skipped, never raised.
 """
 
 from __future__ import annotations
@@ -15,6 +16,10 @@ _MAX_OPERAND = 1e15
 _MAX_EXPONENT = 10
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _PHONE = re.compile(r"\d{2,4}(?:-\d{2,4})+")
+_PERCENT_OF = re.compile(
+    r"(\d+(?:\.\d+)?)\s*%\s+of\s+(\d+(?:\.\d+)?)",
+    re.I,
+)
 _ALLOWED = set("0123456789+-*/%^×÷()., \t")
 _OPS = {
     ast.Add: lambda left, right: left + right,
@@ -151,10 +156,19 @@ def fully_answers(text: str) -> bool:
     return all(char in _ALLOWED for char in raw)
 
 
+def _percent_product(text: str) -> str:
+    """Rewrite 'N% of M' so the whitelist can multiply. Other words stay."""
+
+    def repl(match: re.Match) -> str:
+        return f"({match.group(1)}/100)*{match.group(2)}"
+
+    return _PERCENT_OF.sub(repl, text or "")
+
+
 def notes_for(text: str) -> str | None:
     """Calculator lines for arithmetic spans, or None when nothing is safe."""
     lines: list[str] = []
-    for span in _spans(text):
+    for span in _spans(_percent_product(text)):
         if _DATE.search(span) or _phone_like(span):
             continue
         expr = _normalize(span)

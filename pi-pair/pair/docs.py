@@ -19,8 +19,11 @@ from pair.charts import parse_markdown_table
 from pair.config import data_root
 
 MAX_AGE_S = 24 * 60 * 60
+MAX_FILES = 32
 _KINDS = {"md", "txt", "csv", "docx", "xlsx", "pdf"}
 _ID = re.compile(r"[0-9a-f]{32}")
+_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
+_KIND_ASK = re.compile(r"\b(pdf|docx|xlsx|csv|markdown|txt)\b|\.md\b", re.I)
 
 
 def _xml(text: str) -> str:
@@ -42,8 +45,67 @@ def _plain(markdown: str) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def _csv(markdown: str) -> str:
+def _split_row(line: str) -> list[str]:
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    return [part.strip() for part in text.split("|")]
+
+
+def _blocks(markdown: str) -> list:
+    """Prose and tables. A row may be wider than the header; cells stay."""
+    lines = _plain(markdown).split("\n")
+    blocks: list = []
+    text: list[str] = []
+
+    def flush() -> None:
+        if any(line.strip() for line in text):
+            blocks.append(("text", "\n".join(text).strip("\n")))
+        text.clear()
+
+    index = 0
+    while index < len(lines):
+        nxt = index + 1
+        if nxt < len(lines) and "|" in lines[index] and _RULE.match(lines[nxt]):
+            headers = _split_row(lines[index])
+            rows: list[list[str]] = []
+            cursor = nxt + 1
+            while (
+                cursor < len(lines)
+                and lines[cursor].strip()
+                and "|" in lines[cursor]
+                and not _RULE.match(lines[cursor])
+            ):
+                rows.append(_split_row(lines[cursor]))
+                cursor += 1
+            if rows and len(headers) >= 2:
+                width = max(len(headers), *(len(row) for row in rows))
+                headers = headers + [""] * (width - len(headers))
+                rows = [row + [""] * (width - len(row)) for row in rows]
+                flush()
+                blocks.append(("table", headers, rows))
+                index = cursor
+                continue
+        text.append(lines[index])
+        index += 1
+    flush()
+    return blocks
+
+
+def _first_table(markdown: str) -> tuple[list[str], list[list[str]]] | None:
+    for block in _blocks(markdown):
+        if block[0] == "table":
+            return block[1], block[2]
     parsed = parse_markdown_table(markdown)
+    if not parsed:
+        return None
+    return parsed
+
+
+def _csv(markdown: str) -> str:
+    parsed = _first_table(markdown)
     buf = io.StringIO()
     writer = csv.writer(buf)
     if parsed:
@@ -56,6 +118,32 @@ def _csv(markdown: str) -> str:
     return buf.getvalue()
 
 
+def _docx_table(headers: list[str], rows: list[list[str]]) -> str:
+    edges = ("top", "left", "bottom", "right", "insideH", "insideV")
+    borders = "".join(
+        f'<w:{edge} w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+        for edge in edges
+    )
+    grid = "".join('<w:gridCol w:w="2400"/>' for _ in headers)
+
+    def cell(value: str) -> str:
+        return (
+            '<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr>'
+            f'<w:p><w:r><w:t xml:space="preserve">{_xml(value)}</w:t></w:r></w:p>'
+            "</w:tc>"
+        )
+
+    def row(values: list[str]) -> str:
+        return "<w:tr>" + "".join(cell(value) for value in values) + "</w:tr>"
+
+    body = row(headers) + "".join(row(values) for values in rows)
+    return (
+        '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>'
+        f"<w:tblBorders>{borders}</w:tblBorders></w:tblPr>"
+        f"<w:tblGrid>{grid}</w:tblGrid>{body}</w:tbl>"
+    )
+
+
 def _zip(parts: dict[str, str]) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -66,10 +154,17 @@ def _zip(parts: dict[str, str]) -> bytes:
 
 def _docx(markdown: str) -> bytes:
     paragraphs = []
-    for line in _plain(markdown).split("\n"):
-        paragraphs.append(
-            f'<w:p><w:r><w:t xml:space="preserve">{_xml(line)}</w:t></w:r></w:p>'
-        )
+    for block in _blocks(markdown):
+        if block[0] == "text":
+            for line in str(block[1]).split("\n"):
+                paragraphs.append(
+                    '<w:p><w:r><w:t xml:space="preserve">'
+                    f"{_xml(line)}</w:t></w:r></w:p>"
+                )
+        else:
+            paragraphs.append(_docx_table(block[1], block[2]))
+    if not paragraphs:
+        paragraphs.append("<w:p/>")
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -111,7 +206,7 @@ def _cell(col: int, row: int, value: str) -> str:
 
 
 def _sheet_rows(markdown: str) -> list[list[str]]:
-    parsed = parse_markdown_table(markdown)
+    parsed = _first_table(markdown)
     if parsed:
         headers, rows = parsed
         return [headers, *rows]
@@ -173,23 +268,77 @@ def _pdf_escape(text: str) -> str:
     return raw.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
-def _wrap(text: str) -> list[str]:
+def _wrap_line(raw: str) -> list[str]:
+    line = (raw or "").replace("\t", "    ")
+    if not line:
+        return [""]
     lines: list[str] = []
-    for raw in _plain(text).split("\n"):
-        line = raw.replace("\t", "    ")
-        if not line:
-            lines.append("")
+    while len(line) > 90:
+        lines.append(line[:90])
+        line = line[90:]
+    lines.append(line)
+    return lines
+
+
+def _pdf_items(markdown: str) -> list[tuple]:
+    """Text lines and horizontal rules. Table cells are drawn, not piped."""
+    items: list[tuple] = []
+    for block in _blocks(markdown):
+        if block[0] == "text":
+            for raw in str(block[1]).split("\n"):
+                for line in _wrap_line(raw):
+                    items.append(("text", line))
             continue
-        while len(line) > 90:
-            lines.append(line[:90])
-            line = line[90:]
-        lines.append(line)
-    return lines or [""]
+        headers, rows = block[1], block[2]
+        items.append(("rule",))
+        items.append(("text", "  ".join(headers)))
+        items.append(("rule",))
+        for row in rows:
+            items.append(("text", "  ".join(row)))
+            items.append(("rule",))
+    return items or [("text", "")]
+
+
+def _pdf_commands(items: list[tuple]) -> bytes:
+    commands: list[str] = []
+    y = 750
+    text_open = False
+
+    def close_text() -> None:
+        nonlocal text_open
+        if text_open:
+            commands.append("ET")
+            text_open = False
+
+    def open_text() -> None:
+        nonlocal text_open
+        if text_open:
+            return
+        commands.append("BT")
+        commands.append("/F1 11 Tf")
+        commands.append(f"1 0 0 1 72 {y} Tm")
+        commands.append("14 TL")
+        text_open = True
+
+    for item in items:
+        kind = item[0]
+        if kind == "rule":
+            close_text()
+            y -= 4
+            commands.append(f"72 {y} m 540 {y} l S")
+            y -= 6
+            continue
+        open_text()
+        commands.append(f"({_pdf_escape(item[1])}) Tj")
+        commands.append("T*")
+        y -= 14
+    close_text()
+    return "\n".join(commands).encode("latin-1", "replace")
 
 
 def _pdf(markdown: str) -> bytes:
-    lines = _wrap(markdown)
-    chunks = [lines[index : index + 48] for index in range(0, len(lines), 48)]
+    items = _pdf_items(markdown)
+    chunks = [items[index : index + 40] for index in range(0, len(items), 40)]
     objects: dict[int, bytes] = {}
     page_ids = []
     next_id = 4
@@ -198,13 +347,7 @@ def _pdf(markdown: str) -> bytes:
         content_id = next_id + 1
         next_id += 2
         page_ids.append(page_id)
-        commands = ["BT", "/F1 11 Tf", "72 750 Td", "14 TL"]
-        for index, line in enumerate(chunk):
-            if index:
-                commands.append("T*")
-            commands.append(f"({_pdf_escape(line)}) Tj")
-        commands.append("ET")
-        stream = "\n".join(commands).encode("latin-1", "replace")
+        stream = _pdf_commands(chunk)
         objects[content_id] = (
             f"<< /Length {len(stream)} >>\nstream\n".encode() + stream + b"\nendstream"
         )
@@ -259,29 +402,54 @@ def _dir() -> Path:
     return root
 
 
+def _unlink_doc(root: Path, meta_path: Path, meta: dict) -> None:
+    ext = str(meta.get("ext") or "")
+    blob = root / f"{meta_path.stem}.{ext}" if ext else None
+    if blob is not None and blob.is_file():
+        blob.unlink()
+    meta_path.unlink(missing_ok=True)
+
+
 def purge_documents(max_age: float = MAX_AGE_S, now: float | None = None) -> int:
-    """Delete stored files older than `max_age` seconds. Returns how many went."""
+    """Delete files older than `max_age`, then the oldest past MAX_FILES."""
     clock = time.time() if now is None else float(now)
     removed = 0
     root = data_root() / "docs"
     if not root.is_dir():
         return 0
-    for meta_path in root.glob("*.json"):
+    kept: list[tuple[float, Path, dict]] = []
+    for meta_path in list(root.glob("*.json")):
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             created = float(meta.get("created") or 0)
         except (OSError, ValueError, TypeError):
             continue
-        if clock - created < max_age:
+        if not isinstance(meta, dict):
             continue
-        ext = str(meta.get("ext") or "")
-        doc_id = meta_path.stem
-        blob = root / f"{doc_id}.{ext}" if ext else None
-        if blob is not None and blob.is_file():
-            blob.unlink()
-        meta_path.unlink(missing_ok=True)
+        if clock - created >= max_age:
+            _unlink_doc(root, meta_path, meta)
+            removed += 1
+            continue
+        kept.append((created, meta_path, meta))
+    kept.sort(key=lambda item: (item[0], item[1].name))
+    overflow = len(kept) - MAX_FILES
+    for _created, meta_path, meta in kept[: max(0, overflow)]:
+        _unlink_doc(root, meta_path, meta)
         removed += 1
     return removed
+
+
+def kind_from_request(prompt: str) -> str:
+    """The file type the user named, or empty. Never guesses docx."""
+    from pair.turn import user_question
+
+    match = _KIND_ASK.search(user_question(prompt or ""))
+    if not match:
+        return ""
+    token = (match.group(1) or "md").lower()
+    if token == "markdown":
+        return "md"
+    return token
 
 
 def save_document(data: bytes, ext: str, name: str = "") -> dict:

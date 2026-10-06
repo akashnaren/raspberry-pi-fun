@@ -17,7 +17,13 @@ import zipfile
 from pathlib import Path
 
 from pair.charts import chart_samples, chart_type, render_chart
-from pair.docs import open_document, purge_documents, render_document, save_document
+from pair.docs import (
+    MAX_FILES,
+    open_document,
+    purge_documents,
+    render_document,
+    save_document,
+)
 from pair.nodes.worker import forbidden_routes, handle
 from pair.server import make_server
 
@@ -102,6 +108,8 @@ class Documents(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(docx)) as archive:
             xml = archive.read("word/document.xml").decode("utf-8")
         self.assertIn("Hello mesh", xml)
+        self.assertIn("<w:tbl>", xml)
+        self.assertNotIn("| a |", xml)
         xlsx, ext = render_document(source, "xlsx")
         self.assertEqual(ext, "xlsx")
         with zipfile.ZipFile(io.BytesIO(xlsx)) as archive:
@@ -112,12 +120,33 @@ class Documents(unittest.TestCase):
         self.assertEqual(ext, "pdf")
         self.assertTrue(pdf.startswith(b"%PDF-1.4"))
         self.assertIn(b"Hello mesh", pdf)
+        self.assertIn(b" m ", pdf)
+        self.assertNotIn(b"| a |", pdf)
         text, ext = render_document(source, "txt")
         self.assertEqual(ext, "txt")
         self.assertIn("Hello mesh", text.decode())
         csv_bytes, ext = render_document(source, "csv")
         self.assertEqual(ext, "csv")
         self.assertIn("item,value", csv_bytes.decode())
+
+    def test_stored_files_are_capped(self):
+        import time
+
+        ids = []
+        root = Path(self._tmp.name) / "docs"
+        base = time.time()
+        for index in range(MAX_FILES + 3):
+            data, ext = render_document(f"note {index}\n", "txt")
+            meta = save_document(data, ext, f"n{index}")
+            ids.append(meta["id"])
+            path = root / f"{meta['id']}.json"
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            stored["created"] = base + index
+            path.write_text(json.dumps(stored), encoding="utf-8")
+        now = base + MAX_FILES + 30
+        self.assertGreaterEqual(purge_documents(now=now), 1)
+        self.assertIsNone(open_document(ids[0], now=now))
+        self.assertIsNotNone(open_document(ids[-1], now=now))
 
     def test_files_are_deleted_after_a_day(self):
         data, ext = render_document("keep me\n", "txt")

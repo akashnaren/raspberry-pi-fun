@@ -77,7 +77,16 @@ const plot = renderMarkdown("```plot\ntitle: Wave\nsin(x)\n```");
 if (!plot.includes('class="pi-chart"') || !plot.includes("sin(x)")) {
   throw new Error("a plot fence was not kept: " + plot);
 }
+const numbered = renderMarkdown("1. Alpha\n\n2. Beta\n\n3. Gamma");
+const numbers = [...numbered.matchAll(/<li value="(\d+)">/g)].map((match) => match[1]);
+if (numbers.join(",") !== "1,2,3" || (numbered.match(/<ol>/g) || []).length !== 1) {
+  throw new Error("numbered list reset: " + numbered);
+}
 const docCard = renderMarkdown("```doc\nkind: txt\ntitle: Note\nHello\n```");
+const untyped = renderMarkdown("```doc\nHello there\n```");
+if (untyped.includes(".docx") || !untyped.includes(".md")) {
+  throw new Error("an untyped doc fell back to docx: " + untyped);
+}
 if (!docCard.includes("pi-doc") || !docCard.includes("Download")) {
   throw new Error("a doc fence had no download card: " + docCard);
 }

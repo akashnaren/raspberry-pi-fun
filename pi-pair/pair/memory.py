@@ -7,8 +7,10 @@ never share a summary, and clearing one does not touch the other.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from pair.queue import data_root
 from pair.turn import estimate_tokens
 
 FACT_TOKEN_CAP = 150
+MEMORY_TTL_S = 30 * 24 * 60 * 60
 _LOCK = threading.Lock()
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 _NUMBER = re.compile(r"\b\d{3,}(?:[.,]\d+)?\b")
@@ -77,10 +80,36 @@ def _empty() -> dict:
     return {"facts": [], "summary": "", "compactions": 0, "last_compact_ms": 0}
 
 
+def purge_memory(max_age: float = MEMORY_TTL_S, now: float | None = None) -> int:
+    """Drop idle chat files and the old global facts.json. Active chats stay."""
+    folder = data_root() / "memory"
+    if not folder.is_dir():
+        return 0
+    clock = time.time() if now is None else float(now)
+    removed = 0
+    legacy = folder / "facts.json"
+    if legacy.is_file():
+        legacy.unlink()
+        removed += 1
+    for path in list(folder.glob("*.json")):
+        try:
+            stale = path.stat().st_mtime <= clock - float(max_age)
+        except OSError:
+            continue
+        if stale:
+            path.unlink()
+            removed += 1
+    return removed
+
+
 def _read(scope: str) -> dict:
     path = _path(scope)
     if not path.exists():
         return _empty()
+    try:
+        os.utime(path, None)
+    except OSError:
+        pass
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -102,6 +131,7 @@ def list_facts(scope: str | None = None) -> list[dict]:
     key = _bucket(scope)
     if not key:
         return []
+    purge_memory()
     with _LOCK:
         rows = _read(key).get("facts") or []
     return [dict(row) for row in rows if isinstance(row, dict)]
@@ -189,11 +219,25 @@ def _trim(rows: list[dict]) -> None:
         rows.pop(index)
 
 
+def _as_user_fact(text: str) -> str:
+    """Memory is quoted as the user, so the model does not answer as them."""
+    flat = " ".join(str(text or "").split())
+    lower = flat.lower()
+    if lower.startswith("the user said:"):
+        return flat
+    if lower.startswith("user said"):
+        parts = flat.split(None, 2)
+        body = parts[2] if len(parts) > 2 else ""
+        return f"The user said: {body}".strip()
+    return f"The user said: {flat}"
+
+
 def remember_user(statements: list[str], scope: str | None = None) -> list[dict]:
-    """Store 'user said X' lines. The latest wording wins. Nothing is inferred."""
+    """Store 'The user said: …' lines. The latest wording wins. Nothing is inferred."""
     key = _bucket(scope)
     if not key:
         return []
+    purge_memory()
     kept = []
     with _LOCK:
         data = _read(key)
@@ -203,7 +247,7 @@ def remember_user(statements: list[str], scope: str | None = None) -> list[dict]
             text = " ".join(str(raw or "").split())
             if not text:
                 continue
-            line = text if text.lower().startswith("user said") else f"user said {text}"
+            line = _as_user_fact(text)
             rows = [
                 row for row in rows if not _supersedes(line, str(row.get("text") or ""))
             ]
@@ -251,6 +295,7 @@ def save_summary(text: str, elapsed_ms: int, scope: str | None = None) -> None:
     key = _bucket(scope)
     if not key:
         return
+    purge_memory()
     with _LOCK:
         data = _read(key)
         data["summary"] = str(text or "").strip()

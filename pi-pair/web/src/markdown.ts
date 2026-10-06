@@ -178,7 +178,7 @@ export function renderMarkdown(source: string): string {
       continue;
     }
     const bullet = /^[-*]\s+(.*)$/.exec(line);
-    const ordered = /^\d+\.\s+(.*)$/.exec(line);
+    const ordered = /^(\d+)\.\s+(.*)$/.exec(line);
     if (bullet || ordered) {
       flushParagraph(paragraph);
       const kind = bullet ? "ul" : "ol";
@@ -187,11 +187,22 @@ export function renderMarkdown(source: string): string {
         list = kind;
         out.push(kind === "ul" ? "<ul>" : "<ol>");
       }
-      out.push(`<li>${inline((bullet || ordered)![1])}</li>`);
+      const item = bullet ? bullet[1] : ordered![2];
+      const value = ordered ? ` value="${ordered[1]}"` : "";
+      out.push(`<li${value}>${inline(item)}</li>`);
       continue;
     }
     if (!line.trim()) {
       flushParagraph(paragraph);
+      if (list) {
+        let next = i + 1;
+        while (next < lines.length && !lines[next].trim()) next += 1;
+        const upcoming = next < lines.length ? lines[next] : "";
+        const same =
+          (list === "ol" && /^\d+\.\s+/.test(upcoming)) ||
+          (list === "ul" && /^[-*]\s+/.test(upcoming));
+        if (same) continue;
+      }
       closeList();
       continue;
     }

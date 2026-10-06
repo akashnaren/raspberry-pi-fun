@@ -25,16 +25,14 @@ ATTACH_MARK = "\n\n---\n"
 CHARS_PER_TOKEN = 3.2
 
 PERSONA = (
-    "You are OpenPi, a helpful assistant on a Raspberry Pi. "
+    "You are OpenPi, the assistant on a Raspberry Pi. You are not the user. "
     "Answer in the user's language with the useful part only. "
-    "Use attached notes when they are present. "
-    "For arithmetic, a chart, a downloadable file, or a lookup, "
-    "include one block of this shape and then the answer:\n"
-    "```doc\nkind: pdf\ntitle: Note\n"
-    "| item | n |\n| --- | --- |\n| a | 1 |\n"
-    "A short paragraph.\n```\n"
-    "The label can be calc, plot, doc, or search, and kind can be pdf, docx, xlsx, or md. "
-    "A markdown table is a chart. "
+    "Use attached notes when they are present.\n"
+    "A chart is a markdown table in a plot fence. "
+    "A downloadable file is a doc fence whose first lines are its kind "
+    "(pdf, docx, xlsx, or md) and a title, then the file text. "
+    "Arithmetic is a calc fence. A lookup is a search fence. "
+    "Write a fence only when the user asked for that. "
     "Keep the language tag on a code sample."
 )
 
@@ -184,11 +182,89 @@ def structure_hint(prompt: str) -> str | None:
 
 
 def _time_sensitive(question: str) -> bool:
-    """A time cue, not a topic list. Years are recent when they are last year or newer."""
+    """A time cue, not a topic list. Only a nearby calendar year counts."""
     if _FRESH.search(question) or _RECENCY.search(question):
         return True
-    floor = date.today().year - 1
-    return any(int(match.group(1)) >= floor for match in _YEAR.finditer(question))
+    year = date.today().year
+    for match in _YEAR.finditer(question):
+        value = int(match.group(1))
+        if year - 1 <= value <= year + 1:
+            return True
+    return False
+
+
+_CONTENT = re.compile(r"[a-z]{4,}")
+_CONTENT_SKIP = {
+    "this",
+    "that",
+    "with",
+    "from",
+    "your",
+    "have",
+    "what",
+    "when",
+    "where",
+    "which",
+    "about",
+    "would",
+    "could",
+    "should",
+    "there",
+    "their",
+    "them",
+    "they",
+    "then",
+    "than",
+    "into",
+    "more",
+    "most",
+    "some",
+    "just",
+    "please",
+    "make",
+    "file",
+    "files",
+    "down",
+    "user",
+    "said",
+    "assistant",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    return {
+        word
+        for word in _CONTENT.findall((text or "").lower())
+        if word not in _CONTENT_SKIP
+    }
+
+
+def _context_answers(question: str, context: str) -> bool:
+    """True when earlier text already contains what this question is asking."""
+    from pair.nodes.compact_plan import concrete_tokens
+
+    asked = _content_words(question)
+    remembered = _content_words(context)
+    if len(asked) < 2 or len(asked & remembered) < min(2, len(asked)):
+        return False
+    extra = concrete_tokens(context) - concrete_tokens(question)
+    if extra:
+        return True
+    return len(remembered - asked) >= 3
+
+
+def answered_locally(prompt: str, context: str = "") -> bool:
+    """Calculator or earlier text already covers the question.
+
+    A time cue still needs a lookup. Arithmetic wins over that, because a
+    long number inside an expression is not a date.
+    """
+    question = user_question(prompt)
+    if notes_for(question):
+        return True
+    if not (context or "").strip() or _time_sensitive(question):
+        return False
+    return _context_answers(question, context)
 
 
 @functools.lru_cache(maxsize=256)
@@ -207,16 +283,21 @@ def _needs_web(prompt: str, follow_up: bool, ground_all: bool) -> bool:
     return _time_sensitive(question)
 
 
-def needs_web(prompt: str, follow_up: bool = False) -> bool:
+def needs_web(prompt: str, follow_up: bool = False, context: str = "") -> bool:
     """Search unless the turn is local, or only when the question is current.
 
-    `ground_all` searches every question except an attachment, a message that
-    is only arithmetic, fewer than three words, or a short follow-up with no
-    question mark. When the knob is off, search is a time cue. A search fence
-    is how the model asks for any other fact.
+    `ground_all` searches every question except an attachment, a message the
+    calculator can finish, fewer than three words, or a short follow-up with
+    no question mark. When the knob is off, search is a time cue. Earlier
+    notes that already answer a question that is not time-sensitive skip the
+    lookup. A search fence is how the model asks for any other fact.
     """
+    if notes_for(user_question(prompt or "")):
+        return False
     ground_all = bool(inference_knobs().get("ground_all", False))
-    return _needs_web(prompt or "", bool(follow_up), ground_all)
+    if not _needs_web(prompt or "", bool(follow_up), ground_all):
+        return False
+    return not answered_locally(prompt or "", context)
 
 
 def fence_user_text(content: str, limit: int) -> str:
@@ -439,6 +520,16 @@ def _clip_text(text: str, keep: int) -> str:
 
 def _token_count(rows: list) -> int:
     return sum(estimate_tokens(str(row.get("content") or "")) for row in rows)
+
+
+def turns_for_memory(request, shaped=None) -> list:
+    """Rows to compact. `shaped` is the trimmed window and is not stored."""
+    del shaped
+    rows = []
+    for item in request or []:
+        if isinstance(item, dict) and str(item.get("content") or "").strip():
+            rows.append(dict(item))
+    return rows
 
 
 def fit_messages(messages, knobs: dict | None = None) -> list:

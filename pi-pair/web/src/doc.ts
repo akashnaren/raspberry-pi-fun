@@ -6,7 +6,7 @@ function escapeHtml(text: string): string {
 
 function settings(source: string): { kind: string; title: string; markdown: string } {
   const lines = String(source ?? "").replace(/\n$/, "").split("\n");
-  let kind = "docx";
+  let kind = "";
   let title = "document";
   const body: string[] = [];
   for (const line of lines) {
@@ -18,7 +18,7 @@ function settings(source: string): { kind: string; title: string; markdown: stri
     }
     body.push(line);
   }
-  if (!["md", "txt", "csv", "docx", "xlsx", "pdf"].includes(kind)) kind = "docx";
+  if (!["md", "txt", "csv", "docx", "xlsx", "pdf"].includes(kind)) kind = "md";
   return { kind, title, markdown: body.join("\n").trim() };
 }
 
@@ -60,7 +60,7 @@ export function mountDocs(root: ParentNode | null): void {
       fetch("/tools/render_doc", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ markdown, kind: spec.kind || "docx", name: spec.title || "document" }),
+        body: JSON.stringify({ markdown, kind: spec.kind || "md", name: spec.title || "document" }),
       })
         .then((response) => (response.ok ? response.json() : null))
         .then((body: { data?: string; name?: string } | null) => {
