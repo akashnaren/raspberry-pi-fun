@@ -16,6 +16,7 @@ node_modules/
 uploads/
 pi-pair/peers.json
 pi-pair/data/metrics.json
+pi-pair/data/canned/key_vectors.json
 pi-pair/data/train/public/*
 !pi-pair/data/train/public/.gitkeep
 pi-pair/data/train/pending/*

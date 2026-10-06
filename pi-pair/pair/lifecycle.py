@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from pair.canned import load_map, normalize_key, write_map
@@ -146,11 +149,224 @@ def _prepare(active: Path | None, root: Path, run_id: str) -> tuple[Path, list[d
     return prepared, rows
 
 
+_EMBED_URL = "http://127.0.0.1:18080/tools/embed"
+_EMBED_BATCH = 16
+_PARAPHRASE_MIN = 0.92
+
+
+def _paraphrase_min() -> float:
+    path = ROOT / "configs" / "runtime" / "embed_pi3.json"
+    try:
+        value = float(
+            json.loads(path.read_text(encoding="utf-8")).get("paraphrase_min")
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return _PARAPHRASE_MIN
+    if not math.isfinite(value):
+        return _PARAPHRASE_MIN
+    return value
+
+
+def _cosine(left: list[float], right: list[float]) -> float:
+    from pair.nodes.embedder import cosine
+
+    return cosine(left, right)
+
+
+def _vector_id(key: str, model: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest() + model
+
+
+def _load_vector_cache(path: Path) -> dict:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _cached_model(cache: dict) -> str:
+    found: set[str] = set()
+    for key in cache:
+        if not isinstance(key, str) or len(key) <= 64:
+            continue
+        digest, model = key[:64], key[64:]
+        if (
+            len(digest) == 64
+            and all(ch in "0123456789abcdef" for ch in digest)
+            and model
+        ):
+            found.add(model)
+    if len(found) == 1:
+        return next(iter(found))
+    return ""
+
+
+def _cached_vector(cache: dict, key: str, model: str) -> list[float] | None:
+    row = cache.get(_vector_id(key, model))
+    if not isinstance(row, list) or not row:
+        return None
+    numbers: list[float] = []
+    for value in row:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        number = float(value)
+        if not math.isfinite(number):
+            return None
+        numbers.append(number)
+    return numbers
+
+
+def _embed_remote(texts: list[str]) -> tuple[str, list[list[float]]] | None:
+    """Ask this board's /tools/embed. None means the fold stays exact-only."""
+    if not texts:
+        return "", []
+    request = urllib.request.Request(
+        _EMBED_URL,
+        data=json.dumps({"texts": texts}).encode(),
+        headers={"content-type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3.5) as response:
+            payload = json.loads(response.read().decode() or "{}")
+    except (
+        OSError,
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        ValueError,
+    ):
+        return None
+    if not isinstance(payload, dict) or payload.get("skipped"):
+        return None
+    rows = payload.get("vectors")
+    model = str(payload.get("model") or "")
+    if not model or not isinstance(rows, list) or len(rows) != len(texts):
+        return None
+    parsed: list[list[float]] = []
+    width: int | None = None
+    for row in rows:
+        if not isinstance(row, list) or not row:
+            return None
+        numbers: list[float] = []
+        for value in row:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            number = float(value)
+            if not math.isfinite(number):
+                return None
+            numbers.append(number)
+        if width is None:
+            width = len(numbers)
+        elif len(numbers) != width:
+            return None
+        parsed.append(numbers)
+    return model, parsed
+
+
+def _embed_all(texts: list[str]) -> tuple[str, list[list[float]]] | None:
+    model = ""
+    parsed: list[list[float]] = []
+    for start in range(0, len(texts), _EMBED_BATCH):
+        chunk = texts[start : start + _EMBED_BATCH]
+        got = _embed_remote(chunk)
+        if got is None:
+            return None
+        chunk_model, rows = got
+        if model and chunk_model != model:
+            return None
+        model = chunk_model
+        parsed.extend(rows)
+    return model, parsed
+
+
+def _write_vector_cache(
+    path: Path, table: dict[str, str], vectors: dict[str, list[float]], model: str
+) -> None:
+    payload = {}
+    for key in table:
+        vector = vectors.get(key)
+        if vector:
+            payload[_vector_id(key, model)] = vector
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+def _lookup_vectors(
+    table: dict[str, str], fresh: list[str], root: Path | None
+) -> tuple[dict[str, list[float]], str] | None:
+    path = None if root is None else Path(root) / "canned" / "key_vectors.json"
+    cache = _load_vector_cache(path) if path is not None else {}
+    model = _cached_model(cache)
+    keys = list(dict.fromkeys([*table.keys(), *fresh]))
+    vectors: dict[str, list[float]] = {}
+    missing: list[str] = []
+    if model:
+        for key in keys:
+            hit = _cached_vector(cache, key, model)
+            if hit is None:
+                missing.append(key)
+            else:
+                vectors[key] = hit
+    else:
+        missing = list(keys)
+    if missing:
+        got = _embed_all(missing)
+        if got is None:
+            return None
+        remote_model, rows = got
+        if model and remote_model != model:
+            got = _embed_all(keys)
+            if got is None:
+                return None
+            remote_model, rows = got
+            vectors = dict(zip(keys, rows))
+            model = remote_model
+        else:
+            model = remote_model
+            for key, row in zip(missing, rows):
+                vectors[key] = row
+        if path is not None and model:
+            _write_vector_cache(path, table, vectors, model)
+    if not model:
+        return None
+    return vectors, model
+
+
+def _best_paraphrase(
+    key: str,
+    table: dict[str, str],
+    vectors: dict[str, list[float]],
+    heldout: set[str],
+) -> tuple[str | None, float]:
+    left = vectors.get(key)
+    if not left:
+        return None, 0.0
+    best_key = None
+    best = -1.0
+    for existing in table:
+        if existing == key or existing in heldout:
+            continue
+        right = vectors.get(existing)
+        if not right:
+            continue
+        score = _cosine(left, right)
+        if score > best:
+            best = score
+            best_key = existing
+    return best_key, best
+
+
 def _fold(
-    table: dict[str, str], rows: list[dict], heldout: set[str]
-) -> tuple[dict[str, str], int, int]:
+    table: dict[str, str],
+    rows: list[dict],
+    heldout: set[str],
+    root: Path | None = None,
+) -> tuple[dict[str, str], int, int, int]:
     added = 0
     rejected = 0
+    merged = 0
+    fresh: list[tuple[str, str, bool]] = []
     for row in rows:
         key = row.get("q") or ""
         correction = str(row.get("correction") or "").strip()
@@ -170,9 +386,32 @@ def _fold(
                 table[key] = answer
                 added += 1
             continue
+        fresh.append((key, answer, bool(correction)))
+    if not fresh:
+        return table, added, rejected, merged
+    looked = _lookup_vectors(table, [key for key, _answer, _correction in fresh], root)
+    if looked is None:
+        for key, answer, _correction in fresh:
+            table[key] = answer
+            added += 1
+        return table, added, rejected, merged
+    vectors, model = looked
+    threshold = _paraphrase_min()
+    for key, answer, correction in fresh:
+        best_key, best = _best_paraphrase(key, table, vectors, heldout)
+        if best_key is not None and best >= threshold:
+            merged += 1
+            if correction and table[best_key] != answer:
+                table[best_key] = answer
+                added += 1
+            continue
         table[key] = answer
         added += 1
-    return table, added, rejected
+    if root is not None and model:
+        _write_vector_cache(
+            Path(root) / "canned" / "key_vectors.json", table, vectors, model
+        )
+    return table, added, rejected, merged
 
 
 def _gate(table: dict[str, str], heldout: set[str], before: dict[str, str]) -> None:
@@ -194,6 +433,7 @@ def _tombstone(
     digest: str,
     rows_after: int,
     labeled: int = 0,
+    paraphrase_merged: int = 0,
 ) -> Path:
     path = root / "train" / "done" / f"{run_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -204,6 +444,7 @@ def _tombstone(
         "rejected": rejected,
         "rows_after": rows_after,
         "labeled": labeled,
+        "paraphrase_merged": paraphrase_merged,
         "map_sha256": digest,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -285,6 +526,7 @@ def post_train(
                 "id": run_id,
                 "added": 0,
                 "rejected": 0,
+                "paraphrase_merged": 0,
                 "rows_before": len(table),
                 "rows_after": len(table),
                 "deleted": [],
@@ -295,7 +537,7 @@ def post_train(
         labeled = sum(1 for row in rows if row.get("vote"))
         before = load_map(base / "canned" / "canned_map.json")
         candidate = dict(before)
-        candidate, added, rejected = _fold(candidate, rows, heldout)
+        candidate, added, rejected, merged = _fold(candidate, rows, heldout, root=base)
         try:
             _gate(candidate, heldout, before)
         except GateError:
@@ -338,11 +580,14 @@ def post_train(
         removed = _delete_consumed(active, prepared)
         active = None
         prepared = None
-        _tombstone(base, run_id, added, rejected, digest, len(candidate), labeled)
+        _tombstone(
+            base, run_id, added, rejected, digest, len(candidate), labeled, merged
+        )
         return {
             "id": run_id,
             "added": added,
             "rejected": rejected,
+            "paraphrase_merged": merged,
             "labeled": labeled,
             "rows_before": len(before),
             "rows_after": len(candidate),

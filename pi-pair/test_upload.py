@@ -15,6 +15,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -347,6 +348,37 @@ class MimeRouting(unittest.TestCase):
             ocr.run_local(["__pi_pair_no_such_ocr_bin__"], b"")
         with self.assertRaises(ocr.OcrFailed):
             ocr.run_local([sys.executable, "-c", "import sys; sys.exit(2)"])
+
+    def test_ocr_binaries_take_the_embed_unload_hook(self):
+        calls = []
+
+        def enter() -> None:
+            calls.append("enter")
+
+        def leave() -> None:
+            calls.append("exit")
+
+        with (
+            patch("pair.nodes.embedder.ocr_enter", enter),
+            patch("pair.nodes.embedder.ocr_exit", leave),
+            patch(
+                "pair.ocr._launch_argv",
+                return_value=[sys.executable, "-c", "import time; time.sleep(30)"],
+            ),
+        ):
+            started = time.monotonic()
+            with self.assertRaises(ocr.OcrFailed):
+                ocr.run_local(["tesseract"], timeout=0.2)
+            self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(calls, ["enter", "exit"])
+        calls.clear()
+        with (
+            patch("pair.nodes.embedder.ocr_enter", enter),
+            patch("pair.nodes.embedder.ocr_exit", leave),
+        ):
+            done = ocr.run_local(["echo", "hi"])
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(calls, [])
 
     def test_timeout_kills_the_process_group(self):
         script = (

@@ -106,10 +106,17 @@ class KeepAliveDefault(unittest.TestCase):
         unit = (ROOT / "configs" / "runtime" / "ollama-lan.service").read_text(
             encoding="utf-8"
         )
-        for text in (script, unit):
-            self.assertIn("OLLAMA_MAX_LOADED_MODELS=2", text)
-            self.assertIn("OLLAMA_KEEP_ALIVE=-1", text)
-            self.assertNotIn("OLLAMA_MAX_LOADED_MODELS=1", text)
+        self.assertIn("OLLAMA_MAX_LOADED_MODELS=2", script)
+        self.assertIn("OLLAMA_KEEP_ALIVE=-1", script)
+        self.assertIn("OLLAMA_MAX_LOADED_MODELS=2", unit)
+        self.assertIn("OLLAMA_KEEP_ALIVE=-1", unit)
+        self.assertNotIn("OLLAMA_MAX_LOADED_MODELS=1", unit)
+        # pi4 stays at two resident chat tags. The =1 cap is the pi3 embed drop-in.
+        self.assertEqual(script.count("OLLAMA_MAX_LOADED_MODELS=1"), 1)
+        self.assertLess(
+            script.index("pi3-embed.conf"),
+            script.index("OLLAMA_MAX_LOADED_MODELS=1"),
+        )
         self.assertIn("ollama-lan.service", script)
         self.assertIn(
             'Environment="OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL}"', script

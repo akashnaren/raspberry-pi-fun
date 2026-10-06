@@ -8,8 +8,9 @@ import tempfile
 import threading
 import unittest
 import urllib.request
+from unittest.mock import patch
 
-from pair import memory
+from pair import memory, runtime
 from pair.compact import plan, run_compact, schedule, should_compact
 from pair.context import Ledger, ledger_for, reset, verbatim_budget
 from pair.memory import scope_key
@@ -319,6 +320,108 @@ class CompactTests(unittest.TestCase):
             blob = "\n".join(str(row["content"]) for row in shaped)
             self.assertNotIn("4182", blob)
             self.assertNotIn("9991", blob)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+
+class MemoryRingHttp(unittest.TestCase):
+    def test_usage_and_manual_compact(self):
+        import urllib.error
+
+        httpd = make_server("127.0.0.1", 0)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        host, port = httpd.server_address
+        base = f"http://{host}:{port}/v1/memory"
+        compact = base + "/compact"
+        headers = {
+            "X-Pi-Chat": "ring-chat",
+            "X-Pi-Client": "ring-client",
+            "Content-Type": "application/json",
+        }
+
+        def open_json(req):
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    return resp.status, json.loads(resp.read().decode())
+            except urllib.error.HTTPError as exc:
+                raw = exc.read().decode()
+                return exc.code, json.loads(raw or "{}")
+
+        try:
+            status, public = open_json(urllib.request.Request(base))
+            self.assertEqual(status, 200)
+            self.assertEqual(public["usage"]["used"], 0)
+            self.assertEqual(public["usage"]["compactions"], 0)
+            self.assertGreater(public["usage"]["num_ctx"], 0)
+            self.assertEqual(public["compact_at"], 0.70)
+            self.assertEqual(public["compact_busy_at"], 0.50)
+            status, seen = open_json(urllib.request.Request(base, headers=headers))
+            self.assertEqual(status, 200)
+            self.assertIn("used", seen["usage"])
+            self.assertIn("num_ctx", seen["usage"])
+            self.assertEqual(seen["compact_at"], 0.70)
+            status, denied = open_json(
+                urllib.request.Request(compact, data=b"{}", method="POST")
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(denied, {"ok": False, "reason": "no_session"})
+            payload = json.dumps(
+                {
+                    "messages": [
+                        {"role": "system", "content": "skip"},
+                        {"role": "user", "content": "hello"},
+                        {"role": "assistant", "content": 3},
+                    ]
+                }
+            ).encode()
+            with (
+                patch.object(runtime.gate, "in_flight", return_value=0),
+                patch.object(runtime.gate, "waiting", return_value=0),
+                patch("pair.compact.schedule", return_value=True) as scheduled,
+            ):
+                with patch.object(runtime.gate, "in_flight", return_value=1):
+                    status, busy = open_json(
+                        urllib.request.Request(
+                            compact, data=payload, headers=headers, method="POST"
+                        )
+                    )
+                self.assertEqual(status, 409)
+                self.assertEqual(busy["reason"], "busy")
+                self.assertFalse(scheduled.called)
+                status, queued = open_json(
+                    urllib.request.Request(
+                        compact, data=payload, headers=headers, method="POST"
+                    )
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(queued, {"ok": True, "queued": True})
+                self.assertEqual(scheduled.call_count, 1)
+                self.assertEqual(
+                    scheduled.call_args.kwargs["scope"],
+                    scope_key("ring-chat", "ring-client"),
+                )
+                self.assertEqual(
+                    scheduled.call_args.args[0],
+                    [{"role": "user", "content": "hello"}],
+                )
+                status, limited = open_json(
+                    urllib.request.Request(
+                        compact, data=payload, headers=headers, method="POST"
+                    )
+                )
+                self.assertEqual(status, 429)
+                self.assertEqual(limited["reason"], "rate")
+                self.assertEqual(scheduled.call_count, 1)
+            huge = urllib.request.Request(
+                compact,
+                data=b"{" + b"x" * 70000,
+                headers=headers,
+                method="POST",
+            )
+            status, _over = open_json(huge)
+            self.assertEqual(status, 413)
         finally:
             httpd.shutdown()
             httpd.server_close()

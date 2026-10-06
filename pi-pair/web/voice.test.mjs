@@ -1,5 +1,5 @@
 import fs from "fs";
-import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, adaptiveEndOfUtterance, createUtteranceHold, echoOfSpeech, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, shouldBargeIn, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
+import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, adaptiveEndOfUtterance, createUtteranceHold, currentSpeech, dropPostSpeechEcho, echoOfSpeech, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, shouldBargeIn, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
 
 const assistant = "The hall bench is by the east window.";
 const labels = ["Thinking", "Searching", "Searched", "Search failed", "Answering"];
@@ -168,7 +168,7 @@ if (html.includes('id="btnVoiceMode"')) {
 if (!main.includes("toggleVoiceMode") || !main.includes("shouldBargeIn")) {
   throw new Error("voice mode lost its turn or barge-in");
 }
-if (!html.includes('id="voiceStage"') || !scss.includes(".voice-stage.heard") || !main.includes('classList.toggle("heard"') || !main.includes('classList.toggle("voice-session"')) {
+if (!html.includes('id="voiceStage"') || !scss.includes(".voice-stage.heard") || !main.includes('setVoiceState("heard"') || !main.includes('classList.toggle("voice-session"')) {
   throw new Error("voice mode has no speaking visualization");
 }
 for (const level of ["low", "medium", "high"]) {
@@ -257,20 +257,19 @@ if (pulses !== 1) {
 if (!voiceSrc.includes("utter.onstart") || !voiceSrc.includes("utter.onboundary")) {
   throw new Error("speaking cue is not tied to the reply audio");
 }
-if (!main.includes('classList.toggle("speaking"') || !main.includes('classList.add("beat")')) {
+if (!main.includes('setVoiceState("speaking"') || !main.includes("ensureOrb()?.pulse()")) {
   throw new Error("the UI has no distinct speaking state");
 }
-if (!scss.includes(".voice-stage.speaking") || !scss.includes(".voice-dots")) {
-  throw new Error("speaking state does not keep the five-dot look");
+if (!scss.includes(".voice-stage.speaking") || !scss.includes("#voiceOrb") || scss.includes(".voice-dots")) {
+  throw new Error("speaking state still uses the five dots");
 }
-if (!scss.includes("voice-speak") || !scss.includes("speak-halo") || !scss.includes(".voice-stage.speaking .voice-live")) {
-  throw new Error("speaking affordance was not improved");
+if (!html.includes('id="voiceOrb"') || html.includes("voice-dots")) {
+  throw new Error("the page still shows the five dots");
 }
-const dotMarkup = html.slice(html.indexOf('class="voice-dots"'), html.indexOf('class="voice-dots"') + 120);
-if ((dotMarkup.match(/<i>/g) || []).length !== 5) {
-  throw new Error("speaking state replaced the five dots");
+if (!scss.includes(".voice-stage.speaking .voice-live") || !html.includes('aria-live="polite"')) {
+  throw new Error("speaking caption was removed");
 }
-const earlySpeak = main.indexOf("noteSpokenDelta(textAccum)");
+const earlySpeak = main.indexOf("noteSpokenDelta(textAccum");
 const fullSpeak = main.indexOf("speakText(textAccum)");
 if (earlySpeak < 0 || fullSpeak < 0 || earlySpeak > fullSpeak) {
   throw new Error("voice waits for the whole reply before speaking");
@@ -499,8 +498,138 @@ if (!release.includes("turnCtrl?.abort()")) {
 const barge = main.slice(main.indexOf("function takeBarge"), main.indexOf("function armBarge"));
 if (barge.includes("sending")) throw new Error("barge-in waits for the request to finish");
 if (!barge.includes("stopSpeaking()")) throw new Error("barge-in leaves the reply playing");
-if (!main.includes("shouldBargeIn(text, speakingLine, speechPending())")) {
+if (!main.includes("shouldBargeIn(text, currentSpeech(), speechPending()")) {
   throw new Error("barge-in is not tied to playback");
 }
+
+const greeting = "I'm here to help with anything you need. How can I assist you today?";
+stopSpeaking();
+speakText(greeting);
+const lateEcho = "anything you need";
+if (!shouldBargeIn(lateEcho, "How can I assist you today?", true, 400)) {
+  throw new Error("the old chunk check no longer misses a late echo");
+}
+if (shouldBargeIn(lateEcho, currentSpeech(), true, 400)) {
+  throw new Error("late echo of sentence 1 barged while the full reply was queued");
+}
+if (shouldBargeIn("what about", currentSpeech(), true, 349)) {
+  throw new Error("two words barged before 350ms");
+}
+if (!shouldBargeIn("what about", currentSpeech(), true, 350)) {
+  throw new Error("two distinct words held 350ms did not barge");
+}
+if (!dropPostSpeechEcho(lateEcho, greeting, 200)) {
+  throw new Error("the deaf window kept an echo final");
+}
+if (dropPostSpeechEcho(lateEcho, greeting, 1500)) {
+  throw new Error("an echo final was dropped after the window");
+}
+if (dropPostSpeechEcho("what about the trains", greeting, 200)) {
+  throw new Error("a new question was dropped in the deaf window");
+}
+if (turnFromRecognition("   ")) throw new Error("a blank transcript became a turn");
+if (turnFromRecognition("hi there", { confidence: 0.2 })) {
+  throw new Error("a short low-confidence transcript was kept");
+}
+if (!turnFromRecognition("hi there", { confidence: 0.9 })) {
+  throw new Error("a confident short transcript was dropped");
+}
+if (!turnFromRecognition("where is the bench", { confidence: 0.1 })) {
+  throw new Error("a longer phrase was dropped for confidence");
+}
+if (turnFromRecognition("how can I assist", { confidence: 0.99, lastAssistant: greeting })) {
+  throw new Error("an echo transcript became a user turn");
+}
+stopSpeaking();
+if (noteSpokenDelta(greeting + " The bench is next.", greeting)) {
+  throw new Error("a repeated first sentence was spoken early");
+}
+if (currentSpeech()) throw new Error("the repeated sentence was queued");
+
+const beginVoice = sliceFn(main, "beginVoice", "releaseVoice");
+const releaseVoice = main.slice(main.indexOf("function releaseVoice"), main.indexOf('byId("go")'));
+const takeBarge = main.slice(main.indexOf("function takeBarge"), main.indexOf("function armBarge"));
+if (!beginVoice.includes('setVoiceState("listening"') || !beginVoice.includes('setVoiceState("heard"') || !beginVoice.includes('setVoiceState("thinking"')) {
+  throw new Error("a full turn is not listening → heard → thinking");
+}
+if (!main.includes('setVoiceState("speaking"') || !releaseVoice.includes('setVoiceState("listening"')) {
+  throw new Error("a full turn does not return through speaking to listening");
+}
+if (!takeBarge.includes('setVoiceState("heard"')) {
+  throw new Error("a barge does not move speaking → heard");
+}
+if (!beginVoice.includes('setVoiceState("error", "Voice needs the microphone in this browser.")')) {
+  throw new Error("mic denial does not end in error");
+}
+if (!main.includes("getUserMedia") || !main.includes("echoCancellation: true")) {
+  throw new Error("heard state does not follow the microphone");
+}
+
+const queuedFrames = [];
+let rafCalls = 0;
+globalThis.requestAnimationFrame = (fn) => {
+  rafCalls += 1;
+  queuedFrames.push(fn);
+  return rafCalls;
+};
+globalThis.cancelAnimationFrame = () => {};
+window.matchMedia = () => ({
+  matches: false,
+  media: "",
+  addEventListener() {},
+  removeEventListener() {},
+});
+window.devicePixelRatio = 1;
+globalThis.document = {
+  visibilityState: "visible",
+  documentElement: {},
+  addEventListener() {},
+  removeEventListener() {},
+};
+const { createOrb } = await import("./src/orb.ts");
+const canvas = {
+  width: 220,
+  height: 220,
+  getContext() {
+    return {
+      setTransform() {},
+      clearRect() {},
+      beginPath() {},
+      arc() {},
+      closePath() {},
+      moveTo() {},
+      lineTo() {},
+      fill() {},
+      stroke() {},
+      createRadialGradient() {
+        return { addColorStop() {} };
+      },
+    };
+  },
+};
+const orb = createOrb(canvas);
+if (rafCalls !== 0) throw new Error("the orb looped while voice was off");
+const sequence = ["listening", "heard", "thinking", "speaking", "listening"];
+const seen = [];
+for (const name of sequence) {
+  orb.set(name);
+  seen.push(orb.state());
+}
+if (seen.join(" → ") !== sequence.join(" → ")) {
+  throw new Error("a full turn was " + seen.join(" → "));
+}
+if (orb.state() !== "listening") throw new Error("the turn did not end listening");
+orb.set("speaking");
+orb.set("heard");
+if (orb.state() !== "heard") throw new Error("a barge did not land on heard");
+const whileOn = rafCalls;
+orb.set("idle");
+const parked = rafCalls;
+for (const frame of queuedFrames.splice(0)) frame(32);
+if (rafCalls !== parked) throw new Error("voice off still scheduled frames: " + rafCalls + " after " + whileOn);
+document.visibilityState = "hidden";
+orb.set("listening");
+if (rafCalls !== parked) throw new Error("a hidden tab started the orb loop");
+orb.destroy();
 
 console.log("ok");

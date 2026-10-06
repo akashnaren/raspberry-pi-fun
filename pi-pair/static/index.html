@@ -28,7 +28,22 @@ try {
       <span class="brand-name" id="brandName">OpenPi — MicroAstra</span>
     </div>
     <div class="flex items-center">
-    <button class="head-btn" id="btnMemory" type="button" aria-label="Memory">M</button>
+    <div class="mem-anchor">
+    <button class="head-btn mem-ring" id="btnMemory" type="button" data-level="low"
+            aria-label="Context 0% used. Compact memory." title="Context 0% used. Click to compact.">
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+        <circle class="ring-track" cx="12" cy="12" r="9" fill="none" stroke-width="2.5"/>
+        <circle class="ring-fill" cx="12" cy="12" r="9" fill="none" stroke-width="2.5"
+                stroke-linecap="round" transform="rotate(-90 12 12)"
+                stroke-dasharray="56.55" stroke-dashoffset="56.55"/>
+      </svg>
+    </button>
+    <div id="memPop" class="mem-pop" role="tooltip" hidden>
+      <p id="memPopText">Context 0% used</p>
+      <button type="button" id="memCompact">Compact now</button>
+      <button type="button" id="memShow">Memory</button>
+    </div>
+    </div>
     <button class="head-btn" id="btnNew" type="button" aria-label="New chat">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
     </button>
@@ -43,10 +58,11 @@ try {
     <button type="button" id="memoryClear">Clear</button>
   </div>
   <div id="log"><div class="empty" id="empty"><p>Ask anything.</p></div></div>
-  <div id="voiceStage" class="voice-stage" aria-hidden="true">
-    <div class="voice-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-    <p class="voice-live" id="voiceLive"></p>
+  <div id="voiceStage" class="voice-stage" role="status" aria-hidden="true" aria-label="idle">
+    <canvas id="voiceOrb" width="220" height="220" aria-hidden="true"></canvas>
+    <p class="voice-live" id="voiceLive" aria-live="polite"></p>
     <button type="button" class="voice-send" id="voiceSend" hidden>Tap to send</button>
+    <button type="button" class="voice-end" id="voiceEnd" hidden>End voice</button>
   </div>
   <footer>
     <div class="composer-wrap">
@@ -146,7 +162,6 @@ try {
     </section>
     <section class="set-block">
       <h3>Model</h3>
-      <p>A heatsink and a fan keep the Pi from slowing down under load.</p>
       <div class="seg" role="group" aria-label="Model default">
         <div class="seg-choice">
           <button type="button" class="seg-btn on" data-mode="auto">Auto</button>

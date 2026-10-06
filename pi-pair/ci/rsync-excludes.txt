@@ -1,6 +1,7 @@
 .git/
 peers.json
 data/shards/
+data/canned/key_vectors.json
 data/prepared/
 data/train/
 adapters/

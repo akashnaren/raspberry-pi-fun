@@ -606,4 +606,32 @@ const secondId = retryHeaders[1]["X-Pi-Request-Id"];
 if (!firstId || firstId !== secondId) throw new Error("retry did not reuse the request id");
 if (firstId === requestHeader) throw new Error("a new turn reused the previous request id");
 
+const ring = document.getElementById("btnMemory");
+if (!ring || ring.textContent.trim() !== "") {
+  throw new Error("memory ring still has a letter: " + JSON.stringify(ring && ring.textContent));
+}
+if (!/Context \d+% used/.test(ring.getAttribute("aria-label") || "")) {
+  throw new Error("memory ring label was " + ring.getAttribute("aria-label"));
+}
+const meshFetch = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === "string" ? input : input.url;
+  const method = (init && init.method) || "GET";
+  if (String(url).includes("/v1/memory") && method === "GET") {
+    return new Response(JSON.stringify({
+      facts: [],
+      summary: "",
+      usage: { used: 512, num_ctx: 1024, compactions: 2 },
+      compact_at: 0.7,
+      compact_busy_at: 0.5,
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+  return meshFetch(input, init);
+};
+const app = await import("./src/main.ts");
+await app.refreshMemoryRing();
+globalThis.fetch = meshFetch;
+const offset = Number(ring.querySelector(".ring-fill").getAttribute("stroke-dashoffset"));
+if (Math.abs(offset - 28.27) > 0.1) throw new Error("ring dashoffset was " + offset);
+
 console.log("ok");

@@ -38,7 +38,7 @@ elif [[ "$ROLE" == "health" ]]; then
   echo "Ollama:  not installed here. Chat models run only on pi4."
   echo "Search:  POST /v1/search on this board. No decode."
 elif [[ "$ROLE" == "dataset" ]]; then
-  echo "Ollama:  not installed here. Chat models run only on pi4."
+  echo "Ollama: loopback only, snowflake-arctic-embed:xs on demand for the train fold. No chat model, no decode."
   echo "Labels:  HMAC votes stay on this board. Do not set HF_TOKEN until a public dataset is approved. No decode."
 else
   echo "Ollama:  not installed here. Chat models run only on pi4."
@@ -129,9 +129,7 @@ OLLAMA_MODEL_PRIMARY="$(read_tag "$INFERENCE_CFG" model "$OLLAMA_MODEL_PRIMARY")
 OLLAMA_PRO_MODEL="$(read_tag "$INFERENCE_CFG" pro_model "$OLLAMA_PRO_MODEL")"
 OLLAMA_NUM_PARALLEL="$(parallel_from_config "$INFERENCE_CFG")"
 
-if [[ "$ROLE" != "brain" ]]; then
-  echo "Skipping model pull on ${NODE_NAME}: chat models run only on pi4."
-else
+if [[ "$ROLE" == "brain" ]]; then
   if ! command -v ollama >/dev/null 2>&1; then
     echo
     echo "Ollama not found. Install with (needs network + sudo once):"
@@ -146,6 +144,14 @@ else
       echo "Removing ${REMOVED_EMBED}."
       ollama rm "$REMOVED_EMBED" || echo "WARN: could not remove ${REMOVED_EMBED}."
     fi
+    brain_models="$(ollama list | awk 'NR>1 {print $1}')" || echo "WARN: ollama list failed on pi4."
+    while IFS= read -r name; do
+      [[ -z "$name" || "$name" == "NAME" ]] && continue
+      if [[ "$name" =~ ^snowflake-arctic-embed: ]]; then
+        echo "Removing ${name}."
+        ollama rm "$name" || echo "WARN: could not remove ${name}."
+      fi
+    done <<< "${brain_models:-}" || true
     echo "Pro is ${OLLAMA_PRO_MODEL}. This script does not pull it. Pro stays on disk for measurement."
     echo "A Flash request does not run ollama pull. If the tag is missing, pull it on pi4 only:"
     echo "  ollama pull ${OLLAMA_PRO_MODEL}"
@@ -222,6 +228,38 @@ sudo systemctl daemon-reload
 sudo systemctl restart ollama
 SUDO
   echo
+elif [[ "$ROLE" == "dataset" ]]; then
+  PI3_EMBED="snowflake-arctic-embed:xs"
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "Ollama not found on pi3. Arctic :xs is optional; the train fold stays exact-only."
+  else
+    echo "Ollama present: $(command -v ollama)"
+    dataset_models="$(ollama list | awk 'NR>1 {print $1}')" || echo "WARN: ollama list failed on pi3."
+    while IFS= read -r name; do
+      [[ -z "$name" || "$name" == "NAME" ]] && continue
+      if [[ "$name" =~ ^qwen2\.5: ]]; then
+        echo "Removing ${name}."
+        ollama rm "$name" || echo "WARN: could not remove ${name}."
+      elif [[ "$name" =~ ^snowflake-arctic-embed: && "$name" != "$PI3_EMBED" ]]; then
+        echo "Removing ${name}."
+        ollama rm "$name" || echo "WARN: could not remove ${name}."
+      fi
+    done <<< "${dataset_models:-}" || true
+    ollama pull "$PI3_EMBED" || echo "WARN: pull ${PI3_EMBED} later on pi3."
+  fi
+  UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$UNIT_DIR/ollama-lan.service.d"
+  cat > "$UNIT_DIR/ollama-lan.service.d/pi3-embed.conf" <<'EOF'
+[Service]
+Environment=OLLAMA_HOST=127.0.0.1:11434
+Environment=OLLAMA_MAX_LOADED_MODELS=1
+Environment=OLLAMA_NUM_PARALLEL=1
+Environment=OLLAMA_MAX_QUEUE=2
+Environment=OLLAMA_KEEP_ALIVE=0
+EOF
+  echo "systemctl --user daemon-reload && systemctl --user restart ollama-lan"
+else
+  echo "Skipping model pull on ${NODE_NAME}: chat models run only on pi4."
 fi
 
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"

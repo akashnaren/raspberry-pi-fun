@@ -1,6 +1,6 @@
 interface SpeechResult {
   isFinal: boolean;
-  0?: { transcript?: string };
+  0?: { transcript?: string; confidence?: number };
 }
 
 interface SpeechEvent extends Event {
@@ -62,9 +62,17 @@ export function spokenAnswer(assistantText: string, stageLabel = ""): string {
 }
 
 /** A finished recognition result becomes the next user turn, or nothing if it was blank. */
-export function turnFromRecognition(transcript: string): { role: "user"; content: string } | null {
+export function turnFromRecognition(
+  transcript: string,
+  options?: { confidence?: number; lastAssistant?: string },
+): { role: "user"; content: string } | null {
   const content = transcript.trim();
   if (!content) return null;
+  const last = options?.lastAssistant || "";
+  if (last && echoOfSpeech(content, last)) return null;
+  const words = speechKey(content).split(" ").filter(Boolean);
+  const confidence = options?.confidence;
+  if (words.length <= 2 && typeof confidence === "number" && confidence < 0.35) return null;
   return { role: "user", content };
 }
 
@@ -84,12 +92,32 @@ export function echoOfSpeech(heard: string, spoken: string): boolean {
   return hit / words.length >= 0.6;
 }
 
+/** How long interim speech must last before it can interrupt the reply. */
+export const BARGE_HOLD_MS = 350;
+
+/** Delay after TTS before the mic opens again, then how long echo finals are dropped. */
+export const POST_TTS_DEAF_MS = 400;
+export const POST_TTS_ECHO_MS = 1500;
+
+/** True when a final in the post-speech window is the speaker tail. */
+export function dropPostSpeechEcho(heard: string, lastAssistant: string, listenAgeMs: number): boolean {
+  if (!Number.isFinite(listenAgeMs) || listenAgeMs < 0 || listenAgeMs >= POST_TTS_ECHO_MS) return false;
+  return echoOfSpeech(heard, lastAssistant);
+}
+
 /** A distinct phrase while the reply is playing. Echo and tiny noises stay put. */
-export function shouldBargeIn(heard: string, spoken: string, assistantSpeaking: boolean): boolean {
+export function shouldBargeIn(
+  heard: string,
+  spoken: string,
+  assistantSpeaking: boolean,
+  heldMs = BARGE_HOLD_MS,
+): boolean {
   const text = heard.trim();
   if (!assistantSpeaking || text.length < 2) return false;
   if (isSoloStop(text)) return true;
-  if (text.length < 3) return false;
+  const words = speechKey(text).split(" ").filter(Boolean);
+  if (words.length < 2) return false;
+  if (!Number.isFinite(heldMs) || heldMs < BARGE_HOLD_MS) return false;
   return !echoOfSpeech(text, spoken);
 }
 
@@ -314,11 +342,19 @@ export function firstSpokenSentence(text: string): string | null {
 }
 
 /** Speak the first sentence as soon as it is in the stream. Later text is queued, not cancelled. */
-export function noteSpokenDelta(accum: string): boolean {
+export function noteSpokenDelta(accum: string, previous = ""): boolean {
   const lead = firstSpokenSentence(accum);
   if (!lead) return false;
+  const leadKey = speechKey(lead);
+  const previousKey = speechKey(previous);
+  if (leadKey && previousKey.startsWith(leadKey)) return false;
   if (queuedSay && (lead === queuedSay || queuedSay.startsWith(lead))) return true;
   return speakText(lead);
+}
+
+/** Everything queued for this reply, including sentences that already finished. */
+export function currentSpeech(): string {
+  return queuedSay;
 }
 
 export function whenSpeechStarts(fn: (text: string) => void): void {
@@ -412,7 +448,7 @@ export function stopSpeaking(): void {
 
 export interface ListenHandlers {
   onInterim: (text: string) => void;
-  onFinal: (text: string) => void;
+  onFinal: (text: string, confidence?: number) => void;
   onEnd: () => void;
   onError: () => void;
 }
@@ -463,7 +499,7 @@ export function startListening(
       }
     }, 250);
   };
-  const deliver = (text: string) => {
+  const deliver = (text: string, confidence?: number) => {
     const said = text.trim();
     pending = "";
     clearQuiet();
@@ -472,7 +508,7 @@ export function startListening(
     if (said === echo && now - echoAt < 800) return;
     echo = said;
     echoAt = now;
-    handlers.onFinal(said);
+    handlers.onFinal(said, confidence);
   };
   const armQuiet = () => {
     clearQuiet();
@@ -486,8 +522,9 @@ export function startListening(
     const start = event.resultIndex ?? 0;
     let interim = "";
     for (let i = start; i < event.results.length; i += 1) {
-      const said = event.results[i][0]?.transcript ?? "";
-      if (event.results[i].isFinal) deliver(said);
+      const piece = event.results[i][0];
+      const said = piece?.transcript ?? "";
+      if (event.results[i].isFinal) deliver(said, piece?.confidence);
       else interim += said;
     }
     pending = interim.trim();

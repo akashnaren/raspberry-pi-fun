@@ -13,7 +13,9 @@ import { scrubAssistant } from "./copy";
 import { BIG_LINE, friendlyError, WAITING_LINE } from "./errors";
 import { dropFollow, enqueueFollow, renderFollowQueue, takeFollow, type FollowItem } from "./follow-queue";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
-import { createUtteranceHold, endOfUtteranceSilence, isSoloStop, noteSpokenDelta, shouldBargeIn, speakText, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
+import { chatBody } from "./history";
+import { createOrb, type VoiceOrb, type VoiceOrbState } from "./orb";
+import { createUtteranceHold, currentSpeech, dropPostSpeechEcho, echoOfSpeech, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, POST_TTS_DEAF_MS, POST_TTS_ECHO_MS, shouldBargeIn, speakText, speechKey, speechPending, speechReady, startListening, stopSpeaking, turnFromRecognition, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice";
 
 type Role = "user" | "assistant";
 type StageName = "loading" | "waiting" | "thinking" | "searching" | "answering";
@@ -44,6 +46,7 @@ interface Turn {
   thoughtSeconds?: number;
   images?: ImageCard[];
   stopped?: boolean;
+  echo?: boolean;
 }
 
 interface HealthBody extends HealthSnapshot {
@@ -99,6 +102,16 @@ let graceTimer = 0;
 let bargeHandle: { stop: () => void } | null = null;
 let pendingBarge = "";
 let speakingLine = "";
+let voiceEchoUntil = 0;
+let heardConfidence = 1;
+let voiceLeaveTimer = 0;
+let voiceOrb: VoiceOrb | null = null;
+let micGen = 0;
+let micStream: MediaStream | null = null;
+let micAudio: AudioContext | null = null;
+let micAnalyser: AnalyserNode | null = null;
+let micBins: Uint8Array<ArrayBuffer> | null = null;
+let syntheticLevel = 0;
 const serviceLines: string[] = [];
 let attachSerial = 0;
 let uploading = false;
@@ -1116,14 +1129,34 @@ function freshRequestId(): string {
   });
 }
 
+function lastAssistantText(): string {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn.role === "assistant" && !turn.stopped) return turn.content;
+  }
+  return "";
+}
+
+function userBeforeCurrent(): string {
+  let seen = 0;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (turns[index].role !== "user") continue;
+    seen += 1;
+    if (seen === 2) return turns[index].content;
+  }
+  return "";
+}
+
 async function sendText(
   text: string,
   isRetry: boolean,
   spoken = false,
   extra?: { hidden?: string; attachment?: DocCard | null },
   attempt = 0,
+  fresh = false,
 ): Promise<void> {
   if (sending) return;
+  let freshNext = false;
   const epoch = chatEpoch;
   const mine = () => epoch === chatEpoch;
   if (!isRetry || !requestId) requestId = freshRequestId();
@@ -1183,32 +1216,14 @@ async function sendText(
   };
   void refresh();
   try {
-    const body: {
-      model: string;
-      messages: { role: string; content: string }[];
-      stream: boolean;
-      think: string;
-      pi_mode: string;
-      pi_target: string;
-      pi_mesh: string;
-    } = {
-      model,
-      messages: [],
-      stream: true,
-      think: effort,
-      pi_mode: modelMode,
-      pi_target: "auto",
-      pi_mesh: "on",
-    };
     const sys = (byId<HTMLTextAreaElement>("sys").value || "").trim();
-    if (sys) body.messages.push({ role: "system", content: sys });
-    turns.forEach((turn) => {
-      if (turn.role !== "user" && turn.role !== "assistant") return;
-      const content = turn.role === "user"
-        ? modelUserContent(turn.content, turn.hidden || "")
-        : withoutThinkTags(turn.content);
-      if (!content.trim()) return;
-      body.messages.push({ role: turn.role, content });
+    const body = chatBody(turns, {
+      model,
+      effort,
+      mode: modelMode,
+      sys,
+      fresh,
+      spoken,
     });
 
     let response: Response | null = null;
@@ -1392,7 +1407,7 @@ async function sendText(
           textAccum = payload.pi_replace ? delta : textAccum + delta;
           const visible = withoutThinkTags(textAccum);
           live.setText(visible);
-          if (spoken && !voiced && noteSpokenDelta(textAccum)) voiced = true;
+          if (spoken && !voiced && noteSpokenDelta(textAccum, lastAssistantText())) voiced = true;
         }
         if (payload.pi_think) streamedEffort = payload.pi_think;
         if (payload.pi_mode) streamedMode = payload.pi_mode;
@@ -1429,19 +1444,36 @@ async function sendText(
     } else {
       closeThought();
       const search = searchNow();
-      turns.push({
-        role: "assistant",
-        content: withoutThinkTags(textAccum),
-        effort: streamedEffort,
-        search,
-        stages,
-        mode: streamedMode,
-        route: streamedRoute,
-        thought: thoughtAccum.trim(),
-        thoughtSeconds: thoughtAccum.trim() ? thoughtSeconds() : 0,
-      });
-      paint();
-      if (spoken && speakText(textAccum)) voiced = true;
+      const reply = withoutThinkTags(textAccum);
+      const previousReply = lastAssistantText();
+      const repeated = Boolean(speechKey(reply))
+        && speechKey(reply) === speechKey(previousReply)
+        && speechKey(text) !== speechKey(userBeforeCurrent());
+      const acceptRepeat = !repeated || fresh || !shouldSoftRetry(attempt);
+      if (repeated && !fresh) {
+        const last = turns[turns.length - 1];
+        if (last && last.role === "user" && echoOfSpeech(text, previousReply)) last.echo = true;
+      }
+      if (!acceptRepeat) {
+        stopSpeaking();
+        live.root.remove();
+        followUp = "retry";
+        freshNext = true;
+      } else {
+        turns.push({
+          role: "assistant",
+          content: reply,
+          effort: streamedEffort,
+          search,
+          stages,
+          mode: streamedMode,
+          route: streamedRoute,
+          thought: thoughtAccum.trim(),
+          thoughtSeconds: thoughtAccum.trim() ? thoughtSeconds() : 0,
+        });
+        paint();
+        if (spoken && speakText(textAccum)) voiced = true;
+      }
     }
     }
   } catch (err) {
@@ -1477,6 +1509,7 @@ async function sendText(
     }
     if (followUp !== "retry") flushDeferredHealth();
     if (mine() && followUp !== "retry" && followUp !== "resume") flushFollowQueue();
+    if (mine() && followUp === "") void refreshMemoryRing();
   }
   if (!mine()) return;
   if (followUp === "retry") {
@@ -1486,7 +1519,7 @@ async function sendText(
       armResumeSend(text, spoken);
       return;
     }
-    await sendText(text, true, spoken, extra, attempt + 1);
+    await sendText(text, true, spoken, extra, attempt + 1, freshNext);
     return;
   }
   if (followUp === "resume") armResumeSend(text, spoken);
@@ -1725,35 +1758,100 @@ function voiceNote(text: string): void {
 function paintVoice(): void {
   const mic = byId("btnVoice");
   paintMicButton(mic, dictating);
-  mic.setAttribute("aria-pressed", dictating ? "true" : "false");
+  mic.setAttribute("aria-pressed", voiceOn || dictating ? "true" : "false");
   mic.setAttribute("aria-label", "Voice");
-  document.body.classList.toggle("voice-session", voiceOn);
-  byId("voiceStage").setAttribute("aria-hidden", voiceOn ? "false" : "true");
+  if (voiceLeaveTimer && !voiceOn) document.body.classList.add("voice-session");
+  else document.body.classList.toggle("voice-session", voiceOn);
+  const stageOn = voiceOn || voiceLeaveTimer !== 0;
+  byId("voiceStage").setAttribute("aria-hidden", stageOn ? "false" : "true");
   const tap = document.getElementById("voiceSend");
   if (tap) tap.hidden = !voiceOn;
+  const end = document.getElementById("voiceEnd");
+  if (end) end.hidden = !voiceOn;
 }
 
-function setVoiceThinking(on: boolean): void {
-  byId("voiceStage").classList.toggle("thinking", on && voiceOn);
+function sampleMic(): number {
+  if (micAnalyser && micBins) {
+    micAnalyser.getByteTimeDomainData(micBins);
+    let sum = 0;
+    for (let i = 0; i < micBins.length; i += 1) {
+      const sample = (micBins[i] - 128) / 128;
+      sum += sample * sample;
+    }
+    return Math.min(1, Math.sqrt(sum / micBins.length) * 3.2);
+  }
+  return syntheticLevel;
 }
 
-function setHeard(on: boolean): void {
-  byId("voiceStage").classList.toggle("heard", on && voiceOn);
+function noteInterimLevel(text: string): void {
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  syntheticLevel = words ? Math.min(1, words / 6) : 0;
 }
 
-function setSpeaking(on: boolean): void {
+function ensureOrb(): VoiceOrb | null {
+  if (voiceOrb) return voiceOrb;
+  const canvas = document.getElementById("voiceOrb");
+  if (!canvas || canvas.tagName !== "CANVAS") return null;
+  voiceOrb = createOrb(canvas as HTMLCanvasElement, { sampleLevel: sampleMic });
+  return voiceOrb;
+}
+
+const VOICE_CLASSES = ["listening", "heard", "thinking", "speaking", "error"];
+
+function setVoiceState(state: VoiceOrbState, caption?: string): void {
+  ensureOrb();
   const stage = byId("voiceStage");
-  stage.classList.toggle("speaking", on && voiceOn);
-  if (on) setVoiceThinking(false);
-  if (!on) stage.classList.remove("beat");
+  for (const name of VOICE_CLASSES) stage.classList.toggle(name, name === state);
+  stage.setAttribute("aria-label", state);
+  const orb = ensureOrb();
+  orb?.set(state);
+  if (caption !== undefined) voiceCaption(caption);
+  else if (state === "idle") voiceCaption("");
 }
 
-function pulseSpeaking(): void {
-  const stage = byId("voiceStage");
-  if (!stage.classList.contains("speaking")) return;
-  stage.classList.remove("beat");
-  void stage.offsetWidth;
-  stage.classList.add("beat");
+async function openMicLevel(): Promise<void> {
+  const gen = ++micGen;
+  const media = globalThis.navigator?.mediaDevices;
+  if (!media || typeof media.getUserMedia !== "function") return;
+  try {
+    const stream = await media.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    if (gen !== micGen || !voiceOn) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    const Ctx = window.AudioContext;
+    if (typeof Ctx !== "function") {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    const audio = new Ctx();
+    const source = audio.createMediaStreamSource(stream);
+    const analyser = audio.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+    micStream = stream;
+    micAudio = audio;
+    micAnalyser = analyser;
+    micBins = new Uint8Array(analyser.fftSize);
+  } catch {
+    syntheticLevel = 0;
+  }
+}
+
+function closeMicLevel(): void {
+  micGen += 1;
+  if (micStream) {
+    for (const track of micStream.getTracks()) track.stop();
+  }
+  micStream = null;
+  micAnalyser = null;
+  micBins = null;
+  const audio = micAudio;
+  micAudio = null;
+  if (audio && audio.state !== "closed") void audio.close();
+  syntheticLevel = 0;
 }
 
 function voiceCaption(text: string): void {
@@ -1842,17 +1940,23 @@ function takeBarge(text: string): void {
   pendingBarge = said;
   stopBarge();
   stopSpeaking();
+  noteInterimLevel(said);
+  setVoiceState("heard", said);
   releaseVoice();
 }
 
 function armBarge(): void {
   if (bargeHandle || !voiceOn || listening) return;
+  let heardAt = 0;
   bargeHandle = startListening({
     onInterim(text) {
-      if (shouldBargeIn(text, speakingLine, speechPending())) takeBarge(text);
+      if (!heardAt) heardAt = Date.now();
+      const held = Date.now() - heardAt;
+      if (shouldBargeIn(text, currentSpeech(), speechPending(), held)) takeBarge(text);
     },
     onFinal(text) {
-      if (shouldBargeIn(text, speakingLine, speechPending())) takeBarge(text);
+      const held = heardAt ? Date.now() - heardAt : 0;
+      if (shouldBargeIn(text, currentSpeech(), speechPending(), held)) takeBarge(text);
     },
     onError() {
       stopBarge();
@@ -1866,6 +1970,7 @@ function armBarge(): void {
 }
 
 function endVoiceMode(): void {
+  const wasOn = voiceOn;
   voiceOn = false;
   voiceHold = false;
   pendingBarge = "";
@@ -1875,12 +1980,21 @@ function endVoiceMode(): void {
   cancelUtterance = null;
   stopCapture();
   stopSpeaking();
-  setHeard(false);
-  setSpeaking(false);
-  setVoiceThinking(false);
-  voiceCaption("");
+  closeMicLevel();
+  setVoiceState("idle");
   voiceNote("");
+  window.clearTimeout(voiceLeaveTimer);
+  voiceLeaveTimer = 0;
+  if (wasOn) {
+    document.body.classList.add("voice-leave");
+    voiceLeaveTimer = window.setTimeout(() => {
+      voiceLeaveTimer = 0;
+      if (!voiceOn) document.body.classList.remove("voice-session", "voice-leave");
+    }, 240);
+  }
   paintVoice();
+  const box = document.getElementById("q");
+  if (box instanceof HTMLElement) box.focus();
 }
 
 function toggleVoiceMode(): void {
@@ -1893,41 +2007,64 @@ function toggleVoiceMode(): void {
     dictating = false;
     stopCapture();
   }
+  window.clearTimeout(voiceLeaveTimer);
+  voiceLeaveTimer = 0;
+  document.body.classList.remove("voice-leave");
   if (!speechReady()) {
-    voiceNote("Voice needs Chrome's built-in speech recognition.");
+    voiceOn = true;
     paintVoice();
+    setVoiceState("error", "Voice needs Chrome's built-in speech recognition.");
+    voiceNote("Voice needs Chrome's built-in speech recognition.");
     return;
   }
   voiceOn = true;
   stopSpeaking();
   voiceNote("");
-  voiceCaption("Listening");
+  void openMicLevel();
   paintVoice();
   beginVoice();
 }
 
 function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
   if (!voiceOn || listening || voiceHold || sending) return;
+  heardConfidence = 1;
   const hold = existing ?? createUtteranceHold((text) => {
     if (isSoloStop(text)) {
       endVoiceMode();
       return;
     }
-    const turn = turnFromRecognition(text);
+    const turn = turnFromRecognition(text, {
+      confidence: heardConfidence,
+      lastAssistant: lastAssistantText(),
+    });
     voiceHold = Boolean(turn);
     const active = listenHandle;
     listenHandle = null;
     listening = false;
     active?.stop();
-    setHeard(false);
     paintVoice();
     if (!turn) {
       voiceHold = false;
+      voiceNote("Didn't catch that");
       if (voiceOn) beginVoice();
+      setVoiceState("listening", "Didn't catch that");
+      window.setTimeout(() => {
+        const note = document.getElementById("voiceNote");
+        if (note && note.textContent === "Didn't catch that") voiceNote("");
+        const live = document.getElementById("voiceLive");
+        if (voiceOn && live && live.textContent === "Didn't catch that") {
+          setVoiceState("listening", "Listening");
+        }
+      }, 1200);
+      return;
+    }
+    if (sending) {
+      queueDraft(turn.content, "", null);
+      voiceHold = false;
       return;
     }
     voiceCaption("Thinking");
-    setVoiceThinking(true);
+    setVoiceState("thinking", "Thinking");
     void sendText(turn.content, false, true);
   }, endOfUtteranceSilence());
   voiceUtterance = hold;
@@ -1935,25 +2072,31 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
   const handle = startListening({
     onInterim(text) {
       const line = hold.interim(text);
-      setHeard(Boolean(line));
-      voiceCaption(line || "Listening");
+      noteInterimLevel(line);
+      if (line) setVoiceState("heard", line);
+      else setVoiceState("listening", "Listening");
     },
-    onFinal(text) {
+    onFinal(text, confidence) {
+      if (typeof confidence === "number") heardConfidence = confidence;
+      const echoAge = voiceEchoUntil
+        ? POST_TTS_ECHO_MS - (voiceEchoUntil - Date.now())
+        : POST_TTS_ECHO_MS;
+      if (dropPostSpeechEcho(text, lastAssistantText(), echoAge)) return;
       const line = hold.final(text);
       if (isSoloStop(line)) {
         hold.cancel();
         endVoiceMode();
         return;
       }
-      setHeard(Boolean(line));
-      voiceCaption(line || "Listening");
+      noteInterimLevel(line);
+      if (line) setVoiceState("heard", line);
+      else setVoiceState("listening", "Listening");
     },
     onError() {
       hold.cancel();
-      voiceOn = false;
       voiceHold = false;
       endListening();
-      setHeard(false);
+      setVoiceState("error", "Voice needs the microphone in this browser.");
       voiceNote("Voice needs the microphone in this browser.");
     },
     onEnd() {
@@ -1968,7 +2111,7 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
   if (!handle) {
     hold.cancel();
     cancelUtterance = null;
-    voiceOn = false;
+    setVoiceState("error", "Voice needs Chrome's built-in speech recognition.");
     voiceNote("Voice needs Chrome's built-in speech recognition.");
     paintVoice();
     return;
@@ -1976,14 +2119,14 @@ function beginVoice(existing?: ReturnType<typeof createUtteranceHold>): void {
   listening = true;
   listenHandle = handle;
   const continued = hold.text();
-  setHeard(Boolean(continued));
-  voiceCaption(continued || "Listening");
+  noteInterimLevel(continued);
+  if (continued) setVoiceState("heard", continued);
+  else setVoiceState("listening", "Listening");
   paintVoice();
 }
 
 function releaseVoice(): void {
   stopBarge();
-  setVoiceThinking(false);
   if (speechPending()) return;
   const said = pendingBarge.trim();
   if (sending) {
@@ -1995,20 +2138,22 @@ function releaseVoice(): void {
   }
   pendingBarge = "";
   voiceHold = false;
-  setHeard(false);
-  setSpeaking(false);
   if (said && isSoloStop(said)) {
     endVoiceMode();
     return;
   }
   if (said) {
-    voiceCaption(said);
+    setVoiceState("thinking", "Thinking");
     void sendText(said, false, true);
     return;
   }
   if (!voiceOn || listening) return;
-  voiceCaption("Listening");
-  beginVoice();
+  setVoiceState("listening", "Listening");
+  window.setTimeout(() => {
+    if (!voiceOn || listening || sending || voiceHold) return;
+    voiceEchoUntil = Date.now() + POST_TTS_ECHO_MS;
+    beginVoice();
+  }, POST_TTS_DEAF_MS);
 }
 
 byId("go").onclick = () => {
@@ -2210,13 +2355,17 @@ function newChat(): void {
   paint();
   paintBrand();
   box.focus();
+  void refreshMemoryRing();
 }
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  const pop = document.getElementById("memPop");
+  if (pop) pop.hidden = true;
   dismissPopovers();
   setSettingsOpen(false);
   setSourcesOpen(false);
+  if (voiceOn) endVoiceMode();
   byId<HTMLTextAreaElement>("q").focus();
 });
 document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
@@ -2253,20 +2402,45 @@ paintThemeChoice();
 whenSpeechStarts((text) => {
   if (!voiceOn) return;
   speakingLine = text || speakingLine;
-  setHeard(false);
-  setSpeaking(true);
-  voiceCaption("Speaking");
+  const line = firstSpokenSentence(text) || text || "Speaking";
+  setVoiceState("speaking", line);
   armBarge();
 });
 whenSpeechPulses(() => {
   if (!voiceOn) return;
-  pulseSpeaking();
+  ensureOrb()?.pulse();
 });
 whenSpeechEnds(releaseVoice);
 byId("btnVoice").onclick = () => toggleVoice();
 const voiceSend = document.getElementById("voiceSend");
 if (voiceSend) voiceSend.onclick = () => voiceUtterance?.flush();
+const voiceEnd = document.getElementById("voiceEnd");
+if (voiceEnd) voiceEnd.onclick = () => endVoiceMode();
 byId("btnNew").onclick = () => newChat();
+const RING_C = 56.55;
+let compactAt = 0.7;
+let compactBusyAt = 0.5;
+let ringCompactions = 0;
+let memShowTimer = 0;
+let memHideTimer = 0;
+let ringTitleTimer = 0;
+
+export function ringDashOffset(used: number, numCtx: number): number {
+  const ratio = numCtx > 0 ? used / numCtx : 0;
+  const clamped = Math.min(1, Math.max(0, ratio));
+  return RING_C * (1 - clamped);
+}
+
+function memoryMessages(): { role: string; content: string }[] {
+  const body = chatBody(turns, {
+    model: modeModel(),
+    effort: thinking || "medium",
+    mode: modelMode,
+    sys: "",
+  });
+  return body.messages.filter((row) => row.role === "user" || row.role === "assistant").slice(-64);
+}
+
 function paintMemory(facts: { id: string; text: string }[]) {
   const list = byId("memoryList");
   list.replaceChildren();
@@ -2282,26 +2456,159 @@ function paintMemory(facts: { id: string; text: string }[]) {
       fetch(`/v1/memory/${encodeURIComponent(fact.id)}`, {
         method: "DELETE",
         headers: sessionHeaders(),
-      }).then(() => loadMemory());
+      }).then(() => refreshMemoryRing());
     };
     item.append(label, drop);
     list.append(item);
   }
 }
-function loadMemory() {
-  fetch("/v1/memory", { headers: sessionHeaders() })
-    .then((response) => response.json())
-    .then((body) => paintMemory(Array.isArray(body.facts) ? body.facts : []))
-    .catch(() => undefined);
+
+function paintRing(usage: { used?: number; num_ctx?: number; compactions?: number }): void {
+  const button = document.getElementById("btnMemory");
+  if (!button) return;
+  const used = Number(usage.used) || 0;
+  const numCtx = Number(usage.num_ctx) || 0;
+  const ratio = numCtx > 0 ? used / numCtx : 0;
+  const fill = button.querySelector(".ring-fill");
+  if (fill) fill.setAttribute("stroke-dashoffset", ringDashOffset(used, numCtx).toFixed(2));
+  const level = ratio >= compactAt ? "high" : ratio >= compactBusyAt ? "mid" : "low";
+  button.setAttribute("data-level", level);
+  const pct = Math.round(Math.min(100, Math.max(0, ratio * 100)));
+  const label = `Context ${pct}% used. Compact memory.`;
+  button.setAttribute("aria-label", label);
+  if (!button.classList.contains("compacting") && button.dataset.titleHold !== "1") {
+    button.title = label;
+  }
+  const pop = document.getElementById("memPopText");
+  const count = Number(usage.compactions) || 0;
+  ringCompactions = count;
+  if (pop) {
+    const noun = count === 1 ? "compaction" : "compactions";
+    pop.textContent = `Context ${pct}% used · ${count} ${noun}`;
+  }
 }
-byId("btnMemory").onclick = () => {
+
+function holdRingTitle(text: string, ms: number): void {
+  const button = document.getElementById("btnMemory");
+  if (!button) return;
+  button.dataset.titleHold = "1";
+  button.title = text;
+  window.clearTimeout(ringTitleTimer);
+  ringTitleTimer = window.setTimeout(() => {
+    button.dataset.titleHold = "";
+    void refreshMemoryRing();
+  }, ms);
+}
+
+export async function refreshMemoryRing(): Promise<{ compactions: number } | null> {
+  try {
+    const response = await fetch("/v1/memory", { headers: sessionHeaders() });
+    if (!response.ok) return null;
+    const body = await response.json();
+    if (typeof body.compact_at === "number") compactAt = body.compact_at;
+    if (typeof body.compact_busy_at === "number") compactBusyAt = body.compact_busy_at;
+    const usage = body.usage && typeof body.usage === "object" ? body.usage : {};
+    paintRing(usage);
+    paintMemory(Array.isArray(body.facts) ? body.facts : []);
+    return { compactions: Number(usage.compactions) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+function showMemPop(): void {
+  const pop = document.getElementById("memPop");
+  if (!pop) return;
+  window.clearTimeout(memHideTimer);
+  window.clearTimeout(memShowTimer);
+  memShowTimer = window.setTimeout(() => {
+    pop.hidden = false;
+  }, 150);
+}
+
+function hideMemPopSoon(): void {
+  const pop = document.getElementById("memPop");
+  if (!pop) return;
+  window.clearTimeout(memShowTimer);
+  window.clearTimeout(memHideTimer);
+  memHideTimer = window.setTimeout(() => {
+    pop.hidden = true;
+  }, 200);
+}
+
+async function pollCompaction(before: number): Promise<void> {
+  const usage = await refreshMemoryRing();
+  if (!usage || usage.compactions <= before) return;
+  const button = document.getElementById("btnMemory");
+  if (!button) return;
+  button.classList.remove("pulsed");
+  void button.offsetWidth;
+  button.classList.add("pulsed");
+  holdRingTitle("Compacted", 2000);
+}
+
+async function compactMemory(): Promise<void> {
+  const button = document.getElementById("btnMemory");
+  if (!button || button.classList.contains("compacting")) return;
+  const before = ringCompactions;
+  button.classList.add("compacting");
+  try {
+    const response = await fetch("/v1/memory/compact", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...sessionHeaders() },
+      body: JSON.stringify({ messages: memoryMessages() }),
+    });
+    if (response.status === 409) {
+      holdRingTitle("Busy, try after this reply", 2000);
+      return;
+    }
+    if (!response.ok) return;
+    const body = await response.json();
+    if (body && body.ok === true && body.queued === true) {
+      window.setTimeout(() => void pollCompaction(before), 2000);
+      window.setTimeout(() => void pollCompaction(before), 6000);
+    }
+  } catch {
+    return;
+  } finally {
+    button.classList.remove("compacting");
+  }
+}
+
+const memoryButton = document.getElementById("btnMemory");
+const memoryAnchor = memoryButton?.closest(".mem-anchor");
+if (memoryButton && memoryAnchor) {
+  memoryAnchor.addEventListener("pointerenter", () => showMemPop());
+  memoryAnchor.addEventListener("pointerleave", () => hideMemPopSoon());
+  memoryAnchor.addEventListener("focusin", () => showMemPop());
+  memoryAnchor.addEventListener("focusout", (event: Event) => {
+    const next = event instanceof FocusEvent ? event.relatedTarget : null;
+    if (next instanceof Node && memoryAnchor.contains(next)) return;
+    hideMemPopSoon();
+  });
+  memoryButton.addEventListener("click", () => {
+    void compactMemory();
+  });
+  memoryButton.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const pop = document.getElementById("memPop");
+    if (pop) pop.hidden = false;
+    document.getElementById("memCompact")?.focus();
+  });
+}
+document.getElementById("memCompact")?.addEventListener("click", () => {
+  void compactMemory();
+});
+document.getElementById("memShow")?.addEventListener("click", () => {
   const panel = byId("memoryPanel");
-  panel.hidden = !panel.hidden;
-  if (!panel.hidden) loadMemory();
-};
+  panel.hidden = false;
+  void refreshMemoryRing();
+});
 byId("memoryClear").onclick = () => {
-  fetch("/v1/memory", { method: "DELETE", headers: sessionHeaders() }).then(() => loadMemory());
+  fetch("/v1/memory", { method: "DELETE", headers: sessionHeaders() }).then(() => refreshMemoryRing());
 };
+void refreshMemoryRing();
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
 byId("overlay").onclick = () => {

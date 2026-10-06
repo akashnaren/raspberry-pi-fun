@@ -1,0 +1,27 @@
+{
+  "note": "Synthesized from plan section 2.2. Live DevTools curls were not captured on the Pis. Soft confirms phase A0 after deploy.",
+  "turns": [
+    {
+      "role": "assistant",
+      "content": "I'm here to help with anything you need. How can I assist you today?"
+    },
+    {
+      "role": "assistant",
+      "content": "I'm here to help with anything you need.",
+      "stopped": true
+    },
+    {
+      "role": "user",
+      "content": "anything you need",
+      "echo": true
+    },
+    {
+      "role": "assistant",
+      "content": "I'm here to help with anything you need. How can I assist you today?"
+    },
+    {
+      "role": "user",
+      "content": "What is the top electric car to buy"
+    }
+  ]
+}

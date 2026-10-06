@@ -5,11 +5,14 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from pair.gate import InferenceGate
 from pair.health import parse_temp_c, parse_throttled
 from pair.server import health_document, public_health
+
+ROOT = Path(__file__).resolve().parent
 
 
 class OneSlot(unittest.TestCase):
@@ -61,9 +64,30 @@ class Thermal(unittest.TestCase):
             doc = health_document()
         self.assertEqual(doc["temp_c"], 61.0)
         self.assertEqual(doc["throttled"], "0x0")
-        self.assertIn("heatsink", doc["cooling"])
+        self.assertNotIn("cooling", doc)
         shown = public_health(doc)
         self.assertNotIn("temp_c", shown)
         self.assertNotIn("throttled", shown)
-        self.assertIn("heatsink", shown["cooling"])
+        self.assertNotIn("cooling", shown)
         self.assertNotIn("temp_c", str(shown))
+
+    def test_the_tree_has_no_heatsink_copy(self):
+        targets = [
+            ROOT / "pair",
+            ROOT / "web" / "index.html",
+            ROOT / "web" / "src",
+            ROOT / "static" / "index.html",
+        ]
+        hits = []
+        for target in targets:
+            paths = [target] if target.is_file() else target.rglob("*")
+            for path in paths:
+                if not path.is_file() or path.suffix in {".png", ".woff2", ".jpg"}:
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if "heatsink" in text.lower():
+                    hits.append(str(path.relative_to(ROOT)))
+        self.assertEqual(hits, [])

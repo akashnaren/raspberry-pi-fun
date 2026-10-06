@@ -96,6 +96,16 @@ def _memory(payload: dict) -> dict:
     return apply(payload)
 
 
+def _embed(payload: dict) -> dict:
+    """Loopback Arctic :xs. Off-role nodes skip without calling Ollama."""
+    from pair.nodes.embedder import embed
+
+    texts = payload.get("texts") if isinstance(payload, dict) else None
+    if not isinstance(texts, list):
+        texts = []
+    return embed(texts)
+
+
 def _images(payload: dict) -> dict:
     """Wikipedia photo cards. This route does not generate text."""
     from pair.images import cards
@@ -116,6 +126,7 @@ _HANDLERS = {
     "/tools/compact_plan": _compact_plan,
     "/tools/memory": _memory,
     "/tools/images": _images,
+    "/tools/embed": _embed,
 }
 
 
@@ -137,7 +148,7 @@ def health_body() -> dict:
     from pair.thermal import sample
 
     temp = sample()
-    return {
+    body = {
         "ok": True,
         "role": "tools",
         "load": 0.0,
@@ -145,3 +156,10 @@ def health_body() -> dict:
         "temp_c": None if temp is None else temp.get("temp_c"),
         "routes": sorted(ROUTES),
     }
+    from pair.queue import node_role
+
+    if node_role() == "dataset":
+        from pair.nodes.embedder import state
+
+        body["embed"] = state()
+    return body

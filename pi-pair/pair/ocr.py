@@ -106,27 +106,39 @@ def run_local(
     timeout: float = OCR_TIMEOUT,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run one local binary. A timeout kills its process group."""
-    launched = _launch_argv(argv)
+    watched = bool(argv) and argv[0] in {"tesseract", "pdftoppm"}
+    embedder = None
+    if watched:
+        from pair.nodes import embedder as embed_mod
+
+        embedder = embed_mod
     try:
-        proc = subprocess.Popen(
-            launched,
-            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-        )
-    except FileNotFoundError as exc:
-        raise OcrNotInstalled(argv[0] if argv else "ocr") from exc
-    try:
-        stdout, stderr = proc.communicate(input=stdin, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        kill_process_group(proc)
-        raise OcrFailed("timed out") from None
-    if proc.returncode != 0:
-        detail = (stderr or b"").decode("utf-8", "replace").strip().splitlines()
-        message = detail[-1][:180] if detail else "ocr failed"
-        raise OcrFailed(message)
-    return subprocess.CompletedProcess(argv, proc.returncode or 0, stdout, stderr)
+        if embedder is not None:
+            embedder.ocr_enter()
+        launched = _launch_argv(argv)
+        try:
+            proc = subprocess.Popen(
+                launched,
+                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except FileNotFoundError as exc:
+            raise OcrNotInstalled(argv[0] if argv else "ocr") from exc
+        try:
+            stdout, stderr = proc.communicate(input=stdin, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kill_process_group(proc)
+            raise OcrFailed("timed out") from None
+        if proc.returncode != 0:
+            detail = (stderr or b"").decode("utf-8", "replace").strip().splitlines()
+            message = detail[-1][:180] if detail else "ocr failed"
+            raise OcrFailed(message)
+        return subprocess.CompletedProcess(argv, proc.returncode or 0, stdout, stderr)
+    finally:
+        if embedder is not None:
+            embedder.ocr_exit()
 
 
 def remote_extract(data: bytes, filename: str, url: str) -> str:

@@ -52,7 +52,7 @@ from pair.errors import (
     friendly_error,
 )
 from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
-from pair.health import COOLING_NOTE, board_thermal, snapshot_peers
+from pair.health import board_thermal, snapshot_peers
 from pair.thermal import sample as thermal_sample
 from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
 from pair.modes import (
@@ -105,6 +105,9 @@ SEARCH_BODY_CAP = 4096
 CHAT_BODY_CAP = 1_000_000
 _DRAIN_CAP = 8 * 1024 * 1024
 _CHAT_ROLES = {"system", "user", "assistant"}
+_COMPACT_GAP_S = 10.0
+_COMPACT_BODY_CAP = 64 * 1024
+_COMPACT_LAST: dict[str, float] = {}
 
 
 class DecodeFailed(Exception):
@@ -724,7 +727,6 @@ def health_document() -> dict:
         "waiting": runtime.gate.waiting(),
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
         "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
-        "cooling": COOLING_NOTE,
         "memory": _memory_stats(),
         "services": {
             "brain": _service_row(peers, "brain", "pi4"),
@@ -737,6 +739,14 @@ def health_document() -> dict:
     temp = thermal_sample().get("temp_c")
     if temp is not None:
         doc["temp_c"] = temp
+    if node_role() == "dataset":
+        from pair.nodes import embedder
+
+        embed_state = embedder.state()
+        doc["services"]["embed"] = {
+            "ok": embed_state in {"unloaded", "loaded", "ocr_busy"},
+            "state": embed_state,
+        }
     return doc
 
 
@@ -806,7 +816,6 @@ def public_health(doc: dict) -> dict:
         "in_flight": doc.get("in_flight"),
         "waiting": doc.get("waiting", runtime.gate.waiting()),
         "uptime_s": doc.get("uptime_s"),
-        "cooling": COOLING_NOTE,
         "peers_up": doc.get("peers_up"),
         "services": services,
         "peers": peers,
@@ -1111,6 +1120,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/v1/flywheel/feedback":
             self._feedback()
+            return
+        if path == "/v1/memory/compact":
+            self._memory_compact()
             return
         if path == "/api/chat":
             self._api_chat()
@@ -1808,15 +1820,79 @@ class Handler(BaseHTTPRequestHandler):
 
     def _memory_get(self) -> None:
         from pair import memory
+        from pair.compact import BUSY_RATIO, IDLE_RATIO
 
         scope = self._memory_scope()
-        body = json.dumps(
+        if scope:
+            usage = memory.stats(scope)
+        else:
+            usage = {
+                "used": 0,
+                "num_ctx": self._memory_num_ctx(),
+                "compactions": 0,
+                "last_compact_ms": 0,
+            }
+        self._write_json(
             {
                 "facts": memory.list_facts(scope) if scope else [],
                 "summary": memory.summary_text(scope) if scope else "",
+                "usage": usage,
+                "compact_at": IDLE_RATIO,
+                "compact_busy_at": BUSY_RATIO,
             }
-        ).encode()
-        self.send_response(200)
+        )
+
+    def _memory_num_ctx(self) -> int:
+        """Same context knob the idle compactor uses."""
+        try:
+            return int((_tuned_knobs("") or {}).get("num_ctx") or 2048)
+        except Exception:
+            return 2048
+
+    def _memory_compact(self) -> None:
+        """Queue one compact in the existing idle slot. Never preempts a decode."""
+        scope = self._memory_scope()
+        data = self._read_json(cap=_COMPACT_BODY_CAP, label="compact body")
+        if data is None:
+            return
+        if not scope:
+            self._write_json({"ok": False, "reason": "no_session"}, status=400)
+            return
+        rows: list[dict] = []
+        messages = data.get("messages")
+        if isinstance(messages, list):
+            for row in messages:
+                if len(rows) >= 64:
+                    break
+                if not isinstance(row, dict):
+                    continue
+                role = row.get("role")
+                content = row.get("content")
+                if role not in {"user", "assistant"} or not isinstance(content, str):
+                    continue
+                rows.append({"role": role, "content": content})
+        if runtime.gate.in_flight() or runtime.gate.waiting():
+            self._write_json({"ok": False, "reason": "busy"}, status=409)
+            return
+        now = time.monotonic()
+        previous = _COMPACT_LAST.get(scope, 0.0)
+        if now - previous < _COMPACT_GAP_S:
+            self._write_json({"ok": False, "reason": "rate"}, status=429)
+            return
+        _COMPACT_LAST[scope] = now
+        from pair.compact import schedule
+
+        queued = schedule(
+            rows,
+            self._memory_num_ctx(),
+            idle=lambda: not runtime.gate.in_flight() and not runtime.gate.waiting(),
+            scope=scope,
+        )
+        self._write_json({"ok": True, "queued": bool(queued)})
+
+    def _write_json(self, payload: dict, status: int = 200) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(status)
         self._cors()
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))

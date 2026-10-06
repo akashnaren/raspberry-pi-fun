@@ -18,7 +18,12 @@ from pair import runtime
 from pair import server as pair_server
 from pair.modes import pull_needed, resolve_mode, tag_ready
 from pair.turn import EFFORT_HINT
-from pair.resident import cap_fits_residents, eviction_targets, protected_tags
+from pair.resident import (
+    cap_fits_residents,
+    eviction_targets,
+    loaded_caps,
+    protected_tags,
+)
 from pair.server import make_server
 from test_pair import ROOT
 
@@ -170,12 +175,20 @@ class ModeRules(unittest.TestCase):
             for line in script.splitlines()
             if "ollama pull" in line and not line.strip().startswith("echo")
         ]
-        self.assertEqual(len(executed), 1)
-        self.assertIn("OLLAMA_MODEL_PRIMARY", executed[0])
+        self.assertEqual(
+            executed,
+            [
+                'ollama pull "$OLLAMA_MODEL_PRIMARY" || echo "WARN: model pull failed — pull manually later on pi4."',
+                'ollama pull "$PI3_EMBED" || echo "WARN: pull ${PI3_EMBED} later on pi3."',
+            ],
+        )
         self.assertIn('ollama rm "$REMOVED_EMBED"', script)
         self.assertNotIn('ollama pull "$REMOVED_EMBED"', script)
         self.assertTrue(all("1.5b" not in line for line in executed))
-        self.assertTrue(cap_fits_residents(script))
+        # pi4 caps stay at 2 or more. The single 1 is the pi3 embed drop-in.
+        caps = loaded_caps(script)
+        self.assertIn(2, caps)
+        self.assertEqual([value for value in caps if value < 2], [1])
         unit = (ROOT / "configs" / "runtime" / "ollama-lan.service").read_text(
             encoding="utf-8"
         )
