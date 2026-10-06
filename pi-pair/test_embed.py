@@ -114,6 +114,24 @@ class CannedExact(unittest.TestCase):
         self.assertNotIn(tag, other)
         self.assertNotIn("ollama", other)
 
+    def test_chat_modules_do_not_import_embed(self):
+        for name in (
+            "images.py",
+            "turn.py",
+            "chat.py",
+            "memory.py",
+            "compact.py",
+        ):
+            source = (ROOT / "pair" / name).read_text(encoding="utf-8")
+            self.assertNotIn("embed", source, name)
+        server = (ROOT / "pair" / "server.py").read_text(encoding="utf-8")
+        self.assertNotIn("/api/embed", server)
+        self.assertNotIn("snowflake", server)
+        head, health = server.split("def health_document", 1)
+        self.assertNotIn("embedder", head)
+        rest = health.split("\ndef ", 1)[1]
+        self.assertNotIn("embedder", rest)
+
     def test_ollama_base_ignores_a_missing_embed_path(self):
         os.environ["PI_PAIR_OLLAMA"] = "http://127.0.0.1:11434"
         self.assertEqual(ollama_base(), "http://127.0.0.1:11434")

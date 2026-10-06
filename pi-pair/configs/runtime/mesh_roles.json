@@ -9,5 +9,6 @@
   "remote_search_read_timeout_s": 3,
   "hf_dataset": "akashnaren/pi-mesh-labels",
   "kaggle": "optional-stub-after-huggingface",
-  "note": "pi4 generates. pi2 searches and answers health. pi3 keeps labels, train-then-delete, and the public hash sync. pi2 and pi3 do not decode."
+  "embed": ["pi3"],
+  "note": "pi4 generates. pi2 searches and answers health. pi3 keeps labels, train-then-delete, and the public hash sync. pi2 and pi3 do not decode. pi3 holds snowflake-arctic-embed:xs on loopback for the train fold. It unloads before OCR. pi4 and pi2 never embed."
 }

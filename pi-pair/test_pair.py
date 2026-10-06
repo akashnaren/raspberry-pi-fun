@@ -1988,6 +1988,46 @@ class ProductCopy(unittest.TestCase):
         self.assertEqual(problems, [], "\n".join(problems))
 
 
+class EmbedRoute(unittest.TestCase):
+    def setUp(self):
+        self._role = os.environ.get("PI_PAIR_ROLE")
+        self.servers = []
+
+    def tearDown(self):
+        for httpd in self.servers:
+            httpd.shutdown()
+            httpd.server_close()
+        if self._role is None:
+            os.environ.pop("PI_PAIR_ROLE", None)
+        else:
+            os.environ["PI_PAIR_ROLE"] = self._role
+
+    def test_the_brain_refuses_embed_and_pi2_skips_without_network(self):
+        from pair.nodes.worker import handle
+
+        os.environ["PI_PAIR_ROLE"] = "brain"
+        httpd = make_server("127.0.0.1", 0)
+        self.servers.append(httpd)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        port = httpd.server_address[1]
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/tools/embed",
+            data=json.dumps({"texts": ["a"]}).encode(),
+            headers={"content-type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=5)
+        self.assertEqual(caught.exception.code, 403)
+        os.environ["PI_PAIR_ROLE"] = "health"
+        with patch(
+            "pair.nodes.embedder.urllib.request.urlopen",
+            side_effect=AssertionError("network"),
+        ):
+            status, body = handle("/tools/embed", {"texts": ["a"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["skipped"], "off")
+
+
 if __name__ == "__main__":
     os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     unittest.main()

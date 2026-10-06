@@ -736,6 +736,14 @@ def health_document() -> dict:
     temp = thermal_sample().get("temp_c")
     if temp is not None:
         doc["temp_c"] = temp
+    if node_role() == "dataset":
+        from pair.nodes import embedder
+
+        embed_state = embedder.state()
+        doc["services"]["embed"] = {
+            "ok": embed_state in {"unloaded", "loaded", "ocr_busy"},
+            "state": embed_state,
+        }
     return doc
 
 

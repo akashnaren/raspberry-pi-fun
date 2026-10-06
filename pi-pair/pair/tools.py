@@ -64,6 +64,7 @@ def registry() -> dict[str, Tool]:
             "compact_plan", "/tools/compact_plan", ("pi3",), 5.0, True
         ),
         "memory": Tool("memory", "/tools/memory", ("pi3",), 5.0, True),
+        "embed": Tool("embed", "/tools/embed", ("pi3",), 3.0, True),
     }
 
 

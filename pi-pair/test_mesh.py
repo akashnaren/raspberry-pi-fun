@@ -171,7 +171,7 @@ class MeshRoles(unittest.TestCase):
         cfg = mesh_config()
         self.assertEqual(cfg["generate"], ["pi4"])
         self.assertEqual(cfg["decode"], ["pi4"])
-        self.assertNotIn("embed", cfg)
+        self.assertEqual(cfg["embed"], ["pi3"])
         self.assertEqual(cfg["search"], ["pi2"])
         self.assertEqual(cfg["health"], ["pi2"])
         self.assertEqual(cfg["dataset_and_train"], ["pi3"])

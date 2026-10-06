@@ -54,6 +54,14 @@ class Dispatch(unittest.TestCase):
             Tool("images", "/v1/chat/completions", ("pi2",), 5.0, True)
         with self.assertRaises(ValueError):
             Tool("images", "/tools/images", ("pi4",), 5.0, True)
+        embed = registry()["embed"]
+        self.assertEqual(embed.nodes, ("pi3",))
+        self.assertEqual(embed.path, "/tools/embed")
+        self.assertEqual(embed.timeout, 3.0)
+        self.assertTrue(embed.retry_safe)
+        self.assertEqual(generation_routes(), [])
+        with self.assertRaises(ValueError):
+            Tool("embed", "/tools/embed", ("pi4",), 3.0, True)
 
     def test_least_loaded_node_is_first_and_a_fast_success_skips_the_hedge(self):
         calls = []

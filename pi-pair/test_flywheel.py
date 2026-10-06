@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -17,7 +18,7 @@ if str(ROOT) not in sys.path:
 from pair.canned import _folded_table, lookup, normalize_key
 from pair.chat import chat_ollama
 from pair.guard import may_generate
-from pair.lifecycle import GateError, _prepare, post_train
+from pair.lifecycle import GateError, _fold, _prepare, post_train
 from pair.queue import QUEUE_BOUND, append_row, apply_label, note_exchange
 from pair.registry import RegistryError, require_registered
 from pair.yaml_lite import load_path
@@ -404,6 +405,102 @@ class Flywheel(unittest.TestCase):
         self.assertEqual(by_name["pi2"]["role"], "health")
         self.assertEqual(by_name["pi3"]["role"], "dataset")
         self.assertEqual(by_name["pi4"]["role"], "brain")
+
+    def _embed_opener(self, groups):
+        class _Body:
+            def __init__(self, raw: bytes):
+                self.raw = raw
+
+            def read(self) -> bytes:
+                return self.raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def opener(request, timeout=3.5):
+            payload = json.loads(request.data.decode())
+            vectors = [groups(text) for text in payload["texts"]]
+            raw = json.dumps(
+                {
+                    "ok": True,
+                    "vectors": vectors,
+                    "model": "unit-embed",
+                    "skipped": "",
+                }
+            ).encode()
+            return _Body(raw)
+
+        return opener
+
+    def test_paraphrase_above_the_threshold_merges_and_a_correction_updates(self):
+        table = {"alpha key": "stored answer"}
+        rows = [
+            {
+                "q": "alpha question",
+                "answer": "should not replace",
+                "correction": "corrected answer",
+            },
+            {"q": "other line", "answer": "fresh answer"},
+        ]
+
+        def groups(text: str) -> list[float]:
+            if text.startswith("alpha"):
+                return [1.0, 0.0, 0.0]
+            return [0.0, 1.0, 0.0]
+
+        with patch("urllib.request.urlopen", self._embed_opener(groups)):
+            folded, added, rejected, merged = _fold(
+                dict(table), rows, set(), root=self.base / "data"
+            )
+        self.assertEqual(rejected, 0)
+        self.assertEqual(merged, 1)
+        self.assertNotIn("alpha question", folded)
+        self.assertEqual(folded["alpha key"], "corrected answer")
+        self.assertEqual(folded["other line"], "fresh answer")
+        self.assertEqual(added, 2)
+
+    def test_a_skipped_embed_matches_exact_folding(self):
+        table = {"alpha key": "stored answer"}
+        rows = [
+            {"q": "alpha key", "answer": "ignored", "correction": "updated"},
+            {"q": "brand new", "answer": "fresh"},
+            {"q": "dropped", "answer": "no", "vote": "down"},
+            {"q": "held out line", "answer": "secret"},
+        ]
+        heldout = {"held out line"}
+
+        with patch("urllib.request.urlopen", side_effect=OSError("down")):
+            folded, added, rejected, merged = _fold(
+                dict(table), rows, heldout, root=self.base / "data"
+            )
+        self.assertEqual(
+            folded,
+            {
+                "alpha key": "updated",
+                "brand new": "fresh",
+            },
+        )
+        self.assertEqual(merged, 0)
+        self.assertEqual(added, 2)
+        self.assertEqual(rejected, 2)
+        self.assertFalse((self.base / "data" / "canned" / "key_vectors.json").exists())
+
+    def test_heldout_stays_blocked_when_embed_would_match(self):
+        def groups(_text: str) -> list[float]:
+            return [1.0, 0.0, 0.0]
+
+        with patch("urllib.request.urlopen", self._embed_opener(groups)):
+            folded, added, rejected, merged = _fold(
+                {"alpha key": "stored"},
+                [{"q": "held out line", "answer": "secret"}],
+                {"held out line"},
+                root=self.base / "data",
+            )
+        self.assertEqual(folded, {"alpha key": "stored"})
+        self.assertEqual((added, rejected, merged), (0, 1, 0))
 
 
 if __name__ == "__main__":
