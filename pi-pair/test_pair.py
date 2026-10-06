@@ -970,7 +970,7 @@ class PairHttp(unittest.TestCase):
         expected = {
             "low": (False, 0.7, 0.8, 64),
             "medium": (False, 0.7, 0.8, 384),
-            "high": (True, 0.6, 0.95, 960),
+            "high": (False, 0.7, 0.8, 768),
         }
         seen = {}
         for level, (think, temperature, top_p, num_predict) in expected.items():
@@ -997,10 +997,7 @@ class PairHttp(unittest.TestCase):
             self.assertEqual(options["temperature"], temperature)
             self.assertEqual(options["top_p"], top_p)
             self.assertEqual(options["top_k"], 20)
-            if not think:
-                self.assertEqual(options["presence_penalty"], 1.5)
-            else:
-                self.assertNotIn("presence_penalty", options)
+            self.assertEqual(options["presence_penalty"], 1.5)
             self.assertEqual(options["num_predict"], num_predict)
         self.assertEqual(len(set(seen.values())), 3)
         status, _headers, _body = self._post(
@@ -1148,7 +1145,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("X-Pi-Think"), "high")
         self.assertEqual(body["pi_think"], "high")
-        self.assertEqual(LlamaFake.last_payload["temperature"], 0.6)
+        self.assertEqual(LlamaFake.last_payload["temperature"], 0.7)
         self.assertEqual(LlamaFake.last_payload["max_tokens"], 768)
         self.assertNotIn("think", LlamaFake.last_payload)
 
@@ -1872,9 +1869,12 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn("pi_resident", body)
         self.assertEqual(body["pi_think"], "high")
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
-        self.assertTrue(OllamaFake.last_payload["think"])
-        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.6)
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 960)
+        self.assertFalse(OllamaFake.last_payload["think"])
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.7)
+        self.assertEqual(OllamaFake.last_payload["options"]["top_p"], 0.8)
+        self.assertEqual(OllamaFake.last_payload["options"]["top_k"], 20)
+        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 1.5)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
         status, headers, body = self._post(
             port,
             {
@@ -1889,7 +1889,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_route"], "pro")
         self.assertEqual(headers.get("X-Pi-Route"), "pro")
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:1.7b")
-        self.assertTrue(OllamaFake.last_payload["think"])
+        self.assertFalse(OllamaFake.last_payload["think"])
+        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 1.5)
         os.environ["OLLAMA_MAX_LOADED_MODELS"] = "3"
         runtime.reset_health()
         status, _headers, body = self._post(

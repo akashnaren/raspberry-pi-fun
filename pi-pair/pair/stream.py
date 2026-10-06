@@ -10,15 +10,16 @@ from pair.chat import llamacpp_model, ollama_payload, open_json
 from pair.guard import require_generative
 from pair.knobs import inference_knobs
 from pair.think import (
-    DIRECT_FALLBACK,
     NON_THINK_TEMPERATURE,
     NON_THINK_TOP_P,
     PRESENCE_PENALTY,
     TOP_K,
     clip_reasoning,
+    peel_think,
     reasoning_tokens,
     sample_knobs,
     stop_thinking,
+    visible_answer,
     with_force,
 )
 
@@ -150,10 +151,11 @@ def iter_ollama_channels(
 ):
     """Yield ('thinking', text) or ('content', text) from Ollama.
 
-    High thinking stops at the token cap or at about 25 seconds, then one
+    Levels pass think=false, so this is one direct call. A hand-built thinking
+    plan still stops at the token cap or at about 25 seconds, then one
     follow-up with think=false produces the answer. That follow-up is not
-    part of the saved chat. A High turn still yields an answer if both
-    calls come back empty.
+    part of the saved chat. `<think>` tags are not treated as an answer. If
+    both calls leave no visible text, the iterator yields a fallback sentence.
     """
     require_generative(peer)
     knobs = inference_knobs()
@@ -176,6 +178,7 @@ def iter_ollama_channels(
         presence_penalty=penalty,
     )
     accumulated = ""
+    content_parts: list[str] = []
     saw_content = False
     capped = False
     started = time.monotonic()
@@ -217,7 +220,9 @@ def iter_ollama_channels(
                 ):
                     capped = True
                 if content:
-                    saw_content = True
+                    content_parts.append(content)
+                    if peel_think("".join(content_parts))[0].strip():
+                        saw_content = True
                     yield "content", content
                 if done or (capped and not saw_content):
                     break
@@ -239,6 +244,7 @@ def iter_ollama_channels(
         top_k=TOP_K,
         presence_penalty=PRESENCE_PENALTY,
     )
+    follow_parts: list[str] = []
     try:
         with open_json(url, forced, timeout=180, cancel=cancel) as response:
             for line in _read_ndjson(response, cancel):
@@ -246,16 +252,18 @@ def iter_ollama_channels(
                 if skip:
                     continue
                 if content:
-                    saw_content = True
+                    follow_parts.append(content)
+                    if peel_think("".join(follow_parts))[0].strip():
+                        saw_content = True
                     yield "content", content
                 if done:
                     break
     except TimeoutError:
-        if not saw_content:
-            yield "content", DIRECT_FALLBACK
+        if not peel_think("".join(follow_parts))[0].strip():
+            yield "content", visible_answer("")
         return
-    if not saw_content:
-        yield "content", DIRECT_FALLBACK
+    if not peel_think("".join(follow_parts))[0].strip():
+        yield "content", visible_answer("")
 
 
 def stream_ollama(

@@ -28,6 +28,7 @@ from pair.modes import FLASH_MODEL, PRO_MODEL
 from pair.errors import UNREACHABLE
 from pair.turn import (
     ANSWER_HINT,
+    EFFORT_HINT,
     ATTACH_MARK,
     CHART_HINT,
     NOTES_ANSWER,
@@ -189,6 +190,21 @@ class TurnShape(unittest.TestCase):
         blob = "\n".join(row["content"] for row in chart)
         self.assertIn("```chart", blob)
         self.assertNotIn(ANSWER_HINT, blob)
+
+    def test_levels_ask_for_length_in_the_hint(self):
+        prompt = "Why does rain fall?"
+        for name, sentence in EFFORT_HINT.items():
+            rows = shape_messages(
+                [{"role": "user", "content": prompt}], prompt, effort=name
+            )
+            self.assertEqual(rows[0]["content"], f"{ANSWER_HINT} {sentence}", name)
+        chart = shape_messages(
+            [{"role": "user", "content": "plot a bar chart of the picnic"}],
+            "plot a bar chart of the picnic",
+            effort="high",
+        )
+        blob = "\n".join(row["content"] for row in chart)
+        self.assertNotIn(EFFORT_HINT["high"], blob)
 
 
 class ModelWarm(unittest.TestCase):

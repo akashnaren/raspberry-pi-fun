@@ -1,12 +1,14 @@
-"""Qwen3 thinking levels for Ollama.
+"""Qwen3 decode levels for Ollama.
 
-Low and Medium are direct answers (`think` false). Medium has a longer
-answer budget than Low. High thinks, then stops at about 192 tokens or
-25 seconds, whichever comes first, and asks for the answer in a second
-call so `num_predict` cannot be spent entirely on reasoning. The answer
-text never keeps a `<think>` block. Sampling follows the Qwen3 card:
-non-thinking temperature 0.7, top_p 0.8, top_k 20, presence_penalty 1.5;
-thinking temperature 0.6, top_p 0.95, top_k 20.
+Low, Medium, and High are direct answers (`think` false). They share the
+non-thinking sample: temperature 0.7, top_p 0.8, top_k 20, presence_penalty
+1.5. The level changes the answer budget and a system-prompt sentence, not
+Ollama's thinking switch. A measured High think on the Pi spent the token
+budget on reasoning and often returned an empty answer.
+
+If a caller still builds a thinking plan, the stream stops that pass and
+asks once more with `think` false. `<think>` tags are removed. An empty
+visible answer becomes a short fallback sentence.
 """
 
 from __future__ import annotations
@@ -85,10 +87,10 @@ def _thinking(name: str, num_predict: int, budget: int, seconds: float) -> Decod
 
 
 def sample_knobs(plan: DecodePlan | None) -> tuple[float, int, float | None]:
-    """Qwen3 sample. No plan uses the non-thinking card, including presence_penalty.
+    """Qwen3 sample. No plan, and every level, uses the non-thinking card.
 
-    A thinking plan leaves presence_penalty unset. Ollama's default is enough
-    while the model is reasoning; the answer call sets the penalty itself.
+    A hand-built thinking plan leaves presence_penalty unset. The answer call
+    sets the penalty itself.
     """
     if plan is None:
         return NON_THINK_TOP_P, TOP_K, PRESENCE_PENALTY
@@ -97,10 +99,10 @@ def sample_knobs(plan: DecodePlan | None) -> tuple[float, int, float | None]:
 
 
 def decode_plan(name: str | None, prompt: str = "") -> DecodePlan | None:
-    """Map a think level to Ollama's `think` flag and Qwen3 sampling.
+    """Map a level to a direct Ollama call and the Qwen3 non-thinking sample.
 
     Unknown or blank names return None so a caller-supplied temperature stays.
-    Low and Medium are direct answers. High is the only level that thinks.
+    Low, Medium, and High all set `think` false. They differ by `num_predict`.
     `prompt` is accepted so callers can pass the line without a second lookup.
     """
     del prompt
@@ -110,8 +112,14 @@ def decode_plan(name: str | None, prompt: str = "") -> DecodePlan | None:
     if key == "medium":
         return _direct(key, MEDIUM_PREDICT)
     if key == "high":
-        return _thinking(key, HIGH_PREDICT, HIGH_THINK_BUDGET, HIGH_THINK_SECONDS)
+        return _direct(key, HIGH_PREDICT)
     return None
+
+
+def visible_answer(text: str) -> str:
+    """Drop `<think>` blocks. An empty remainder is the fallback sentence."""
+    answer, _reasoning = peel_think(text or "")
+    return answer.strip() or DIRECT_FALLBACK
 
 
 def stop_thinking(

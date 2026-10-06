@@ -50,7 +50,7 @@ def decode_effort(name: str | None, prompt: str = ""):
     """Low, Medium, or High. None when the caller did not name a level.
 
     The plan carries Ollama's `think` flag, the Qwen3 sample, and the answer
-    budget. Only High thinks, and that cap is separate from the answer.
+    budget. Every level is a direct answer. Length comes from `num_predict`.
     """
     from pair.think import decode_plan
 

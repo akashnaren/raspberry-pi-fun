@@ -944,6 +944,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         safe_write(self, body)
 
+    def _effort_name(self) -> str:
+        """Low, Medium, or High when the turn named one. Empty otherwise."""
+        plan = getattr(self, "_decode_plan", None)
+        return str(getattr(plan, "name", "") or "")
+
     def _chosen_mode(self, data: dict) -> str:
         """LAN mode word. Thinking levels are not model choices."""
         if getattr(self, "public_mode", ""):
@@ -974,7 +979,7 @@ class Handler(BaseHTTPRequestHandler):
             return str(data.get("model") or runtime.MODEL)
         if picked == "auto":
             route, model, _reason = resolve_auto(prompt, listed_chat_models())
-            # High thinking is slow on Pro. Stay on Flash unless Pro was chosen.
+            # High is a longer Flash answer. Stay on Flash unless Pro was chosen.
             if think_name == "high":
                 route, model = "flash", mode_table()["flash"]
             self.pi_mode = "auto"
@@ -1244,7 +1249,7 @@ class Handler(BaseHTTPRequestHandler):
             elif not want_stream:
                 images = _image_cards(prompt)
             if not want_stream:
-                outbound = shape_messages(outbound, prompt, tuned)
+                outbound = shape_messages(outbound, prompt, tuned, think_name)
             grounded = ready
         except ClientGone:
             raise
@@ -1852,6 +1857,7 @@ class Handler(BaseHTTPRequestHandler):
                     {"role": "user", "content": HELPFUL_NUDGE},
                 ],
                 prompt,
+                effort=self._effort_name(),
             )
             return self._ask(peer, kind, model, follow, temperature, max_tokens)
 
@@ -1878,6 +1884,7 @@ class Handler(BaseHTTPRequestHandler):
                     {"role": "user", "content": CHART_NUDGE},
                 ],
                 prompt,
+                effort=self._effort_name(),
             )
             try:
                 if kind == "llamacpp":
@@ -2016,7 +2023,7 @@ class Handler(BaseHTTPRequestHandler):
         _put_images(answer_extra, images)
         if not emit_status("answering", answer_extra or None):
             return
-        messages = shape_messages(messages, prompt, _tuned_knobs(model))
+        messages = shape_messages(messages, prompt, _tuned_knobs(model), think_name)
         if grounded is not None:
             self._emit_ready_answer(
                 peer,
@@ -2357,6 +2364,25 @@ class Handler(BaseHTTPRequestHandler):
                     return
             elif not policy and not is_harmful(prompt):
                 answer = scrub_reply(answer) or answer
+            trainable = not policy
+            if not policy and not str(answer).strip():
+                answer = degraded_answer(search_note, None)
+                trainable = False
+                fallback = {
+                    "id": "pi-pair",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": answer},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                if not write_json(fallback):
+                    chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
+                    remember_completion(prompt, answer, chip, peer["name"])
+                    return
             images = _cards_after(prompt, answer, images)
             elapsed = int((time.time() - started) * 1000)
             final = {
@@ -2397,7 +2423,9 @@ class Handler(BaseHTTPRequestHandler):
                 refused = _block(answer)
                 if refused:
                     answer = refused
-                note_exchange(prompt, answer, chip=chip, peer=peer["name"], train=True)
+                note_exchange(
+                    prompt, answer, chip=chip, peer=peer["name"], train=trainable
+                )
             remember_completion(prompt, answer, chip, peer["name"])
             apply_tier(self, final)
             safe_write(self, f"data: {json.dumps(final)}\n\n".encode(), flush=True)

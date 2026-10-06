@@ -28,6 +28,13 @@ ANSWER_HINT = (
     "Do not mention model choice, routing, or the mesh."
 )
 
+# Length lives in the prompt. None of these turn Qwen3 thinking on.
+EFFORT_HINT = {
+    "low": "Keep the answer short.",
+    "medium": "Give a moderate amount of detail.",
+    "high": "Give a fuller answer.",
+}
+
 CHART_HINT = (
     "Chart replies use one fenced block and no other plot format.\n"
     "```chart\n"
@@ -274,11 +281,15 @@ def add_chart_hint(messages, prompt: str) -> list:
     return [{"role": "system", "content": CHART_HINT}, *rows]
 
 
-def add_answer_hint(messages, prompt: str) -> list:
-    """One system note for every non-chart turn. Search notes stay in front."""
+def add_answer_hint(messages, prompt: str, effort: str = "") -> list:
+    """One system note for every non-chart turn. Search notes stay in front.
+
+    `effort` adds one sentence about length. It does not enable thinking.
+    """
     if is_plot(prompt):
         return list(messages or [])
-    hint = ANSWER_HINT
+    extra = EFFORT_HINT.get((effort or "").strip().lower(), "")
+    hint = f"{ANSWER_HINT} {extra}" if extra else ANSWER_HINT
     rows = list(messages or [])
     for row in rows:
         if (
@@ -398,10 +409,12 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
     return rows
 
 
-def shape_messages(messages, prompt: str, knobs: dict | None = None) -> list:
+def shape_messages(
+    messages, prompt: str, knobs: dict | None = None, effort: str = ""
+) -> list:
     rows = fence_messages(messages, knobs)
     rows = add_chart_hint(rows, prompt)
-    rows = add_answer_hint(rows, prompt)
+    rows = add_answer_hint(rows, prompt, effort)
     return fit_messages(rows, knobs)
 
 

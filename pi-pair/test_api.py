@@ -265,9 +265,12 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(body["model"], FLASH_MODE)
         self.assertEqual(body["pi_think"], "high")
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
-        self.assertTrue(OllamaFake.last_payload["think"])
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 960)
-        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.6)
+        self.assertFalse(OllamaFake.last_payload["think"])
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.7)
+        self.assertEqual(OllamaFake.last_payload["options"]["top_p"], 0.8)
+        self.assertEqual(OllamaFake.last_payload["options"]["top_k"], 20)
+        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 1.5)
 
     def test_chat_requires_the_api_key(self):
         missing, headers, body = self._json(
@@ -860,6 +863,23 @@ class Exposure(unittest.TestCase):
         self.assertIn("waiting", full)
 
     def test_mode_header_is_sent_once(self):
+        # The health test seeds a LAN address in the snapshot. A chat merges
+        # that snapshot over the peer, so point it back at the local fake.
+        peer = runtime.PEERS[0]
+        with runtime._health_lock:
+            runtime._health_cache["peers"] = [
+                {
+                    "name": peer["name"],
+                    "host": peer["host"],
+                    "port": peer["port"],
+                    "kind": peer.get("kind") or "ollama",
+                    "role": peer.get("role") or "brain",
+                    "ok": True,
+                    "models": ["qwen3:0.6b", "qwen3:1.7b"],
+                    "generative": True,
+                }
+            ]
+            runtime._health_cache["t"] = time.time()
         cached = {
             "messages": [{"role": "user", "content": "hi"}],
             "mode": "flash",

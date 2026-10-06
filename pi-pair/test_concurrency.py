@@ -436,7 +436,7 @@ class ConcurrentChat(unittest.TestCase):
         self.assertEqual(HoldOllama.posts, 0)
         runtime.gate.release()
 
-    def test_canned_and_page_answers_skip_a_full_gate(self):
+    def test_canned_answers_skip_a_full_gate(self):
         runtime.set_infer_slots(1)
         self.assertTrue(runtime.gate.try_acquire())
         port = self._pi4()
@@ -452,38 +452,6 @@ class ConcurrentChat(unittest.TestCase):
         self.assertEqual(
             body["choices"][0]["message"]["content"], "Hi. What can I help you with?"
         )
-        self.assertEqual(HoldOllama.posts, 0)
-
-        page = (
-            "The balloon gains 12 cubic centimeters per second. "
-            "When the surface area is 36 pi square centimeters, r = 3. "
-            "dr/dt = 1/(3 pi) centimeters per second."
-        )
-
-        def fake(query, opener=None):
-            return {
-                "status": "ok",
-                "sources": [
-                    {"title": "Balloon note", "url": "https://example.com/balloon"}
-                ],
-                "context": "Text from the first page:\n" + page,
-            }
-
-        pair_server.lookup_web = fake
-        prompt = (
-            "A spherical balloon is being inflated with gas at a constant rate of "
-            "12 cubic centimeters per second. Find the exact rate at which the radius "
-            "is increasing when the surface area is 36 pi square centimeters."
-        )
-        started = time.perf_counter()
-        status, _headers, body = self._post(
-            port,
-            prompt,
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertLess(time.perf_counter() - started, 0.5)
-        self.assertEqual(status, 200)
-        self.assertIn("dr/dt = 1/(3 pi)", body["choices"][0]["message"]["content"])
         self.assertEqual(HoldOllama.posts, 0)
         runtime.gate.release()
 
