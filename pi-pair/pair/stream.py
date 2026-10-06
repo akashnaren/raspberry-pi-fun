@@ -197,10 +197,12 @@ def iter_ollama_channels(
     try:
         with open_json(url, payload, timeout=first_timeout, cancel=cancel) as response:
             for line in _read_ndjson(response, cancel):
-                content, thinking, done, skip, _reason, frame_usage = ollama_parts(line)
+                content, thinking, done, skip, reason, frame_usage = ollama_parts(line)
                 if skip:
                     continue
                 _keep_usage(usage, frame_usage)
+                if done and usage is not None:
+                    usage["done_reason"] = reason
                 now = time.monotonic()
                 if thinking and not capped:
                     merged = accumulated + thinking

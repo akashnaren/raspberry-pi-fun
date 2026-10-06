@@ -634,4 +634,68 @@ globalThis.fetch = meshFetch;
 const offset = Number(ring.querySelector(".ring-fill").getAttribute("stroke-dashoffset"));
 if (Math.abs(offset - 28.27) > 0.1) throw new Error("ring dashoffset was " + offset);
 
+const pop = document.getElementById("memPop");
+const memoryIds = [...pop.querySelectorAll("button")].map((node) => node.id);
+if (memoryIds.join(",") !== "memCompact,memClear") {
+  throw new Error("memory popup was " + memoryIds.join(","));
+}
+if (document.getElementById("memShow") || document.getElementById("memoryPanel")) {
+  throw new Error("the extra memory panel is still on the page");
+}
+let memoryDeletes = 0;
+const memoryFetch = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === "string" ? input : input.url;
+  const method = ((init && init.method) || "GET").toUpperCase();
+  if (String(url).includes("/v1/memory") && method === "DELETE") {
+    memoryDeletes += 1;
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  }
+  return memoryFetch(input, init);
+};
+document.getElementById("memClear").click();
+await new Promise((resolve) => setTimeout(resolve, 20));
+if (memoryDeletes !== 0) throw new Error("one tap cleared memory");
+document.getElementById("memClear").click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+if (memoryDeletes !== 1) throw new Error("two taps issued " + memoryDeletes + " deletes");
+globalThis.fetch = memoryFetch;
+
+class FakeXHR {
+  constructor() {
+    this.upload = {};
+    this.status = 200;
+    this.responseText = JSON.stringify({ text: "page one", route: "text" });
+    this.onload = null;
+    this.onerror = null;
+    this.onabort = null;
+    FakeXHR.current = this;
+  }
+  open() {}
+  send() {}
+  abort() {
+    if (typeof this.onabort === "function") this.onabort();
+  }
+}
+globalThis.XMLHttpRequest = FakeXHR;
+window.XMLHttpRequest = FakeXHR;
+const pendingUpload = app.loadFile(new File(["abc"], "notes.pdf", { type: "application/pdf" }));
+await new Promise((resolve) => setTimeout(resolve, 30));
+const paperclip = document.getElementById("btnAttach");
+if (!paperclip.classList.contains("live") || paperclip.getAttribute("aria-busy") !== "true" || !paperclip.disabled) {
+  throw new Error("upload did not mark the paperclip busy");
+}
+document.getElementById("fileClear").click();
+if (paperclip.classList.contains("live") || paperclip.getAttribute("aria-busy") || paperclip.disabled) {
+  throw new Error("removing the file left the paperclip busy");
+}
+if (go.disabled) throw new Error("send stayed disabled after remove");
+const fileTag = document.getElementById("fileTag");
+if (fileTag.classList.contains("on")) throw new Error("the chip stayed on");
+if (FakeXHR.current && typeof FakeXHR.current.onload === "function") FakeXHR.current.onload();
+await pendingUpload.catch(() => {});
+await new Promise((resolve) => setTimeout(resolve, 20));
+if (fileTag.classList.contains("on")) throw new Error("a late upload restored the chip");
+if (box.dataset.attachText) throw new Error("a ghost attachment was kept");
+
 console.log("ok");

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import ipaddress
 import json
 import os
@@ -18,6 +19,7 @@ from pathlib import Path
 from pair.abilities import (
     JSON_RETRY,
     clean_reply,
+    mend_cut_tail,
     needs_json_retry,
     settle_blocks,
     tail_hints,
@@ -157,6 +159,16 @@ def encoded_body(handler, body: bytes) -> tuple[bytes, str | None]:
     if len(packed) >= len(body):
         return body, None
     return packed, "gzip"
+
+
+# (path, mtime_ns, size, gzip_ok) -> (body, encoding, etag). Raw bytes, not gzip.
+_STATIC_CACHE: dict[tuple[str, int, int, bool], tuple[bytes, str | None, str]] = {}
+_STATIC_LOCK = threading.Lock()
+_STATIC_CAP = 64
+
+
+def _asset_etag(raw: bytes) -> str:
+    return '"' + hashlib.sha1(raw).hexdigest()[:16] + '"'
 
 
 def safe_write(handler, body: bytes, flush: bool = False) -> bool:
@@ -951,36 +963,82 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def _wants_gzip(self) -> bool:
+        accept = self.headers.get("Accept-Encoding") or ""
+        return "gzip" in accept.lower()
+
+    def _etag_matches(self, etag: str) -> bool:
+        header = (self.headers.get("If-None-Match") or "").strip()
+        if not header:
+            return False
+        if header == "*":
+            return True
+        return etag in {part.strip() for part in header.split(",") if part.strip()}
+
+    def _cached_static(
+        self, key: tuple[str, int, int, bool], load_raw
+    ) -> tuple[bytes, str | None, str]:
+        """Re-gzip a static body only when the file or the encoding changes."""
+        with _STATIC_LOCK:
+            hit = _STATIC_CACHE.get(key)
+        if hit is not None:
+            return hit
+        raw = load_raw()
+        body, encoding = encoded_body(self, raw)
+        entry = (body, encoding, _asset_etag(raw))
+        with _STATIC_LOCK:
+            if key not in _STATIC_CACHE and len(_STATIC_CACHE) >= _STATIC_CAP:
+                _STATIC_CACHE.pop(next(iter(_STATIC_CACHE)), None)
+            _STATIC_CACHE.setdefault(key, entry)
+            return _STATIC_CACHE[key]
+
+    def _send_cached(
+        self, content_type: str, key: tuple[str, int, int, bool], load_raw
+    ) -> None:
+        body, encoding, etag = self._cached_static(key, load_raw)
+        if self._etag_matches(etag):
+            self.send_response(304)
+            self._cors()
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            if encoding:
+                self.send_header("Vary", "Accept-Encoding")
+            self.send_header("content-length", "0")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", content_type)
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("ETag", etag)
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
     def do_GET(self) -> None:
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
-            body, encoding = encoded_body(self, index_body())
-            self.send_response(200)
-            self._cors()
-            self.send_header("content-type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            if encoding:
-                self.send_header("Content-Encoding", encoding)
-                self.send_header("Vary", "Accept-Encoding")
-            self.send_header("content-length", str(len(body)))
-            self.end_headers()
-            safe_write(self, body)
+            page = STATIC_DIR / "index.html"
+            stat = page.stat()
+            tips = json.dumps(mode_tips(), sort_keys=True, separators=(",", ":"))
+            digest = hashlib.sha1(tips.encode()).hexdigest()[:16]
+            key = (
+                f"index:{digest}",
+                stat.st_mtime_ns,
+                stat.st_size,
+                self._wants_gzip(),
+            )
+            self._send_cached("text/html; charset=utf-8", key, index_body)
             return
         asset = static_file(path)
         if asset is not None:
-            body, encoding = encoded_body(self, asset.read_bytes())
-            self.send_response(200)
-            self._cors()
-            self.send_header(
-                "content-type", _TYPES.get(asset.suffix, "application/octet-stream")
-            )
-            self.send_header("Cache-Control", "no-cache")
-            if encoding:
-                self.send_header("Content-Encoding", encoding)
-                self.send_header("Vary", "Accept-Encoding")
-            self.send_header("content-length", str(len(body)))
-            self.end_headers()
-            safe_write(self, body)
+            stat = asset.stat()
+            key = (path, stat.st_mtime_ns, stat.st_size, self._wants_gzip())
+            kind = _TYPES.get(asset.suffix, "application/octet-stream")
+            self._send_cached(kind, key, asset.read_bytes)
             return
         if path in ("/openapi.json", "/swagger.json"):
             self._openapi()
@@ -2450,6 +2508,8 @@ class Handler(BaseHTTPRequestHandler):
             context=getattr(self, "_local_context", ""),
             have_tools=_searched(search_note),
         )
+        cut = (getattr(self, "_usage", {}) or {}).get("done_reason") == "length"
+        content = mend_cut_tail(content, cut)
         if not str(content).strip():
             raise DecodeFailed(friendly_error(""))
         return content, used, True
@@ -2898,6 +2958,8 @@ class Handler(BaseHTTPRequestHandler):
                     search_note,
                     answer,
                 )
+                cut = (getattr(self, "_usage", {}) or {}).get("done_reason") == "length"
+                more = mend_cut_tail(more, cut)
                 shown = clean_reply(
                     more,
                     prompt,
@@ -3142,12 +3204,18 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, body)
 
 
+class PiServer(ThreadingHTTPServer):
+    """The page reload opens many connections. The stdlib backlog of 5 overflows."""
+
+    request_queue_size = 128
+
+
 def make_server(
     host: str | None = None, port: int | None = None
 ) -> ThreadingHTTPServer:
     bind_host = runtime.HOST if host is None else host
     bind_port = runtime.PORT if port is None else port
-    return ThreadingHTTPServer((bind_host, bind_port), Handler)
+    return PiServer((bind_host, bind_port), Handler)
 
 
 def main() -> None:

@@ -223,7 +223,9 @@ if (assistantBubbles().length !== 1) {
   throw new Error("expected one assistant bubble after the first token");
 }
 
-first.push({ choices: [{ index: 0, delta: { content: " is by the east window." } }] });
+first.push({
+  choices: [{ index: 0, delta: { content: " is by the east window and the morning light stays warm there." } }],
+});
 await waitFor("rest of the token", () => {
   const bubble = streamingBubble();
   return Boolean(bubble && bubble.textContent.includes("east window"));
@@ -286,7 +288,7 @@ imageCards = [
     height: 480,
   },
 ];
-const pictured = await sendTurn("What does the tower look like?");
+const pictured = await sendTurn("What does the Eiffel Tower look like?");
 await waitFor("picture live row", () => document.querySelector(".msg.bot.streaming"));
 if (imageCalls !== 1) {
   throw new Error("image request started before the pictured answer finished");

@@ -534,7 +534,43 @@ class ImageCards(unittest.TestCase):
             opener=missing,
         )
         self.assertEqual(empty["cards"], [])
-        self.assertTrue(any("list=search" in url for url in missed))
+        self.assertFalse(any("list=search" in url for url in missed))
+
+    def test_a_greeting_does_not_search(self):
+        def opener(request, timeout=None):
+            raise AssertionError(request.full_url)
+
+        samples = (
+            ("Hello", "Hello! What can I help you with?"),
+            ("how are you", "I'm doing well, thanks! How can I help?"),
+        )
+        for question, answer in samples:
+            found = cards(
+                {"question": question, "answer": answer, "sources": []},
+                opener=opener,
+            )
+            self.assertEqual(found["cards"], [])
+
+    def test_a_long_lowercase_answer_still_searches(self):
+        images.reset_image_cache()
+        calls = []
+
+        def opener(request, timeout=None):
+            url = request.full_url
+            calls.append(url)
+            if "list=search" in url:
+                return _Resp(json.dumps({"query": {"search": [{"title": "Paris"}]}}))
+            if url.endswith("/Paris"):
+                return _Resp(_summary("Paris", "city", PHOTO, PAGE))
+            return _Resp("{}")
+
+        answer = " ".join(["The city has bridges and wide streets today"] * 3)
+        found = cards(
+            {"question": "tell me about paris", "answer": answer, "sources": []},
+            opener=opener,
+        )
+        self.assertTrue(any("list=search" in url for url in calls))
+        self.assertEqual([card["title"] for card in found["cards"]], ["Paris"])
 
     def test_at_most_four_cards_and_seven_fetches(self):
         calls = []

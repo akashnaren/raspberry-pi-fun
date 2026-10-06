@@ -2029,6 +2029,46 @@ class EmbedRoute(unittest.TestCase):
         self.assertEqual(body["skipped"], "off")
 
 
+class StaticCache(unittest.TestCase):
+    def test_static_etag_revalidates_and_the_backlog_is_wide(self):
+        fresh = make_server("127.0.0.1", 0)
+        self.assertGreaterEqual(fresh.request_queue_size, 128)
+        fresh.server_close()
+        httpd = make_server("127.0.0.1", 0)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        port = httpd.server_address[1]
+
+        def get(path, headers=None):
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", path, headers=headers or {})
+            response = conn.getresponse()
+            payload = response.read()
+            status = response.status
+            etag = response.getheader("ETag")
+            conn.close()
+            return status, payload, etag
+
+        try:
+            status, body, etag = get("/static/mesh.css")
+            self.assertEqual(status, 200)
+            self.assertTrue(etag and etag.startswith('"') and etag.endswith('"'))
+            self.assertGreater(len(body), 0)
+            again, empty, matched = get("/static/mesh.css", {"If-None-Match": etag})
+            self.assertEqual(again, 304)
+            self.assertEqual(empty, b"")
+            self.assertEqual(matched, etag)
+            first = get("/static/mesh.css", {"Accept-Encoding": "gzip"})
+            second = get("/static/mesh.css", {"Accept-Encoding": "gzip"})
+            self.assertEqual(first[0], 200)
+            self.assertEqual(second[0], 200)
+            self.assertEqual(first[1], second[1])
+            self.assertGreater(len(first[1]), 0)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+
 if __name__ == "__main__":
     os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     unittest.main()

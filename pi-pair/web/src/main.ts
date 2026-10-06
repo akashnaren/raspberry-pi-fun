@@ -1,5 +1,5 @@
 import { docExcerpt, modelUserContent, userMessagePieces, type DocCard } from "./attach";
-import { cardsFrom, fetchImages, revealImageStrip, type ImageCard } from "./images";
+import { cardsFrom, fetchImages, lowSubstance, revealImageStrip, type ImageCard } from "./images";
 import { mountCharts } from "./chart";
 import { mountDiagrams } from "./diagram";
 import { mountDocs } from "./doc";
@@ -114,6 +114,7 @@ let micBins: Uint8Array<ArrayBuffer> | null = null;
 let syntheticLevel = 0;
 const serviceLines: string[] = [];
 let attachSerial = 0;
+let attachXhr: XMLHttpRequest | null = null;
 let uploading = false;
 let attachError = false;
 let followQueue: FollowItem[] = [];
@@ -562,6 +563,10 @@ function wantsImages(item: Turn): boolean {
   if (!picturesOn || item.stopped || item.role !== "assistant") return false;
   if (!visibleReply(item.content) || imageWordCount(item.content) < 2) return false;
   if (item.content.trim().startsWith("I can't help with that.")) return false;
+  const sources = item.search?.sources || [];
+  if (sources.length) return true;
+  const index = turns.indexOf(item);
+  if (lowSubstance(promptBefore(index), item.content)) return false;
   return true;
 }
 
@@ -619,7 +624,7 @@ function restoreTurns(): void {
         thoughtSeconds: typeof item.thoughtSeconds === "number" ? item.thoughtSeconds : 0,
         stopped: item.stopped === true,
       };
-      if (item.role === "assistant" && Array.isArray(item.images)) turn.images = cardsFrom(item.images);
+      if (item.role === "assistant") turn.images = cardsFrom(item.images) ?? [];
       if (item.attachment && typeof item.attachment === "object") {
         const card = item.attachment as DocCard;
         if (typeof card.name === "string" && typeof card.route === "string") turn.attachment = card;
@@ -1558,7 +1563,7 @@ function queueDraft(text: string, hidden: string, attachment: DocCard | null): v
   const item = result.items[result.items.length - 1];
   followExtra.set(item.id, { text, hidden: hidden.trim(), attachment });
   const box = byId<HTMLTextAreaElement>("q");
-  if (hidden.trim() || attachment) clearAttach();
+  if (hidden.trim() || attachment) cancelAttach();
   box.value = "";
   autoGrow(box);
   paintBrand();
@@ -1598,7 +1603,7 @@ async function send(): Promise<void> {
     queueDraft(text, hidden, attachment);
     return;
   }
-  if (hidden || attachment) clearAttach();
+  if (hidden || attachment) cancelAttach();
   box.value = "";
   autoGrow(box);
   paintBrand();
@@ -1637,6 +1642,15 @@ function clearAttach(): void {
   syncSend();
 }
 
+function cancelAttach(): void {
+  attachSerial += 1;
+  attachXhr?.abort();
+  attachXhr = null;
+  uploading = false;
+  releaseAttachButton();
+  clearAttach();
+}
+
 function releaseAttachButton(): void {
   const button = byId<HTMLButtonElement>("btnAttach");
   button.classList.remove("live");
@@ -1652,7 +1666,7 @@ function showUploadChip(label: string, failed = false): void {
   attachError = failed;
 }
 
-async function loadFile(file: File | null): Promise<void> {
+export async function loadFile(file: File | null): Promise<void> {
   if (!file) return;
   const serial = ++attachSerial;
   const button = byId<HTMLButtonElement>("btnAttach");
@@ -1682,6 +1696,7 @@ async function loadFile(file: File | null): Promise<void> {
   try {
     const response = await new Promise<{ ok: boolean; status: number; text: string }>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      attachXhr = xhr;
       xhr.open("POST", "/v1/attachments");
       xhr.upload.onprogress = (event) => {
         if (!current() || !event.lengthComputable || event.total <= 0) return;
@@ -1740,6 +1755,7 @@ async function loadFile(file: File | null): Promise<void> {
       uploading = false;
       releaseAttachButton();
       syncSend();
+      attachXhr = null;
     }
   }
 }
@@ -2346,7 +2362,7 @@ function newChat(): void {
   const box = byId<HTMLTextAreaElement>("q");
   box.value = "";
   autoGrow(box);
-  clearAttach();
+  cancelAttach();
   voiceNote("");
   setSourcesOpen(false);
   setSettingsOpen(false);
@@ -2423,6 +2439,7 @@ let compactBusyAt = 0.5;
 let ringCompactions = 0;
 let memShowTimer = 0;
 let memHideTimer = 0;
+let memClearTimer = 0;
 let ringTitleTimer = 0;
 
 export function ringDashOffset(used: number, numCtx: number): number {
@@ -2439,28 +2456,6 @@ function memoryMessages(): { role: string; content: string }[] {
     sys: "",
   });
   return body.messages.filter((row) => row.role === "user" || row.role === "assistant").slice(-64);
-}
-
-function paintMemory(facts: { id: string; text: string }[]) {
-  const list = byId("memoryList");
-  list.replaceChildren();
-  for (const fact of facts) {
-    const item = document.createElement("li");
-    const label = document.createElement("span");
-    label.textContent = fact.text;
-    const drop = document.createElement("button");
-    drop.type = "button";
-    drop.textContent = "×";
-    drop.setAttribute("aria-label", "Delete fact");
-    drop.onclick = () => {
-      fetch(`/v1/memory/${encodeURIComponent(fact.id)}`, {
-        method: "DELETE",
-        headers: sessionHeaders(),
-      }).then(() => refreshMemoryRing());
-    };
-    item.append(label, drop);
-    list.append(item);
-  }
 }
 
 function paintRing(usage: { used?: number; num_ctx?: number; compactions?: number }): void {
@@ -2509,7 +2504,6 @@ export async function refreshMemoryRing(): Promise<{ compactions: number } | nul
     if (typeof body.compact_busy_at === "number") compactBusyAt = body.compact_busy_at;
     const usage = body.usage && typeof body.usage === "object" ? body.usage : {};
     paintRing(usage);
-    paintMemory(Array.isArray(body.facts) ? body.facts : []);
     return { compactions: Number(usage.compactions) || 0 };
   } catch {
     return null;
@@ -2600,14 +2594,30 @@ if (memoryButton && memoryAnchor) {
 document.getElementById("memCompact")?.addEventListener("click", () => {
   void compactMemory();
 });
-document.getElementById("memShow")?.addEventListener("click", () => {
-  const panel = byId("memoryPanel");
-  panel.hidden = false;
-  void refreshMemoryRing();
+document.getElementById("memClear")?.addEventListener("click", () => {
+  const button = document.getElementById("memClear");
+  if (!button) return;
+  if (button.dataset.armed === "1") {
+    window.clearTimeout(memClearTimer);
+    button.dataset.armed = "";
+    button.textContent = "Clear memory";
+    void fetch("/v1/memory", { method: "DELETE", headers: sessionHeaders() }).then(() =>
+      refreshMemoryRing().then(() => {
+        holdRingTitle("Memory cleared", 2000);
+        const pop = document.getElementById("memPopText");
+        if (pop) pop.textContent = "Memory cleared";
+      }),
+    );
+    return;
+  }
+  button.textContent = "Tap again to clear";
+  button.dataset.armed = "1";
+  window.clearTimeout(memClearTimer);
+  memClearTimer = window.setTimeout(() => {
+    button.dataset.armed = "";
+    button.textContent = "Clear memory";
+  }, 3000);
 });
-byId("memoryClear").onclick = () => {
-  fetch("/v1/memory", { method: "DELETE", headers: sessionHeaders() }).then(() => refreshMemoryRing());
-};
 void refreshMemoryRing();
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
@@ -2621,7 +2631,7 @@ byId<HTMLInputElement>("attach").onchange = (event) => {
   const input = event.target as HTMLInputElement;
   loadFile(input.files && input.files[0]);
 };
-byId("fileClear").onclick = () => clearAttach();
+byId("fileClear").onclick = () => cancelAttach();
 function paintBrand(typing?: boolean): void {
   const brand = document.getElementById("brand");
   const box = document.getElementById("q") as HTMLTextAreaElement | null;

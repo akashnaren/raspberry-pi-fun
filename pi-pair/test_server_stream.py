@@ -88,3 +88,66 @@ class SoftRefusalStream(unittest.TestCase):
         self.assertEqual("".join(pieces), opener + rest)
         blob = json.dumps(ScriptOllama.seen)
         self.assertNotIn("Answer helpfully if the request is safe.", blob)
+
+    def test_a_length_stop_replaces_a_dangling_marker(self):
+        from pair import runtime
+        from test_turn import ScriptOllama
+
+        ScriptOllama.replies = [
+            {
+                "chunks": ["- **Value 1:** 1\n- **Value 2"],
+                "done_reason": "length",
+            }
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        peer_port = self.http._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self.http._pair()
+        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request(
+            "POST",
+            "/v1/chat/completions",
+            body=json.dumps(
+                {
+                    "messages": [{"role": "user", "content": "Top 5 cars"}],
+                    "stream": True,
+                }
+            ).encode(),
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Target": "pi4",
+                "X-Pi-Mesh": "off",
+            },
+        )
+        raw = conn.getresponse().read().decode()
+        conn.close()
+        frames = []
+        for line in raw.splitlines():
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            frames.append(json.loads(data))
+        replaced = [frame for frame in frames if frame.get("pi_replace")]
+        self.assertTrue(replaced)
+        text = ((replaced[-1].get("choices") or [{}])[0].get("delta") or {}).get(
+            "content"
+        ) or ""
+        self.assertEqual(text.count("**") % 2, 0)
+        self.assertIn("Value 2", text)
+        self.assertIn("…", text)
+        self.assertNotIn("**Value 2", text)
