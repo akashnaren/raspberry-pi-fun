@@ -2074,6 +2074,40 @@ byId("btnVoice").onclick = () => toggleVoice();
 const voiceSend = document.getElementById("voiceSend");
 if (voiceSend) voiceSend.onclick = () => voiceUtterance?.flush();
 byId("btnNew").onclick = () => newChat();
+function paintMemory(facts: { id: string; text: string }[]) {
+  const list = byId("memoryList");
+  list.replaceChildren();
+  for (const fact of facts) {
+    const item = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = fact.text;
+    const drop = document.createElement("button");
+    drop.type = "button";
+    drop.textContent = "×";
+    drop.setAttribute("aria-label", "Delete fact");
+    drop.onclick = () => {
+      fetch(`/v1/memory/${encodeURIComponent(fact.id)}`, { method: "DELETE" }).then(
+        () => loadMemory(),
+      );
+    };
+    item.append(label, drop);
+    list.append(item);
+  }
+}
+function loadMemory() {
+  fetch("/v1/memory")
+    .then((response) => response.json())
+    .then((body) => paintMemory(Array.isArray(body.facts) ? body.facts : []))
+    .catch(() => undefined);
+}
+byId("btnMemory").onclick = () => {
+  const panel = byId("memoryPanel");
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) loadMemory();
+};
+byId("memoryClear").onclick = () => {
+  fetch("/v1/memory", { method: "DELETE" }).then(() => loadMemory());
+};
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
 byId("overlay").onclick = () => {

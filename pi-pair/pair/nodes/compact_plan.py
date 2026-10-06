@@ -2,7 +2,26 @@
 
 from __future__ import annotations
 
+import re
+
 from pair.turn import estimate_tokens
+
+
+def _numbers_and_quotes(text: str) -> list[str]:
+    found = re.findall(
+        r'"([^"]{1,160})"|\'([^\']{1,160})\'|\b\d[\d,]*(?:\.\d+)?\b', text or ""
+    )
+    rows = []
+    for groups in found:
+        piece = (
+            groups
+            if isinstance(groups, str)
+            else next((part for part in groups if part), "")
+        )
+        piece = piece.strip()
+        if piece:
+            rows.append(piece)
+    return rows
 
 
 def plan_turns(turns: list[dict], num_ctx: int) -> dict:
@@ -31,7 +50,10 @@ def plan_turns(turns: list[dict], num_ctx: int) -> dict:
         content = str(row.get("content") or "").strip()
         if not content:
             continue
-        if str(row.get("role") or "") == "user":
+        bits = _numbers_and_quotes(content)
+        if bits:
+            draft_bits.append(" ".join(bits))
+        elif str(row.get("role") or "") == "user":
             draft_bits.append(content[:240])
     return {
         "keep": keep,
