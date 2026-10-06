@@ -1477,6 +1477,7 @@ async function sendText(
     }
     if (followUp !== "retry") flushDeferredHealth();
     if (mine() && followUp !== "retry" && followUp !== "resume") flushFollowQueue();
+    if (mine() && followUp === "") void refreshMemoryRing();
   }
   if (!mine()) return;
   if (followUp === "retry") {
@@ -2210,10 +2211,13 @@ function newChat(): void {
   paint();
   paintBrand();
   box.focus();
+  void refreshMemoryRing();
 }
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  const pop = document.getElementById("memPop");
+  if (pop) pop.hidden = true;
   dismissPopovers();
   setSettingsOpen(false);
   setSourcesOpen(false);
@@ -2267,6 +2271,33 @@ byId("btnVoice").onclick = () => toggleVoice();
 const voiceSend = document.getElementById("voiceSend");
 if (voiceSend) voiceSend.onclick = () => voiceUtterance?.flush();
 byId("btnNew").onclick = () => newChat();
+const RING_C = 56.55;
+let compactAt = 0.7;
+let compactBusyAt = 0.5;
+let ringCompactions = 0;
+let memShowTimer = 0;
+let memHideTimer = 0;
+let ringTitleTimer = 0;
+
+export function ringDashOffset(used: number, numCtx: number): number {
+  const ratio = numCtx > 0 ? used / numCtx : 0;
+  const clamped = Math.min(1, Math.max(0, ratio));
+  return RING_C * (1 - clamped);
+}
+
+function memoryMessages(): { role: string; content: string }[] {
+  const rows: { role: string; content: string }[] = [];
+  for (const turn of turns) {
+    if (turn.role !== "user" && turn.role !== "assistant") continue;
+    const content = turn.role === "user"
+      ? modelUserContent(turn.content, turn.hidden || "")
+      : withoutThinkTags(turn.content);
+    if (!content.trim()) continue;
+    rows.push({ role: turn.role, content });
+  }
+  return rows.slice(-64);
+}
+
 function paintMemory(facts: { id: string; text: string }[]) {
   const list = byId("memoryList");
   list.replaceChildren();
@@ -2282,26 +2313,159 @@ function paintMemory(facts: { id: string; text: string }[]) {
       fetch(`/v1/memory/${encodeURIComponent(fact.id)}`, {
         method: "DELETE",
         headers: sessionHeaders(),
-      }).then(() => loadMemory());
+      }).then(() => refreshMemoryRing());
     };
     item.append(label, drop);
     list.append(item);
   }
 }
-function loadMemory() {
-  fetch("/v1/memory", { headers: sessionHeaders() })
-    .then((response) => response.json())
-    .then((body) => paintMemory(Array.isArray(body.facts) ? body.facts : []))
-    .catch(() => undefined);
+
+function paintRing(usage: { used?: number; num_ctx?: number; compactions?: number }): void {
+  const button = document.getElementById("btnMemory");
+  if (!button) return;
+  const used = Number(usage.used) || 0;
+  const numCtx = Number(usage.num_ctx) || 0;
+  const ratio = numCtx > 0 ? used / numCtx : 0;
+  const fill = button.querySelector(".ring-fill");
+  if (fill) fill.setAttribute("stroke-dashoffset", ringDashOffset(used, numCtx).toFixed(2));
+  const level = ratio >= compactAt ? "high" : ratio >= compactBusyAt ? "mid" : "low";
+  button.setAttribute("data-level", level);
+  const pct = Math.round(Math.min(100, Math.max(0, ratio * 100)));
+  const label = `Context ${pct}% used. Compact memory.`;
+  button.setAttribute("aria-label", label);
+  if (!button.classList.contains("compacting") && button.dataset.titleHold !== "1") {
+    button.title = label;
+  }
+  const pop = document.getElementById("memPopText");
+  const count = Number(usage.compactions) || 0;
+  ringCompactions = count;
+  if (pop) {
+    const noun = count === 1 ? "compaction" : "compactions";
+    pop.textContent = `Context ${pct}% used · ${count} ${noun}`;
+  }
 }
-byId("btnMemory").onclick = () => {
+
+function holdRingTitle(text: string, ms: number): void {
+  const button = document.getElementById("btnMemory");
+  if (!button) return;
+  button.dataset.titleHold = "1";
+  button.title = text;
+  window.clearTimeout(ringTitleTimer);
+  ringTitleTimer = window.setTimeout(() => {
+    button.dataset.titleHold = "";
+    void refreshMemoryRing();
+  }, ms);
+}
+
+export async function refreshMemoryRing(): Promise<{ compactions: number } | null> {
+  try {
+    const response = await fetch("/v1/memory", { headers: sessionHeaders() });
+    if (!response.ok) return null;
+    const body = await response.json();
+    if (typeof body.compact_at === "number") compactAt = body.compact_at;
+    if (typeof body.compact_busy_at === "number") compactBusyAt = body.compact_busy_at;
+    const usage = body.usage && typeof body.usage === "object" ? body.usage : {};
+    paintRing(usage);
+    paintMemory(Array.isArray(body.facts) ? body.facts : []);
+    return { compactions: Number(usage.compactions) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+function showMemPop(): void {
+  const pop = document.getElementById("memPop");
+  if (!pop) return;
+  window.clearTimeout(memHideTimer);
+  window.clearTimeout(memShowTimer);
+  memShowTimer = window.setTimeout(() => {
+    pop.hidden = false;
+  }, 150);
+}
+
+function hideMemPopSoon(): void {
+  const pop = document.getElementById("memPop");
+  if (!pop) return;
+  window.clearTimeout(memShowTimer);
+  window.clearTimeout(memHideTimer);
+  memHideTimer = window.setTimeout(() => {
+    pop.hidden = true;
+  }, 200);
+}
+
+async function pollCompaction(before: number): Promise<void> {
+  const usage = await refreshMemoryRing();
+  if (!usage || usage.compactions <= before) return;
+  const button = document.getElementById("btnMemory");
+  if (!button) return;
+  button.classList.remove("pulsed");
+  void button.offsetWidth;
+  button.classList.add("pulsed");
+  holdRingTitle("Compacted", 2000);
+}
+
+async function compactMemory(): Promise<void> {
+  const button = document.getElementById("btnMemory");
+  if (!button || button.classList.contains("compacting")) return;
+  const before = ringCompactions;
+  button.classList.add("compacting");
+  try {
+    const response = await fetch("/v1/memory/compact", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...sessionHeaders() },
+      body: JSON.stringify({ messages: memoryMessages() }),
+    });
+    if (response.status === 409) {
+      holdRingTitle("Busy, try after this reply", 2000);
+      return;
+    }
+    if (!response.ok) return;
+    const body = await response.json();
+    if (body && body.ok === true && body.queued === true) {
+      window.setTimeout(() => void pollCompaction(before), 2000);
+      window.setTimeout(() => void pollCompaction(before), 6000);
+    }
+  } catch {
+    return;
+  } finally {
+    button.classList.remove("compacting");
+  }
+}
+
+const memoryButton = document.getElementById("btnMemory");
+const memoryAnchor = memoryButton?.closest(".mem-anchor");
+if (memoryButton && memoryAnchor) {
+  memoryAnchor.addEventListener("pointerenter", () => showMemPop());
+  memoryAnchor.addEventListener("pointerleave", () => hideMemPopSoon());
+  memoryAnchor.addEventListener("focusin", () => showMemPop());
+  memoryAnchor.addEventListener("focusout", (event: Event) => {
+    const next = event instanceof FocusEvent ? event.relatedTarget : null;
+    if (next instanceof Node && memoryAnchor.contains(next)) return;
+    hideMemPopSoon();
+  });
+  memoryButton.addEventListener("click", () => {
+    void compactMemory();
+  });
+  memoryButton.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const pop = document.getElementById("memPop");
+    if (pop) pop.hidden = false;
+    document.getElementById("memCompact")?.focus();
+  });
+}
+document.getElementById("memCompact")?.addEventListener("click", () => {
+  void compactMemory();
+});
+document.getElementById("memShow")?.addEventListener("click", () => {
   const panel = byId("memoryPanel");
-  panel.hidden = !panel.hidden;
-  if (!panel.hidden) loadMemory();
-};
+  panel.hidden = false;
+  void refreshMemoryRing();
+});
 byId("memoryClear").onclick = () => {
-  fetch("/v1/memory", { method: "DELETE", headers: sessionHeaders() }).then(() => loadMemory());
+  fetch("/v1/memory", { method: "DELETE", headers: sessionHeaders() }).then(() => refreshMemoryRing());
 };
+void refreshMemoryRing();
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
 byId("overlay").onclick = () => {

@@ -105,6 +105,9 @@ SEARCH_BODY_CAP = 4096
 CHAT_BODY_CAP = 1_000_000
 _DRAIN_CAP = 8 * 1024 * 1024
 _CHAT_ROLES = {"system", "user", "assistant"}
+_COMPACT_GAP_S = 10.0
+_COMPACT_BODY_CAP = 64 * 1024
+_COMPACT_LAST: dict[str, float] = {}
 
 
 class DecodeFailed(Exception):
@@ -1118,6 +1121,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/v1/flywheel/feedback":
             self._feedback()
             return
+        if path == "/v1/memory/compact":
+            self._memory_compact()
+            return
         if path == "/api/chat":
             self._api_chat()
             return
@@ -1814,15 +1820,79 @@ class Handler(BaseHTTPRequestHandler):
 
     def _memory_get(self) -> None:
         from pair import memory
+        from pair.compact import BUSY_RATIO, IDLE_RATIO
 
         scope = self._memory_scope()
-        body = json.dumps(
+        if scope:
+            usage = memory.stats(scope)
+        else:
+            usage = {
+                "used": 0,
+                "num_ctx": self._memory_num_ctx(),
+                "compactions": 0,
+                "last_compact_ms": 0,
+            }
+        self._write_json(
             {
                 "facts": memory.list_facts(scope) if scope else [],
                 "summary": memory.summary_text(scope) if scope else "",
+                "usage": usage,
+                "compact_at": IDLE_RATIO,
+                "compact_busy_at": BUSY_RATIO,
             }
-        ).encode()
-        self.send_response(200)
+        )
+
+    def _memory_num_ctx(self) -> int:
+        """Same context knob the idle compactor uses."""
+        try:
+            return int((_tuned_knobs("") or {}).get("num_ctx") or 2048)
+        except Exception:
+            return 2048
+
+    def _memory_compact(self) -> None:
+        """Queue one compact in the existing idle slot. Never preempts a decode."""
+        scope = self._memory_scope()
+        data = self._read_json(cap=_COMPACT_BODY_CAP, label="compact body")
+        if data is None:
+            return
+        if not scope:
+            self._write_json({"ok": False, "reason": "no_session"}, status=400)
+            return
+        rows: list[dict] = []
+        messages = data.get("messages")
+        if isinstance(messages, list):
+            for row in messages:
+                if len(rows) >= 64:
+                    break
+                if not isinstance(row, dict):
+                    continue
+                role = row.get("role")
+                content = row.get("content")
+                if role not in {"user", "assistant"} or not isinstance(content, str):
+                    continue
+                rows.append({"role": role, "content": content})
+        if runtime.gate.in_flight() or runtime.gate.waiting():
+            self._write_json({"ok": False, "reason": "busy"}, status=409)
+            return
+        now = time.monotonic()
+        previous = _COMPACT_LAST.get(scope, 0.0)
+        if now - previous < _COMPACT_GAP_S:
+            self._write_json({"ok": False, "reason": "rate"}, status=429)
+            return
+        _COMPACT_LAST[scope] = now
+        from pair.compact import schedule
+
+        queued = schedule(
+            rows,
+            self._memory_num_ctx(),
+            idle=lambda: not runtime.gate.in_flight() and not runtime.gate.waiting(),
+            scope=scope,
+        )
+        self._write_json({"ok": True, "queued": bool(queued)})
+
+    def _write_json(self, payload: dict, status: int = 200) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(status)
         self._cors()
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))

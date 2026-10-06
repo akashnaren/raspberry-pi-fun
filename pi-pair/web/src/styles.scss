@@ -8,6 +8,8 @@
   --line: #1d1d1d;
   --danger: #ff5f57;
   --accent: #7cb8ff;
+  --fg-muted: var(--muted);
+  --warn: #e6b15c;
   --think: #7ec8b8;
   --col: 46rem;
   --bubble: #2a2a2a;
@@ -196,6 +198,47 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
   font-size: 14px;
 }
 .memory-panel[hidden] { display: none; }
+.mem-anchor { position: relative; }
+.mem-ring .ring-track { stroke: var(--line); }
+.mem-ring .ring-fill {
+  stroke: var(--fg-muted);
+  transition: stroke-dashoffset 400ms ease;
+}
+.mem-ring[data-level="mid"] .ring-fill { stroke: var(--accent); }
+.mem-ring[data-level="high"] .ring-fill { stroke: var(--warn); }
+.mem-ring.compacting svg { animation: ring-spin 1s linear infinite; }
+.mem-ring.pulsed { animation: ring-pulse 400ms ease; }
+.mem-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 11rem;
+  padding: 10px 12px;
+  background: var(--elev);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+}
+.mem-pop[hidden] { display: none; }
+.mem-pop p { margin: 0 0 8px; }
+.mem-pop button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  min-height: 32px;
+  padding: 4px 2px;
+  border-radius: 8px;
+}
+.mem-pop button:hover, .mem-pop button:focus { background: var(--hover); }
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+@keyframes ring-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
 .memory-title { margin: 0 0 6px; }
 #memoryList { list-style: none; margin: 0; padding: 0; }
 #memoryList li { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
@@ -1802,6 +1845,7 @@ body.voice-session {
 
   .voice-stage.speaking .voice-dots,
   .voice-stage.speaking.beat .voice-dots { transform: none; }
+  .mem-ring.compacting svg, .mem-ring.pulsed { animation: none; }
 
   .stage { opacity: 1; transform: none; }
   .stages { transition: none; }
@@ -1818,6 +1862,8 @@ html[data-theme="light"] {
   --line: #e4e2dc;
   --danger: #c53630;
   --accent: #1859b5;
+  --fg-muted: var(--muted);
+  --warn: #9a6700;
   --think: #0c6b58;
   --bubble: #e7e4dc;
   --on-bubble: #161616;
