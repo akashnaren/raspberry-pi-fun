@@ -91,7 +91,7 @@ def stamp(payload: dict, mode: str) -> dict:
 def openapi_document() -> dict:
     checkpoint = flash_checkpoint()
     description = (
-        "HTTP API so other apps can call Pi GPT. "
+        "HTTP API so other apps can call OpenPi. "
         f"Set {API_KEY_ENV} in the router environment. "
         "Send that value as `Authorization: Bearer <key>` or as the "
         "`X-API-Key` header. Do not put the key in the query string. "
@@ -99,7 +99,7 @@ def openapi_document() -> dict:
         "A missing or wrong key returns 401. "
         "POST /api/chat uses the same inference cap as the page. "
         "When every slot is in use the request waits in a queue of 8 for up to "
-        "60 seconds. The page shows Waiting for a free slot. A full queue or a "
+        "15 minutes. The page shows Waiting for a free slot. A full queue or a "
         "wait that runs out returns 503 with a short message and does not name "
         "the board. A map hit does not take a slot. "
         "`GET /openapi.json` and `GET /docs` do not require the key. "
@@ -124,7 +124,7 @@ def openapi_document() -> dict:
     return {
         "openapi": "3.0.3",
         "info": {
-            "title": "Pi GPT API",
+            "title": "OpenPi API",
             "version": "1.0.0",
             "description": description,
         },
@@ -139,7 +139,7 @@ def openapi_document() -> dict:
                 "post": {
                     "operationId": "postChat",
                     "tags": ["chat"],
-                    "summary": "Chat with Pi GPT",
+                    "summary": "Chat with OpenPi",
                     "description": (
                         "One user turn, or a short session in `messages`. "
                         "Omitting `mode` selects the Flash model. "
@@ -407,7 +407,7 @@ def swagger_html() -> bytes:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pi GPT Swagger UI</title>
+  <title>OpenPi API docs</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css">
   <style>
     body {{ margin: 0; font-family: "Source Serif 4", Georgia, serif; color: #1c1917; background: #fafaf9; }}
@@ -422,7 +422,7 @@ def swagger_html() -> bytes:
 <body>
   <div id="swagger-ui"></div>
   <article id="fallback">
-    <h1>Pi GPT Swagger UI</h1>
+    <h1>OpenPi API docs</h1>
     <p class="muted">This page is the Swagger UI for <a href="/openapi.json">/openapi.json</a>. The script below loads the UI from the OpenAPI document. The text here is the same contract when that script is unavailable.</p>
     <h2>Auth</h2>
     <p>Set <code>{API_KEY_ENV}</code> on the router. Send it on chat and health as <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key: &lt;key&gt;</code>. An unset variable returns 503. A wrong key returns 401. The docs and the OpenAPI JSON do not require the key. Do not put the key in a query string.</p>

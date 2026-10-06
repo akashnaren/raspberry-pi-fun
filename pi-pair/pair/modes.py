@@ -43,8 +43,8 @@ def mode_tips(knobs: dict | None = None) -> dict[str, str]:
     """Info-icon sentences. Tags stay in /health for the operator, not the tip."""
     del knobs
     return {
-        FLASH: "The fast resident model.",
-        PRO: "The stronger resident model.",
+        FLASH: "Fast answers for everyday questions.",
+        PRO: "Slower, more careful answers for harder questions.",
     }
 
 

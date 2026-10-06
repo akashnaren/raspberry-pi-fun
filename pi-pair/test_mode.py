@@ -93,8 +93,10 @@ class Resolve(unittest.TestCase):
         self.assertEqual(resolve_mode("pro", "nope", knobs), ("pro", "custom:pro"))
         self.assertEqual(resolve_mode(None, "custom:pro", knobs), ("pro", "custom:pro"))
         tips = mode_tips(knobs)
-        self.assertEqual(tips["flash"], "custom:flash, the fast resident model.")
-        self.assertEqual(tips["pro"], "custom:pro, loaded when the question needs it.")
+        self.assertEqual(tips["flash"], "Fast answers for everyday questions.")
+        self.assertEqual(
+            tips["pro"], "Slower, more careful answers for harder questions."
+        )
         self.assertNotIn("qwen2.5", tips["flash"] + tips["pro"])
         route, tag, _reason = resolve_auto(
             "Write a python function", [FLASH_MODEL], knobs

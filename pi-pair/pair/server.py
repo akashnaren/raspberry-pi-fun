@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import ipaddress
 import json
 import os
 import threading
@@ -538,6 +539,25 @@ def _claim_wait(slot: dict) -> bool:
     return False
 
 
+_RFC1918 = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+_PUBLIC_HIDDEN = {"x-pi-peer", "x-pi-chip"}
+
+
+def _lan_address(host: str) -> bool:
+    """True for loopback and RFC 1918. Anything else is treated as public."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if ip.is_loopback:
+        return True
+    return any(ip.version == net.version and ip in net for net in _RFC1918)
+
+
 def health_document() -> dict:
     peers = snapshot_peers()
     up = sum(1 for peer in peers if isinstance(peer, dict) and peer.get("ok"))
@@ -553,6 +573,7 @@ def health_document() -> dict:
         "peers": peers,
         "slots": runtime.INFER_SLOTS,
         "in_flight": runtime.gate.in_flight(),
+        "waiting": runtime.gate.waiting(),
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
         "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
         "services": {
@@ -561,6 +582,32 @@ def health_document() -> dict:
             "peers_up": up,
             "peers": len(peers),
         },
+    }
+
+
+def public_health(doc: dict) -> dict:
+    """What a tunnel may show. Names, hosts, ports, roles, and latency stay off."""
+    services: dict = {}
+    for key, value in (doc.get("services") or {}).items():
+        if isinstance(value, dict) and "ok" in value:
+            services[key] = bool(value.get("ok"))
+        elif isinstance(value, bool):
+            services[key] = value
+    peers = []
+    for peer in doc.get("peers") or []:
+        if not isinstance(peer, dict):
+            continue
+        models = peer.get("models") if isinstance(peer.get("models"), list) else []
+        peers.append({"ok": bool(peer.get("ok")), "models": models})
+    return {
+        "ok": bool(doc.get("ok")),
+        "slots": doc.get("slots"),
+        "in_flight": doc.get("in_flight"),
+        "waiting": doc.get("waiting", runtime.gate.waiting()),
+        "uptime_s": doc.get("uptime_s"),
+        "peers_up": doc.get("peers_up"),
+        "services": services,
+        "peers": peers,
     }
 
 
@@ -628,6 +675,35 @@ def allowed_api_origin(origin: str, host: str, allowlist: str = "") -> str:
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
+
+    def send_response(self, code: int, message: str | None = None) -> None:
+        self._sent_pi: set[str] = set()
+        super().send_response(code, message)
+
+    def send_header(self, keyword: str, value: str) -> None:
+        name = str(keyword)
+        if name.lower().startswith("x-pi-"):
+            key = name.lower()
+            sent = getattr(self, "_sent_pi", None)
+            if sent is None:
+                sent = set()
+                self._sent_pi = sent
+            if key in sent:
+                return
+            if self._public() and key in _PUBLIC_HIDDEN:
+                return
+            sent.add(key)
+        super().send_header(keyword, value)
+
+    def _public(self) -> bool:
+        """True on the Cloudflare tunnel, or when the client is not on the LAN."""
+        if self.headers.get("Cf-Ray") or self.headers.get("Cf-Connecting-Ip"):
+            return True
+        loop = (self.headers.get("Cdn-Loop") or "").lower()
+        if "cloudflare" in loop:
+            return True
+        host = str(self.client_address[0]) if self.client_address else ""
+        return not _lan_address(host)
 
     def _api_route(self) -> bool:
         path = (self.path or "").split("?", 1)[0]
@@ -705,7 +781,10 @@ class Handler(BaseHTTPRequestHandler):
             self._api_health()
             return
         if path.startswith("/health") or path.startswith("/peers"):
-            body = json.dumps(health_document()).encode()
+            doc = health_document()
+            if path.startswith("/health") and self._public():
+                doc = public_health(doc)
+            body = json.dumps(doc).encode()
             self.send_response(200)
             self._cors()
             self.send_header("content-type", "application/json")
@@ -849,6 +928,8 @@ class Handler(BaseHTTPRequestHandler):
             self._reject_api(*rejected)
             return
         body_obj = health_document()
+        if self._public():
+            body_obj = public_health(body_obj)
         body_obj["public_model"] = FLASH_MODE
         body_obj["default_mode"] = FLASH_MODE
         body_obj["checkpoint"] = flash_checkpoint()
@@ -2199,11 +2280,12 @@ class Handler(BaseHTTPRequestHandler):
             safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
             safe_write(self, b"data: [DONE]\n\n", flush=True)
             return
-        safe_write(
-            self,
-            f": pi-pair peer={peer['name']} kind={kind} model={used}\n\n".encode(),
-            flush=True,
-        )
+        if not self._public():
+            safe_write(
+                self,
+                f": pi-pair peer={peer['name']} kind={kind} model={used}\n\n".encode(),
+                flush=True,
+            )
         first = {
             "id": "pi-pair",
             "object": "chat.completion.chunk",
@@ -2758,7 +2840,7 @@ def make_server(
 def main() -> None:
     runtime.configure()
     print(
-        f"Pi GPT 1.0 on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
+        f"OpenPi 1.0 on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
         f"flash={mode_table().get('flash')} pro={mode_table().get('pro')} "
         f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s "
         f"brain=pi4 search=pi2 dataset=pi3",
