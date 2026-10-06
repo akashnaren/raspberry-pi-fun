@@ -1235,6 +1235,8 @@ body.voice-session {
 
   &.on { display: inline-flex; }
 
+  &.err { color: var(--danger); }
+
   button {
     color: var(--dim);
     font-size: 14px;

@@ -143,6 +143,41 @@ class GateUnit(unittest.TestCase):
             else:
                 os.environ["PI_PAIR_SLOTS"] = previous
 
+    def test_waiters_keep_fifo_order_and_report_position(self):
+        gate = InferenceGate(1, queue_limit=8, wait_timeout=2)
+        self.assertTrue(gate.try_acquire())
+        status_a, ticket_a = gate.reserve_ticket()
+        status_b, ticket_b = gate.reserve_ticket()
+        self.assertEqual(status_a, "wait")
+        self.assertEqual(status_b, "wait")
+        self.assertEqual(gate.position(ticket_a), 1)
+        self.assertEqual(gate.position(ticket_b), 2)
+        self.assertGreater(gate.eta_s(2), 0)
+        ticks: list[tuple[str, int]] = []
+        order: list[str] = []
+
+        def run(name: str, ticket) -> None:
+            def on_tick(pos: int, _eta: int) -> None:
+                ticks.append((name, pos))
+
+            self.assertTrue(gate.wait(ticket, on_tick=on_tick, timeout=2))
+            order.append(name)
+            gate.release(ticket)
+
+        first = threading.Thread(target=run, args=("a", ticket_a))
+        second = threading.Thread(target=run, args=("b", ticket_b))
+        first.start()
+        second.start()
+        time.sleep(0.05)
+        gate.release()
+        first.join(2)
+        second.join(2)
+        self.assertEqual(order, ["a", "b"])
+        self.assertIn(("b", 2), ticks)
+        self.assertIn(("b", 1), ticks)
+        self.assertEqual(gate.in_flight(), 0)
+        self.assertEqual(gate.waiting(), 0)
+
     def test_there_is_no_process_wide_inference_semaphore(self):
         self.assertFalse(hasattr(runtime, "_infer_sem"))
         self.assertIsInstance(runtime.gate, InferenceGate)
@@ -401,7 +436,7 @@ class ConcurrentChat(unittest.TestCase):
         self.assertEqual(HoldOllama.posts, 0)
         runtime.gate.release()
 
-    def test_canned_and_page_answers_skip_a_full_gate(self):
+    def test_canned_answers_skip_a_full_gate(self):
         runtime.set_infer_slots(1)
         self.assertTrue(runtime.gate.try_acquire())
         port = self._pi4()
@@ -417,38 +452,6 @@ class ConcurrentChat(unittest.TestCase):
         self.assertEqual(
             body["choices"][0]["message"]["content"], "Hi. What can I help you with?"
         )
-        self.assertEqual(HoldOllama.posts, 0)
-
-        page = (
-            "The balloon gains 12 cubic centimeters per second. "
-            "When the surface area is 36 pi square centimeters, r = 3. "
-            "dr/dt = 1/(3 pi) centimeters per second."
-        )
-
-        def fake(query, opener=None):
-            return {
-                "status": "ok",
-                "sources": [
-                    {"title": "Balloon note", "url": "https://example.com/balloon"}
-                ],
-                "context": "Text from the first page:\n" + page,
-            }
-
-        pair_server.lookup_web = fake
-        prompt = (
-            "A spherical balloon is being inflated with gas at a constant rate of "
-            "12 cubic centimeters per second. Find the exact rate at which the radius "
-            "is increasing when the surface area is 36 pi square centimeters."
-        )
-        started = time.perf_counter()
-        status, _headers, body = self._post(
-            port,
-            prompt,
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertLess(time.perf_counter() - started, 0.5)
-        self.assertEqual(status, 200)
-        self.assertIn("dr/dt = 1/(3 pi)", body["choices"][0]["message"]["content"])
         self.assertEqual(HoldOllama.posts, 0)
         runtime.gate.release()
 
@@ -518,6 +521,59 @@ class ConcurrentChat(unittest.TestCase):
             self.assertEqual(body["error"], "That machine cannot answer chats.")
             self.assertNotIn(name, body["error"])
         self.assertEqual(HoldOllama.posts, 0)
+
+    def test_same_request_id_cancels_the_first(self):
+        runtime.set_infer_slots(1)
+
+        class SeqHold(HoldOllama):
+            def do_POST(self):
+                length = int(self.headers.get("content-length") or 0)
+                self.rfile.read(length)
+                with type(self).lock:
+                    type(self).posts += 1
+                    number = type(self).posts
+                if number == 1:
+                    type(self).release.wait(timeout=8)
+                self._send(json.dumps({"message": {"content": "held"}}).encode())
+
+        SeqHold.posts = 0
+        SeqHold.lock = threading.Lock()
+        SeqHold.release = threading.Event()
+        port = self._pi4(SeqHold)
+        headers = {
+            "X-Pi-Target": "pi4",
+            "X-Pi-Mesh": "off",
+            "X-Pi-Request-Id": "same-turn",
+        }
+        results: list = [None]
+        peak = {"n": 0}
+        stop = threading.Event()
+
+        def watch() -> None:
+            while not stop.wait(0.02):
+                peak["n"] = max(peak["n"], runtime.gate.in_flight())
+
+        def first() -> None:
+            try:
+                results[0] = self._post(port, "novel same id one", headers, timeout=5)
+            except Exception as exc:
+                results[0] = exc
+
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        threading.Thread(target=first, daemon=True).start()
+        deadline = time.monotonic() + 3
+        while SeqHold.posts < 1 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertGreaterEqual(SeqHold.posts, 1)
+        status, _headers, body = self._post(
+            port, "novel same id two", headers, timeout=5
+        )
+        stop.set()
+        SeqHold.release.set()
+        self.assertEqual(status, 200, body)
+        self.assertIn("held", json.dumps(body))
+        self.assertLessEqual(peak["n"], 1)
 
     def test_page_shows_the_capacity_sentence(self):
         source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")

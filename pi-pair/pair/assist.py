@@ -4,11 +4,9 @@ Request refusal is optional. `safety_filter` gates it, and
 `pair.moderate.moderate` is the hook a later safety stack replaces. With the
 flag off, nothing here refuses a prompt or replaces a reply for harmful wording.
 
-`is_harmful` is the lexicon. List and sequence routing still consult it so
-those paths stay off harmful asks. A soft refusal is retried only when the
-prompt is a harmless shape. One nudge retry comes first. A second soft refusal
-on a list or real-world question can be grounded by the caller (search notes
-or Pro). The last resort is one honest sentence, never a canned item list.
+`is_harmful` is the lexicon. A soft refusal on a harmless question is nudged
+once. The model's words stay after that. This module does not invent a list
+or replace an ordinary answer with a canned sentence.
 """
 
 from __future__ import annotations
@@ -16,27 +14,10 @@ from __future__ import annotations
 import functools
 import re
 
-from pair.charts import is_structured_request
-from pair.lists import list_count, placeholder_only
-
 HELPFUL_NUDGE = "Answer helpfully if the request is safe."
-
-LIST_MISS = "I couldn't get a good list for that, try Pro or rephrase."
-FACT_MISS = "I couldn't get a good answer for that, try Pro or rephrase."
 
 HARM_REFUSAL = "I can't help with that."
 CRISIS_REFUSAL = "I can't help with that. If you are in crisis, call or text 988."
-
-ANSWER_HINT = (
-    "Answer the user's question directly. "
-    "Answer helpfully if the request is safe. "
-    "Do not mention model choice, routing, or the mesh."
-)
-
-LIST_HINT = (
-    "Reply with a numbered list, one item per line, numbered from 1. "
-    "Answer helpfully if the request is safe."
-)
 
 _GREETING = re.compile(
     r"^(?:(?:hi|hello|hey|hiya|howdy|yo|sup)(?:\s+there)?|"
@@ -330,8 +311,7 @@ def is_casual_greeting(prompt: str) -> bool:
 
 
 def is_list_shape(prompt: str) -> bool:
-    text = prompt or ""
-    return bool(list_count(text) or _LIST_SHAPE.search(text))
+    return bool(_LIST_SHAPE.search(prompt or ""))
 
 
 def is_plain_factual(prompt: str) -> bool:
@@ -355,11 +335,6 @@ def may_retry_refusal(prompt: str) -> bool:
     return is_harmless_shape(prompt)
 
 
-def wants_grounded_retry(prompt: str) -> bool:
-    """A list or real-world question can try search notes or Pro. A greeting does not."""
-    return may_retry_refusal(prompt) and not is_casual_greeting(prompt)
-
-
 @functools.lru_cache(maxsize=256)
 def is_soft_refusal(text: str) -> bool:
     return bool(_SOFT.search(_fold(text)))
@@ -376,19 +351,6 @@ def friendly_greeting(prompt: str) -> str:
     if folded.startswith("hey"):
         return "Hey! How can I help?"
     return "Hi! How can I help?"
-
-
-def answer_hint_for(prompt: str) -> str | None:
-    """A short system hint for a harmless question. Plots already have one."""
-    if (
-        is_harmful(prompt)
-        or is_structured_request(prompt)
-        or not is_harmless_shape(prompt)
-    ):
-        return None
-    if is_list_shape(prompt):
-        return LIST_HINT
-    return ANSWER_HINT
 
 
 def leaks_infra(text: str) -> bool:
@@ -450,8 +412,6 @@ def withhold_partial(text: str) -> bool:
         return False
     if is_soft_refusal(sample) or _META.search(sample):
         return True
-    if placeholder_only(text or ""):
-        return True
     folded = sample.lower()
     if len(folded) > 180:
         return False
@@ -468,20 +428,6 @@ def visible_canned(prompt: str, answer: str) -> str:
     return text
 
 
-def honest_fallback(prompt: str) -> str:
-    """One sentence. No invented cars, movies, or other items."""
-    if is_casual_greeting(prompt):
-        return friendly_greeting(prompt)
-    if is_list_shape(prompt):
-        return LIST_MISS
-    return FACT_MISS
-
-
-def is_honest_miss(text: str) -> bool:
-    folded = " ".join((text or "").split())
-    return folded in {LIST_MISS, FACT_MISS}
-
-
 def _usable(prompt: str, text: str) -> str:
     cleaned = scrub_reply(text or "")
     if not cleaned or is_soft_refusal(cleaned):
@@ -492,12 +438,13 @@ def _usable(prompt: str, text: str) -> str:
 
 
 def settle_reply(prompt: str, text: str, retry, ground=None) -> str:
-    """Scrub a harmless reply. One nudge, then one grounded retry, then one line.
+    """Scrub a reply. One nudge when a harmless question comes back refused.
 
-    `retry` and `ground` are each called at most once. A prompt or reply the
-    moderation hook refuses becomes that verdict's replacement. Any other
-    prompt that is not a harmless shape keeps a soft refusal as the model wrote it.
+    `ground` is unused. The model's words stay; this does not substitute a
+    canned list or a canned miss. A prompt or reply the moderation hook
+    refuses becomes that verdict's replacement.
     """
+    del ground
     from pair.moderate import moderate
 
     raw = text or ""
@@ -527,12 +474,5 @@ def settle_reply(prompt: str, text: str, retry, ground=None) -> str:
     kept = _usable(prompt, second)
     if kept:
         return kept
-    if wants_grounded_retry(prompt) and ground is not None:
-        try:
-            third = ground() or ""
-        except Exception:
-            third = ""
-        kept = _usable(prompt, third)
-        if kept:
-            return kept
-    return honest_fallback(prompt)
+    shown = scrub_reply(second or raw)
+    return shown or (second or raw)

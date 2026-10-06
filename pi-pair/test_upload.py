@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import sys
@@ -19,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pair import ocr, upload
+from pair.pdftext import extract_pdf_text
 from pair.server import make_server
 
 JPEG = b"\xff\xd8\xff\xd9"
@@ -66,6 +69,46 @@ def _flate_pdf(text: str) -> bytes:
     return header + body + xref.encode("ascii") + trailer
 
 
+def _content_pdf(stream: bytes, filter_clause: bytes, decoy: bytes = b"") -> bytes:
+    """One-page PDF whose content stream uses filter_clause."""
+    header = b"%PDF-1.4\n"
+    page = (
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200]"
+        + decoy
+        + b" /Contents 4 0 R >>\nendobj\n"
+    )
+    objects = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        page,
+        (
+            b"4 0 obj\n<< /Length "
+            + str(len(stream)).encode("ascii")
+            + b" "
+            + filter_clause
+            + b" >>\nstream\n"
+            + stream
+            + b"\nendstream\nendobj\n"
+        ),
+    ]
+    body = b""
+    cursor = len(header)
+    offsets = []
+    for chunk in objects:
+        offsets.append(cursor)
+        body += chunk
+        cursor += len(chunk)
+    xref = "xref\n0 5\n0000000000 65535 f \n" + "".join(
+        f"{off:010d} 00000 n \n" for off in offsets
+    )
+    trailer = (
+        f"trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{cursor}\n%%EOF\n".encode(
+            "ascii"
+        )
+    )
+    return header + body + xref.encode("ascii") + trailer
+
+
 def _multipart(name: str, mime: str, data: bytes) -> tuple[str, bytes]:
     boundary = "----pi-pair-test"
     head = (
@@ -104,7 +147,7 @@ class MimeRouting(unittest.TestCase):
         with self.assertRaises(upload.UploadRejected) as pdf_error:
             upload.route_for("essay.pdf", "application/pdf", TEXT_PDF)
         self.assertEqual(pdf_error.exception.status, 415)
-        self.assertIn("JPEG-scanned", str(pdf_error.exception))
+        self.assertEqual(str(pdf_error.exception), "that PDF has no readable text")
         self.assertFalse(upload.is_jpeg_scanned_pdf(TEXT_PDF))
         self.assertTrue(upload.is_jpeg_scanned_pdf(JPEG_PDF))
         essay = _flate_pdf("Hello")
@@ -119,6 +162,48 @@ class MimeRouting(unittest.TestCase):
             upload.route_for("rows.csv", "text/csv", b"a,b")
         self.assertEqual(csv_error.exception.status, 415)
         self.assertEqual(str(csv_error.exception), "unsupported file type")
+
+    def test_reportlab_and_hex_filters_keep_page_text(self):
+        page = b"BT /F1 12 Tf 72 720 Td (Secret code word: PINEAPPLE) Tj ET"
+        encoded = base64.a85encode(zlib.compress(page)) + b"~>"
+        report = _content_pdf(
+            encoded,
+            b"/Filter [ /ASCII85Decode /FlateDecode ]",
+            decoy=b" /Filter /LZWDecode",
+        )
+        self.assertEqual(upload.route_for("note.pdf", "application/pdf", report), "pdf")
+        ingested = upload.ingest("application/pdf", report, filename="note.pdf")
+        self.assertIn("PINEAPPLE", ingested["text"])
+
+        folded = b"<~" + b"\n".join(
+            encoded[index : index + 16] for index in range(0, len(encoded) - 2, 16)
+        )
+        if not folded.endswith(b"~>"):
+            folded += b"~>"
+        wrapped = _content_pdf(
+            folded,
+            b"/Filter [ /ASCII85Decode /FlateDecode ]",
+        )
+        self.assertIn("PINEAPPLE", extract_pdf_text(wrapped))
+
+        hex_page = binascii.hexlify(b"BT (Hex word) Tj ET") + b"0>"
+        hex_pdf = _content_pdf(hex_page, b"/Filter /ASCIIHexDecode")
+        self.assertEqual(upload.route_for("hex.pdf", "application/pdf", hex_pdf), "pdf")
+        self.assertIn(
+            "Hex word",
+            upload.ingest("application/pdf", hex_pdf, filename="hex.pdf")["text"],
+        )
+
+        skipped = _content_pdf(
+            b"BT (Hidden) Tj ET",
+            b"/Filter /LZWDecode",
+        )
+        self.assertEqual(extract_pdf_text(skipped), "")
+        kept = _content_pdf(
+            zlib.compress(b"BT (One) Tj <54776F> Tj ET\nBT (Two) Tj ET") + b"junk",
+            b"/Filter /FlateDecode",
+        )
+        self.assertEqual(extract_pdf_text(kept), "One Two\nTwo")
 
     def test_txt_extension_stays_text_and_jpeg_named_pdf_is_an_image(self):
         self.assertEqual(

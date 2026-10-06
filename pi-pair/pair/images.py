@@ -104,11 +104,8 @@ def visual_mode(prompt: str) -> str:
     visual = bool(noun or suits_visuals(text))
     if not visual:
         return "none"
-    from pair.lists import list_count
-
-    counted = list_count(text)
     plural = bool(_SEVERAL.search(text) or (noun and _LISTISH.search(text)))
-    if counted or plural:
+    if plural:
         return "each"
     return "one"
 
@@ -439,10 +436,7 @@ def cards_for_answer(prompt: str, answer: str, opener=None) -> list[dict]:
         return []
     if mode == "one":
         return lookup_images(prompt, opener=opener)
-    from pair.lists import list_count
-
-    counted = list_count(prompt) or MAX_LIST_CARDS
-    limit = min(counted, MAX_LIST_CARDS)
+    limit = MAX_LIST_CARDS
     names = item_names(answer, limit)
     movie = bool(
         _MOVIE.search(prompt or "")

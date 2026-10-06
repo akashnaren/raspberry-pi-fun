@@ -5,18 +5,21 @@ from __future__ import annotations
 import json
 import time
 
+from pair.cancel import ClientGone
 from pair.chat import llamacpp_model, ollama_payload, open_json
 from pair.guard import require_generative
 from pair.knobs import inference_knobs
 from pair.think import (
-    DIRECT_FALLBACK,
     NON_THINK_TEMPERATURE,
     NON_THINK_TOP_P,
     PRESENCE_PENALTY,
     TOP_K,
     clip_reasoning,
+    peel_think,
     reasoning_tokens,
+    sample_knobs,
     stop_thinking,
+    visible_answer,
     with_force,
 )
 
@@ -119,23 +122,40 @@ class TextStream:
         yield from self._producer(self)
 
 
-def _read_ndjson(response):
-    while True:
-        raw = response.readline()
-        if not raw:
-            break
-        yield raw.decode("utf-8", errors="replace")
+def _read_ndjson(response, cancel=None):
+    token = None
+    if cancel is not None:
+        abort = getattr(response, "abort", None)
+        if abort is not None:
+            token = cancel.attach(abort)
+    try:
+        while True:
+            if cancel is not None:
+                cancel.check()
+            try:
+                raw = response.readline()
+            except OSError:
+                if cancel is not None and cancel.gone():
+                    raise ClientGone() from None
+                raise
+            if not raw:
+                break
+            yield raw.decode("utf-8", errors="replace")
+    finally:
+        if cancel is not None and token:
+            cancel.detach(token)
 
 
 def iter_ollama_channels(
-    peer, model, messages, temperature=0.7, max_tokens=256, plan=None
+    peer, model, messages, temperature=0.7, max_tokens=256, plan=None, cancel=None
 ):
     """Yield ('thinking', text) or ('content', text) from Ollama.
 
-    High thinking stops at the token cap or at about 25 seconds, then one
+    Levels pass think=false, so this is one direct call. A hand-built thinking
+    plan still stops at the token cap or at about 25 seconds, then one
     follow-up with think=false produces the answer. That follow-up is not
-    part of the saved chat. A High turn still yields an answer if both
-    calls come back empty.
+    part of the saved chat. `<think>` tags are not treated as an answer. If
+    both calls leave no visible text, the iterator yields a fallback sentence.
     """
     require_generative(peer)
     knobs = inference_knobs()
@@ -143,9 +163,7 @@ def iter_ollama_channels(
     budget = int(plan.think_budget) if think and plan else 0
     seconds = float(plan.think_seconds) if think and plan else 0.0
     predict = int(plan.ollama_predict(max_tokens)) if plan else int(max_tokens)
-    top_p = plan.top_p if plan else None
-    top_k = plan.top_k if plan else None
-    penalty = plan.presence_penalty if plan and plan.presence_penalty else None
+    top_p, top_k, penalty = sample_knobs(plan)
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
     payload = ollama_payload(
         model,
@@ -160,6 +178,7 @@ def iter_ollama_channels(
         presence_penalty=penalty,
     )
     accumulated = ""
+    content_parts: list[str] = []
     saw_content = False
     capped = False
     started = time.monotonic()
@@ -167,8 +186,8 @@ def iter_ollama_channels(
     # socket may stay open for the rest of that reply.
     first_timeout = seconds if think and seconds else 180
     try:
-        with open_json(url, payload, timeout=first_timeout) as response:
-            for line in _read_ndjson(response):
+        with open_json(url, payload, timeout=first_timeout, cancel=cancel) as response:
+            for line in _read_ndjson(response, cancel):
                 content, thinking, done, skip, _reason = ollama_parts(line)
                 if skip:
                     continue
@@ -201,7 +220,9 @@ def iter_ollama_channels(
                 ):
                     capped = True
                 if content:
-                    saw_content = True
+                    content_parts.append(content)
+                    if peel_think("".join(content_parts))[0].strip():
+                        saw_content = True
                     yield "content", content
                 if done or (capped and not saw_content):
                     break
@@ -223,32 +244,37 @@ def iter_ollama_channels(
         top_k=TOP_K,
         presence_penalty=PRESENCE_PENALTY,
     )
+    follow_parts: list[str] = []
     try:
-        with open_json(url, forced, timeout=180) as response:
-            for line in _read_ndjson(response):
+        with open_json(url, forced, timeout=180, cancel=cancel) as response:
+            for line in _read_ndjson(response, cancel):
                 content, _thinking, done, skip, _reason = ollama_parts(line)
                 if skip:
                     continue
                 if content:
-                    saw_content = True
+                    follow_parts.append(content)
+                    if peel_think("".join(follow_parts))[0].strip():
+                        saw_content = True
                     yield "content", content
                 if done:
                     break
     except TimeoutError:
-        if not saw_content:
-            yield "content", DIRECT_FALLBACK
+        if not peel_think("".join(follow_parts))[0].strip():
+            yield "content", visible_answer("")
         return
-    if not saw_content:
-        yield "content", DIRECT_FALLBACK
+    if not peel_think("".join(follow_parts))[0].strip():
+        yield "content", visible_answer("")
 
 
-def stream_ollama(peer, model, messages, temperature=0.7, max_tokens=256, plan=None):
+def stream_ollama(
+    peer, model, messages, temperature=0.7, max_tokens=256, plan=None, cancel=None
+):
     """Yield answer deltas from Ollama /api/chat with stream:true (NDJSON)."""
 
     def produce(stream: TextStream):
         del stream
         for kind, text in iter_ollama_channels(
-            peer, model, messages, temperature, max_tokens, plan=plan
+            peer, model, messages, temperature, max_tokens, plan=plan, cancel=cancel
         ):
             if kind == "content" and text:
                 yield text
@@ -256,7 +282,9 @@ def stream_ollama(peer, model, messages, temperature=0.7, max_tokens=256, plan=N
     return TextStream(produce)
 
 
-def stream_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256):
+def stream_llamacpp(
+    peer, model, messages, temperature=0.7, max_tokens=256, cancel=None
+):
     """Yield text deltas from llama.cpp OpenAI SSE /v1/chat/completions stream:true."""
 
     def produce(stream: TextStream):
@@ -270,14 +298,9 @@ def stream_llamacpp(peer, model, messages, temperature=0.7, max_tokens=256):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        with open_json(url, payload, timeout=300) as response:
-            while True:
-                raw = response.readline()
-                if not raw:
-                    break
-                text, done, skip, reason = llamacpp_event(
-                    raw.decode("utf-8", errors="replace")
-                )
+        with open_json(url, payload, timeout=300, cancel=cancel) as response:
+            for decoded in _read_ndjson(response, cancel):
+                text, done, skip, reason = llamacpp_event(decoded)
                 if skip:
                     continue
                 if reason:

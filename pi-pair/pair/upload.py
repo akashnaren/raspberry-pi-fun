@@ -107,7 +107,7 @@ def route_for(name: str, mime: str, data: bytes) -> str:
                 return "pdf"
             if is_jpeg_scanned_pdf(data):
                 return "ocr"
-            raise UploadRejected("only a JPEG-scanned PDF can be read", 415)
+            raise UploadRejected("that PDF has no readable text", 415)
         if _looks_like_image(ext, kind, data):
             return "ocr"
         raise UploadRejected("only a JPEG-scanned PDF can be read", 415)

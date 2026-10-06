@@ -25,11 +25,14 @@ from pair.think import (
     FORCE_NOTE,
     HIGH_PREDICT,
     HIGH_THINK_BUDGET,
+    _thinking,
     decode_plan,
-    reasoning_tokens,
+    peel_think,
     split_ollama_message,
     stop_thinking,
+    visible_answer,
 )
+from pair.turn import EFFORT_HINT, SHORT_ANSWER
 
 ROOT = Path(__file__).resolve().parent
 
@@ -47,7 +50,7 @@ class ThinkLevels(unittest.TestCase):
         self.assertEqual(low.top_k, 20)
         self.assertEqual(low.presence_penalty, 1.5)
         self.assertEqual(medium.presence_penalty, 1.5)
-        self.assertEqual(high.presence_penalty, 0.0)
+        self.assertEqual(high.presence_penalty, 1.5)
         self.assertEqual(low.num_predict, 64)
         self.assertEqual(low.ollama_predict(), 64)
         self.assertFalse(trivial.think)
@@ -60,12 +63,14 @@ class ThinkLevels(unittest.TestCase):
         self.assertEqual(medium.num_predict, 384)
         self.assertEqual(medium.think_budget, 0)
         self.assertEqual(medium.ollama_predict(), 384)
-        self.assertTrue(high.think)
-        self.assertEqual(high.temperature, 0.6)
+        self.assertFalse(high.think)
+        self.assertEqual(high.temperature, 0.7)
+        self.assertEqual(high.top_p, 0.8)
+        self.assertEqual(high.top_k, 20)
         self.assertEqual(high.num_predict, 768)
-        self.assertEqual(high.think_budget, 192)
-        self.assertEqual(high.think_seconds, 25.0)
-        self.assertEqual(high.ollama_predict(), 960)
+        self.assertEqual(high.think_budget, 0)
+        self.assertEqual(high.think_seconds, 0.0)
+        self.assertEqual(high.ollama_predict(), 768)
         five = decode_plan("medium", "Say hi in five words.")
         self.assertFalse(five.think)
 
@@ -88,6 +93,12 @@ class ThinkLevels(unittest.TestCase):
         self.assertNotIn("</think", answer)
         self.assertIn("native note", reasoning)
         self.assertIn("count the letters", reasoning)
+
+    def test_think_tags_never_hide_the_answer(self):
+        self.assertEqual(visible_answer("<think>only</think>"), DIRECT_FALLBACK)
+        self.assertEqual(visible_answer("<think>a</think>Paris."), "Paris.")
+        self.assertEqual(visible_answer("   "), DIRECT_FALLBACK)
+        self.assertNotIn("<think", visible_answer("<think>x</think>Paris"))
 
     def test_config_flip_is_the_only_rollback(self):
         knobs = inference_knobs()
@@ -394,11 +405,8 @@ class ThinkHttp(unittest.TestCase):
             self.forwarded[0]["answer"], "Shorter wavelengths scatter more."
         )
 
-    def test_cap_forces_one_answer_and_drops_the_follow_up_thinking(self):
-        ThinkOllama.replies = [
-            {"content": "", "thinking": "a " * 200},
-            {"content": "the answer", "thinking": "should not stick"},
-        ]
+    def test_high_is_one_direct_call(self):
+        ThinkOllama.replies = [{"content": "the answer", "thinking": "a " * 200}]
         port = self._boot()
         body = self._post(
             port,
@@ -410,35 +418,26 @@ class ThinkHttp(unittest.TestCase):
                 "think": "high",
             },
         )
-        self.assertEqual(len(ThinkOllama.calls), 2)
-        self.assertTrue(ThinkOllama.calls[0]["think"])
-        self.assertEqual(
-            ThinkOllama.calls[0]["options"]["num_predict"],
-            HIGH_PREDICT + HIGH_THINK_BUDGET,
-        )
-        self.assertFalse(ThinkOllama.calls[1]["think"])
-        self.assertEqual(ThinkOllama.calls[1]["options"]["num_predict"], HIGH_PREDICT)
-        follow = json.dumps(ThinkOllama.calls[1]["messages"])
-        self.assertIn(FORCE_NOTE, follow)
-        self.assertIn("Partial reasoning", follow)
-        self.assertIn("a a", follow)
+        self.assertEqual(len(ThinkOllama.calls), 1)
+        call = ThinkOllama.calls[0]
+        self.assertFalse(call["think"])
+        self.assertEqual(call["options"]["num_predict"], HIGH_PREDICT)
+        self.assertEqual(call["options"]["temperature"], 0.7)
+        self.assertEqual(call["options"]["top_p"], 0.8)
+        self.assertEqual(call["options"]["top_k"], 20)
+        self.assertEqual(call["options"]["presence_penalty"], 1.5)
+        sent = json.dumps(call)
+        self.assertNotIn(FORCE_NOTE, sent)
+        self.assertIn(EFFORT_HINT["high"], sent)
         message = body["choices"][0]["message"]
         self.assertEqual(message["content"], "the answer")
-        self.assertLessEqual(
-            reasoning_tokens(message["reasoning_content"]), HIGH_THINK_BUDGET
-        )
-        self.assertNotIn("should not stick", json.dumps(body))
         saved = last_completion()
-        blob = json.dumps({"saved": saved, "queued": self.forwarded})
-        self.assertNotIn(FORCE_NOTE, blob)
-        self.assertNotIn("should not stick", blob)
         self.assertEqual(saved["answer"], "the answer")
         queued = Path(self._tmp.name) / "train" / "pending" / "queue.jsonl"
         self.assertTrue(queued.exists())
         text = queued.read_text(encoding="utf-8")
         self.assertIn("the answer", text)
         self.assertNotIn(FORCE_NOTE, text)
-        self.assertNotIn("should not stick", text)
 
     def test_high_reply_is_never_empty(self):
         ThinkOllama.replies = [{"content": "Paris.", "thinking": "short note"}]
@@ -455,12 +454,10 @@ class ThinkHttp(unittest.TestCase):
         )
         self.assertEqual(answered["choices"][0]["message"]["content"], "Paris.")
         self.assertEqual(len(ThinkOllama.calls), 1)
+        self.assertFalse(ThinkOllama.calls[0]["think"])
 
         ThinkOllama.calls = []
-        ThinkOllama.replies = [
-            {"content": "", "thinking": ""},
-            {"content": "   ", "thinking": "still nothing"},
-        ]
+        ThinkOllama.replies = [{"content": "", "thinking": ""}]
         empty = self._post(
             port,
             {
@@ -470,11 +467,26 @@ class ThinkHttp(unittest.TestCase):
             },
         )
         message = empty["choices"][0]["message"]
-        self.assertTrue(message["content"].strip())
-        self.assertEqual(message["content"], DIRECT_FALLBACK)
-        self.assertEqual(len(ThinkOllama.calls), 2)
-        self.assertTrue(ThinkOllama.calls[0]["think"])
-        self.assertFalse(ThinkOllama.calls[1]["think"])
+        self.assertEqual(message["content"], SHORT_ANSWER)
+        self.assertEqual(len(ThinkOllama.calls), 1)
+        self.assertFalse(ThinkOllama.calls[0]["think"])
+
+        ThinkOllama.calls = []
+        ThinkOllama.replies = [{"content": "<think>only the trace</think>"}]
+        tagged = self._post(
+            port,
+            {
+                "messages": [{"role": "user", "content": "Name the river in Paris"}],
+                "stream": False,
+                "think": "high",
+            },
+        )
+        tagged_message = tagged["choices"][0]["message"]
+        self.assertEqual(tagged_message["content"], SHORT_ANSWER)
+        self.assertNotIn("<think", tagged_message["content"])
+        self.assertNotIn("only the trace", tagged_message["content"])
+        self.assertEqual(len(ThinkOllama.calls), 1)
+        self.assertFalse(ThinkOllama.calls[0]["think"])
 
     def test_high_thinking_stays_on_flash_unless_pro_was_chosen(self):
         ThinkOllama.replies = [{"content": "reversed.", "thinking": "walk the indexes"}]
@@ -493,6 +505,7 @@ class ThinkHttp(unittest.TestCase):
         self.assertEqual(auto["pi_route"], "flash")
         self.assertEqual(auto["pi_model"], "qwen3:0.6b")
         self.assertEqual(ThinkOllama.calls[0]["model"], "qwen3:0.6b")
+        self.assertFalse(ThinkOllama.calls[0]["think"])
         self.assertTrue(auto["choices"][0]["message"]["content"].strip())
 
         ThinkOllama.calls = []
@@ -512,4 +525,43 @@ class ThinkHttp(unittest.TestCase):
         self.assertEqual(chosen["pi_route"], "pro")
         self.assertEqual(chosen["pi_model"], "qwen3:1.7b")
         self.assertEqual(ThinkOllama.calls[0]["model"], "qwen3:1.7b")
+        self.assertFalse(ThinkOllama.calls[0]["think"])
+        self.assertEqual(ThinkOllama.calls[0]["options"]["presence_penalty"], 1.5)
         self.assertTrue(chosen["choices"][0]["message"]["content"].strip())
+
+    def test_a_leftover_thinking_plan_still_returns_visible_text(self):
+        from pair.stream import iter_ollama_channels
+
+        peer_http = ThreadingHTTPServer(("127.0.0.1", 0), ThinkOllama)
+        self.servers.append(peer_http)
+        threading.Thread(target=peer_http.serve_forever, daemon=True).start()
+        peer = {
+            "name": "pi4",
+            "host": "127.0.0.1",
+            "port": peer_http.server_address[1],
+            "kind": "ollama",
+            "generative": True,
+            "role": "brain",
+        }
+        plan = _thinking("custom", 32, HIGH_THINK_BUDGET, 25.0)
+        ThinkOllama.replies = [
+            {"content": "<think>secret</think>"},
+            {"content": "   "},
+        ]
+        ThinkOllama.calls = []
+        chunks = list(
+            iter_ollama_channels(
+                peer,
+                "qwen3:0.6b",
+                [{"role": "user", "content": "Why is the sky blue?"}],
+                plan=plan,
+            )
+        )
+        text = "".join(piece for kind, piece in chunks if kind == "content")
+        visible, _reasoning = peel_think(text)
+        self.assertEqual(visible, DIRECT_FALLBACK)
+        self.assertNotIn("<think", visible)
+        self.assertNotIn("secret", visible)
+        self.assertEqual(len(ThinkOllama.calls), 2)
+        self.assertTrue(ThinkOllama.calls[0]["think"])
+        self.assertFalse(ThinkOllama.calls[1]["think"])

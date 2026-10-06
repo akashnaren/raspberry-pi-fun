@@ -12,19 +12,19 @@ from pair.guard import may_generate, require_generative
 from pair.http_pool import open_json_request
 from pair.knobs import inference_knobs, keep_alive, ollama_options
 from pair.modes import FLASH, PRO, mode_table
-from pair.think import DIRECT_FALLBACK, split_ollama_message
+from pair.think import sample_knobs, split_ollama_message
 
 _WARM_THREAD: threading.Thread | None = None
 
 
-def open_json(url: str, payload: dict, timeout: float):
+def open_json(url: str, payload: dict, timeout: float, cancel=None):
     """POST JSON. Chat, stream, and the startup warm share this opener."""
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
         headers={"content-type": "application/json"},
     )
-    return open_json_request(request, timeout)
+    return open_json_request(request, timeout, cancel=cancel)
 
 
 def _post_json(url: str, payload: dict, timeout: float) -> dict:
@@ -47,7 +47,7 @@ def ollama_payload(
     """The one Ollama chat body. keep_alive is the pi4 knob, not a per-call TTL.
 
     `think` is Ollama's native switch. False is a direct answer. Sampling
-    fields are set only when a thinking level asked for them.
+    follows the Qwen3 card. A missing plan uses the non-thinking sample.
     """
     row = inference_knobs() if knobs is None else knobs
     options = ollama_options(temperature, max_tokens, row, model)
@@ -82,31 +82,36 @@ def chat_ollama(
     max_tokens=256,
     meta: dict | None = None,
     plan=None,
+    cancel=None,
 ):
     require_generative(peer)
     think = bool(plan and plan.think)
-    if think:
+    if think or cancel is not None:
         from pair.stream import iter_ollama_channels
 
         answer_parts: list[str] = []
         thinking_parts: list[str] = []
         for kind, text in iter_ollama_channels(
-            peer, model, messages, temperature, max_tokens, plan=plan
+            peer,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            plan=plan,
+            cancel=cancel,
         ):
             if kind == "thinking" and text:
                 thinking_parts.append(text)
             elif text:
                 answer_parts.append(text)
-        answer = "".join(answer_parts).strip() or DIRECT_FALLBACK
+        answer = "".join(answer_parts).strip()
         if meta is not None:
             meta["done_reason"] = "stop"
             meta["reasoning"] = "".join(thinking_parts).strip()
         return answer, model
     knobs = inference_knobs()
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
-    top_p = plan.top_p if plan else None
-    top_k = plan.top_k if plan else None
-    penalty = plan.presence_penalty if plan else None
+    top_p, top_k, penalty = sample_knobs(plan)
     predict = int(plan.ollama_predict(max_tokens)) if plan else int(max_tokens)
     payload = ollama_payload(
         model,
@@ -129,10 +134,29 @@ def chat_ollama(
 
 
 def chat_llamacpp(
-    peer, model, messages, temperature=0.7, max_tokens=256, meta: dict | None = None
+    peer,
+    model,
+    messages,
+    temperature=0.7,
+    max_tokens=256,
+    meta: dict | None = None,
+    cancel=None,
 ):
     require_generative(peer)
     use = llamacpp_model(peer, model)
+    if cancel is not None:
+        from pair.stream import stream_llamacpp
+
+        parts: list[str] = []
+        produced = stream_llamacpp(
+            peer, model, messages, temperature, max_tokens, cancel=cancel
+        )
+        for text in produced:
+            if text:
+                parts.append(text)
+        if meta is not None:
+            meta["done_reason"] = produced.done_reason or "stop"
+        return "".join(parts), use
     url = f"http://{peer['host']}:{peer['port']}/v1/chat/completions"
     payload = {
         "model": use,

@@ -32,6 +32,8 @@ _health_cache = {
     "thread": None,
 }
 gate = InferenceGate(INFER_SLOTS)
+# Live turns, keyed by X-Pi-Request-Id, so a retry can cancel the one before it.
+requests: dict = {}
 
 
 def configure() -> None:
@@ -44,6 +46,7 @@ def configure() -> None:
     INFER_SLOTS = infer_slots()
     HEALTH_CACHE_TTL = health_ttl()
     gate = InferenceGate(INFER_SLOTS)
+    requests.clear()
     reset_health()
 
 

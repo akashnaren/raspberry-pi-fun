@@ -68,7 +68,11 @@ interface LiveTurn {
   stagesEl: HTMLElement;
   seen: StageName[];
   search: SearchInfo | null;
-  pushStatus: (name: StageName, search: SearchInfo | null) => void;
+  pushStatus: (
+    name: StageName,
+    search: SearchInfo | null,
+    queue?: { position?: number; eta_s?: number } | null,
+  ) => void;
   setText: (text: string) => void;
   setThought: (text: string, live: boolean, seconds: number) => void;
   clearThought: () => void;
@@ -81,9 +85,13 @@ interface LiveTurn {
 const DEFAULT_MODEL = window.MESH_DEFAULT_MODEL || "qwen3:0.6b";
 const FLASH_TAG = "qwen3:0.6b";
 const PRO_TAG = "qwen3:1.7b";
+const FLASH_TIP = "Fast answers for everyday questions.";
+const PRO_TIP = "Slower, more careful answers for harder questions.";
 const turns: Turn[] = [];
 let sending = false;
 let stopAsked = false;
+let chatEpoch = 0;
+let requestId = "";
 let turnCtrl: AbortController | null = null;
 let pageSettings: PageSettings = loadSettings(browserStorage("local"));
 let thinking: ThinkLevel = pageSettings.thinking;
@@ -107,6 +115,7 @@ let speakingLine = "";
 const serviceLines: string[] = [];
 let attachSerial = 0;
 let uploading = false;
+let attachError = false;
 let voiceUtterance: ReturnType<typeof createUtteranceHold> | null = null;
 
 const ATTACH_BYTES = 4 * 1024 * 1024;
@@ -291,6 +300,16 @@ function mountImageCards(row: HTMLElement, before: Node | null, raw: unknown): v
   else row.appendChild(strip);
 }
 
+function waitingCopy(queue: { position?: number; eta_s?: number } | null): string {
+  const ahead = Number(queue?.position);
+  const eta = Number(queue?.eta_s);
+  if (!Number.isFinite(ahead) || ahead <= 0 || !Number.isFinite(eta) || eta <= 0) {
+    return WAITING_LINE;
+  }
+  const minutes = Math.max(1, Math.round(eta / 60));
+  return "Waiting · " + Math.round(ahead) + " ahead · about " + minutes + " min";
+}
+
 function stageText(name: StageName, search: SearchInfo | null): string {
   if (name === "loading") return "Thinking";
   if (name === "waiting") return WAITING_LINE;
@@ -395,7 +414,7 @@ async function refresh(): Promise<void> {
       banner.className = "";
       banner.replaceChildren();
       fillModels(body.peers || []);
-      paintModelTips(body.modes);
+      paintModelTips();
       paintServices(body);
       return;
     } catch {
@@ -413,26 +432,15 @@ async function refresh(): Promise<void> {
   }
 }
 
-function modelTip(kind: "flash" | "pro", tag: string | undefined): string {
-  const name = (tag || "").trim();
-  if (!name) return "";
-  if (kind === "flash") return name + ", the fast resident model.";
-  return name + ", loaded when the question needs it.";
-}
-
-function paintModelTips(modes: HealthBody["modes"]): void {
-  if (!modes) return;
-  const flash = modelTip("flash", modes.flash);
-  const pro = modelTip("pro", modes.pro);
+function paintModelTips(): void {
   const write = (id: string, text: string) => {
-    if (!text) return;
     const node = document.getElementById(id);
     if (node) node.textContent = text;
   };
-  write("tip-menu-flash", flash);
-  write("tip-set-flash", flash);
-  write("tip-menu-pro", pro);
-  write("tip-set-pro", pro);
+  write("tip-menu-flash", FLASH_TIP);
+  write("tip-set-flash", FLASH_TIP);
+  write("tip-menu-pro", PRO_TIP);
+  write("tip-set-pro", PRO_TIP);
 }
 
 function paintServices(body: HealthBody): void {
@@ -765,6 +773,7 @@ function addLiveBot(expectPro = false): LiveTurn {
   let shown: StageName | null = null;
   const queued: StageName[] = [];
   let holding = false;
+  let queueNote: { position?: number; eta_s?: number } | null = null;
 
   function retire(node: HTMLElement): void {
     if (node.classList.contains("leave")) return;
@@ -801,7 +810,7 @@ function addLiveBot(expectPro = false): LiveTurn {
   }
 
   function labelFor(name: StageName): string {
-    if (name === "waiting") return WAITING_LINE;
+    if (name === "waiting") return waitingCopy(queueNote);
     return stageText(name, live.search);
   }
 
@@ -888,8 +897,9 @@ function addLiveBot(expectPro = false): LiveTurn {
     stagesEl,
     seen: [],
     search: null,
-    pushStatus(name, search) {
+    pushStatus(name, search, queue) {
       if (search && (search.status === "ok" || search.status === "failed")) live.search = search;
+      if (queue && Number(queue.position) > 0) queueNote = queue;
       if (!live.seen.includes(name)) live.seen.push(name);
       enqueue(name);
       row.scrollIntoView({ block: "end" });
@@ -996,6 +1006,16 @@ function searchFrom(payload: { pi_search?: string; pi_sources?: SourceLink[] }, 
   };
 }
 
+function freshRequestId(): string {
+  const cryptoObj = globalThis.crypto;
+  if (cryptoObj && typeof cryptoObj.randomUUID === "function") return cryptoObj.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
+    const nibble = Math.floor(Math.random() * 16);
+    const value = ch === "x" ? nibble : (nibble & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
 async function sendText(
   text: string,
   isRetry: boolean,
@@ -1004,6 +1024,9 @@ async function sendText(
   attempt = 0,
 ): Promise<void> {
   if (sending) return;
+  const epoch = chatEpoch;
+  const mine = () => epoch === chatEpoch;
+  if (!isRetry || !requestId) requestId = freshRequestId();
   const hidden = (extra?.hidden || "").trim();
   if (!isRetry && !text.trim() && !hidden) return;
   sending = true;
@@ -1097,11 +1120,12 @@ async function sendText(
 
     let response: Response | null = null;
     let lastErr: unknown = null;
-    for (let i = 0; i < 3; i += 1) {
-      if (stopAsked || !shouldPollHealth(document.hidden)) break;
+    for (let i = 0; i < 2; i += 1) {
+      if (!mine() || stopAsked || !shouldPollHealth(document.hidden)) break;
+      const attemptCtrl = new AbortController();
+      turnCtrl = attemptCtrl;
+      const timer = window.setTimeout(() => attemptCtrl.abort(), 180000);
       try {
-        turnCtrl = new AbortController();
-        const timer = window.setTimeout(() => turnCtrl?.abort(), 180000);
         response = await fetch("/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -1109,24 +1133,28 @@ async function sendText(
             "X-Pi-Target": "auto",
             "X-Pi-Mesh": "on",
             "X-Pi-Mode": modelMode,
+            "X-Pi-Request-Id": requestId,
           },
           body: JSON.stringify(body),
-          signal: turnCtrl.signal,
+          signal: attemptCtrl.signal,
           cache: "no-store",
         });
-        window.clearTimeout(timer);
         lastErr = null;
         break;
       } catch (err) {
-        if (stopAsked) throw err;
+        if (stopAsked || !mine()) throw err;
         lastErr = err;
-        if (!shouldPollHealth(document.hidden)) break;
-        if (shouldSoftRetry(i)) await delay(softRetryDelay(i));
+        const beforeResponse = err instanceof TypeError;
+        if (!beforeResponse || i === 1 || !shouldPollHealth(document.hidden)) break;
+        await delay(softRetryDelay(i));
+      } finally {
+        window.clearTimeout(timer);
       }
     }
     const searchNow = (): SearchInfo | null => (
       searchStatus ? { status: searchStatus, sources: searchSources } : null
     );
+    if (!mine()) return;
     if (stopAsked) {
       keepPartial(live, textAccum, text, effort, searchNow(), stages, imageCards, modelMode, "");
       return;
@@ -1167,6 +1195,7 @@ async function sendText(
       const search = searchFrom(payload, searchNow());
       const doneStages = Array.isArray(payload.pi_stages) ? payload.pi_stages : stages;
       noteImages(payload.pi_images);
+      if (!mine()) return;
       if (unreadable || !visibleReply(answer)) {
         missOrRetry();
       } else {
@@ -1197,8 +1226,10 @@ async function sendText(
     let streamDone = false;
     let streamErr = "";
     while (!streamDone) {
+      if (!mine()) return;
       if (stopAsked) break;
       const chunk = await reader.read();
+      if (!mine()) return;
       if (chunk.done) break;
       buf += decoder.decode(chunk.value, { stream: true });
       let nl = buf.indexOf("\n");
@@ -1227,6 +1258,7 @@ async function sendText(
           pi_stages?: StageName[];
           pi_replace?: boolean;
           pi_reasoning_clear?: boolean;
+          pi_queue?: { position?: number; eta_s?: number };
           choices?: { delta?: { content?: string; reasoning_content?: string } }[];
         };
         try {
@@ -1240,7 +1272,7 @@ async function sendText(
         }
         if (Array.isArray(payload.pi_images)) noteImages(payload.pi_images);
         if (payload.pi_status) {
-          live.pushStatus(payload.pi_status, searchNow());
+          live.pushStatus(payload.pi_status, searchNow(), payload.pi_queue || null);
           if (!stages.includes(payload.pi_status)) stages.push(payload.pi_status);
         }
         if (Array.isArray(payload.pi_stages)) {
@@ -1281,6 +1313,7 @@ async function sendText(
         }
       }
     }
+    if (!mine()) return;
     if (stopAsked) {
       closeThought();
       keepPartial(
@@ -1302,6 +1335,7 @@ async function sendText(
       showTurnError(shownError(streamErr || "HTTP " + response.status));
       return;
     }
+    if (!mine()) return;
     if (!visibleReply(textAccum)) {
       missOrRetry();
     } else {
@@ -1324,11 +1358,13 @@ async function sendText(
     }
     }
   } catch (err) {
+    if (!mine()) return;
     if (stopAsked) {
       keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
       return;
     }
     if (await quietNetwork()) {
+      if (!mine()) return;
       if (visibleReply(textAccum)) {
         keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
       } else {
@@ -1338,24 +1374,25 @@ async function sendText(
     } else if (!visibleReply(textAccum) && shouldSoftRetry(attempt)) {
       live.root.remove();
       followUp = "retry";
-    } else if (visibleReply(textAccum) && attempt < 1) {
-      live.root.remove();
-      followUp = "retry";
     } else if (visibleReply(textAccum)) {
       keepPartial(live, textAccum, text, effort, searchStatus ? { status: searchStatus, sources: searchSources } : null, stages, imageCards, modelMode, "");
     } else {
       showTurnError(shownError(err));
     }
   } finally {
-    sending = false;
-    stopAsked = false;
-    turnCtrl = null;
-    syncSend();
-    if (followUp !== "retry") byId<HTMLTextAreaElement>("q").focus();
-    if (followUp !== "retry" && voiceOn && !speechPending()) releaseVoice();
+    if (mine()) {
+      sending = false;
+      stopAsked = false;
+      turnCtrl = null;
+      syncSend();
+      if (followUp !== "retry") byId<HTMLTextAreaElement>("q").focus();
+      if (followUp !== "retry" && voiceOn && !speechPending()) releaseVoice();
+    }
   }
+  if (!mine()) return;
   if (followUp === "retry") {
     await delay(softRetryDelay(attempt));
+    if (!mine()) return;
     if (!shouldPollHealth(document.hidden)) {
       armResumeSend(text, spoken);
       return;
@@ -1390,7 +1427,7 @@ function syncSend(): void {
   const kind = primaryKind(sending, composerHasDraft());
   go.classList.remove("voice", "send", "stop");
   go.classList.add(kind);
-  go.disabled = uploading;
+  go.disabled = uploading || attachError;
   go.setAttribute("aria-label", uploading ? "Uploading" : primaryLabel(kind));
 }
 
@@ -1403,7 +1440,8 @@ function clearAttach(): void {
   const box = byId<HTMLTextAreaElement>("q");
   delete box.dataset.attachText;
   pendingDoc = null;
-  byId("fileTag").classList.remove("on");
+  attachError = false;
+  byId("fileTag").classList.remove("on", "err");
   byId<HTMLInputElement>("attach").value = "";
   syncSend();
 }
@@ -1415,9 +1453,12 @@ function releaseAttachButton(): void {
   button.removeAttribute("aria-busy");
 }
 
-function showUploadChip(label: string): void {
+function showUploadChip(label: string, failed = false): void {
   byId("fileName").textContent = label;
-  byId("fileTag").classList.add("on");
+  const tag = byId("fileTag");
+  tag.classList.add("on");
+  tag.classList.toggle("err", failed);
+  attachError = failed;
 }
 
 async function loadFile(file: File | null): Promise<void> {
@@ -1472,23 +1513,20 @@ async function loadFile(file: File | null): Promise<void> {
       payload = response.text ? (JSON.parse(response.text) as AttachmentResult) : {};
     } catch {
       if (current()) {
-        clearAttach();
-        voiceNote(friendlyError("Could not read that file."));
+        showUploadChip(label + " · couldn't read it", true);
+        voiceNote("");
+        syncSend();
       }
       return;
     }
     if (!current()) return;
-    if (!response.ok) {
-      clearAttach();
-      voiceNote(friendlyError(payload.error || "Could not read that file."));
+    if (!response.ok || !String(payload.text || "").trim()) {
+      showUploadChip(label + " · couldn't read it", true);
+      voiceNote("");
+      syncSend();
       return;
     }
     const text = String(payload.text || "").trim();
-    if (!text) {
-      clearAttach();
-      voiceNote("No text in that file.");
-      return;
-    }
     voiceNote("");
     byId<HTMLTextAreaElement>("q").dataset.attachText = text;
     pendingDoc = {
@@ -1501,10 +1539,10 @@ async function loadFile(file: File | null): Promise<void> {
     const via = payload.route === "ocr" ? "ocr" : "text";
     const cut = payload.truncated ? " · cut" : "";
     showUploadChip(label + " · " + via + cut + " (" + kb + " KB)");
-  } catch (err) {
+  } catch {
     if (current()) {
-      clearAttach();
-      voiceNote(friendlyError(err));
+      showUploadChip(label + " · couldn't read it", true);
+      voiceNote("");
     }
   } finally {
     if (current()) {
@@ -1816,7 +1854,7 @@ function releaseVoice(): void {
 }
 
 byId("go").onclick = () => {
-  if (uploading) return;
+  if (uploading || attachError) return;
   if (sending) {
     stopAsked = true;
     stopSpeaking();
@@ -1842,7 +1880,7 @@ composer.addEventListener("keydown", (event) => {
   if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) paintBrand(true);
   if (event.key !== "Enter") return;
   if (event.shiftKey) return;
-  if (uploading) {
+  if (uploading || attachError) {
     event.preventDefault();
     return;
   }
@@ -1975,8 +2013,47 @@ document.querySelectorAll(".info-slot").forEach((slot) => {
     if (tip) tip.hidden = true;
   });
 });
+function closeModeMenu(): void {
+  const menu = document.getElementById("modePop");
+  if (menu) menu.hidden = true;
+  byId("modeBtn").setAttribute("aria-expanded", "false");
+}
+
+function dismissPopovers(event?: Event): void {
+  const target = event?.target as { closest?: (selector: string) => unknown } | null;
+  if (target && typeof target.closest === "function" && target.closest(".info-slot, #modePop, #modeBtn")) {
+    return;
+  }
+  closeInfoTips();
+  closeModeMenu();
+}
+
+function newChat(): void {
+  chatEpoch += 1;
+  stopAsked = true;
+  turnCtrl?.abort();
+  sending = false;
+  turns.length = 0;
+  const box = byId<HTMLTextAreaElement>("q");
+  box.value = "";
+  autoGrow(box);
+  clearAttach();
+  voiceNote("");
+  setSourcesOpen(false);
+  setSettingsOpen(false);
+  closeInfoTips();
+  closeModeMenu();
+  paint();
+  paintBrand();
+  box.focus();
+}
+
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeInfoTips();
+  if (event.key !== "Escape") return;
+  dismissPopovers();
+  setSettingsOpen(false);
+  setSourcesOpen(false);
+  byId<HTMLTextAreaElement>("q").focus();
 });
 document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
   (btn as HTMLButtonElement).onclick = () => setTheme(btn.getAttribute("data-theme-choice") || "dark");
@@ -1989,13 +2066,8 @@ byId("modeBtn").onclick = (event) => {
   menu.hidden = !open;
   byId("modeBtn").setAttribute("aria-expanded", open ? "true" : "false");
 };
-document.addEventListener("click", () => {
-  closeInfoTips();
-  const menu = document.getElementById("modePop");
-  if (!menu || menu.hidden) return;
-  menu.hidden = true;
-  byId("modeBtn").setAttribute("aria-expanded", "false");
-});
+document.addEventListener("pointerdown", (event) => dismissPopovers(event), true);
+document.addEventListener("click", (event) => dismissPopovers(event));
 const enterBox = byId<HTMLInputElement>("enterSend");
 enterBox.checked = enterToSend;
 enterBox.addEventListener("change", () => {
@@ -2023,6 +2095,7 @@ whenSpeechEnds(releaseVoice);
 byId("btnVoice").onclick = () => toggleVoice();
 const voiceSend = document.getElementById("voiceSend");
 if (voiceSend) voiceSend.onclick = () => voiceUtterance?.flush();
+byId("btnNew").onclick = () => newChat();
 byId("btnIo").onclick = () => setSettingsOpen(true);
 byId("btnCloseIo").onclick = () => setSettingsOpen(false);
 byId("overlay").onclick = () => {
@@ -2059,6 +2132,7 @@ function bootSplash(): void {
   window.setTimeout(() => brand.classList.remove("brand-enter"), SPLASH_HOLD_MS);
 }
 bootSplash();
+paintModelTips();
 composer.addEventListener("paste", (event) => {
   const items = event.clipboardData?.items;
   if (!items) return;

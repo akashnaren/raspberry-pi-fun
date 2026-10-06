@@ -29,7 +29,7 @@ export function friendlyError(raw: unknown): string {
   if (/at capacity|generations in flight/i.test(text)) return BUSY_LINE;
   if (/took too long|timed out|timeout/i.test(text)) return SLOW_LINE;
   if (/too long|too large|over 4 mb|\b413\b/i.test(text)) return BIG_LINE;
-  if (/jpeg-scanned/i.test(text)) return PDF_LINE;
+  if (/jpeg-scanned|no readable text/i.test(text)) return PDF_LINE;
   if (/not installed|this pi/i.test(text)) return OCR_LINE;
   if (/ocr is busy/i.test(text)) return OCR_BUSY_LINE;
   if (/unsupported file/i.test(text)) return FILE_LINE;

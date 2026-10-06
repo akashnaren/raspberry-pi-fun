@@ -13,6 +13,7 @@ const cases = [
   ["OCR is busy", "Reading a file is busy. Try again in a moment."],
   ["unsupported file type", "That file type is not supported."],
   ["only a JPEG-scanned PDF can be read", "That PDF could not be read. Try a text file or a photo."],
+  ["that PDF has no readable text", "That PDF could not be read. Try a text file or a photo."],
   ["search is served on the health host", "Search is not available from here."],
   ["could not read that file", "could not read that file"],
   ["HTTP 500", "The reply did not come back. Try again."],

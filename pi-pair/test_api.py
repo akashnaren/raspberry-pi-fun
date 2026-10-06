@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 
 from pair import runtime
 from pair import server as pair_server
-from pair.errors import BAD_MESSAGE, BUSY
+from pair.errors import ASK_FIRST, BAD_MESSAGE, BUSY, TOO_BIG
 from pair.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
 from pair.server import make_server
 
@@ -265,9 +265,12 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(body["model"], FLASH_MODE)
         self.assertEqual(body["pi_think"], "high")
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
-        self.assertTrue(OllamaFake.last_payload["think"])
-        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 960)
-        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.6)
+        self.assertFalse(OllamaFake.last_payload["think"])
+        self.assertEqual(OllamaFake.last_payload["options"]["num_predict"], 768)
+        self.assertEqual(OllamaFake.last_payload["options"]["temperature"], 0.7)
+        self.assertEqual(OllamaFake.last_payload["options"]["top_p"], 0.8)
+        self.assertEqual(OllamaFake.last_payload["options"]["top_k"], 20)
+        self.assertEqual(OllamaFake.last_payload["options"]["presence_penalty"], 1.5)
 
     def test_chat_requires_the_api_key(self):
         missing, headers, body = self._json(
@@ -522,14 +525,15 @@ class PublicApi(unittest.TestCase):
 
         alias, _headers, alias_raw = self._open("GET", "/swagger.json")
         self.assertEqual(alias, 200)
-        self.assertEqual(json.loads(alias_raw.decode())["info"]["title"], "Pi GPT API")
+        self.assertEqual(json.loads(alias_raw.decode())["info"]["title"], "OpenPi API")
 
         for path in ("/docs", "/docs/", "/swagger", "/swagger/"):
             page_status, page_headers, page = self._open("GET", path)
             self.assertEqual(page_status, 200, path)
             self.assertIn("text/html", page_headers.get("content-type", ""))
             text = page.decode()
-            self.assertIn("Pi GPT Swagger UI", text)
+            self.assertIn("OpenPi API docs", text)
+            self.assertNotIn("Pi GPT", text)
             self.assertIn("/openapi.json", text)
             self.assertIn("swagger-ui-bundle", text)
             self.assertIn(API_KEY_ENV, text)
@@ -651,6 +655,273 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(payload["model"], runtime.MODEL)
         self.assertEqual(payload["think"], "medium")
         self.assertNotIn("mode", payload)
+
+
+class ChatHygiene(unittest.TestCase):
+    """Bad JSON, oversized bodies, and empty chats never reach a model."""
+
+    def setUp(self):
+        self.httpd = make_server("127.0.0.1", 0)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.port = self.httpd.server_address[1]
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def _raw(self, body: bytes, path: str = "/v1/chat/completions", timeout: float = 5):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=body,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.status, response.read()
+        except urllib.error.HTTPError as error:
+            return error.code, error.read()
+
+    def test_bad_json_is_a_json_400(self):
+        status, raw = self._raw(b"{bad")
+        self.assertEqual(status, 400)
+        body = json.loads(raw.decode())
+        self.assertEqual(body["error"], BAD_MESSAGE)
+
+    def test_five_megabyte_body_is_413_without_a_slot(self):
+        before = runtime.gate.in_flight()
+        payload = (
+            b'{"messages":[{"role":"user","content":"' + (b"a" * 5_000_000) + b'"}]}'
+        )
+        started = time.monotonic()
+        status, raw = self._raw(payload, timeout=2)
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertEqual(status, 413)
+        self.assertEqual(json.loads(raw.decode())["error"], TOO_BIG)
+        self.assertEqual(runtime.gate.in_flight(), before)
+        self.assertEqual(runtime.gate.in_flight(), 0)
+
+    def test_empty_and_malformed_chats_ask_first(self):
+        cases = [
+            {},
+            {"messages": []},
+            {"messages": "hi"},
+            {"messages": [{"role": "user", "content": None}]},
+            {"messages": [{"role": "user", "content": "   \n"}]},
+        ]
+        for payload in cases:
+            status, raw = self._raw(json.dumps(payload).encode())
+            body = json.loads(raw.decode())
+            self.assertEqual(status, 400, payload)
+            self.assertEqual(body["error"], ASK_FIRST, payload)
+        status, raw = self._raw(b"")
+        body = json.loads(raw.decode())
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], BAD_MESSAGE)
+
+
+class _NdjsonOllama(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def _json(self, body: bytes) -> None:
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path == "/api/tags":
+            self._json(
+                json.dumps(
+                    {"models": [{"name": "qwen3:0.6b"}, {"name": "qwen3:1.7b"}]}
+                ).encode()
+            )
+            return
+        if path == "/api/ps":
+            self._json(
+                json.dumps(
+                    {"models": [{"name": "qwen3:0.6b"}, {"name": "qwen3:1.7b"}]}
+                ).encode()
+            )
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length") or 0)
+        self.rfile.read(length)
+        lines = (
+            json.dumps({"message": {"content": "Hello there"}, "done": False})
+            + "\n"
+            + json.dumps(
+                {"message": {"content": ""}, "done": True, "done_reason": "stop"}
+            )
+            + "\n"
+        ).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/x-ndjson")
+        self.send_header("content-length", str(len(lines)))
+        self.end_headers()
+        self.wfile.write(lines)
+
+
+class Exposure(unittest.TestCase):
+    """Public health is redacted, and X-Pi-Mode is sent once."""
+
+    def setUp(self):
+        self._peers = [dict(peer) for peer in runtime.PEERS]
+        self._role = os.environ.get("PI_PAIR_ROLE")
+        self._canned = os.environ.get("PI_PAIR_CANNED")
+        os.environ["PI_PAIR_ROLE"] = "brain"
+        os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
+        self.servers: list[ThreadingHTTPServer] = []
+        ollama = ThreadingHTTPServer(("127.0.0.1", 0), _NdjsonOllama)
+        self.servers.append(ollama)
+        _start(ollama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": ollama.server_address[1],
+                    "kind": "ollama",
+                    "note": "",
+                    "generative": True,
+                    "role": "brain",
+                }
+            ]
+        )
+        with runtime._health_lock:
+            runtime._health_cache["peers"] = [
+                {
+                    "name": "pi4",
+                    "host": "10.0.0.181",
+                    "port": 11434,
+                    "role": "brain",
+                    "ok": True,
+                    "models": ["qwen3:0.6b"],
+                    "latency_ms": 4,
+                }
+            ]
+            runtime._health_cache["t"] = time.time()
+        self.httpd = make_server("127.0.0.1", 0)
+        self.servers.append(self.httpd)
+        _start(self.httpd)
+        self.port = self.httpd.server_address[1]
+
+    def tearDown(self):
+        for httpd in self.servers:
+            httpd.shutdown()
+            httpd.server_close()
+        runtime.set_peers(self._peers)
+        if self._role is None:
+            os.environ.pop("PI_PAIR_ROLE", None)
+        else:
+            os.environ["PI_PAIR_ROLE"] = self._role
+        if self._canned is None:
+            os.environ.pop("PI_PAIR_CANNED", None)
+        else:
+            os.environ["PI_PAIR_CANNED"] = self._canned
+
+    def _open(self, method: str, path: str, payload=None, headers=None, timeout=8):
+        data = None if payload is None else json.dumps(payload).encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=data,
+            headers=headers or {},
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.status, response.headers, response.read()
+        except urllib.error.HTTPError as error:
+            return error.code, error.headers, error.read()
+
+    def test_public_health_hides_the_lan(self):
+        status, _headers, raw = self._open("GET", "/health", headers={"Cf-Ray": "x"})
+        self.assertEqual(status, 200)
+        text = raw.decode()
+        body = json.loads(text)
+        self.assertNotIn("10.", text)
+        self.assertNotIn('"host"', text)
+        self.assertNotIn('"port"', text)
+        self.assertNotIn("pi4", text)
+        self.assertIn("waiting", body)
+        self.assertEqual(body["peers"][0]["models"], ["qwen3:0.6b"])
+        self.assertNotIn("name", body["peers"][0])
+        self.assertIsInstance(body["services"]["brain"], bool)
+
+        status, _headers, raw = self._open("GET", "/health")
+        full = json.loads(raw.decode())
+        self.assertEqual(status, 200)
+        self.assertEqual(full["peers"][0]["host"], "10.0.0.181")
+        self.assertEqual(full["peers"][0]["name"], "pi4")
+        self.assertIn("waiting", full)
+
+    def test_mode_header_is_sent_once(self):
+        # The health test seeds a LAN address in the snapshot. A chat merges
+        # that snapshot over the peer, so point it back at the local fake.
+        peer = runtime.PEERS[0]
+        with runtime._health_lock:
+            runtime._health_cache["peers"] = [
+                {
+                    "name": peer["name"],
+                    "host": peer["host"],
+                    "port": peer["port"],
+                    "kind": peer.get("kind") or "ollama",
+                    "role": peer.get("role") or "brain",
+                    "ok": True,
+                    "models": ["qwen3:0.6b", "qwen3:1.7b"],
+                    "generative": True,
+                }
+            ]
+            runtime._health_cache["t"] = time.time()
+        cached = {
+            "messages": [{"role": "user", "content": "hi"}],
+            "mode": "flash",
+            "stream": False,
+        }
+        status, headers, _raw = self._open("POST", "/v1/chat/completions", cached)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get_all("X-Pi-Mode"), ["flash"])
+        self.assertEqual(headers.get("X-Pi-Peer"), "cache")
+
+        streamed = {
+            "messages": [{"role": "user", "content": "hello"}],
+            "mode": "flash",
+            "stream": True,
+        }
+        status, headers, raw = self._open("POST", "/v1/chat/completions", streamed)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get_all("X-Pi-Mode"), ["flash"])
+        self.assertIn(b"data:", raw)
+
+        live = {
+            "messages": [{"role": "user", "content": "Say hi in five words."}],
+            "mode": "flash",
+            "stream": True,
+            "think": "low",
+        }
+        status, headers, raw = self._open("POST", "/v1/chat/completions", live)
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(headers.get_all("X-Pi-Mode"), ["flash"])
+        self.assertIn(b"pi-pair peer=", raw)
+
+        status, headers, raw = self._open(
+            "POST",
+            "/v1/chat/completions",
+            live,
+            headers={"Cf-Ray": "x", "content-type": "application/json"},
+        )
+        self.assertEqual(status, 200, raw)
+        self.assertIsNone(headers.get("X-Pi-Peer"))
+        self.assertIsNone(headers.get("X-Pi-Chip"))
+        self.assertNotIn(b"pi-pair peer=", raw)
+        self.assertEqual(headers.get_all("X-Pi-Mode"), ["flash"])
 
 
 if __name__ == "__main__":

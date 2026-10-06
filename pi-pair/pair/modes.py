@@ -1,35 +1,17 @@
 """Flash and Pro. An unspecified mode is always Flash.
 
-Auto is a page choice. It still resolves to one of the two tags in mode_table.
+Auto is a page choice. It stays on Flash. Pro is only an explicit choice.
 """
 
 from __future__ import annotations
 
-import re
-
-from pair.ground import is_grounded_problem
 from pair.knobs import inference_knobs
-from pair.lists import list_count
-from pair.turn import is_plain_list, is_plot, user_question
 
 FLASH = "flash"
 PRO = "pro"
 AUTO = "auto"
 FLASH_MODEL = "qwen3:0.6b"
 PRO_MODEL = "qwen3:1.7b"
-
-_CODE = re.compile(
-    r"```|"
-    r"(^|\n)\s*(?:def |class |function |import |from |const |let |var |fn |pub )|"
-    r"\b(?:write|debug|implement|refactor)\b.{0,48}\b(?:function|script|program|class|code)\b|"
-    r"\b(?:python|javascript|typescript)\b",
-    re.I,
-)
-_SEARCH = re.compile(
-    r"\b(?:search for|look up|lookup|latest news|news about|sources for|find articles|find sources)\b",
-    re.I,
-)
-_MULTI = re.compile(r"step by step|multi-step|break it down|show your work", re.I)
 
 
 def mode_table(knobs: dict | None = None) -> dict[str, str]:
@@ -40,11 +22,11 @@ def mode_table(knobs: dict | None = None) -> dict[str, str]:
 
 
 def mode_tips(knobs: dict | None = None) -> dict[str, str]:
-    """Info-icon sentences. The tags come from mode_table, not from the page."""
-    table = mode_table(knobs)
+    """Info-icon sentences. Tags stay in /health for the operator, not the tip."""
+    del knobs
     return {
-        FLASH: f"{table[FLASH]}, the fast resident model.",
-        PRO: f"{table[PRO]}, loaded when the question needs it.",
+        FLASH: "Fast answers for everyday questions.",
+        PRO: "Slower, more careful answers for harder questions.",
     }
 
 
@@ -64,44 +46,16 @@ def resolve_mode(
     return FLASH, table[FLASH]
 
 
-def task_tier(prompt: str) -> str:
-    """flash for short chitchat, plots, and plain lists.
-
-    pro for math, code, multi-step, search, or a long question. A long
-    attachment does not count as a long question. Auto uses this to pick a tag.
-    """
-    text = user_question(prompt)
-    if not text:
-        return FLASH
-    if _CODE.search(text) or is_grounded_problem(text):
-        return PRO
-    if is_plot(text) or is_plain_list(text):
-        return FLASH
-    if _SEARCH.search(text) or _MULTI.search(text):
-        return PRO
-    if (list_count(text) or 0) >= 8:
-        return PRO
-    if len(text) >= 280 or len(text.split()) >= 48:
-        return PRO
-    return FLASH
-
-
 def resolve_auto(
     prompt: str, available: list | None = None, knobs: dict | None = None
 ) -> tuple[str, str, str]:
-    """Return (route, tag, reason) for Auto. The tag is always from mode_table.
+    """Return (route, tag, reason) for Auto. Auto is always the Flash tag.
 
-    A known model list that lacks the Pro tag stays on Flash. An unknown list
-    still names Pro; the request path fails closed if that tag is not pulled.
+    Pro is an explicit page choice in resolve_mode, not a guess from the question.
     """
+    del prompt, available
     table = mode_table(knobs)
-    tier = task_tier(prompt)
-    reason = "heuristic"
-    known = [str(name).strip() for name in (available or []) if str(name or "").strip()]
-    if tier == PRO and known and table[PRO] not in known:
-        tier = FLASH
-        reason = "pro-unavailable"
-    return tier, table[tier], reason
+    return FLASH, table[FLASH], "default"
 
 
 def tag_ready(models: list, mode: str, model: str) -> bool:
