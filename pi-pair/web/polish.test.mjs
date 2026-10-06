@@ -2,6 +2,7 @@ import { parseHTML } from "linkedom";
 import { docExcerpt, modelUserContent, userMessagePieces } from "./src/attach.ts";
 import { flowchartSvg, mountDiagrams } from "./src/diagram.ts";
 import { renderMarkdown, renderStreamingMarkdown, stabilizeMarkdown } from "./src/markdown.ts";
+import { linkCitations } from "./src/sources.ts";
 import { serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner } from "./src/presence.ts";
 const partial = "1. First\n2. Second\n```chart\n{\"title\":\"y\"}";
 const stable = stabilizeMarkdown(partial);
@@ -60,6 +61,14 @@ if (!bare.includes("<th>Year</th>") || !bare.includes("<td>Dune</td>")) {
   throw new Error("bare GFM table stayed prose: " + bare);
 }
 
+const coded = renderMarkdown("```python\nprint(1)\n```");
+if (!coded.includes('class="language-python"') || !coded.includes("print(1)")) {
+  throw new Error("a code fence lost its language tag: " + coded);
+}
+const cited = linkCitations("See [1] and [9].", 1);
+if (!cited.includes('href="#pi-src-1"') || !cited.includes("[9]")) {
+  throw new Error("citations were not linked from the snippets: " + cited);
+}
 const tableChart = renderMarkdown("| item | value |\n| --- | --- |\n| a | 1 |\n| b | 2 |\n");
 if (!tableChart.includes("<table>") || !tableChart.includes('class="pi-chart"')) {
   throw new Error("a data table did not keep the table and a chart: " + tableChart);

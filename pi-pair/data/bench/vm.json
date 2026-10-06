@@ -1,12 +1,12 @@
 {
   "where": "vm",
   "turns": {
-    "persona_chars": 504,
-    "first_tokens": 185,
+    "persona_chars": 583,
+    "first_tokens": 210,
     "second_uncached_tokens": 44,
-    "first_ttft_ms": 1480.0,
+    "first_ttft_ms": 1680.0,
     "second_ttft_ms": 352.0,
-    "ttft_drop": 0.762,
+    "ttft_drop": 0.79,
     "prefix_identical": true,
     "tok_s_note": "decode tok/s is unchanged when the context length is held equal"
   },

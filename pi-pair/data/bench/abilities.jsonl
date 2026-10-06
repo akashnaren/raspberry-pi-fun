@@ -1,0 +1,200 @@
+{"id": "persona-0", "category": "persona"}
+{"id": "calc-0", "category": "calc", "expr": "2+2"}
+{"id": "citations-0", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-0", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-0", "category": "task", "text": "summarize the note 0"}
+{"id": "code-0", "category": "code", "lang": "python"}
+{"id": "json-0", "category": "json", "key": "name"}
+{"id": "tools-0", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-0", "category": "effort"}
+{"id": "honest-0", "category": "honest"}
+{"id": "persona-1", "category": "persona"}
+{"id": "calc-1", "category": "calc", "expr": "3*4"}
+{"id": "citations-1", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-1", "category": "files", "text": "hello"}
+{"id": "task-1", "category": "task", "text": "rewrite the note 1"}
+{"id": "code-1", "category": "code", "lang": "js"}
+{"id": "json-1", "category": "json", "key": "name"}
+{"id": "tools-1", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-1", "category": "effort"}
+{"id": "honest-1", "category": "honest"}
+{"id": "persona-2", "category": "persona"}
+{"id": "calc-2", "category": "calc", "expr": "10-1"}
+{"id": "citations-2", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-2", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-2", "category": "task", "text": "translate the note 2"}
+{"id": "code-2", "category": "code", "lang": "ts"}
+{"id": "json-2", "category": "json", "key": "name"}
+{"id": "tools-2", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-2", "category": "effort"}
+{"id": "honest-2", "category": "honest"}
+{"id": "persona-3", "category": "persona"}
+{"id": "calc-3", "category": "calc", "expr": "8/2"}
+{"id": "citations-3", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-3", "category": "files", "text": "hello"}
+{"id": "task-3", "category": "task", "text": "summarize the note 3"}
+{"id": "code-3", "category": "code", "lang": "bash"}
+{"id": "json-3", "category": "json", "key": "name"}
+{"id": "tools-3", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-3", "category": "effort"}
+{"id": "honest-3", "category": "honest"}
+{"id": "persona-4", "category": "persona"}
+{"id": "calc-4", "category": "calc", "expr": "2^3"}
+{"id": "citations-4", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-4", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-4", "category": "task", "text": "rewrite the note 4"}
+{"id": "code-4", "category": "code", "lang": "json"}
+{"id": "json-4", "category": "json", "key": "name"}
+{"id": "tools-4", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-4", "category": "effort"}
+{"id": "honest-4", "category": "honest"}
+{"id": "persona-5", "category": "persona"}
+{"id": "calc-5", "category": "calc", "expr": "7+1"}
+{"id": "citations-5", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-5", "category": "files", "text": "hello"}
+{"id": "task-5", "category": "task", "text": "translate the note 5"}
+{"id": "code-5", "category": "code", "lang": "css"}
+{"id": "json-5", "category": "json", "key": "name"}
+{"id": "tools-5", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-5", "category": "effort"}
+{"id": "honest-5", "category": "honest"}
+{"id": "persona-6", "category": "persona"}
+{"id": "calc-6", "category": "calc", "expr": "9-4"}
+{"id": "citations-6", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-6", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-6", "category": "task", "text": "summarize the note 6"}
+{"id": "code-6", "category": "code", "lang": "html"}
+{"id": "json-6", "category": "json", "key": "name"}
+{"id": "tools-6", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-6", "category": "effort"}
+{"id": "honest-6", "category": "honest"}
+{"id": "persona-7", "category": "persona"}
+{"id": "calc-7", "category": "calc", "expr": "6*6"}
+{"id": "citations-7", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-7", "category": "files", "text": "hello"}
+{"id": "task-7", "category": "task", "text": "rewrite the note 7"}
+{"id": "code-7", "category": "code", "lang": "sql"}
+{"id": "json-7", "category": "json", "key": "name"}
+{"id": "tools-7", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-7", "category": "effort"}
+{"id": "honest-7", "category": "honest"}
+{"id": "persona-8", "category": "persona"}
+{"id": "calc-8", "category": "calc", "expr": "100/4"}
+{"id": "citations-8", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-8", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-8", "category": "task", "text": "translate the note 8"}
+{"id": "code-8", "category": "code", "lang": "go"}
+{"id": "json-8", "category": "json", "key": "name"}
+{"id": "tools-8", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-8", "category": "effort"}
+{"id": "honest-8", "category": "honest"}
+{"id": "persona-9", "category": "persona"}
+{"id": "calc-9", "category": "calc", "expr": "1+2+3"}
+{"id": "citations-9", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-9", "category": "files", "text": "hello"}
+{"id": "task-9", "category": "task", "text": "summarize the note 9"}
+{"id": "code-9", "category": "code", "lang": "rust"}
+{"id": "json-9", "category": "json", "key": "name"}
+{"id": "tools-9", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-9", "category": "effort"}
+{"id": "honest-9", "category": "honest"}
+{"id": "persona-10", "category": "persona"}
+{"id": "calc-10", "category": "calc", "expr": "5*5"}
+{"id": "citations-10", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-10", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-10", "category": "task", "text": "rewrite the note 10"}
+{"id": "code-10", "category": "code", "lang": "java"}
+{"id": "json-10", "category": "json", "key": "name"}
+{"id": "tools-10", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-10", "category": "effort"}
+{"id": "honest-10", "category": "honest"}
+{"id": "persona-11", "category": "persona"}
+{"id": "calc-11", "category": "calc", "expr": "12-7"}
+{"id": "citations-11", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-11", "category": "files", "text": "hello"}
+{"id": "task-11", "category": "task", "text": "translate the note 11"}
+{"id": "code-11", "category": "code", "lang": "ruby"}
+{"id": "json-11", "category": "json", "key": "name"}
+{"id": "tools-11", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-11", "category": "effort"}
+{"id": "honest-11", "category": "honest"}
+{"id": "persona-12", "category": "persona"}
+{"id": "calc-12", "category": "calc", "expr": "4/2"}
+{"id": "citations-12", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-12", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-12", "category": "task", "text": "summarize the note 12"}
+{"id": "code-12", "category": "code", "lang": "php"}
+{"id": "json-12", "category": "json", "key": "name"}
+{"id": "tools-12", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-12", "category": "effort"}
+{"id": "honest-12", "category": "honest"}
+{"id": "persona-13", "category": "persona"}
+{"id": "calc-13", "category": "calc", "expr": "3^2"}
+{"id": "citations-13", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-13", "category": "files", "text": "hello"}
+{"id": "task-13", "category": "task", "text": "rewrite the note 13"}
+{"id": "code-13", "category": "code", "lang": "c"}
+{"id": "json-13", "category": "json", "key": "name"}
+{"id": "tools-13", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-13", "category": "effort"}
+{"id": "honest-13", "category": "honest"}
+{"id": "persona-14", "category": "persona"}
+{"id": "calc-14", "category": "calc", "expr": "11+8"}
+{"id": "citations-14", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-14", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-14", "category": "task", "text": "translate the note 14"}
+{"id": "code-14", "category": "code", "lang": "cpp"}
+{"id": "json-14", "category": "json", "key": "name"}
+{"id": "tools-14", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-14", "category": "effort"}
+{"id": "honest-14", "category": "honest"}
+{"id": "persona-15", "category": "persona"}
+{"id": "calc-15", "category": "calc", "expr": "20-6"}
+{"id": "citations-15", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-15", "category": "files", "text": "hello"}
+{"id": "task-15", "category": "task", "text": "summarize the note 15"}
+{"id": "code-15", "category": "code", "lang": "sh"}
+{"id": "json-15", "category": "json", "key": "name"}
+{"id": "tools-15", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-15", "category": "effort"}
+{"id": "honest-15", "category": "honest"}
+{"id": "persona-16", "category": "persona"}
+{"id": "calc-16", "category": "calc", "expr": "2*9"}
+{"id": "citations-16", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-16", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-16", "category": "task", "text": "rewrite the note 16"}
+{"id": "code-16", "category": "code", "lang": "yaml"}
+{"id": "json-16", "category": "json", "key": "name"}
+{"id": "tools-16", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-16", "category": "effort"}
+{"id": "honest-16", "category": "honest"}
+{"id": "persona-17", "category": "persona"}
+{"id": "calc-17", "category": "calc", "expr": "15/3"}
+{"id": "citations-17", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-17", "category": "files", "text": "hello"}
+{"id": "task-17", "category": "task", "text": "translate the note 17"}
+{"id": "code-17", "category": "code", "lang": "toml"}
+{"id": "json-17", "category": "json", "key": "name"}
+{"id": "tools-17", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-17", "category": "effort"}
+{"id": "honest-17", "category": "honest"}
+{"id": "persona-18", "category": "persona"}
+{"id": "calc-18", "category": "calc", "expr": "6+6"}
+{"id": "citations-18", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-18", "category": "files", "text": "read this\n\n---\npage"}
+{"id": "task-18", "category": "task", "text": "summarize the note 18"}
+{"id": "code-18", "category": "code", "lang": "text"}
+{"id": "json-18", "category": "json", "key": "name"}
+{"id": "tools-18", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-18", "category": "effort"}
+{"id": "honest-18", "category": "honest"}
+{"id": "persona-19", "category": "persona"}
+{"id": "calc-19", "category": "calc", "expr": "1^4"}
+{"id": "citations-19", "category": "citations", "text": "See [1] and [9]."}
+{"id": "files-19", "category": "files", "text": "hello"}
+{"id": "task-19", "category": "task", "text": "rewrite the note 19"}
+{"id": "code-19", "category": "code", "lang": "md"}
+{"id": "json-19", "category": "json", "key": "name"}
+{"id": "tools-19", "category": "tools", "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```"}
+{"id": "effort-19", "category": "effort"}
+{"id": "honest-19", "category": "honest"}
