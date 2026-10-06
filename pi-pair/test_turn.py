@@ -30,7 +30,6 @@ from pair.turn import (
     PERSONA,
     EFFORT_HINT,
     ATTACH_MARK,
-    CHART_HINT,
     NOTES_ANSWER,
     SHORT_ANSWER,
     SLOW_ANSWER,
@@ -173,8 +172,7 @@ class TurnShape(unittest.TestCase):
         )
         self.assertLessEqual(sum(len(row["content"]) for row in shaped), 2560)
         blob = "\n".join(row["content"] for row in shaped)
-        self.assertIn("```chart", blob)
-        self.assertIn(CHART_HINT.splitlines()[0][:24], blob)
+        self.assertNotIn("```chart", blob)
         self.assertIn("plot the bars", blob)
         self.assertNotIn("<|im_start|>", blob)
 
@@ -202,23 +200,20 @@ class TurnShape(unittest.TestCase):
         )
         self.assertEqual(public_failure(RuntimeError("x" * 300)), SHORT_ANSWER)
 
-    def test_every_non_chart_turn_gets_the_same_hint(self):
+    def test_every_turn_gets_the_same_persona(self):
         for prompt in (
             "make a list of picnic foods",
             "Top 5 fruits",
             "What is the capital of France?",
             "Say hi in five words.",
+            "make a table of name and year",
+            "plot a bar chart of the picnic",
         ):
             rows = shape_messages([{"role": "user", "content": prompt}], prompt)
             self.assertEqual(rows[0]["content"], PERSONA, prompt)
-            self.assertNotIn("each line", rows[0]["content"], prompt)
-        chart = shape_messages(
-            [{"role": "user", "content": "plot a bar chart of the picnic"}],
-            "plot a bar chart of the picnic",
-        )
-        blob = "\n".join(row["content"] for row in chart)
-        self.assertEqual(chart[0]["content"], PERSONA)
-        self.assertIn("```chart", blob)
+            blob = "\n".join(row["content"] for row in rows)
+            self.assertNotIn("```chart", blob, prompt)
+            self.assertNotIn("```table", blob, prompt)
 
     def test_persona_stays_byte_identical_across_turns(self):
         first = shape_messages(
@@ -270,8 +265,8 @@ class TurnShape(unittest.TestCase):
             "plot a bar chart of the picnic",
             effort="high",
         )
-        blob = "\n".join(row["content"] for row in chart)
-        self.assertNotIn(EFFORT_HINT["high"], blob)
+        self.assertEqual(chart[0]["content"], PERSONA)
+        self.assertEqual(chart[1]["content"], EFFORT_HINT["high"])
 
 
 class ModelWarm(unittest.TestCase):
@@ -458,7 +453,7 @@ class TurnHttp(unittest.TestCase):
                 json.loads(response.read().decode()),
             )
 
-    def test_plot_skips_search_and_stays_on_flash(self):
+    def test_plot_stays_on_flash_and_uses_the_model(self):
         OllamaFake.catalog = [FLASH_MODEL, PRO_MODEL]
         runtime.reset_health()
         port = self._pi4()
@@ -476,13 +471,18 @@ class TurnHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_route"], "flash")
-        self.assertEqual(self.search_calls, [])
+        self.assertEqual(self.search_calls, [prompt])
         content = body["choices"][0]["message"]["content"]
-        self.assertIn("```chart", content)
-        self.assertIn("apples", content)
-        self.assertIn("bread", content)
-        self.assertNotIn("could not draw", content.lower())
-        self.assertEqual(OllamaFake.posts, posts)
+        self.assertEqual(content, "hello from peer")
+        self.assertGreater(OllamaFake.posts, posts)
+        payload = OllamaFake.last_payload or {}
+        blob = "\n".join(
+            str(row.get("content") or "")
+            for row in payload.get("messages") or []
+            if isinstance(row, dict)
+        )
+        self.assertNotIn("```chart", blob)
+        self.assertNotIn("```table", blob)
 
     def test_facts_search_and_structured_turns_do_not(self):
         port = self._pi4()
@@ -527,7 +527,6 @@ class TurnHttp(unittest.TestCase):
             self.assertEqual(self.search_calls, [prompt], prompt)
         for prompt in (
             "make a table of name and year",
-            "draw a diagram of the login steps",
             "plot a bar chart of the picnic",
         ):
             self.search_calls.clear()
@@ -537,7 +536,16 @@ class TurnHttp(unittest.TestCase):
                 {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, prompt)
-            self.assertEqual(self.search_calls, [], prompt)
+            self.assertEqual(self.search_calls, [prompt], prompt)
+        self.search_calls.clear()
+        diagram = "draw a diagram of the login steps"
+        status, _headers, _body = self._post(
+            port,
+            {"messages": [{"role": "user", "content": diagram}], "stream": False},
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.search_calls, [])
         self.search_calls.clear()
         news = "Top 5 latest news about the orchard"
         status, _headers, body = self._post(
@@ -768,12 +776,10 @@ class TurnHttp(unittest.TestCase):
         self.assertNotIn("Traceback", raw)
         self.assertNotIn("TimeoutError", raw)
 
-    def test_chart_fence_is_kept_or_replaced_after_one_retry(self):
-        from pair.charts import CHART_FALLBACK, CHART_NUDGE
-
-        good = '```chart\n{"title":"Fruit","data":[{"type":"bar","y":[1,2]}]}\n```'
+    def test_table_request_adds_no_hint_and_still_streams(self):
+        reply = "Dune was released in 2021."
         ScriptOllama.replies = [
-            {"message": {"content": good}, "done": True, "done_reason": "stop"}
+            {"message": {"content": reply}, "done": True, "done_reason": "stop"}
         ]
         ScriptOllama.seen = []
         ScriptOllama.posts = 0
@@ -792,32 +798,11 @@ class TurnHttp(unittest.TestCase):
             ]
         )
         port = self._pair()
-        status, _headers, body = self._post(
-            port,
-            {
-                "messages": [
-                    {"role": "user", "content": "plot a bar chart of the fruit stand"}
-                ],
-                "stream": False,
-            },
-            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(body["choices"][0]["message"]["content"], good)
-        self.assertEqual(len(ScriptOllama.seen), 1)
-
-        bad = '```json\n{"title":"Fruit","data":[{"type":"bar","points":[1,2]}]}\n```'
-        worse = '```chart\n{"data":[{"type":"scatter","x":[1]}]}\n```'
-        ScriptOllama.replies = [
-            {"message": {"content": bad}, "done": True, "done_reason": "stop"},
-            {"message": {"content": worse}, "done": True, "done_reason": "stop"},
-        ]
-        ScriptOllama.seen = []
         conn = HTTPConnection("127.0.0.1", port, timeout=5)
         payload = json.dumps(
             {
                 "messages": [
-                    {"role": "user", "content": "plot a bar chart of the fruit stand"}
+                    {"role": "user", "content": "make a table of name and year"}
                 ],
                 "stream": True,
             }
@@ -834,14 +819,18 @@ class TurnHttp(unittest.TestCase):
         )
         raw = conn.getresponse().read().decode()
         conn.close()
-        self.assertIn(CHART_FALLBACK, raw)
-        self.assertNotIn("```", raw)
-        self.assertNotIn("points", raw)
-        self.assertEqual(len(ScriptOllama.seen), 2)
-        self.assertNotIn("```json", raw)
-        follow = ScriptOllama.seen[1]["messages"][-1]["content"]
-        self.assertIn(CHART_NUDGE, follow)
+        self.assertIn(reply, raw)
+        self.assertEqual(ScriptOllama.posts, 1)
+        self.assertEqual(len(ScriptOllama.seen), 1)
         self.assertTrue(ScriptOllama.seen[0].get("stream"))
+        blob = "\n".join(
+            str(row.get("content") or "")
+            for row in ScriptOllama.seen[0]["messages"]
+            if isinstance(row, dict)
+        )
+        self.assertIn(PERSONA, blob)
+        self.assertNotIn("```table", blob)
+        self.assertNotIn("```chart", blob)
 
     def test_a_soft_refusal_is_nudged_once(self):
         refusal = "I'm sorry, but I can't assist with that.\n1. junk\n2. junk"

@@ -24,14 +24,6 @@ from pair.assist import (
 from pair.moderate import moderate
 from pair.cancel import Cancel, ClientGone, peer_closed
 from pair.canned import lookup
-from pair.charts import (
-    CHART_NUDGE,
-    is_chart_request,
-    is_structured_request,
-    ready_chart,
-    repair_chart_reply,
-    structure_hint,
-)
 from pair.chat import (
     chat_llamacpp,
     chat_ollama,
@@ -88,10 +80,12 @@ from pair.think import decode_plan, peel_think
 from pair.timing import assemble, present
 from pair.turn import (
     degraded_answer,
+    is_structured_request,
     needs_web,
     prepare_search_note,
     public_failure,
     shape_messages,
+    structure_hint,
 )
 from pair.upload import UploadRejected, ingest, read_limited
 
@@ -1253,22 +1247,20 @@ class Handler(BaseHTTPRequestHandler):
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             structured = is_structured_request(prompt)
-            ready = ready_chart(prompt)
             do_search = (
                 bool(mesh and node_role() == "brain")
-                and ready is None
                 and not structured
                 and needs_web(prompt, follow_up=not one_user_turn(messages))
             )
             tuned = _tuned_knobs(used if kind != "llamacpp" else model)
             ctx = int(tuned.get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
-            hint = None if ready else structure_hint(prompt)
+            hint = structure_hint(prompt)
             if hint:
                 outbound = [{"role": "system", "content": hint}, *outbound]
             search_note = None
             search_job = _begin_lookup(prompt, model) if do_search else None
-            grounded = ready
+            grounded = None
         except ClientGone:
             raise
         except Exception as error:
@@ -1806,7 +1798,7 @@ class Handler(BaseHTTPRequestHandler):
         prompt: str,
         search_note: dict | None,
     ) -> tuple[str, str, bool]:
-        """One completion. A failed decode is one sentence. A chart may be repaired once."""
+        """One completion. A failed decode is one sentence."""
         meta: dict = {}
         try:
             if kind == "llamacpp":
@@ -1845,9 +1837,6 @@ class Handler(BaseHTTPRequestHandler):
             return refused, used, False
         self._last_reasoning = reasoning
         content = answer
-        content = self._repair_chart(
-            peer, kind, model, messages, temperature, max_tokens, prompt, content
-        )
         if not _block(prompt):
             content = settle_reply(prompt, content, lambda: "")
         refused = _block(content)
@@ -1857,54 +1846,6 @@ class Handler(BaseHTTPRequestHandler):
         if not str(content).strip():
             return degraded_answer(search_note, None), used, False
         return content, used, True
-
-    def _repair_chart(
-        self,
-        peer,
-        kind,
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        prompt: str,
-        content: str,
-    ) -> str:
-        """One strict-JSON retry when a chart fence is invalid, else one sentence."""
-
-        def again() -> str:
-            follow = shape_messages(
-                [
-                    *list(messages or []),
-                    {"role": "assistant", "content": content},
-                    {"role": "user", "content": CHART_NUDGE},
-                ],
-                prompt,
-                effort=self._effort_name(),
-            )
-            try:
-                if kind == "llamacpp":
-                    more, _used = chat_llamacpp(
-                        peer,
-                        model,
-                        follow,
-                        temperature,
-                        max_tokens,
-                        cancel=self._cancel,
-                    )
-                else:
-                    more, _used = chat_ollama(
-                        peer,
-                        model,
-                        follow,
-                        temperature,
-                        max_tokens,
-                        cancel=self._cancel,
-                    )
-            except (OSError, json.JSONDecodeError):
-                return ""
-            return more or ""
-
-        return repair_chart_reply(content, again, prompt=prompt)
 
     def _stream(
         self,
@@ -2034,43 +1975,6 @@ class Handler(BaseHTTPRequestHandler):
                 route_name,
                 resident_name,
             )
-            return
-        if is_chart_request(prompt):
-            content, used, train = self._decode_reply(
-                peer,
-                kind,
-                model,
-                messages,
-                temperature,
-                max_tokens,
-                prompt,
-                search_note,
-            )
-            if train:
-                self._emit_ready_answer(
-                    peer,
-                    kind,
-                    used,
-                    prompt,
-                    content,
-                    started,
-                    think_name,
-                    search_note,
-                    stages,
-                    mode_name,
-                    route_name,
-                    resident_name,
-                )
-                return
-            chunk = {
-                "id": "pi-pair",
-                "object": "chat.completion.chunk",
-                "choices": [
-                    {"index": 0, "delta": {"content": content}, "finish_reason": None}
-                ],
-            }
-            safe_write(self, f"data: {json.dumps(chunk)}\n\n".encode(), flush=True)
-            safe_write(self, b"data: [DONE]\n\n", flush=True)
             return
         if not self._public():
             safe_write(

@@ -852,37 +852,6 @@ class ModeHttp(unittest.TestCase):
         self.assertNotIn("Loading Pro", json.dumps(body))
         self.assertNotIn("loading", body["pi_stages"])
 
-    def test_parabola_is_a_chart_and_skips_search(self):
-        port = self._boot()
-        self.search_calls.clear()
-        status, _headers, body = self._post(
-            port,
-            {
-                "messages": [{"role": "user", "content": "Plot me a parabolic curve"}],
-                "stream": False,
-            },
-            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
-        )
-        self.assertEqual(status, 200, body)
-        content = body["choices"][0]["message"]["content"]
-        self.assertIn("```chart", content)
-        self.assertIn("[25,16,9,4,1,0,1,4,9,16,25]", content)
-        self.assertNotIn("Desmos", content)
-        self.assertEqual(self.search_calls, [])
-        chats = [
-            item
-            for item in ModeOllama.calls
-            if item[0] == "POST" and item[1] == "/api/chat"
-        ]
-        self.assertEqual(chats, [])
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/health", timeout=5
-        ) as response:
-            health = json.loads(response.read().decode())
-        self.assertGreaterEqual(health["uptime_s"], 0)
-        self.assertIn("brain", health["services"])
-        self.assertIn("search", health["services"])
-
     def test_numbered_list_raises_the_budget_and_continues(self):
         port = self._boot()
         status, _headers, body = self._post(
