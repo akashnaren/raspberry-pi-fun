@@ -1,9 +1,14 @@
-"""One decode slot for every client.
+"""One decode slot for every client, plus idle background work.
 
-Flash and Pro share the slot. Each client may keep two requests queued behind
-the one that is running. A full line, or a wait past three minutes, is a 503.
-Tools for the next request start while the current decode still holds the slot.
-A hot board delays the next decode. This never starts a second model call.
+Three job types share this module. Interactive decode is one global slot for
+Flash and Pro. Background decode (a summary) runs only when that slot and the
+line are empty, and an interactive arrival cancels it. Tool jobs go to pi2 and
+pi3 through the tool registry and never take the slot.
+
+Each client may keep two requests queued behind the one that is running. A
+full line, or a wait past three minutes, is a 503. Tools for the next request
+start while the current decode still holds the slot. A hot board delays the
+next decode. This never starts a second model call.
 """
 
 from __future__ import annotations
@@ -124,6 +129,8 @@ class InferenceGate:
         self._active: dict[str, int] = {}
         self._rates = _Rates()
         self._local = threading.local()
+        self._bg_cancel: threading.Event | None = None
+        self._tool_jobs = 0
 
     def in_flight(self) -> int:
         with self._cv:
@@ -181,6 +188,7 @@ class InferenceGate:
     def try_acquire(self) -> bool:
         """Return immediately. False when a slot is busy or someone is waiting."""
         with self._cv:
+            self._stop_background()
             if self._queue or self._in_flight >= self.limit:
                 return False
             self._in_flight += 1
@@ -190,9 +198,10 @@ class InferenceGate:
         """`ready` took a slot. `wait` joined the line. `full` did neither.
 
         A free slot is taken only when the line is empty, so a new chat cannot
-        pass someone who is already waiting.
+        pass someone who is already waiting. Either outcome cancels a summary.
         """
         with self._cv:
+            self._stop_background()
             if not self._queue and self._in_flight < self.limit:
                 return "ready", self._start_locked(client)
             if self._queued_locked(client) >= PER_CLIENT_QUEUED:
@@ -394,6 +403,70 @@ class InferenceGate:
         pos = self._in_flight + len(self._queue) + 1
         return self.eta_s(pos) > WAIT_LIMIT_S
 
+    def _stop_background(self) -> None:
+        """Ask the idle summary to stop. Safe to call while holding the lock."""
+        event = self._bg_cancel
+        if event is not None:
+            event.set()
+
+    def enqueue_background(self, fn) -> bool:
+        """Run `fn(cancel)` when no interactive job is active or waiting.
+
+        One background job at a time. The event is set as soon as an
+        interactive reserve or try_acquire arrives. The callable must stop
+        when that event is set.
+        """
+        with self._cv:
+            if self._bg_cancel is not None:
+                return False
+            cancel = threading.Event()
+            self._bg_cancel = cancel
+
+        def run() -> None:
+            try:
+                while not cancel.is_set():
+                    with self._cv:
+                        idle = self._in_flight == 0 and not self._queue
+                    if idle:
+                        break
+                    if cancel.wait(0.02):
+                        return
+                if cancel.is_set():
+                    return
+                fn(cancel)
+            finally:
+                with self._cv:
+                    if self._bg_cancel is cancel:
+                        self._bg_cancel = None
+                        self._cv.notify_all()
+
+        threading.Thread(target=run, name="background-decode", daemon=True).start()
+        return True
+
+    def enqueue_tool(self, name: str, payload: dict, invoke) -> dict:
+        """Send a tool job to pi2 or pi3. This does not take the decode slot."""
+        from pair.tools import Dispatcher
+
+        with self._cv:
+            self._tool_jobs += 1
+            busy = self._in_flight
+        try:
+            result = Dispatcher(invoke).call(name, payload)
+        finally:
+            with self._cv:
+                self._tool_jobs -= 1
+        if self.in_flight() != busy:
+            raise RuntimeError("a tool job took the decode slot")
+        return result
+
+    def job_counts(self) -> dict:
+        with self._cv:
+            return {
+                "interactive": self._in_flight + len(self._queue),
+                "background": 1 if self._bg_cancel is not None else 0,
+                "tool": self._tool_jobs,
+            }
+
 
 def heat_delay_s(temp_c: float | None = None) -> float:
     """Seconds to wait before the next decode. Zero when the board is cool."""
@@ -585,6 +658,67 @@ def heat_report() -> dict:
         "warm_delay_s": warm,
         "hot_delay_s": hot,
         "ok": warm == 0 and hot == HEAT_DELAY_S and sensor <= HEAT_DELAY_S,
+    }
+
+
+def background_cancel_report() -> dict:
+    """An interactive arrival stops a running summary within 200 ms."""
+    gate = InferenceGate(1, queue_limit=4)
+    started = threading.Event()
+    seen = threading.Event()
+
+    def job(cancel: threading.Event) -> None:
+        started.set()
+        if cancel.wait(5):
+            seen.set()
+
+    enqueued = gate.enqueue_background(job)
+    if not started.wait(1):
+        return {
+            "enqueued": enqueued,
+            "cancelled": False,
+            "elapsed_s": None,
+            "ok": False,
+        }
+    second = gate.enqueue_background(lambda _cancel: None)
+    began = time.perf_counter()
+    gate.reserve_ticket("user")
+    cancelled = seen.wait(0.2)
+    elapsed = time.perf_counter() - began
+    gate.release()
+    return {
+        "enqueued": enqueued,
+        "cancelled": cancelled,
+        "elapsed_s": round(elapsed, 4),
+        "second_while_busy": second,
+        "ok": enqueued and cancelled and elapsed < 0.2 and second is False,
+    }
+
+
+def tool_job_report() -> dict:
+    """A tool call stays on pi2 and does not take the decode slot."""
+    from pair.tools import generation_routes
+
+    gate = InferenceGate(1)
+    seen: dict[str, str] = {}
+
+    def invoke(node: str, tool, _payload: dict) -> dict:
+        seen["node"] = node
+        seen["path"] = tool.path
+        return {"ok": True, "model": False}
+
+    before = gate.in_flight()
+    result = gate.enqueue_tool("search", {"q": "pi"}, invoke)
+    return {
+        "node": seen.get("node"),
+        "path": seen.get("path"),
+        "model": result.get("model"),
+        "in_flight": gate.in_flight(),
+        "routes": generation_routes(),
+        "ok": seen.get("node") == "pi2"
+        and result.get("model") is False
+        and gate.in_flight() == before
+        and generation_routes() == [],
     }
 
 

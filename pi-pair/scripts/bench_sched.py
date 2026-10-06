@@ -13,11 +13,13 @@ if str(ROOT) not in sys.path:
 
 from pair.sched import (  # noqa: E402
     admission_report,
+    background_cancel_report,
     client_report,
     estimate_report,
     fairness_report,
     handoff_report,
     heat_report,
+    tool_job_report,
 )
 from pair.tools import generation_routes  # noqa: E402
 
@@ -29,6 +31,8 @@ def main() -> int:
     clients = client_report()
     heat = heat_report()
     handoff = handoff_report()
+    background = background_cancel_report()
+    tools = tool_job_report()
     routes = generation_routes()
     report = {
         "fairness": fairness,
@@ -37,9 +41,21 @@ def main() -> int:
         "clients": clients,
         "heat": heat,
         "handoff": handoff,
+        "background": background,
+        "tool": tools,
         "generation_routes": routes,
         "ok": all(
-            row["ok"] for row in (fairness, estimate, admission, clients, heat, handoff)
+            row["ok"]
+            for row in (
+                fairness,
+                estimate,
+                admission,
+                clients,
+                heat,
+                handoff,
+                background,
+                tools,
+            )
         )
         and routes == [],
     }
@@ -60,6 +76,8 @@ def main() -> int:
         f"- hot delay s: {heat['hot_delay_s']}",
         f"- sensor delay s: {heat['sensor_delay_s']}",
         f"- handoff ran: {handoff['ran']}",
+        f"- background cancel s: {background['elapsed_s']}",
+        f"- tool node: {tools['node']}",
         f"- generation routes: {len(routes)}",
         f"- ok: {report['ok']}",
         "",

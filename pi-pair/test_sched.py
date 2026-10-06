@@ -10,11 +10,13 @@ from unittest.mock import patch
 from pair.gate import InferenceGate
 from pair.sched import (
     admission_report,
+    background_cancel_report,
     client_report,
     estimate_report,
     fairness_report,
     handoff_report,
     heat_report,
+    tool_job_report,
 )
 from pair.tools import generation_routes
 
@@ -107,3 +109,27 @@ class SchedulerReports(unittest.TestCase):
             thread.join(3)
         self.assertEqual([item for item in slept if item >= 1], [5])
         self.assertFalse(thread.is_alive())
+
+    def test_background_waits_and_cancels_within_200ms(self):
+        gate = InferenceGate(1, queue_limit=4)
+        started = threading.Event()
+        _status, holder = gate.reserve_ticket("hold")
+
+        def wait_for_idle(cancel) -> None:
+            started.set()
+            cancel.wait(0)
+
+        self.assertTrue(gate.enqueue_background(wait_for_idle))
+        time.sleep(0.05)
+        self.assertFalse(started.is_set())
+        self.assertFalse(gate.enqueue_background(lambda _cancel: None))
+        gate.release(holder)
+        self.assertTrue(started.wait(1))
+        report = background_cancel_report()
+        self.assertTrue(report["cancelled"], report)
+        self.assertLess(report["elapsed_s"], 0.2, report)
+        self.assertFalse(report["second_while_busy"], report)
+        self.assertTrue(report["ok"], report)
+        tools = tool_job_report()
+        self.assertTrue(tools["ok"], tools)
+        self.assertEqual(tools["routes"], [])
