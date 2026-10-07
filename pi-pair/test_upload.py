@@ -7,6 +7,7 @@ import binascii
 import json
 import os
 import sys
+import tracemalloc
 import zlib
 import tempfile
 import threading
@@ -429,6 +430,124 @@ class MimeRouting(unittest.TestCase):
             ocr.recognize_image = previous
             for _ in range(held):
                 ocr.release()
+
+
+def _s0_pdf(image_bytes: int = 3_200_000) -> bytes:
+    """One text stream plus one random Flate image. This is the wedge fixture."""
+    image = zlib.compress(os.urandom(image_bytes))
+    text = zlib.compress(b"BT (Hello scan) Tj ET")
+    return (
+        b"%PDF-1.4\n"
+        + b"1 0 obj << /Length %d /Filter /FlateDecode >>\nstream\n" % len(text)
+        + text
+        + b"\nendstream\nendobj\n"
+        + b"2 0 obj << /Type /XObject /Subtype /Image /Filter /FlateDecode /Length %d >>\nstream\n"
+        % len(image)
+        + image
+        + b"\nendstream\nendobj\n%%EOF"
+    )
+
+
+def _flate_image_pdf() -> bytes:
+    """A PNG-shaped scan: Flate image, no text operators."""
+    image = zlib.compress(b"\x00" * 64)
+    return (
+        b"%PDF-1.4\n1 0 obj << /Type /XObject /Subtype /Image "
+        b"/Filter /FlateDecode /Length "
+        + str(len(image)).encode("ascii")
+        + b" >>\nstream\n"
+        + image
+        + b"\nendstream\nendobj\n%%EOF"
+    )
+
+
+class PdfTextBounds(unittest.TestCase):
+    def test_s0_fixture_returns_the_page_text_quickly(self):
+        pdf = _s0_pdf()
+        started = time.monotonic()
+        text = extract_pdf_text(pdf)
+        elapsed = time.monotonic() - started
+        self.assertEqual(text, "Hello scan")
+        self.assertLess(elapsed, 1.0)
+
+    def test_zip_bomb_stream_stays_small_and_fast(self):
+        zeros = b"\x00" * 20_000_000
+        packed = zlib.compress(zeros)
+        del zeros
+        pdf = (
+            b"%PDF-1.4\n1 0 obj << /Length "
+            + str(len(packed)).encode("ascii")
+            + b" /Filter /FlateDecode >>\nstream\n"
+            + packed
+            + b"\nendstream\nendobj\n%%EOF"
+        )
+        tracemalloc.start()
+        started = time.monotonic()
+        extract_pdf_text(pdf)
+        elapsed = time.monotonic() - started
+        _current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.assertLess(elapsed, 0.5)
+        self.assertLess(peak, 30 * 1024 * 1024)
+
+    def test_brackets_without_tj_stay_linear(self):
+        stream = b"[" * 50_000
+        pdf = _content_pdf(stream, b"")
+        started = time.monotonic()
+        self.assertEqual(extract_pdf_text(pdf), "")
+        self.assertLess(time.monotonic() - started, 0.5)
+
+    def test_extract_does_not_stall_another_thread(self):
+        pdf = _s0_pdf()
+        gaps: list[float] = []
+        stop = threading.Event()
+
+        def tick() -> None:
+            last = time.monotonic()
+            while not stop.is_set():
+                time.sleep(0.01)
+                now = time.monotonic()
+                gaps.append(now - last)
+                last = now
+
+        thread = threading.Thread(target=tick, daemon=True)
+        thread.start()
+        try:
+            self.assertEqual(extract_pdf_text(pdf), "Hello scan")
+        finally:
+            stop.set()
+            thread.join(timeout=1)
+        self.assertTrue(gaps)
+        self.assertLess(max(gaps), 0.1)
+
+    def test_ingest_parses_a_text_pdf_once(self):
+        calls = {"n": 0}
+        real = upload.extract_pdf_text
+
+        def wrapped(data: bytes) -> str:
+            calls["n"] += 1
+            return real(data)
+
+        with patch("pair.upload.extract_pdf_text", wrapped):
+            result = upload.ingest(
+                "application/pdf", _flate_pdf("Hello"), filename="note.pdf"
+            )
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(result["text"], "Hello")
+        self.assertEqual(result["route"], "pdf")
+
+    def test_flate_image_pdf_routes_to_ocr(self):
+        scanned = _flate_image_pdf()
+        self.assertTrue(upload.is_jpeg_scanned_pdf(scanned))
+        self.assertEqual(
+            upload.route_for("scan.pdf", "application/pdf", scanned), "ocr"
+        )
+        self.assertEqual(
+            upload.route_hint("notes.txt", "application/octet-stream"), "text"
+        )
+        self.assertEqual(
+            upload.route_hint("scan.pdf", "application/pdf", scanned[:32]), ""
+        )
 
 
 class AttachmentHttp(unittest.TestCase):

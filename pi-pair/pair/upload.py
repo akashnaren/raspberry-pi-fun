@@ -82,38 +82,69 @@ def _is_pdf(ext: str, kind: str, data: bytes) -> bool:
     return ext == ".pdf" or kind == "application/pdf" or data.startswith(b"%PDF-")
 
 
-def is_jpeg_scanned_pdf(data: bytes) -> bool:
-    """A PDF page that is a JPEG image (DCTDecode), not a thumbnail inside text."""
+_IMAGE_SUBTYPE = re.compile(rb"/Subtype\s*/Image\b")
+
+
+def is_jpeg_scanned_pdf(data: bytes, text: str | None = None) -> bool:
+    """True when the file has an image XObject and no extracted page text.
+
+    A JPEG scan is DCTDecode. A PNG-in-PDF scan is FlateDecode with
+    `/Subtype /Image`. Either one is OCR. A thumbnail inside real text is not,
+    because the extracted text is non-empty.
+    """
     if not data.startswith(b"%PDF-"):
         return False
-    return b"DCTDecode" in data
+    if _IMAGE_SUBTYPE.search(data) is None:
+        return False
+    extracted = extract_pdf_text(data) if text is None else text
+    return not str(extracted or "").strip()
 
 
-def route_for(name: str, mime: str, data: bytes) -> str:
-    """Return 'text', 'pdf', or 'ocr'.
-
-    .txt and .md are text even when the browser sends a generic MIME.
-    A PDF with text operators is 'pdf'. A JPEG scan with no text is 'ocr'.
-    """
+def route_hint(name: str, mime: str, head_bytes: bytes = b"") -> str:
+    """`'text'` from the extension or MIME. This does not parse a PDF."""
+    if not isinstance(head_bytes, (bytes, bytearray)):
+        return ""
     ext = _ext(name)
     kind = _mime(mime)
     if ext in TEXT_EXTS:
         return "text"
     if kind in TEXT_MIMES and ext not in IMAGE_EXTS and ext != ".pdf":
         return "text"
+    return ""
+
+
+def _route_and_text(name: str, mime: str, data: bytes) -> tuple[str, str]:
+    """Return the route and, for a text PDF, the page text from one parse."""
+    ext = _ext(name)
+    kind = _mime(mime)
+    if ext in TEXT_EXTS:
+        return "text", ""
+    if kind in TEXT_MIMES and ext not in IMAGE_EXTS and ext != ".pdf":
+        return "text", ""
     if _is_pdf(ext, kind, data):
         if data.startswith(b"%PDF-"):
-            if extract_pdf_text(data):
-                return "pdf"
-            if is_jpeg_scanned_pdf(data):
-                return "ocr"
+            pdf_text = extract_pdf_text(data)
+            if pdf_text:
+                return "pdf", pdf_text
+            if is_jpeg_scanned_pdf(data, pdf_text):
+                return "ocr", ""
             raise UploadRejected("that PDF has no readable text", 415)
         if _looks_like_image(ext, kind, data):
-            return "ocr"
+            return "ocr", ""
         raise UploadRejected("only a JPEG-scanned PDF can be read", 415)
     if _looks_like_image(ext, kind, data):
-        return "ocr"
+        return "ocr", ""
     raise UploadRejected("unsupported file type", 415)
+
+
+def route_for(name: str, mime: str, data: bytes) -> str:
+    """Return 'text', 'pdf', or 'ocr'.
+
+    .txt and .md are text even when the browser sends a generic MIME.
+    A PDF with text operators is 'pdf'. An image scan with no text is 'ocr'.
+    """
+    route, _pdf_text = _route_and_text(name, mime, data)
+    return route
 
 
 def ocr_kind(name: str, mime: str, data: bytes) -> str:
@@ -264,11 +295,11 @@ def ingest(content_type: str, body: bytes, filename: str = "") -> dict:
         data = body
     if not data:
         raise UploadRejected("attachment is empty", 400)
-    route = route_for(name, mime, data)
+    route, pdf_text = _route_and_text(name, mime, data)
     if route == "text":
         raw = decode_text(data)
     elif route == "pdf":
-        raw = extract_pdf_text(data)
+        raw = pdf_text
     else:
         if not ocr.try_acquire():
             raise UploadRejected("OCR is busy", 429)
