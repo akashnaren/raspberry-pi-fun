@@ -107,8 +107,9 @@ def run_local(
 ) -> subprocess.CompletedProcess[bytes]:
     """Run one local binary. A timeout kills its process group."""
     watched = bool(argv) and argv[0] in {"tesseract", "pdftoppm"}
+    # The parent server owns the embed counters. The child must not touch them.
     embedder = None
-    if watched:
+    if watched and os.environ.get("PI_PAIR_INGEST_CHILD") != "1":
         from pair.nodes import embedder as embed_mod
 
         embedder = embed_mod

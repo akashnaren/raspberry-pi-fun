@@ -6,6 +6,7 @@ import base64
 import binascii
 import json
 import os
+import socket
 import sys
 import tracemalloc
 import zlib
@@ -22,7 +23,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import ocr, upload
+from pair import ingest_job, ocr, runtime, upload
 from pair.pdftext import extract_pdf_text
 from pair.server import make_server
 
@@ -552,6 +553,8 @@ class PdfTextBounds(unittest.TestCase):
 
 class AttachmentHttp(unittest.TestCase):
     def setUp(self):
+        self._inline = ingest_job.INLINE
+        ingest_job.INLINE = True
         self.httpd = make_server("127.0.0.1", 0)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
@@ -574,6 +577,7 @@ class AttachmentHttp(unittest.TestCase):
     def tearDown(self):
         ocr.recognize_image = self._image
         ocr.recognize_pdf = self._pdf
+        ingest_job.INLINE = self._inline
         self.httpd.shutdown()
         self.httpd.server_close()
 
@@ -710,6 +714,199 @@ class AttachmentHttp(unittest.TestCase):
             hold.set()
             for thread in threads:
                 thread.join(timeout=3)
+
+
+def _ingest_pids() -> list[int]:
+    found = []
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return found
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            command = (entry / "cmdline").read_bytes().replace(b"\x00", b" ")
+        except OSError:
+            continue
+        if b"pair.ingest_job" in command:
+            found.append(int(entry.name))
+    return found
+
+
+class AttachmentIsolation(unittest.TestCase):
+    """Real child. INLINE stays false so a deadline or a disconnect can kill it."""
+
+    def setUp(self):
+        self._inline = ingest_job.INLINE
+        self._deadline = ingest_job.UPLOAD_DEADLINE_S
+        self._sleep = os.environ.get("PI_PAIR_INGEST_TEST_SLEEP")
+        self._peers = [dict(peer) for peer in runtime.PEERS]
+        ingest_job.INLINE = False
+        os.environ.pop("PI_PAIR_INGEST_TEST_SLEEP", None)
+        runtime.set_peers([])
+        self.httpd = make_server("127.0.0.1", 0)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.port = self.httpd.server_address[1]
+
+    def tearDown(self):
+        ingest_job.INLINE = self._inline
+        ingest_job.UPLOAD_DEADLINE_S = self._deadline
+        if self._sleep is None:
+            os.environ.pop("PI_PAIR_INGEST_TEST_SLEEP", None)
+        else:
+            os.environ["PI_PAIR_INGEST_TEST_SLEEP"] = self._sleep
+        runtime.set_peers(self._peers)
+        for pid in _ingest_pids():
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def _post(self, data: bytes, headers: dict[str, str], timeout: float = 5):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/v1/attachments",
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.status, json.loads(response.read().decode())
+        except urllib.error.HTTPError as error:
+            raw = error.read().decode()
+            return error.code, json.loads(raw or "{}")
+
+    def _elapsed_get(self, path: str) -> float:
+        started = time.monotonic()
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{self.port}{path}", timeout=2
+        ) as response:
+            self.assertEqual(response.status, 200)
+            response.read()
+        return time.monotonic() - started
+
+    def test_s0_upload_leaves_health_responsive(self):
+        pdf = _s0_pdf()
+        box: dict = {}
+
+        def post() -> None:
+            started = time.monotonic()
+            box["result"] = self._post(
+                pdf,
+                {"content-type": "application/pdf", "x-filename": "s0.pdf"},
+            )
+            box["dt"] = time.monotonic() - started
+
+        thread = threading.Thread(target=post)
+        thread.start()
+        samples = [self._elapsed_get("/health") for _ in range(20)]
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertLess(box["dt"], 5)
+        status, body = box["result"]
+        self.assertIn(status, (200, 422))
+        if status == 200:
+            self.assertEqual(body.get("text"), "Hello scan")
+        self.assertTrue(all(sample < 0.3 for sample in samples), samples)
+
+    def test_deadline_kills_the_child(self):
+        ingest_job.UPLOAD_DEADLINE_S = 1
+        os.environ["PI_PAIR_INGEST_TEST_SLEEP"] = "3"
+        box: dict = {}
+
+        def post() -> None:
+            started = time.monotonic()
+            box["result"] = self._post(
+                JPEG,
+                {"content-type": "image/jpeg", "x-filename": "pic.jpg"},
+                timeout=4,
+            )
+            box["dt"] = time.monotonic() - started
+
+        thread = threading.Thread(target=post)
+        thread.start()
+        pid = None
+        limit = time.monotonic() + 2
+        while time.monotonic() < limit and pid is None:
+            found = _ingest_pids()
+            if found:
+                pid = found[0]
+                break
+            time.sleep(0.02)
+        static_s = self._elapsed_get("/static/mesh.css")
+        thread.join(timeout=3)
+        self.assertFalse(thread.is_alive())
+        self.assertLess(box["dt"], 2)
+        status, body = box["result"]
+        self.assertEqual(status, 504, body)
+        self.assertEqual(body.get("error"), "That took too long. Try again.")
+        self.assertIsNotNone(pid)
+        self.assertTrue(_stopped(pid), pid)
+        self.assertLess(static_s, 0.3)
+
+    def test_disconnect_kills_the_child_and_releases_the_gate(self):
+        os.environ["PI_PAIR_INGEST_TEST_SLEEP"] = "3"
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        body = JPEG
+        head = (
+            "POST /v1/attachments HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{self.port}\r\n"
+            "Content-Type: image/jpeg\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "X-Filename: pic.jpg\r\n"
+            "Connection: close\r\n\r\n"
+        ).encode()
+        sock.sendall(head + body)
+        pid = None
+        limit = time.monotonic() + 2
+        while time.monotonic() < limit:
+            found = _ingest_pids()
+            if found:
+                pid = found[0]
+                break
+            time.sleep(0.02)
+        self.assertIsNotNone(pid)
+        sock.close()
+        self.assertTrue(_stopped(int(pid)))
+        os.environ.pop("PI_PAIR_INGEST_TEST_SLEEP", None)
+        status, _body = self._post(
+            JPEG, {"content-type": "image/jpeg", "x-filename": "again.jpg"}
+        )
+        self.assertNotEqual(status, 429)
+
+    def test_two_slow_uploads_reject_a_third(self):
+        os.environ["PI_PAIR_INGEST_TEST_SLEEP"] = "3"
+        threads = []
+        try:
+            for _ in range(2):
+                thread = threading.Thread(
+                    target=lambda: self._post(
+                        JPEG,
+                        {"content-type": "image/jpeg", "x-filename": "pic.jpg"},
+                        timeout=8,
+                    )
+                )
+                thread.start()
+                threads.append(thread)
+            limit = time.monotonic() + 2
+            while time.monotonic() < limit and len(_ingest_pids()) < 2:
+                time.sleep(0.02)
+            self.assertGreaterEqual(len(_ingest_pids()), 2)
+            started = time.monotonic()
+            status, body = self._post(
+                JPEG,
+                {"content-type": "image/jpeg", "x-filename": "third.jpg"},
+                timeout=2,
+            )
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertEqual(status, 429, body)
+        finally:
+            os.environ.pop("PI_PAIR_INGEST_TEST_SLEEP", None)
+            for thread in threads:
+                thread.join(timeout=8)
 
 
 def _stopped(pid: int) -> bool:

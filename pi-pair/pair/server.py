@@ -97,7 +97,14 @@ from pair.turn import (
     structure_hint,
     turns_for_memory,
 )
-from pair.upload import UploadRejected, ingest, read_limited
+from pair.upload import (
+    UploadRejected,
+    file_part,
+    ingest,
+    read_limited,
+    route_hint,
+    safe_name,
+)
 
 FLASH_SOURCE_CAP = 3
 PRO_SOURCE_CAP = 8
@@ -105,6 +112,9 @@ SEARCH_BUDGET_S = 4.0
 KEEPALIVE_S = 5.0
 SEARCH_BODY_CAP = 4096
 CHAT_BODY_CAP = 1_000_000
+# One cap for non-text uploads. ocr.try_acquire() inside the child is
+# per-process and always free, so this gate is the real limit.
+_ATTACH_GATE = threading.BoundedSemaphore(2)
 _DRAIN_CAP = 8 * 1024 * 1024
 _CHAT_ROLES = {"system", "user", "assistant"}
 _COMPACT_GAP_S = 10.0
@@ -1823,18 +1833,16 @@ class Handler(BaseHTTPRequestHandler):
             if close:
                 close()
 
-    def _attachment(self) -> None:
-        """Text files are decoded. Images and JPEG-scanned PDFs are OCR'd first."""
-        try:
-            raw = read_limited(self.headers.get("content-length"), self.rfile.read)
-            result = ingest(
-                self.headers.get("content-type") or "",
-                raw,
-                filename=self.headers.get("x-filename") or "",
-            )
-        except UploadRejected as error:
-            self._error(str(error), status=error.status)
-            return
+    def _upload_identity(
+        self, content_type: str, raw: bytes, filename: str
+    ) -> tuple[str, str]:
+        """Name and MIME for the fast path. Multipart is one split, not a parse."""
+        if (content_type or "").lower().startswith("multipart/"):
+            name, mime, _data = file_part(raw, content_type)
+            return name, mime
+        return safe_name(filename or "attachment"), content_type or ""
+
+    def _send_attachment(self, result: dict) -> None:
         body = json.dumps(result).encode()
         self.send_response(200)
         self._cors()
@@ -1842,6 +1850,78 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         safe_write(self, body)
+
+    def _finish_ingest(self, result: dict) -> None:
+        if not isinstance(result, dict) or not result.get("ok"):
+            status = 422
+            message = "could not read that file"
+            if isinstance(result, dict):
+                try:
+                    status = int(result.get("status") or 422)
+                except (TypeError, ValueError):
+                    status = 422
+                if result.get("error"):
+                    message = str(result.get("error"))
+            if status == 499:
+                self.close_connection = True
+                return
+            self._error(message, status=status)
+            return
+        self._send_attachment(result)
+
+    def _attachment(self) -> None:
+        """Text stays on this thread. Other files run in a killable child."""
+        try:
+            try:
+                self.connection.settimeout(30)
+            except OSError:
+                pass
+            raw = read_limited(self.headers.get("content-length"), self.rfile.read)
+        except UploadRejected as error:
+            self._error(str(error), status=error.status)
+            return
+        finally:
+            try:
+                self.connection.settimeout(None)
+            except OSError:
+                pass
+        content_type = self.headers.get("content-type") or ""
+        filename = self.headers.get("x-filename") or ""
+        try:
+            name, mime = self._upload_identity(content_type, raw, filename)
+        except UploadRejected as error:
+            self._error(str(error), status=error.status)
+            return
+        if route_hint(name, mime, raw[:512]) == "text":
+            try:
+                result = ingest(content_type, raw, filename=filename)
+            except UploadRejected as error:
+                self._error(str(error), status=error.status)
+                return
+            self._send_attachment(result)
+            return
+        if not _ATTACH_GATE.acquire(blocking=False):
+            self._error("OCR is busy", status=429)
+            return
+        from pair import ingest_job
+        from pair.nodes import embedder
+
+        entered = node_role() == "dataset"
+        if entered:
+            embedder.ocr_enter()
+        try:
+            result = ingest_job.run(
+                content_type,
+                raw,
+                filename,
+                ingest_job.UPLOAD_DEADLINE_S,
+                lambda: peer_closed(self.connection),
+            )
+        finally:
+            if entered:
+                embedder.ocr_exit()
+            _ATTACH_GATE.release()
+        self._finish_ingest(result)
 
     def _touch_memory(self, messages) -> None:
         """Record the real prompt size and enqueue a summary for when the slot is free."""
