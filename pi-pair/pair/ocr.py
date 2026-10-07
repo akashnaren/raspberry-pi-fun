@@ -62,6 +62,34 @@ def release() -> None:
     _GATE.release()
 
 
+def hold_embed() -> bool:
+    """Unload the embed tag on the dataset parent before OCR starts.
+
+    The child must not touch the counters (it is a different process, and
+    ``run_local`` already skips the hook when ``PI_PAIR_INGEST_CHILD=1``).
+    Other roles are a no-op. Returns whether this call took the hook.
+    """
+    if os.environ.get("PI_PAIR_INGEST_CHILD") == "1":
+        return False
+    from pair.queue import node_role
+
+    if node_role() != "dataset":
+        return False
+    from pair.nodes import embedder
+
+    embedder.ocr_enter()
+    return True
+
+
+def release_embed(held: bool) -> None:
+    """Pair with ``hold_embed``. A false flag does nothing."""
+    if not held:
+        return
+    from pair.nodes import embedder
+
+    embedder.ocr_exit()
+
+
 def _close_pipes(proc: subprocess.Popen[bytes]) -> None:
     for stream in (proc.stdout, proc.stderr, proc.stdin):
         if stream is None:

@@ -1342,14 +1342,6 @@ body.voice-session {
   100% { transform: translateX(340%); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .read-bar span {
-    animation: none;
-    width: 100%;
-    opacity: 0.55;
-  }
-}
-
 .composer {
   background: var(--elev);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1794,9 +1786,15 @@ body.voice-session {
   .label-out,
   #voiceStage,
   #voiceStage::before,
-  #voiceOrb {
+  #voiceOrb,
+  .read-bar span {
     animation: none;
     transition: none;
+  }
+
+  .read-bar span {
+    width: 100%;
+    opacity: 0.55;
   }
 
   .mem-ring.compacting svg, .mem-ring.pulsed { animation: none; }

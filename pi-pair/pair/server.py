@@ -2020,12 +2020,9 @@ class Handler(BaseHTTPRequestHandler):
         if not _ATTACH_GATE.acquire(blocking=False):
             self._error("OCR is busy", status=429)
             return
-        from pair import ingest_job
-        from pair.nodes import embedder
+        from pair import ingest_job, ocr
 
-        entered = node_role() == "dataset"
-        if entered:
-            embedder.ocr_enter()
+        held = ocr.hold_embed()
         try:
             started = time.monotonic()
 
@@ -2059,8 +2056,7 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 via = "local"
         finally:
-            if entered:
-                embedder.ocr_exit()
+            ocr.release_embed(held)
             _ATTACH_GATE.release()
         self._finish_ingest(result, via)
 
@@ -2260,12 +2256,11 @@ class Handler(BaseHTTPRequestHandler):
         """Same ingest as an upload, so a text PDF is not rasterized first."""
         import base64
 
-        from pair import ingest_job
-        from pair.nodes import embedder
+        from pair import ingest_job, ocr
 
         if not _ATTACH_GATE.acquire(blocking=False):
             return 429, {"ok": False, "error": "OCR is busy", "status": 429}
-        embedder.ocr_enter()
+        held = ocr.hold_embed()
         try:
             raw = payload.get("data") or ""
             try:
@@ -2284,7 +2279,7 @@ class Handler(BaseHTTPRequestHandler):
                 lambda: peer_closed(self.connection),
             )
         finally:
-            embedder.ocr_exit()
+            ocr.release_embed(held)
             _ATTACH_GATE.release()
         if not isinstance(result, dict):
             return 422, {
