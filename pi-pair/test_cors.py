@@ -64,7 +64,9 @@ class ApiCors(unittest.TestCase):
         saved = os.environ.get("PI_PAIR_CORS_ORIGINS")
         os.environ["PI_PAIR_CORS_ORIGINS"] = "https://lab.example"
         httpd = make_server("127.0.0.1", 0)
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         thread.start()
         port = httpd.server_address[1]
         try:

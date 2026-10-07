@@ -29,7 +29,9 @@ from pair.server import make_server
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
 
 

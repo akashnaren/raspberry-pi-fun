@@ -53,7 +53,9 @@ def _label_hmac(text: str, pepper: str = PEPPER) -> str:
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    threading.Thread(
+        target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    ).start()
 
 
 def _listen(servers: list, handler) -> int:

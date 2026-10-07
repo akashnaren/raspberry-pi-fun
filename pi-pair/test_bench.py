@@ -11,12 +11,11 @@ _SPEC = importlib.util.spec_from_file_location("bench_pi4", _PATH)
 assert _SPEC and _SPEC.loader
 _BENCH = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_BENCH)
-run_vm = _BENCH.run_vm
 
 
 class VmBench(unittest.TestCase):
     def test_second_turn_ttft_drops(self):
-        result = run_vm()
+        result = {"turns": _BENCH.vm_turns(), "llama": _BENCH.llama_note()}
         turns = result["turns"]
         self.assertTrue(turns["prefix_identical"])
         self.assertGreaterEqual(turns["ttft_drop"], 0.4)

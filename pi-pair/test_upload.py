@@ -556,7 +556,9 @@ class AttachmentHttp(unittest.TestCase):
         self._inline = ingest_job.INLINE
         ingest_job.INLINE = True
         self.httpd = make_server("127.0.0.1", 0)
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         self.thread.start()
         self.port = self.httpd.server_address[1]
         self._image = ocr.recognize_image
@@ -769,7 +771,9 @@ class AttachmentIsolation(unittest.TestCase):
         os.environ.pop("PI_PAIR_INGEST_TEST_SLEEP", None)
         runtime.set_peers([])
         self.httpd = make_server("127.0.0.1", 0)
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         self.thread.start()
         self.port = self.httpd.server_address[1]
 
@@ -968,8 +972,7 @@ class AttachmentWire(unittest.TestCase):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn("tesseract-ocr", install)
         self.assertIn("poppler-utils", install)
-        self.assertIn('"$INSTALL_DIR/pair/nodes"', install)
-        self.assertIn('"$ROOT/pair/nodes/"*.py', install)
+        self.assertIn('cp -a "$ROOT/pair" "$INSTALL_DIR/pair.new"', install)
 
     def test_composer_posts_then_sends_the_text(self):
         source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")

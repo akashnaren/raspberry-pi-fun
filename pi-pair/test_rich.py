@@ -273,7 +273,11 @@ class BrainRender(unittest.TestCase):
         os.environ.pop("PI_PAIR_TOOL_FORWARD", None)
         self._httpd = make_server("127.0.0.1", 0)
         self._port = self._httpd.server_address[1]
-        threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=self._httpd.serve_forever,
+            kwargs={"poll_interval": 0.05},
+            daemon=True,
+        ).start()
 
     def tearDown(self):
         self._httpd.shutdown()

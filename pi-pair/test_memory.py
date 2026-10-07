@@ -281,7 +281,9 @@ class CompactTests(unittest.TestCase):
         self.assertEqual(memory.list_facts(""), [])
         self.assertEqual(memory.summary_text(""), "")
         httpd = make_server("127.0.0.1", 0)
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         thread.start()
         try:
             host, port = httpd.server_address
@@ -330,7 +332,9 @@ class MemoryRingHttp(unittest.TestCase):
         import urllib.error
 
         httpd = make_server("127.0.0.1", 0)
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         thread.start()
         host, port = httpd.server_address
         base = f"http://{host}:{port}/v1/memory"

@@ -232,13 +232,17 @@ class ModeHttp(unittest.TestCase):
     def _listen(self, handler):
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.servers.append(httpd)
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        ).start()
         return httpd.server_address[1]
 
     def _pair(self) -> int:
         httpd = make_server("127.0.0.1", 0)
         self.servers.append(httpd)
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        ).start()
         return httpd.server_address[1]
 
     def _post(self, port, payload, headers=None):

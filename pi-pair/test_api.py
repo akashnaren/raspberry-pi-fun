@@ -29,7 +29,9 @@ from pair.server import make_server
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
 
 
@@ -660,7 +662,9 @@ class ChatHygiene(unittest.TestCase):
 
     def setUp(self):
         self.httpd = make_server("127.0.0.1", 0)
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         self.thread.start()
         self.port = self.httpd.server_address[1]
 

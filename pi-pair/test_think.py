@@ -243,7 +243,9 @@ class ThinkHttp(unittest.TestCase):
     def _boot(self) -> int:
         peer = ThreadingHTTPServer(("127.0.0.1", 0), ThinkOllama)
         self.servers.append(peer)
-        threading.Thread(target=peer.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=peer.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        ).start()
         runtime.set_peers(
             [
                 {
@@ -259,7 +261,9 @@ class ThinkHttp(unittest.TestCase):
         )
         httpd = make_server("127.0.0.1", 0)
         self.servers.append(httpd)
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        ).start()
         return httpd.server_address[1]
 
     def _post(self, port: int, payload: dict) -> dict:
@@ -555,7 +559,9 @@ class ThinkHttp(unittest.TestCase):
 
         peer_http = ThreadingHTTPServer(("127.0.0.1", 0), ThinkOllama)
         self.servers.append(peer_http)
-        threading.Thread(target=peer_http.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=peer_http.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        ).start()
         peer = {
             "name": "pi4",
             "host": "127.0.0.1",

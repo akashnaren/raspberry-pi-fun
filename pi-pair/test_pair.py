@@ -58,7 +58,9 @@ def _statuses(raw: str) -> list[str]:
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
 
 
@@ -2009,7 +2011,9 @@ class EmbedRoute(unittest.TestCase):
         os.environ["PI_PAIR_ROLE"] = "brain"
         httpd = make_server("127.0.0.1", 0)
         self.servers.append(httpd)
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        ).start()
         port = httpd.server_address[1]
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}/tools/embed",
@@ -2035,7 +2039,9 @@ class StaticCache(unittest.TestCase):
         self.assertGreaterEqual(fresh.request_queue_size, 128)
         fresh.server_close()
         httpd = make_server("127.0.0.1", 0)
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         thread.start()
         port = httpd.server_address[1]
 
