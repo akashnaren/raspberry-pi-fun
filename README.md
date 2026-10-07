@@ -1,5 +1,7 @@
 # pi-pair
 
+Access and use the Platform: https://would-bride-celebrities-enables.trycloudflare.com/
+
 Chat for a three-board Raspberry Pi rack. Stdlib Python on the boards, no pip. The page is served on 18080.
 
 pi2, pi3, and pi4 all sit in one custom 3D-printed server rack. Tailscale names are rpi-pi2, rpi-pi3, and rpi-pi4.
