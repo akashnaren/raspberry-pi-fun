@@ -10,12 +10,14 @@ import unittest
 import urllib.request
 from unittest.mock import patch
 
-from pair import memory, runtime
-from pair.compact import plan, run_compact, schedule, should_compact
-from pair.context import Ledger, ledger_for, reset, verbatim_budget
-from pair.memory import scope_key
+from pair.memory import store as memory
+
+from pair.core import runtime
+from pair.memory.compact import plan, run_compact, schedule, should_compact
+from pair.memory.ledger import Ledger, ledger_for, reset, verbatim_budget
+from pair.memory.store import scope_key
 from pair.server import make_server
-from pair.turn import estimate_tokens, shape_messages
+from pair.turn.shape import estimate_tokens, shape_messages
 
 
 class LedgerTests(unittest.TestCase):
@@ -76,8 +78,8 @@ class CompactTests(unittest.TestCase):
     def test_summary_waits_until_the_slot_is_free(self):
         import time
 
-        from pair import runtime
-        from pair.sched import InferenceGate
+        from pair.core import runtime
+        from pair.model.sched import InferenceGate
 
         previous = runtime.gate
         gate = InferenceGate(1, queue_limit=4)
@@ -383,7 +385,7 @@ class MemoryRingHttp(unittest.TestCase):
             with (
                 patch.object(runtime.gate, "in_flight", return_value=0),
                 patch.object(runtime.gate, "waiting", return_value=0),
-                patch("pair.compact.schedule", return_value=True) as scheduled,
+                patch("pair.memory.compact.schedule", return_value=True) as scheduled,
             ):
                 with patch.object(runtime.gate, "in_flight", return_value=1):
                     status, busy = open_json(

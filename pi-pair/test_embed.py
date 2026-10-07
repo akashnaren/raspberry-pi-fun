@@ -9,9 +9,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pair.canned import lookup, normalize_key
-from pair.config import ollama_base
-from pair.public_api import openapi_document
+from pair.flywheel.canned import lookup, normalize_key
+from pair.core.config import ollama_base
+from pair.routes.public_api import openapi_document
 from pair.server import health_document
 
 ROOT = Path(__file__).resolve().parent
@@ -78,7 +78,9 @@ class CannedExact(unittest.TestCase):
         self.assertNotIn("ollama pull snowflake-arctic-embed", readme)
         self.assertNotIn("/api/embed", readme)
         self.assertNotIn("cosine", readme.lower())
-        for path in (ROOT / "pair").glob("*.py"):
+        for path in (ROOT / "pair").rglob("*.py"):
+            if "nodes" in path.relative_to(ROOT / "pair").parts:
+                continue
             source = path.read_text(encoding="utf-8")
             self.assertNotIn("pair.embed", source, path.name)
             self.assertNotIn("snowflake", source, path.name)
@@ -116,11 +118,11 @@ class CannedExact(unittest.TestCase):
 
     def test_chat_modules_do_not_import_embed(self):
         for name in (
-            "images.py",
-            "turn.py",
-            "chat.py",
-            "memory.py",
-            "compact.py",
+            "render/images.py",
+            "turn/shape.py",
+            "model/chat_once.py",
+            "memory/store.py",
+            "memory/compact.py",
         ):
             source = (ROOT / "pair" / name).read_text(encoding="utf-8")
             self.assertNotIn("embed", source, name)

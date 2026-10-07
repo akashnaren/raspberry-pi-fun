@@ -11,10 +11,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.config import data_root
-from pair.lifecycle import _read_jsonl, train_config_path
-from pair.registry import require_registered
-from pair.yaml_lite import load_path
+from pair.core.config import data_root
+from pair.flywheel.lifecycle import _read_jsonl, train_config_path
+from pair.flywheel.registry import require_registered
+from pair.core.yaml_lite import load_path
 
 
 def main() -> int:

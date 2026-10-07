@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 
 from pair.nodes import websearch
-from pair.tools import GENERATION_PATHS, registry
+from pair.mesh.tools import GENERATION_PATHS, registry
 
 ROUTES = {tool.path: tool.name for tool in registry().values()}
 
@@ -32,7 +32,7 @@ def _extract(payload: dict) -> dict:
     if kind == "text" or name.lower().endswith((".txt", ".md", ".csv")):
         text = blob.decode("utf-8", "replace").strip()
         return {"ok": bool(text), "text": text, "filename": name}
-    from pair.upload import UploadRejected, ingest
+    from pair.ingest.upload import UploadRejected, ingest
 
     if name.lower().endswith(".pdf") or kind == "pdf":
         content_type = "application/pdf"
@@ -55,7 +55,7 @@ def _search(payload: dict) -> dict:
 
 def _render_doc(payload: dict) -> dict:
     """Markdown to a file. The route still does not generate."""
-    from pair.docs import render_document, save_document
+    from pair.render.documents import render_document, save_document
 
     markdown = str(payload.get("markdown") or "")
     data, ext = render_document(markdown, str(payload.get("kind") or "md"))
@@ -71,7 +71,7 @@ def _render_doc(payload: dict) -> dict:
 
 
 def _render_chart(payload: dict) -> dict:
-    from pair.charts import render_chart
+    from pair.render.charts import render_chart
 
     return render_chart(
         table=str(payload.get("table") or ""),
@@ -87,7 +87,7 @@ def _tokenize(payload: dict) -> dict:
 
 
 def _compact_plan(payload: dict) -> dict:
-    from pair.nodes.compact_plan import plan_turns
+    from pair.memory.plan import plan_turns
 
     turns = payload.get("turns") if isinstance(payload.get("turns"), list) else []
     try:
@@ -117,7 +117,7 @@ def _embed(payload: dict) -> dict:
 
 def _images(payload: dict) -> dict:
     """Wikipedia photo cards. This route does not generate text."""
-    from pair.images import cards
+    from pair.render.images import cards
 
     found = cards(payload if isinstance(payload, dict) else {})
     rows = found.get("cards") if isinstance(found, dict) else None
@@ -153,8 +153,8 @@ def handle(path: str, payload: dict | None) -> tuple[int, dict]:
 
 
 def health_body() -> dict:
-    from pair import runtime
-    from pair.thermal import sample
+    from pair.core import runtime
+    from pair.core.thermal import sample
 
     temp = sample()
     body = {
@@ -165,7 +165,7 @@ def health_body() -> dict:
         "temp_c": None if temp is None else temp.get("temp_c"),
         "routes": sorted(ROUTES),
     }
-    from pair.queue import node_role
+    from pair.flywheel.miss_queue import node_role
 
     if node_role() == "dataset":
         from pair.nodes.embedder import state

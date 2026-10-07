@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import memory
-from pair.compact import plan, run_compact
+from pair.memory import store as memory
+from pair.memory.compact import plan, run_compact
 
 
 def main() -> None:

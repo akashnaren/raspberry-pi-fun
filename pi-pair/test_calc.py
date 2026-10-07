@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import unittest
 
-from pair.abilities import settle_blocks, tool_notes
-from pair.calc import evaluate_expr, fully_answers, notes_for
-from pair.turn import needs_web, shape_messages
+from pair.turn.abilities import settle_blocks, tool_notes
+from pair.turn.calc import evaluate_expr, fully_answers, notes_for
+from pair.turn.shape import needs_web, shape_messages
 
 
 class CalculatorNotes(unittest.TestCase):

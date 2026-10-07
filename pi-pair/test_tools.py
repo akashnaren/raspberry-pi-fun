@@ -12,14 +12,16 @@ import urllib.error
 import urllib.request
 from unittest.mock import patch
 
-from pair import ingest_job, ocr, runtime
-from pair.guard import may_generate
-from pair.health import peer_load
+from pair.ingest import job as ingest_job, ocr
+
+from pair.core import runtime
+from pair.mesh.guard import may_generate
+from pair.mesh.health import peer_load
 from pair.nodes import websearch
 from pair.nodes.worker import forbidden_routes, handle
-from pair.ocr import recognize_image
+from pair.ingest.ocr import recognize_image
 from pair.server import Handler, make_server
-from pair.tools import (
+from pair.mesh.tools import (
     SEARCH_MEDIAN_TARGET_S,
     SEARCH_P95_TARGET_S,
     Dispatcher,
@@ -301,7 +303,7 @@ class WorkerHttp(unittest.TestCase):
             return _Body(json.dumps({"text": "from pi3"}).encode())
 
         with patch("urllib.request.urlopen", fake_open):
-            with patch("pair.ocr.run_local") as local:
+            with patch("pair.ingest.ocr.run_local") as local:
                 text = recognize_image(b"not-an-image")
         self.assertEqual(text, "from pi3")
         local.assert_not_called()
@@ -336,7 +338,7 @@ class WorkerHttp(unittest.TestCase):
 
     def test_images_handler_calls_cards_and_the_brain_refuses_the_route(self):
         with patch(
-            "pair.images.cards", return_value={"ok": True, "cards": []}
+            "pair.render.images.cards", return_value={"ok": True, "cards": []}
         ) as mocked:
             status, body = handle(
                 "/tools/images", {"question": "hi there", "answer": "hello there"}
@@ -568,7 +570,7 @@ class ExtractOffload(unittest.TestCase):
             + content
             + b"\nendstream\nendobj\n%%EOF"
         )
-        with patch("pair.ocr.recognize_pdf") as raster:
+        with patch("pair.ingest.ocr.recognize_pdf") as raster:
             body = _extract(
                 {
                     "filename": "note.pdf",

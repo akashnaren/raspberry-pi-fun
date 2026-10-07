@@ -23,8 +23,10 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import ingest_job, ocr, runtime, upload
-from pair.pdftext import extract_pdf_text
+from pair.ingest import job as ingest_job, ocr, upload
+
+from pair.core import runtime
+from pair.ingest.pdftext import extract_pdf_text
 from pair.server import make_server
 
 JPEG = b"\xff\xd8\xff\xd9"
@@ -364,7 +366,7 @@ class MimeRouting(unittest.TestCase):
             patch("pair.nodes.embedder.ocr_enter", enter),
             patch("pair.nodes.embedder.ocr_exit", leave),
             patch(
-                "pair.ocr._launch_argv",
+                "pair.ingest.ocr._launch_argv",
                 return_value=[sys.executable, "-c", "import time; time.sleep(30)"],
             ),
         ):
@@ -529,7 +531,7 @@ class PdfTextBounds(unittest.TestCase):
             calls["n"] += 1
             return real(data)
 
-        with patch("pair.upload.extract_pdf_text", wrapped):
+        with patch("pair.ingest.upload.extract_pdf_text", wrapped):
             result = upload.ingest(
                 "application/pdf", _flate_pdf("Hello"), filename="note.pdf"
             )
@@ -754,7 +756,7 @@ def _ingest_pids() -> list[int]:
             command = (entry / "cmdline").read_bytes().replace(b"\x00", b" ")
         except OSError:
             continue
-        if b"pair.ingest_job" in command:
+        if b"pair.ingest.job" in command:
             found.append(int(entry.name))
     return found
 

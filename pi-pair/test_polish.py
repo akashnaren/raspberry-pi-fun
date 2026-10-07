@@ -14,9 +14,9 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
-from pair.turn import is_structured_request, structure_hint  # noqa: E402
-from pair.preload import (  # noqa: E402
+from pair.ingest.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
+from pair.turn.shape import is_structured_request, structure_hint  # noqa: E402
+from pair.model.preload import (  # noqa: E402
     PRELOAD_TIMEOUT_S,
     pro_preload_payload,
     rewarm_pro_if_evicted,
@@ -135,16 +135,18 @@ class Preload(unittest.TestCase):
 
         env = {"PI_PAIR_ROLE": "brain"}
         with patch.dict(os.environ, env, clear=False):
-            with patch("pair.preload.resident_models", return_value=[]):
-                with patch("pair.preload.open_json_request", opener):
+            with patch("pair.model.preload.resident_models", return_value=[]):
+                with patch("pair.model.preload.open_json_request", opener):
                     rewarm_pro_if_evicted()
         models = [item["model"] for item in seen]
         self.assertEqual(models, ["qwen3:0.6b", "qwen3:1.7b"])
         self.assertTrue(all(item["keep_alive"] == -1 for item in seen))
         seen.clear()
         with patch.dict(os.environ, env, clear=False):
-            with patch("pair.preload.resident_models", return_value=["qwen3:0.6b"]):
-                with patch("pair.preload.open_json_request", opener):
+            with patch(
+                "pair.model.preload.resident_models", return_value=["qwen3:0.6b"]
+            ):
+                with patch("pair.model.preload.open_json_request", opener):
                     rewarm_pro_if_evicted()
         self.assertEqual([item["model"] for item in seen], ["qwen3:1.7b"])
         self.assertEqual(seen[0]["keep_alive"], -1)

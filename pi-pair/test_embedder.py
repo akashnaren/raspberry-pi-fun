@@ -237,12 +237,12 @@ class MeshSurface(EmbedderCase):
     def test_embedder_does_not_import_the_hot_path(self):
         source = Path(embedder.__file__).read_text(encoding="utf-8")
         for banned in (
-            "pair.chat",
-            "pair.runtime",
-            "pair.sched",
-            "pair.queue",
-            "pair.images",
-            "pair.memory",
+            "pair.model.chat_once",
+            "pair.core.runtime",
+            "pair.model.sched",
+            "pair.flywheel.miss_queue",
+            "pair.render.images",
+            "pair.memory.store",
         ):
             self.assertNotIn(banned, source)
 

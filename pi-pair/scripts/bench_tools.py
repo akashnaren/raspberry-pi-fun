@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.tools import (
+from pair.mesh.tools import (
     SEARCH_MEDIAN_TARGET_S,
     SEARCH_P95_TARGET_S,
     latency_stats,

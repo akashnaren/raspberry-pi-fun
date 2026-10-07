@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.turn import PERSONA, estimate_tokens, shape_messages
+from pair.turn.shape import PERSONA, estimate_tokens, shape_messages
 
 # Milliseconds per uncached token on the VM stand-in. The ratio is what the
 # pass criteria checks, not this constant.

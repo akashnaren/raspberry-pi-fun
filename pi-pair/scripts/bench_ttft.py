@@ -195,7 +195,7 @@ def bench_mock(runs: int) -> list[dict]:
     canned.write_text('{"unrelated bench key": "not this answer"}\n', encoding="utf-8")
     os.environ["PI_PAIR_CANNED"] = str(canned)
 
-    import pair.runtime as runtime
+    import pair.core.runtime as runtime
     from pair.server import lookup_web, make_server
 
     ollama = ThreadingHTTPServer(("127.0.0.1", 0), _Drip)

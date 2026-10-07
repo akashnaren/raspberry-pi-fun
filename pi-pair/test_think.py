@@ -14,14 +14,16 @@ from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from pair import queue, runtime
+from pair.flywheel import miss_queue as queue
+
+from pair.core import runtime
 from pair import server as pair_server
-from pair.assist import HARM_REFUSAL
-from pair.knobs import inference_knobs
-from pair.modes import mode_table
-from pair.queue import append_row
+from pair.turn.assist import HARM_REFUSAL
+from pair.model.knobs import inference_knobs
+from pair.model.modes import mode_table
+from pair.flywheel.miss_queue import append_row
 from pair.server import last_completion, make_server
-from pair.think import (
+from pair.model.think import (
     DIRECT_FALLBACK,
     FORCE_NOTE,
     HIGH_PREDICT,
@@ -33,8 +35,8 @@ from pair.think import (
     stop_thinking,
     visible_answer,
 )
-from pair.errors import GENERIC
-from pair.turn import EFFORT_HINT
+from pair.core.errors import GENERIC
+from pair.turn.shape import EFFORT_HINT
 
 ROOT = Path(__file__).resolve().parent
 
@@ -280,7 +282,7 @@ class ThinkHttp(unittest.TestCase):
             return json.loads(response.read().decode())
 
     def test_harmful_thinking_is_refused_and_not_saved(self):
-        with patch("pair.moderate.safety_filter", return_value=True):
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
             self._harmful_thinking_is_refused()
 
     def _harmful_thinking_is_refused(self):
@@ -338,7 +340,7 @@ class ThinkHttp(unittest.TestCase):
         self.assertEqual(self.forwarded[0]["answer"], "The capital is Paris.")
 
     def test_streamed_thinking_stops_before_the_harmful_span(self):
-        with patch("pair.moderate.safety_filter", return_value=True):
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
             self._streamed_thinking_is_refused()
 
     def _streamed_thinking_is_refused(self):
@@ -555,7 +557,7 @@ class ThinkHttp(unittest.TestCase):
         self.assertTrue(chosen["choices"][0]["message"]["content"].strip())
 
     def test_a_leftover_thinking_plan_still_returns_visible_text(self):
-        from pair.stream import iter_ollama_channels
+        from pair.model.chat_stream import iter_ollama_channels
 
         peer_http = ThreadingHTTPServer(("127.0.0.1", 0), ThinkOllama)
         self.servers.append(peer_http)

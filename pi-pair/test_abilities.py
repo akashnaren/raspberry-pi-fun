@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from pair.abilities import (
+from pair.turn.abilities import (
     CATEGORIES,
     category_rates,
     clean_reply,
@@ -12,10 +12,10 @@ from pair.abilities import (
     parse_fences,
     tool_notes,
 )
-from pair.charts import render_chart
-from pair.docs import render_document
+from pair.render.charts import render_chart
+from pair.render.documents import render_document
 from pair.server import Handler
-from pair.turn import PERSONA
+from pair.turn.shape import PERSONA
 
 
 class Abilities(unittest.TestCase):

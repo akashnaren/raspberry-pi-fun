@@ -16,8 +16,13 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from pair.charts import chart_samples, chart_type, figure_to_plot_fence, render_chart
-from pair.docs import (
+from pair.render.charts import (
+    chart_samples,
+    chart_type,
+    figure_to_plot_fence,
+    render_chart,
+)
+from pair.render.documents import (
     MAX_FILES,
     open_document,
     purge_documents,
@@ -135,7 +140,7 @@ class Charts(unittest.TestCase):
 
 
 def _table(text: str):
-    from pair.charts import parse_markdown_table
+    from pair.render.charts import parse_markdown_table
 
     parsed = parse_markdown_table(text)
     assert parsed is not None

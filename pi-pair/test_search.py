@@ -6,8 +6,8 @@ import json
 import unittest
 from unittest import mock
 
-import pair.search as search
-from pair.search import (
+import pair.search.lookup as search
+from pair.search.lookup import (
     DEFAULT_RESULTS,
     MAX_RESULTS,
     PAGE_READ_CAP,

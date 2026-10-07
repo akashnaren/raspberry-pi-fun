@@ -25,12 +25,12 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import runtime
+from pair.core import runtime
 from pair import server as pair_server
-from pair.guard import may_generate
-from pair.lifecycle import post_train
-from pair.mesh import lookup_for_brain, mesh_config, search_timeouts
-from pair.publish import (
+from pair.mesh.guard import may_generate
+from pair.flywheel.lifecycle import post_train
+from pair.mesh.offload import lookup_for_brain, mesh_config, search_timeouts
+from pair.flywheel.publish import (
     redact_label,
     sync_huggingface,
     sync_kaggle,
@@ -759,7 +759,7 @@ class PublicLabels(unittest.TestCase):
             seen.append(request)
             return Resp()
 
-        import pair.publish as publish
+        import pair.flywheel.publish as publish
 
         order = []
         original = publish.sync_kaggle

@@ -12,15 +12,15 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.assist import (  # noqa: E402
+from pair.turn.assist import (  # noqa: E402
     CRISIS_REFUSAL,
     HARM_REFUSAL,
     stream_release,
 )
-from pair.knobs import inference_knobs  # noqa: E402
-from pair.moderate import moderate  # noqa: E402
+from pair.model.knobs import inference_knobs  # noqa: E402
+from pair.turn.moderate import moderate  # noqa: E402
 
-_ON = patch("pair.moderate.safety_filter", return_value=True)
+_ON = patch("pair.turn.moderate.safety_filter", return_value=True)
 
 
 class Moderate(unittest.TestCase):

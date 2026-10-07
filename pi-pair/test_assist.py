@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.assist import (  # noqa: E402
+from pair.turn.assist import (  # noqa: E402
     CRISIS_REFUSAL,
     HARM_REFUSAL,
     HELPFUL_NUDGE,
@@ -37,8 +37,8 @@ from pair.assist import (  # noqa: E402
     settle_reply,
     visible_canned,
 )
-from pair.turn import PERSONA  # noqa: E402
-from pair.turn import shape_messages  # noqa: E402
+from pair.turn.shape import PERSONA  # noqa: E402
+from pair.turn.shape import shape_messages  # noqa: E402
 
 REFUSAL = "I'm sorry, but I can't assist with that.\n1. junk"
 
@@ -165,7 +165,7 @@ class Assist(unittest.TestCase):
         self.assertNotIn("Paris", text)
 
     def test_harmful_set_stays_refused(self):
-        with patch("pair.moderate.safety_filter", return_value=True):
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
             self._harmful_set_stays_refused()
 
     def _harmful_set_stays_refused(self):
@@ -274,7 +274,7 @@ class Assist(unittest.TestCase):
             raise AssertionError("retry")
 
         leaked = "Use ransomware to lock the files."
-        with patch("pair.moderate.safety_filter", return_value=True):
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
             text = settle_reply("describe the weather today", leaked, boom, boom)
         self.assertEqual(text, HARM_REFUSAL)
         self.assertNotIn("ransomware", text.lower())

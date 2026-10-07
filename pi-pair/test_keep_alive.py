@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.chat import chat_ollama
-from pair.knobs import inference_knobs, keep_alive
-from pair.stream import stream_ollama
+from pair.model.chat_once import chat_ollama
+from pair.model.knobs import inference_knobs, keep_alive
+from pair.model.chat_stream import stream_ollama
 
 
 class _Body:
@@ -84,7 +84,7 @@ class KeepAliveDefault(unittest.TestCase):
             "generative": True,
             "role": "brain",
         }
-        with patch("pair.chat.urllib.request.urlopen", urlopen):
+        with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
             text, model = chat_ollama(
                 peer, "qwen3:0.6b", [{"role": "user", "content": "hi"}]
             )
@@ -128,7 +128,7 @@ class KeepAliveDefault(unittest.TestCase):
         self.assertIn("OLLAMA_MAX_LOADED_MODELS=2", readme)
         self.assertIn("OLLAMA_KEEP_ALIVE=-1", readme)
         self.assertIn("ollama-lan", readme)
-        for path in (ROOT / "pair").glob("*.py"):
+        for path in (ROOT / "pair").rglob("*.py"):
             self.assertNotIn('"5m"', path.read_text(encoding="utf-8"), path.name)
         self.assertNotIn(
             '"5m"',
@@ -140,7 +140,7 @@ class KeepAliveDefault(unittest.TestCase):
 
 class PoolClose(unittest.TestCase):
     def test_close_does_not_drain_an_unfinished_body(self):
-        from pair.http_pool import _Body
+        from pair.model.http_pool import _Body
 
         class _Response:
             def __init__(self):

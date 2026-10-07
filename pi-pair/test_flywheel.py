@@ -15,13 +15,13 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.canned import _folded_table, lookup, normalize_key
-from pair.chat import chat_ollama
-from pair.guard import may_generate
-from pair.lifecycle import GateError, _fold, _prepare, post_train
-from pair.queue import QUEUE_BOUND, append_row, apply_label, note_exchange
-from pair.registry import RegistryError, require_registered
-from pair.yaml_lite import load_path
+from pair.flywheel.canned import _folded_table, lookup, normalize_key
+from pair.model.chat_once import chat_ollama
+from pair.mesh.guard import may_generate
+from pair.flywheel.lifecycle import GateError, _fold, _prepare, post_train
+from pair.flywheel.miss_queue import QUEUE_BOUND, append_row, apply_label, note_exchange
+from pair.flywheel.registry import RegistryError, require_registered
+from pair.core.yaml_lite import load_path
 
 
 class Flywheel(unittest.TestCase):
@@ -141,7 +141,7 @@ class Flywheel(unittest.TestCase):
         self.assertIn("p5", lines[0])
         os.environ["PI_PAIR_ROLE"] = "brain"
         seen = []
-        import pair.queue as queue
+        import pair.flywheel.miss_queue as queue
 
         original = queue.forward_row
         queue.forward_row = (
@@ -328,7 +328,7 @@ class Flywheel(unittest.TestCase):
         data = self._copy_data()
         os.environ["PI_PAIR_ROLE"] = "brain"
         seen = []
-        import pair.queue as queue
+        import pair.flywheel.miss_queue as queue
 
         original = queue.forward_feedback
         queue.forward_feedback = (

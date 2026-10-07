@@ -21,10 +21,10 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import runtime
+from pair.core import runtime
 from pair import server as pair_server
-from pair.errors import ASK_FIRST, BAD_MESSAGE, BUSY, TOO_BIG
-from pair.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
+from pair.core.errors import ASK_FIRST, BAD_MESSAGE, BUSY, TOO_BIG
+from pair.routes.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
 from pair.server import make_server
 
 
@@ -119,7 +119,7 @@ class PublicApi(unittest.TestCase):
         os.environ.pop("KAGGLE_API_TOKEN", None)
         self._tmp = tempfile.TemporaryDirectory()
         self._lookup = pair_server.lookup_web
-        import pair.queue as queue
+        import pair.flywheel.miss_queue as queue
 
         self._queue = queue
         self._forward = queue.forward_row
@@ -327,12 +327,12 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(OllamaFake.posts, 0)
 
     def test_harmful_api_chat_does_not_generate_or_relay(self):
-        with patch("pair.moderate.safety_filter", return_value=True):
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
             self._harmful_api_chat_is_refused()
         self._harmful_api_chat_is_answered()
 
     def _harmful_api_chat_is_refused(self):
-        from pair.assist import CRISIS_REFUSAL, HARM_REFUSAL
+        from pair.turn.assist import CRISIS_REFUSAL, HARM_REFUSAL
 
         OllamaFake.posts = 0
         BrainPage.last_payload = None
@@ -380,7 +380,7 @@ class PublicApi(unittest.TestCase):
         self.assertEqual(OllamaFake.posts, 0)
 
     def _harmful_api_chat_is_answered(self):
-        from pair.assist import HARM_REFUSAL
+        from pair.turn.assist import HARM_REFUSAL
 
         os.environ["PI_PAIR_ROLE"] = "brain"
         OllamaFake.posts = 0
@@ -603,7 +603,9 @@ class PublicApi(unittest.TestCase):
             runtime.set_infer_slots(previous)
 
     def test_pi4_install_key_file_is_mode_600_and_empty(self):
-        source = (ROOT / "pair" / "public_api.py").read_text(encoding="utf-8")
+        source = (ROOT / "pair" / "routes" / "public_api.py").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("hmac.compare_digest", source)
         example = (ROOT / "configs" / "runtime" / "pi-gpt-api.env.example").read_text(
             encoding="utf-8"
@@ -1070,8 +1072,12 @@ class ImageRoute(unittest.TestCase):
                 "acquire_reserved",
                 side_effect=AssertionError("reserved"),
             ),
-            patch("pair.memory.remember_user", side_effect=AssertionError("memory")),
-            patch("pair.memory.save_summary", side_effect=AssertionError("summary")),
+            patch(
+                "pair.memory.store.remember_user", side_effect=AssertionError("memory")
+            ),
+            patch(
+                "pair.memory.store.save_summary", side_effect=AssertionError("summary")
+            ),
             patch("pair.server.append_row", side_effect=AssertionError("queue")),
             patch("pair.server.note_exchange", side_effect=AssertionError("exchange")),
             patch(

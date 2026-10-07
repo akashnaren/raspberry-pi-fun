@@ -9,9 +9,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-from pair.cancel import Cancel, ClientGone, peer_closed
-from pair.chat import chat_ollama
-from pair.sched import InferenceGate
+from pair.core.cancel import Cancel, ClientGone, peer_closed
+from pair.model.chat_once import chat_ollama
+from pair.model.sched import InferenceGate
 
 
 class _SlowBody:
@@ -83,7 +83,7 @@ class CancelToken(unittest.TestCase):
                 gate.release()
 
         worker = threading.Thread(target=run)
-        with patch("pair.stream.open_json", open_json):
+        with patch("pair.model.chat_stream.open_json", open_json):
             worker.start()
             time.sleep(0.06)
             started = time.monotonic()

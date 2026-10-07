@@ -38,7 +38,7 @@ class SoftRefusalStream(unittest.TestCase):
         self.http.tearDown()
 
     def test_a_soft_refusal_opener_streams_immediately(self):
-        from pair import runtime
+        from pair.core import runtime
         from test_turn import ScriptOllama
 
         opener = "I'm sorry, "
@@ -90,7 +90,7 @@ class SoftRefusalStream(unittest.TestCase):
         self.assertNotIn("Answer helpfully if the request is safe.", blob)
 
     def test_a_length_stop_replaces_a_dangling_marker(self):
-        from pair import runtime
+        from pair.core import runtime
         from test_turn import ScriptOllama
 
         ScriptOllama.replies = [

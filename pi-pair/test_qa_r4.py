@@ -10,13 +10,19 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from pair.abilities import clean_reply, parse_fences, settle_blocks, tool_notes
-from pair.charts import render_chart, with_headers
-from pair.compact import run_compact
-from pair.docs import render_document
-from pair.memory import facts_block, remember_user, save_summary, summary_text
+from pair.turn.abilities import clean_reply, parse_fences, settle_blocks, tool_notes
+from pair.render.charts import render_chart, with_headers
+from pair.memory.compact import run_compact
+from pair.render.documents import render_document
+from pair.memory.store import facts_block, remember_user, save_summary, summary_text
 from pair.server import Handler
-from pair.turn import PERSONA, needs_web, sample_turns, shape_messages, turns_for_memory
+from pair.turn.shape import (
+    PERSONA,
+    needs_web,
+    sample_turns,
+    shape_messages,
+    turns_for_memory,
+)
 
 CAPITAL = "What is the capital of Australia?"
 CHART = "Make a bar chart of monthly sales: Jan 12, Feb 18, Mar 9, Apr 15."
@@ -303,7 +309,7 @@ class LocalAnswers(unittest.TestCase):
             "What is 15% of 2340?",
         )
         for knobs in ({"ground_all": True}, {"ground_all": False}):
-            with patch("pair.turn.inference_knobs", return_value=knobs):
+            with patch("pair.turn.shape.inference_knobs", return_value=knobs):
                 for prompt in prompts:
                     self.assertFalse(needs_web(prompt), prompt)
                 self.assertTrue(needs_web("Who won the most recent Super Bowl?"))
@@ -321,7 +327,9 @@ class LocalAnswers(unittest.TestCase):
         tool_notes("```search\npercent\n```", search=search, prompt=percent)
         cactus = "How often should I water the cactus?"
         context = "The user said: water the cactus every Sunday morning."
-        with patch("pair.turn.inference_knobs", return_value={"ground_all": True}):
+        with patch(
+            "pair.turn.shape.inference_knobs", return_value={"ground_all": True}
+        ):
             self.assertTrue(needs_web(cactus, follow_up=True))
             self.assertTrue(needs_web(cactus, follow_up=True, context=context))
         tool_notes(

@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from pair.sched import InferenceGate
-from pair.health import parse_temp_c, parse_throttled
+from pair.model.sched import InferenceGate
+from pair.mesh.health import parse_temp_c, parse_throttled
 from pair.server import health_document, public_health
 
 ROOT = Path(__file__).resolve().parent

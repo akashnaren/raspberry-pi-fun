@@ -7,7 +7,12 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from pair.runtime_choice import choose_decoder, kl_ok, output_layer_ok, quality_held
+from pair.model.runtime_choice import (
+    choose_decoder,
+    kl_ok,
+    output_layer_ok,
+    quality_held,
+)
 
 ROOT = Path(__file__).resolve().parent
 

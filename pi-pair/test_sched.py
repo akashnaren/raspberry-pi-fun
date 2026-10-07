@@ -7,8 +7,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from pair.sched import InferenceGate
-from pair.sched import (
+from pair.model.sched import InferenceGate
+from pair.model.sched import (
     admission_report,
     background_cancel_report,
     client_report,
@@ -18,7 +18,7 @@ from pair.sched import (
     heat_report,
     tool_job_report,
 )
-from pair.tools import generation_routes
+from pair.mesh.tools import generation_routes
 
 
 class SchedulerReports(unittest.TestCase):
@@ -96,8 +96,8 @@ class SchedulerReports(unittest.TestCase):
             slept.append(seconds)
 
         with (
-            patch("pair.sched.heat_delay_s", return_value=5),
-            patch("pair.sched.time.sleep", fake_sleep),
+            patch("pair.model.sched.heat_delay_s", return_value=5),
+            patch("pair.model.sched.time.sleep", fake_sleep),
         ):
 
             def run() -> None:

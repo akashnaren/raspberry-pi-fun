@@ -1,11 +1,11 @@
-"""pi3 memory tool. The file itself lives in pair.memory."""
+"""pi3 memory tool. The file itself lives in pair.memory.store."""
 
 from __future__ import annotations
 
 
 def apply(payload: dict) -> dict:
     """list, put, delete, or clear. No model. Scoped when the caller names one."""
-    from pair import memory
+    from pair.memory import store as memory
 
     raw = payload.get("scope")
     scope = None if raw is None else str(raw)

@@ -15,10 +15,10 @@ from unittest.mock import patch
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from pair import runtime
+from pair.core import runtime
 from pair import server as pair_server
-from pair.modes import pull_needed, resolve_mode, tag_ready
-from pair.turn import EFFORT_HINT
+from pair.model.modes import pull_needed, resolve_mode, tag_ready
+from pair.turn.shape import EFFORT_HINT
 from pair.server import make_server
 from test_pair import ROOT
 
@@ -531,7 +531,7 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])
 
     def test_pro_shares_the_inference_gate_with_flash(self):
-        from pair.errors import BUSY
+        from pair.core.errors import BUSY
 
         port = self._boot()
         ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
@@ -832,14 +832,14 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])
 
     def test_a_cold_flash_wait_is_not_a_502(self):
-        from pair.preload import COLD_WAIT_S
+        from pair.model.preload import COLD_WAIT_S
 
         port = self._boot()
         ModeOllama.loaded = []
         ModeOllama.hold_load = True
         ModeOllama.calls = []
         self.assertGreaterEqual(COLD_WAIT_S, 30)
-        with patch("pair.preload.COLD_WAIT_S", 0.05):
+        with patch("pair.model.preload.COLD_WAIT_S", 0.05):
             status, _headers, body = self._post(
                 port,
                 {"messages": [{"role": "user", "content": "still cold flash"}]},

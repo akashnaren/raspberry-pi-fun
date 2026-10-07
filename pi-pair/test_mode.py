@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from pair.modes import (
+from pair.model.modes import (
     FLASH_MODEL,
     PRO_MODEL,
     mode_tips,

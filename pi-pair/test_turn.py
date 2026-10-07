@@ -21,12 +21,12 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import runtime
+from pair.core import runtime
 from pair import server as pair_server
-from pair.chat import start_model_warm, warm_residents
-from pair.modes import FLASH_MODEL, PRO_MODEL
-from pair.errors import GENERIC, TIMEOUT, UNREACHABLE
-from pair.turn import (
+from pair.model.chat_once import start_model_warm, warm_residents
+from pair.model.modes import FLASH_MODEL, PRO_MODEL
+from pair.core.errors import GENERIC, TIMEOUT, UNREACHABLE
+from pair.turn.shape import (
     PERSONA,
     EFFORT_HINT,
     ATTACH_MARK,
@@ -44,7 +44,9 @@ from test_pair import OllamaFake, _start
 
 class TurnShape(unittest.TestCase):
     def test_ground_all_searches_unless_the_turn_is_local(self):
-        with patch("pair.turn.inference_knobs", return_value={"ground_all": True}):
+        with patch(
+            "pair.turn.shape.inference_knobs", return_value={"ground_all": True}
+        ):
             self.assertTrue(needs_web("who won the most recent super bowl"))
             self.assertTrue(needs_web("capital of australia"))
             self.assertTrue(needs_web("top 10 sci-fi movies"))
@@ -84,7 +86,7 @@ class TurnShape(unittest.TestCase):
         from datetime import date
 
         off = {"ground_all": False}
-        with patch("pair.turn.inference_knobs", return_value=off):
+        with patch("pair.turn.shape.inference_knobs", return_value=off):
             self.assertTrue(needs_web("who won the most recent super bowl"))
             self.assertTrue(needs_web("what is the latest news"))
             self.assertTrue(needs_web("is the shop still open today"))
@@ -325,7 +327,7 @@ class ModelWarm(unittest.TestCase):
             "generative": True,
             "role": "brain",
         }
-        with patch("pair.chat.urllib.request.urlopen", urlopen):
+        with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
             loaded = warm_residents(peer, timeout=1)
         self.assertEqual(
             [item[1].get("model") for item in seen], [FLASH_MODEL, PRO_MODEL]
@@ -334,7 +336,7 @@ class ModelWarm(unittest.TestCase):
         self.assertEqual(flash["keep_alive"], -1)
         self.assertFalse(flash["stream"])
         self.assertEqual(flash["options"]["num_predict"], 1)
-        from pair.turn import persona_text
+        from pair.turn.shape import persona_text
 
         self.assertEqual(
             flash["messages"],
@@ -354,7 +356,7 @@ class ModelWarm(unittest.TestCase):
             "generative": True,
             "role": "health",
         }
-        with patch("pair.chat.urllib.request.urlopen", urlopen):
+        with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
             self.assertEqual(warm_residents(weak, timeout=1), [])
         self.assertEqual(seen, [])
 
@@ -1079,10 +1081,10 @@ class TurnHttp(unittest.TestCase):
             "stream": False,
         }
         headers = {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"}
-        with patch("pair.moderate.safety_filter", return_value=True):
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
             status, _headers, body = self._post(port, bomb, headers)
         self.assertEqual(status, 200)
-        from pair.assist import HARM_REFUSAL
+        from pair.turn.assist import HARM_REFUSAL
 
         self.assertEqual(body["choices"][0]["message"]["content"], HARM_REFUSAL)
         self.assertNotIn("assist", body["choices"][0]["message"]["content"].lower())
@@ -1096,13 +1098,13 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(ScriptOllama.posts, 1)
 
     def test_harmful_asks_never_reach_the_model(self):
-        from pair.assist import refusal_for
+        from pair.turn.assist import refusal_for
         from test_assist import HARM_SET, PARAPHRASES, TOP_SET
 
         port = self._pi4()
         OllamaFake.posts = 0
         self.search_calls.clear()
-        with patch("pair.moderate.safety_filter", return_value=True):
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
             for prompt in (*HARM_SET, *PARAPHRASES):
                 status, _headers, body = self._post(
                     port,
@@ -1197,7 +1199,7 @@ class TurnHttp(unittest.TestCase):
             self.assertEqual(self.search_calls, [], prompt)
 
     def test_a_harmful_reply_is_replaced_on_both_streams(self):
-        from pair.assist import HARM_REFUSAL
+        from pair.turn.assist import HARM_REFUSAL
 
         leaked = "Install ransomware on the laptop."
         ScriptOllama.replies = [
@@ -1222,7 +1224,7 @@ class TurnHttp(unittest.TestCase):
         port = self._pair()
         self.search_calls.clear()
         prompt = "Tell me something pleasant about potatoes"
-        gate = patch("pair.moderate.safety_filter", return_value=True)
+        gate = patch("pair.turn.moderate.safety_filter", return_value=True)
         gate.start()
         try:
             self._harmful_reply_is_replaced(port, prompt, leaked, HARM_REFUSAL)
@@ -1306,7 +1308,7 @@ class TurnHttp(unittest.TestCase):
         page-visible text becomes the refusal. Exact-N and a computed sequence
         still arrive as the full corrected list.
         """
-        from pair.assist import HARM_REFUSAL
+        from pair.turn.assist import HARM_REFUSAL
         from pair.server import last_completion
 
         def assemble(raw: str) -> str:
@@ -1388,7 +1390,7 @@ class TurnHttp(unittest.TestCase):
             ]
         )
         port = self._pair()
-        with patch("pair.moderate.safety_filter", return_value=True):
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
             raw = stream(port, "Tell me something pleasant about potatoes")
             shown = assemble(raw)
             pieces = deltas(raw)
@@ -1495,7 +1497,7 @@ class TurnHttp(unittest.TestCase):
         short = "1. 2\n2. 3\n3. 5"
         prompt = "Top 5 primes"
         product = (ROOT / "pair" / "server.py").read_text(encoding="utf-8")
-        product += (ROOT / "pair" / "assist.py").read_text(encoding="utf-8")
+        product += (ROOT / "pair" / "turn" / "assist.py").read_text(encoding="utf-8")
         self.assertNotIn("2, 3, 5, 7, 11", product)
         ScriptOllama.replies = [
             {"message": {"content": short}, "done": True, "done_reason": "stop"},

@@ -20,13 +20,15 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import health, runtime
+from pair.mesh import health
+
+from pair.core import runtime
 from pair import server as pair_server
-from pair.chat import llamacpp_model
-from pair.config import DEFAULT_PEERS, load_peers, normalize_peer
-from pair.peers import model_on_peer, pick
+from pair.model.chat_once import llamacpp_model
+from pair.core.config import DEFAULT_PEERS, load_peers, normalize_peer
+from pair.mesh.peers import model_on_peer, pick
 from pair.server import make_server
-from pair.stream import llamacpp_delta, ollama_delta
+from pair.model.chat_stream import llamacpp_delta, ollama_delta
 
 
 def _composer_keydown(script: str) -> str:
@@ -369,7 +371,7 @@ class PairHelpers(unittest.TestCase):
             with (
                 patch("shutil.disk_usage", boom),
                 patch("os.getloadavg", boom),
-                patch("pair.queue._pending_jsonl", boom),
+                patch("pair.flywheel.miss_queue._pending_jsonl", boom),
             ):
                 body = pair_server.health_document()
             self.assertEqual(body["peers_up"], 1)
@@ -409,7 +411,7 @@ class PairHelpers(unittest.TestCase):
                 ]
             )
             health.peer_health = fake
-            with patch("pair.health.time.monotonic", lambda: clock["t"]):
+            with patch("pair.mesh.health.time.monotonic", lambda: clock["t"]):
                 first = health.snapshot_peers(force=True)
                 self.assertEqual(sum(peer["ok"] for peer in first), 1)
                 clock["t"] += 3
@@ -523,7 +525,7 @@ class PairHttp(unittest.TestCase):
 
     def _pi3_accepts_forwarded_rows(self):
         """Stand in for pi3 so a brain-role server can be checked for the queued row."""
-        import pair.queue as queue
+        import pair.flywheel.miss_queue as queue
 
         original_row = queue.forward_row
         original_feedback = queue.forward_feedback
@@ -1580,7 +1582,7 @@ class PairHttp(unittest.TestCase):
         self.assertIsNone(response_headers.get("X-Pi-Search"))
 
     def test_search_note_is_capped_before_prefill(self):
-        from pair.knobs import search_note_limit
+        from pair.model.knobs import search_note_limit
 
         limit = search_note_limit()
         self.assertEqual(limit, 720)

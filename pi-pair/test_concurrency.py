@@ -19,12 +19,12 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import runtime
+from pair.core import runtime
 from pair import server as pair_server
-from pair.config import infer_slots
-from pair.errors import BUSY, WAITING
-from pair.sched import QUEUE_LIMIT, InferenceGate
-from pair.knobs import parallel_limit
+from pair.core.config import infer_slots
+from pair.core.errors import BUSY, WAITING
+from pair.model.sched import QUEUE_LIMIT, InferenceGate
+from pair.model.knobs import parallel_limit
 from pair.server import make_server
 
 

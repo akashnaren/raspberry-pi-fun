@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import images  # noqa: E402
-from pair.images import (  # noqa: E402
+from pair.render import images  # noqa: E402
+from pair.render.images import (  # noqa: E402
     _fetch_json,
     _public_http,
     candidates,
@@ -353,7 +353,7 @@ class ImageCards(unittest.TestCase):
             self.assertFalse(hasattr(images, name), name)
 
     def test_source_file_has_no_topic_word_lists(self):
-        path = ROOT / "pair" / "images.py"
+        path = ROOT / "pair" / "render" / "images.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):

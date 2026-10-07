@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from pair.abilities import (
+from pair.turn.abilities import (
     JSON_RETRY,
     clean_reply,
     mend_cut_tail,
@@ -25,24 +25,24 @@ from pair.abilities import (
     tail_hints,
     tool_notes,
 )
-from pair.assist import (
+from pair.turn.assist import (
     is_harmful,
     scrub_reply,
     settle_reply,
     stream_release,
 )
-from pair.moderate import moderate
-from pair.cancel import Cancel, ClientGone, peer_closed
-from pair.chat import (
+from pair.turn.moderate import moderate
+from pair.core.cancel import Cancel, ClientGone, peer_closed
+from pair.model.chat_once import (
     chat_llamacpp,
     chat_ollama,
     llamacpp_model,
     start_model_warm,
     warm_in_flight,
 )
-from pair.config import STATIC_DIR
-from pair.docfit import fit_outbound
-from pair.errors import (
+from pair.core.config import STATIC_DIR
+from pair.ingest.docfit import fit_outbound
+from pair.core.errors import (
     ASK_FIRST,
     BUSY,
     FLASH_WARMING,
@@ -53,11 +53,16 @@ from pair.errors import (
     friendly_body,
     friendly_error,
 )
-from pair.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
-from pair.health import board_thermal, snapshot_peers
-from pair.thermal import sample as thermal_sample
-from pair.knobs import decode_effort, inference_knobs, mode_limits, search_note_limit
-from pair.modes import (
+from pair.mesh.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
+from pair.mesh.health import board_thermal, snapshot_peers
+from pair.core.thermal import sample as thermal_sample
+from pair.model.knobs import (
+    decode_effort,
+    inference_knobs,
+    mode_limits,
+    search_note_limit,
+)
+from pair.model.modes import (
     mode_table,
     mode_tips,
     pull_needed,
@@ -65,14 +70,14 @@ from pair.modes import (
     resolve_mode,
     tag_ready,
 )
-from pair.peers import pick
-from pair.preload import (
+from pair.mesh.peers import pick
+from pair.model.preload import (
     resident_models,
     schedule_pro_warm,
     start_pro_warm,
     wait_for_resident,
 )
-from pair.public_api import (
+from pair.routes.public_api import (
     FLASH_MODE,
     apply_mode,
     authorize,
@@ -81,14 +86,14 @@ from pair.public_api import (
     stamp,
     swagger_html,
 )
-from pair.queue import append_row, apply_label, node_role, note_exchange
-from pair.mesh import lookup_for_brain
-from pair.search import lookup_web
-from pair import runtime
-from pair.stream import iter_ollama_channels, stream_llamacpp, stream_ollama
-from pair.think import decode_plan, peel_think
-from pair.timing import assemble, present
-from pair.turn import (
+from pair.flywheel.miss_queue import append_row, apply_label, node_role, note_exchange
+from pair.mesh.offload import lookup_for_brain
+from pair.search.lookup import lookup_web
+from pair.core import runtime
+from pair.model.chat_stream import iter_ollama_channels, stream_llamacpp, stream_ollama
+from pair.model.think import decode_plan, peel_think
+from pair.core.timing import assemble, present
+from pair.turn.shape import (
     is_structured_request,
     needs_web,
     prepare_search_note,
@@ -97,7 +102,7 @@ from pair.turn import (
     structure_hint,
     turns_for_memory,
 )
-from pair.upload import (
+from pair.ingest.upload import (
     UploadRejected,
     file_part,
     ingest,
@@ -232,7 +237,7 @@ def _forward_tool(path: str, payload: dict) -> tuple[int, dict] | None:
     """Send a render call to pi2 or pi3. Off unless PI_PAIR_TOOL_FORWARD=1."""
     if os.environ.get("PI_PAIR_TOOL_FORWARD") != "1":
         return None
-    from pair.tools import Dispatcher, ToolError, registry
+    from pair.mesh.tools import Dispatcher, ToolError, registry
 
     names = {"/tools/render_doc": "render_doc", "/tools/render_chart": "render_chart"}
     tool_name = names.get(path)
@@ -338,7 +343,7 @@ def _post_image_tool(peer: dict, path: str, payload: dict) -> dict:
     """POST one tool host. Connect stays short. Redirects are not followed."""
     import http.client
 
-    from pair.tools import ToolError
+    from pair.mesh.tools import ToolError
 
     host = str(peer.get("host") or "")
     try:
@@ -375,7 +380,7 @@ def _post_image_tool(peer: dict, path: str, payload: dict) -> dict:
 
 def _image_forward(payload: dict) -> list:
     """pi2, then pi3. No local lookup on pi4."""
-    from pair.tools import Dispatcher, registry
+    from pair.mesh.tools import Dispatcher, registry
 
     if "images" not in registry():
         return []
@@ -388,7 +393,7 @@ def _image_forward(payload: dict) -> list:
         return []
 
     def invoke(node: str, tool, body: dict) -> dict:
-        from pair.tools import ToolError
+        from pair.mesh.tools import ToolError
 
         peer = peers.get(node)
         if not peer:
@@ -776,7 +781,7 @@ def health_document() -> dict:
 
 def _memory_stats() -> dict:
     try:
-        from pair import memory
+        from pair.memory import store as memory
 
         return memory.stats("")
     except Exception:
@@ -787,7 +792,7 @@ def _memory_prompt(scope: str) -> tuple[str, str]:
     if not scope:
         return "", ""
     try:
-        from pair import memory
+        from pair.memory import store as memory
 
         return memory.facts_block(scope), memory.summary_text(scope)
     except Exception:
@@ -911,7 +916,7 @@ def _local_extract(
     content_type: str, body: bytes, filename: str, deadline_s: float, gone
 ) -> dict:
     """In-process fallback when pi3 cannot take the file. Tests patch this."""
-    from pair import ingest_job
+    from pair.ingest import job as ingest_job
 
     return ingest_job.run(content_type, body, filename, deadline_s, gone)
 
@@ -932,7 +937,7 @@ def _offload_extract(
     import base64
     import socket
 
-    from pair import ingest_job
+    from pair.ingest import job as ingest_job
 
     if node_role() != "brain":
         return None
@@ -1694,7 +1699,7 @@ class Handler(BaseHTTPRequestHandler):
             search_note = None
             search_job = _begin_lookup(prompt, model) if do_search else None
             if do_search and os.environ.get("PI_PAIR_PREFIX_PRIME") == "1":
-                from pair.tools import schedule_prefix_prime
+                from pair.mesh.tools import schedule_prefix_prime
 
                 schedule_prefix_prime(outbound)
             grounded = None
@@ -1754,7 +1759,7 @@ class Handler(BaseHTTPRequestHandler):
                 slot["held"] = True
             else:
                 slot["waiting"] = True
-                from pair.sched import overlap, prepare_prefix
+                from pair.model.sched import overlap, prepare_prefix
 
                 overlap(lambda: prepare_prefix(outbound))
         try:
@@ -2020,7 +2025,7 @@ class Handler(BaseHTTPRequestHandler):
         if not _ATTACH_GATE.acquire(blocking=False):
             self._error("OCR is busy", status=429)
             return
-        from pair import ingest_job, ocr
+        from pair.ingest import job as ingest_job, ocr
 
         held = ocr.hold_embed()
         try:
@@ -2062,8 +2067,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _touch_memory(self, messages) -> None:
         """Record the real prompt size and enqueue a summary for when the slot is free."""
-        from pair.compact import schedule, should_compact
-        from pair.context import ledger_for
+        from pair.memory.compact import schedule, should_compact
+        from pair.memory.ledger import ledger_for
 
         ctx = 2048
         try:
@@ -2094,8 +2099,8 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _memory_get(self) -> None:
-        from pair import memory
-        from pair.compact import BUSY_RATIO, IDLE_RATIO
+        from pair.memory import store as memory
+        from pair.memory.compact import BUSY_RATIO, IDLE_RATIO
 
         scope = self._memory_scope()
         if scope:
@@ -2155,7 +2160,7 @@ class Handler(BaseHTTPRequestHandler):
             self._write_json({"ok": False, "reason": "rate"}, status=429)
             return
         _COMPACT_LAST[scope] = now
-        from pair.compact import schedule
+        from pair.memory.compact import schedule
 
         queued = schedule(
             rows,
@@ -2175,7 +2180,7 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, body)
 
     def _memory_delete(self, fact_id: str) -> None:
-        from pair import memory
+        from pair.memory import store as memory
 
         scope = self._memory_scope()
         if scope and fact_id:
@@ -2256,7 +2261,7 @@ class Handler(BaseHTTPRequestHandler):
         """Same ingest as an upload, so a text PDF is not rasterized first."""
         import base64
 
-        from pair import ingest_job, ocr
+        from pair.ingest import job as ingest_job, ocr
 
         if not _ATTACH_GATE.acquire(blocking=False):
             return 429, {"ok": False, "error": "OCR is busy", "status": 429}
@@ -2305,7 +2310,7 @@ class Handler(BaseHTTPRequestHandler):
         return handle(path, payload)
 
     def _file_get(self, doc_id: str) -> None:
-        from pair.docs import open_document
+        from pair.render.documents import open_document
 
         found = open_document(doc_id.split("/")[0])
         if found is None:
@@ -2321,7 +2326,7 @@ class Handler(BaseHTTPRequestHandler):
         safe_write(self, data)
 
     def _image_json(self, cards: list) -> None:
-        from pair.images import sanitize_card
+        from pair.render.images import sanitize_card
 
         clean = []
         for item in cards:
@@ -2545,7 +2550,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _memory_scope(self) -> str:
         """Chat plus client. Missing both reads and writes nothing."""
-        from pair.memory import scope_key
+        from pair.memory.store import scope_key
 
         headers = getattr(self, "headers", None)
         chat = client = ""
@@ -2568,7 +2573,7 @@ class Handler(BaseHTTPRequestHandler):
         return str(address[0])[:80]
 
     def _observe_rates(self) -> None:
-        from pair.sched import observe_usage
+        from pair.model.sched import observe_usage
 
         observe_usage(
             getattr(self, "_usage", None) or {},

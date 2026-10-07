@@ -256,7 +256,7 @@ def _read_jsonl(path: Path, errors: list[dict]) -> list[tuple[int, dict]]:
 
 
 def _norm(text: str) -> str:
-    """Same fold as pair.canned.normalize_key. A trailing dot is not a new key."""
+    """Same fold as pair.flywheel.canned.normalize_key. A trailing dot is not a new key."""
     collapsed = " ".join(text.strip().lower().split())
     return collapsed.strip(" \t\r\n?!.,;:\"'")
 

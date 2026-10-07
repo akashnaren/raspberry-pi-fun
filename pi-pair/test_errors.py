@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from pair.errors import (
+from pair.core.errors import (
     BAD_MESSAGE,
     BUSY,
     FILE_EMPTY,
@@ -62,7 +62,7 @@ class FriendlyMap(unittest.TestCase):
             "{",
             "[",
         )
-        with self.assertLogs("pi-pair.errors", level="WARNING") as logs:
+        with self.assertLogs("pi-pair.core.errors", level="WARNING") as logs:
             for raw, want in samples.items():
                 shown = friendly_error(raw)
                 self.assertEqual(shown, want, raw)
