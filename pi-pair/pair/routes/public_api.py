@@ -5,6 +5,8 @@ from __future__ import annotations
 import hmac
 import json
 import os
+from pair.routes.base import safe_write
+from pair.routes.status import health_document, public_health
 
 # Public name of the only generative checkpoint on pi4. Low, medium, and high
 # change the decode budget. They do not select another model.
@@ -452,3 +454,70 @@ def swagger_html() -> bytes:
 </html>
 """
     return page.encode("utf-8")
+
+
+class PublicApiRoutes:
+    def _api_chat(self) -> None:
+        rejected = authorize(self.headers)
+        if rejected is not None:
+            self._reject_api(*rejected)
+            return
+        data = self._read_json()
+        if data is None or not self._validate_chat(data):
+            return
+        try:
+            self.public_mode = apply_mode(data)
+        except ValueError as error:
+            self._error(str(error), status=400)
+            return
+        self._serve_chat(data, json.dumps(data).encode())
+
+    def _api_health(self) -> None:
+        rejected = authorize(self.headers)
+        if rejected is not None:
+            self._reject_api(*rejected)
+            return
+        body_obj = health_document()
+        if self._public():
+            body_obj = public_health(body_obj)
+        body_obj["public_model"] = FLASH_MODE
+        body_obj["default_mode"] = FLASH_MODE
+        body_obj["checkpoint"] = flash_checkpoint()
+        body = json.dumps(body_obj).encode()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _openapi(self) -> None:
+        body = openapi_bytes()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "application/json")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _docs(self) -> None:
+        body = swagger_html()
+        self.send_response(200)
+        self._cors()
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)
+
+    def _reject_api(self, status: int, message: str) -> None:
+        body = json.dumps({"error": message}).encode()
+        self.send_response(status)
+        self._cors()
+        if status == 401:
+            self.send_header("WWW-Authenticate", 'Bearer realm="pi-gpt"')
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        safe_write(self, body)

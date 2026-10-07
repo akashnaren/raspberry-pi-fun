@@ -25,7 +25,6 @@ from pathlib import Path
 
 
 from pair.core import runtime
-from pair import server as pair_server
 from pair.mesh.guard import may_generate
 from pair.flywheel.lifecycle import post_train
 from pair.mesh.offload import lookup_for_brain, mesh_config, search_timeouts
@@ -35,7 +34,10 @@ from pair.flywheel.publish import (
     sync_kaggle,
     sync_public_labels,
 )
-from pair.server import SEARCH_BODY_CAP, make_server
+from pair.routes.search import SEARCH_BODY_CAP
+from pair.routes import reply as reply_routes
+from pair.routes import search as search_routes
+from pair.server import make_server
 
 SECRET = "zz-secret-bench-phrase email ada@example.com phone 415-555-0130"
 TOKEN = "test-hf-token"
@@ -371,17 +373,17 @@ class SearchRoute(unittest.TestCase):
     def setUp(self):
         self.servers: list[ThreadingHTTPServer] = []
         self._role = os.environ.get("PI_PAIR_ROLE")
-        self._lookup = pair_server.lookup_web
-        self._chat = pair_server.chat_ollama
-        self._stream = pair_server.stream_ollama
+        self._lookup = search_routes.lookup_web
+        self._chat = reply_routes.chat_ollama
+        self._stream = reply_routes.stream_ollama
 
     def tearDown(self):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
-        pair_server.lookup_web = self._lookup
-        pair_server.chat_ollama = self._chat
-        pair_server.stream_ollama = self._stream
+        search_routes.lookup_web = self._lookup
+        reply_routes.chat_ollama = self._chat
+        reply_routes.stream_ollama = self._stream
         if self._role is None:
             os.environ.pop("PI_PAIR_ROLE", None)
         else:
@@ -413,9 +415,9 @@ class SearchRoute(unittest.TestCase):
         def boom(*args, **kwargs):
             raise AssertionError("decode")
 
-        pair_server.lookup_web = fake
-        pair_server.chat_ollama = boom
-        pair_server.stream_ollama = boom
+        search_routes.lookup_web = fake
+        reply_routes.chat_ollama = boom
+        reply_routes.stream_ollama = boom
         os.environ["PI_PAIR_ROLE"] = "health"
         httpd = make_server("127.0.0.1", 0)
         self.servers.append(httpd)
@@ -444,7 +446,7 @@ class SearchRoute(unittest.TestCase):
             calls.append(query)
             return {"status": "ok", "sources": [], "context": ""}
 
-        pair_server.lookup_web = fake
+        search_routes.lookup_web = fake
         os.environ["PI_PAIR_ROLE"] = "health"
         httpd = make_server("127.0.0.1", 0)
         self.servers.append(httpd)
@@ -489,7 +491,7 @@ class ChatOffload(unittest.TestCase):
             )
         }
         self._tmp = tempfile.TemporaryDirectory()
-        self._lookup = pair_server.lookup_web
+        self._lookup = search_routes.lookup_web
         os.environ["PI_PAIR_ROLE"] = "brain"
         os.environ["PI_PAIR_REMOTE_SEARCH"] = "1"
         os.environ["PI_PAIR_DATA"] = self._tmp.name
@@ -502,7 +504,7 @@ class ChatOffload(unittest.TestCase):
             self.local_calls.append(query)
             return {"status": "failed", "sources": [], "context": ""}
 
-        pair_server.lookup_web = local
+        search_routes.lookup_web = local
         runtime.reset_health()
         SearchPage.seen = []
         OllamaPage.posts = 0
@@ -512,7 +514,7 @@ class ChatOffload(unittest.TestCase):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
-        pair_server.lookup_web = self._lookup
+        search_routes.lookup_web = self._lookup
         runtime.PEERS = self._peers
         runtime.reset_health()
         for key, value in self._env.items():

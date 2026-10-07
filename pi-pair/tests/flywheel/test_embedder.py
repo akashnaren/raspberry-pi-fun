@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 from pair.nodes import embedder
 from pair.nodes.worker import handle, health_body
-from pair.server import health_document, public_health
+from pair.routes.status import health_document, public_health
 
 
 class _Resp:
@@ -203,7 +203,7 @@ class MeshSurface(EmbedderCase):
     def test_dataset_health_reports_embed_and_the_brain_does_not(self):
         self._enable()
         with (
-            patch("pair.server.snapshot_peers", return_value=[]),
+            patch("pair.routes.status.snapshot_peers", return_value=[]),
             patch("pair.nodes.embedder.state", return_value="unloaded"),
         ):
             doc = health_document()
@@ -212,7 +212,7 @@ class MeshSurface(EmbedderCase):
         shown = public_health(doc)
         self.assertNotIn("unloaded", json.dumps(shown))
         os.environ["PI_PAIR_ROLE"] = "brain"
-        with patch("pair.server.snapshot_peers", return_value=[]):
+        with patch("pair.routes.status.snapshot_peers", return_value=[]):
             brain = health_document()
         self.assertNotIn("embed", brain["services"])
 

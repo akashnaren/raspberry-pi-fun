@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from pair.model.sched import InferenceGate
 from pair.mesh.health import parse_temp_c, parse_throttled
-from pair.server import health_document, public_health
+from pair.routes.status import health_document, public_health
 
 
 class OneSlot(unittest.TestCase):
@@ -54,9 +54,9 @@ class Thermal(unittest.TestCase):
 
     def test_private_health_keeps_temp_and_the_public_copy_drops_it(self):
         with (
-            patch("pair.server.snapshot_peers", return_value=[]),
+            patch("pair.routes.status.snapshot_peers", return_value=[]),
             patch(
-                "pair.server.board_thermal",
+                "pair.routes.status.board_thermal",
                 return_value={"temp_c": 61.0, "throttled": "0x0"},
             ),
         ):

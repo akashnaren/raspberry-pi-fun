@@ -414,7 +414,7 @@ class ExtractOffload(unittest.TestCase):
         ingest_job.INLINE = True
         os.environ["PI_PAIR_ROLE"] = "brain"
         ocr.recognize_image = lambda _data: "from image"
-        from pair.server import _local_extract as real_local
+        from pair.routes.files import _local_extract as real_local
 
         real_extract = Handler._run_extract
 
@@ -435,7 +435,7 @@ class ExtractOffload(unittest.TestCase):
                 }
             return real_extract(handler, payload)
 
-        self._local_patch = patch("pair.server._local_extract", local)
+        self._local_patch = patch("pair.routes.files._local_extract", local)
         self._extract_patch = patch.object(Handler, "_run_extract", run_extract)
         self._local_patch.start()
         self._extract_patch.start()

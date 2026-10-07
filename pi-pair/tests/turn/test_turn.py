@@ -21,6 +21,8 @@ from unittest.mock import patch
 
 from pair.core import runtime
 from pair import server as pair_server
+from pair.routes import reply as reply_routes
+from pair.routes import search as search_routes
 from pair.model.chat_once import start_model_warm, warm_residents
 from pair.model.modes import FLASH_MODEL, PRO_MODEL
 from pair.core.errors import GENERIC, TIMEOUT, UNREACHABLE
@@ -395,21 +397,21 @@ class TurnHttp(unittest.TestCase):
         OllamaFake.last_payload = None
         OllamaFake.catalog = [FLASH_MODEL]
         self.search_calls = []
-        self._lookup_web = pair_server.lookup_web
-        self._note_exchange = pair_server.note_exchange
+        self._lookup_web = search_routes.lookup_web
+        self._note_exchange = reply_routes.note_exchange
 
         def _stub_search(query, opener=None):
             self.search_calls.append(query)
             return {"status": "failed", "sources": [], "context": ""}
 
-        pair_server.lookup_web = _stub_search
+        search_routes.lookup_web = _stub_search
 
     def tearDown(self):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
-        pair_server.lookup_web = self._lookup_web
-        pair_server.note_exchange = self._note_exchange
+        search_routes.lookup_web = self._lookup_web
+        reply_routes.note_exchange = self._note_exchange
         runtime.PEERS = self._peers
         runtime.reset_health()
         os.environ.pop("PI_PAIR_DATA", None)
@@ -594,7 +596,7 @@ class TurnHttp(unittest.TestCase):
         def spy(prompt, answer, *, chip, peer, train):
             trained.append(train)
 
-        pair_server.note_exchange = spy
+        reply_routes.note_exchange = spy
         ScriptOllama.replies = [
             {"message": {"content": ""}, "done": True, "done_reason": "stop"}
         ]
@@ -631,7 +633,7 @@ class TurnHttp(unittest.TestCase):
         def boom(*_args, **_kwargs):
             raise TimeoutError("timed out")
 
-        with patch("pair.server.chat_ollama", boom):
+        with patch("pair.routes.reply.chat_ollama", boom):
             status, _headers, body = self._post(
                 port,
                 {
@@ -656,7 +658,7 @@ class TurnHttp(unittest.TestCase):
             self.search_calls.append(query)
             return {"status": "failed", "sources": [], "context": ""}
 
-        pair_server.lookup_web = blocked
+        search_routes.lookup_web = blocked
         port = self._pi4()
         conn = HTTPConnection("127.0.0.1", port, timeout=4)
         holder: dict = {}
@@ -722,7 +724,7 @@ class TurnHttp(unittest.TestCase):
         def boom(*_args, **_kwargs):
             raise TimeoutError("timed out")
 
-        with patch("pair.server.stream_ollama", boom):
+        with patch("pair.routes.reply.stream_ollama", boom):
             conn = HTTPConnection("127.0.0.1", port, timeout=4)
             payload = json.dumps(
                 {
@@ -1272,7 +1274,7 @@ class TurnHttp(unittest.TestCase):
         still arrive as the full corrected list.
         """
         from pair.turn.assist import HARM_REFUSAL
-        from pair.server import last_completion
+        from pair.routes.reply import last_completion
 
         def assemble(raw: str) -> str:
             text = ""
@@ -1433,7 +1435,7 @@ class TurnHttp(unittest.TestCase):
                 "context": "Web search notes.\n- Halloween is a horror film.",
             }
 
-        pair_server.lookup_web = _notes
+        search_routes.lookup_web = _notes
         self.search_calls.clear()
         status, _headers, body = self._post(
             port,
@@ -1455,11 +1457,15 @@ class TurnHttp(unittest.TestCase):
         self.assertIn("Halloween is a horror film.", hinted)
 
     def test_canned_text_is_returned_as_stored(self):
-        from pair.server import last_completion
+        from pair.routes.reply import last_completion
 
         short = "1. 2\n2. 3\n3. 5"
         prompt = "Top 5 primes"
         product = (ROOT / "pair" / "server.py").read_text(encoding="utf-8")
+        product += "".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((ROOT / "pair" / "routes").glob("*.py"))
+        )
         product += (ROOT / "pair" / "turn" / "assist.py").read_text(encoding="utf-8")
         self.assertNotIn("2, 3, 5, 7, 11", product)
         ScriptOllama.replies = [

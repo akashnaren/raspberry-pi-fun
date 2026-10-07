@@ -20,8 +20,9 @@ from pathlib import Path
 
 
 from pair.core import runtime
-from pair import server as pair_server
 from pair.core.errors import ASK_FIRST, BAD_MESSAGE, BUSY, TOO_BIG
+from pair.routes import images as image_routes
+from pair.routes import search as search_routes
 from pair.routes.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
 from pair.server import make_server
 
@@ -116,7 +117,7 @@ class PublicApi(unittest.TestCase):
         os.environ.pop("HF_TOKEN", None)
         os.environ.pop("KAGGLE_API_TOKEN", None)
         self._tmp = tempfile.TemporaryDirectory()
-        self._lookup = pair_server.lookup_web
+        self._lookup = search_routes.lookup_web
         import pair.flywheel.miss_queue as queue
 
         self._queue = queue
@@ -126,7 +127,7 @@ class PublicApi(unittest.TestCase):
         os.environ["PI_PAIR_REMOTE_SEARCH"] = "0"
         os.environ["PI_PAIR_DATA"] = self._tmp.name
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
-        pair_server.lookup_web = lambda prompt: {
+        search_routes.lookup_web = lambda prompt: {
             "status": "failed",
             "sources": [],
             "context": "",
@@ -155,7 +156,7 @@ class PublicApi(unittest.TestCase):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
-        pair_server.lookup_web = self._lookup
+        search_routes.lookup_web = self._lookup
         self._queue.forward_row = self._forward
         runtime.PEERS = self._peers
         runtime.reset_health()
@@ -937,7 +938,7 @@ class _ImagePeer(BaseHTTPRequestHandler):
 
 class ImageRoute(unittest.TestCase):
     def setUp(self):
-        pair_server.reset_image_admission()
+        image_routes.reset_image_admission()
         self._peers = [dict(peer) for peer in runtime.PEERS]
         self._role = os.environ.get("PI_PAIR_ROLE")
         self.servers = []
@@ -962,7 +963,7 @@ class ImageRoute(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
         runtime.set_peers(self._peers)
-        pair_server.reset_image_admission()
+        image_routes.reset_image_admission()
         if self._role is None:
             os.environ.pop("PI_PAIR_ROLE", None)
         else:
@@ -1061,10 +1062,15 @@ class ImageRoute(unittest.TestCase):
             patch(
                 "pair.memory.store.save_summary", side_effect=AssertionError("summary")
             ),
-            patch("pair.server.append_row", side_effect=AssertionError("queue")),
-            patch("pair.server.note_exchange", side_effect=AssertionError("exchange")),
             patch(
-                "pair.server.remember_completion",
+                "pair.routes.flywheel.append_row", side_effect=AssertionError("queue")
+            ),
+            patch(
+                "pair.routes.reply.note_exchange",
+                side_effect=AssertionError("exchange"),
+            ),
+            patch(
+                "pair.routes.reply.remember_completion",
                 side_effect=AssertionError("completion"),
             ),
         ):

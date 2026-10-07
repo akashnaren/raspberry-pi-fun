@@ -25,7 +25,9 @@ from tests.support.web import web_source
 from pair.mesh import health
 
 from pair.core import runtime
-from pair import server as pair_server
+from pair.routes import relay as relay_routes
+from pair.routes import search as search_routes
+from pair.routes import status as status_routes
 from pair.model.chat_once import llamacpp_model
 from pair.core.config import DEFAULT_PEERS, load_peers, normalize_peer
 from pair.mesh.peers import model_on_peer, pick
@@ -280,7 +282,7 @@ class PairHelpers(unittest.TestCase):
                 patch("os.getloadavg", boom),
                 patch("pair.flywheel.miss_queue._pending_jsonl", boom),
             ):
-                body = pair_server.health_document()
+                body = status_routes.health_document()
             self.assertEqual(body["peers_up"], 1)
         finally:
             health.peer_health = previous_probe
@@ -395,19 +397,19 @@ class PairHttp(unittest.TestCase):
         OllamaFake.last_payload = None
         OllamaFake.catalog = ["qwen3:0.6b"]
         self.search_calls = []
-        self._lookup_web = pair_server.lookup_web
+        self._lookup_web = search_routes.lookup_web
 
         def _stub_search(query, opener=None):
             self.search_calls.append(query)
             return {"status": "failed", "sources": [], "context": ""}
 
-        pair_server.lookup_web = _stub_search
+        search_routes.lookup_web = _stub_search
 
     def tearDown(self):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
-        pair_server.lookup_web = self._lookup_web
+        search_routes.lookup_web = self._lookup_web
         runtime.PEERS = self._peers
         runtime.reset_health()
         os.environ.pop("PI_PAIR_DATA", None)
@@ -1094,7 +1096,7 @@ class PairHttp(unittest.TestCase):
                 ),
             }
 
-        pair_server.lookup_web = fake
+        search_routes.lookup_web = fake
         port = self._pi4()
         status, headers, body = self._post(
             port,
@@ -1129,7 +1131,7 @@ class PairHttp(unittest.TestCase):
             self.search_calls.append(query)
             raise RuntimeError("lookup down")
 
-        pair_server.lookup_web = boom
+        search_routes.lookup_web = boom
         port = self._pi4()
         status, headers, body = self._post(
             port,
@@ -1152,7 +1154,7 @@ class PairHttp(unittest.TestCase):
         def empty(query, opener=None):
             return {"status": "failed", "sources": [], "context": ""}
 
-        pair_server.lookup_web = empty
+        search_routes.lookup_web = empty
         status, headers, body = self._post(
             port,
             {
@@ -1289,7 +1291,7 @@ class PairHttp(unittest.TestCase):
             ]
         )
         self.assertEqual(
-            pair_server.brain_chat_url(),
+            relay_routes.brain_chat_url(),
             "http://10.0.0.166:18080/v1/chat/completions",
         )
         runtime.set_peers(
@@ -1306,7 +1308,7 @@ class PairHttp(unittest.TestCase):
             ]
         )
         relayed = []
-        original = pair_server.relay_chat
+        original = relay_routes.relay_chat
 
         def fake_relay(payload, target, mesh, mode=""):
             relayed.append(
@@ -1325,8 +1327,8 @@ class PairHttp(unittest.TestCase):
             ).encode()
             return 200, {"content-type": "application/json", "X-Pi-Search": "ok"}, body
 
-        pair_server.relay_chat = fake_relay
-        self.addCleanup(lambda: setattr(pair_server, "relay_chat", original))
+        relay_routes.relay_chat = fake_relay
+        self.addCleanup(lambda: setattr(relay_routes, "relay_chat", original))
         for role in ("health", "dataset"):
             os.environ["PI_PAIR_ROLE"] = role
             port = self._pair()
@@ -1368,7 +1370,7 @@ class PairHttp(unittest.TestCase):
             relayed.clear()
         self.assertEqual(self.search_calls, [])
         self.assertEqual(OllamaFake.posts, 0)
-        pair_server.relay_chat = original
+        relay_routes.relay_chat = original
         os.environ["PI_PAIR_ROLE"] = "brain"
         os.environ["PI_PAIR_BRAIN_PORT"] = "1"
         with self.assertRaises(RuntimeError) as caught:
@@ -1506,7 +1508,7 @@ class PairHttp(unittest.TestCase):
                 "context": "Web search notes.\n" + page,
             }
 
-        pair_server.lookup_web = fake
+        search_routes.lookup_web = fake
         port = self._pi4()
         status, headers, body = self._post(
             port,
@@ -1550,7 +1552,7 @@ class PairHttp(unittest.TestCase):
                 "context": "Text from the first page:\ndr/dt = 1/(3 pi)",
             }
 
-        pair_server.lookup_web = fake
+        search_routes.lookup_web = fake
         port = self._pi4()
         OllamaFake.posts = 0
         self.search_calls.clear()
@@ -1596,7 +1598,7 @@ class PairHttp(unittest.TestCase):
             self.search_calls.append(query)
             return {"status": "ok", "sources": [], "context": "dr/dt = 1/(3 pi)"}
 
-        pair_server.lookup_web = fake
+        search_routes.lookup_web = fake
         port = self._pi4()
         OllamaFake.posts = 0
         self.search_calls.clear()
@@ -1764,7 +1766,7 @@ class PairHttp(unittest.TestCase):
                 ],
             }
 
-        pair_server.lookup_web = fake
+        search_routes.lookup_web = fake
         port = self._brain()
         status, _headers, body = self._post(
             port,
@@ -1792,7 +1794,7 @@ class PairHttp(unittest.TestCase):
                 ],
             }
 
-        pair_server.lookup_web = fake
+        search_routes.lookup_web = fake
         OllamaFake.catalog = ["qwen3:0.6b", "qwen3:1.7b"]
         port = self._brain()
         status, _headers, body = self._post(

@@ -8,7 +8,8 @@ import unittest
 from http.client import HTTPConnection
 
 
-from pair.server import allowed_api_origin, make_server
+from pair.routes.base import allowed_api_origin
+from pair.server import make_server
 
 
 def _headers(port: int, method: str, path: str, headers: dict[str, str] | None = None):

@@ -196,7 +196,8 @@ def bench_mock(runs: int) -> list[dict]:
     os.environ["PI_PAIR_CANNED"] = str(canned)
 
     import pair.core.runtime as runtime
-    from pair.server import lookup_web, make_server
+    from pair.routes import search as search_routes
+    from pair.server import make_server
 
     ollama = ThreadingHTTPServer(("127.0.0.1", 0), _Drip)
     _start(ollama)
@@ -232,9 +233,8 @@ def bench_mock(runs: int) -> list[dict]:
         remembered[text] = found
         return found
 
-    import pair.server as server
-
-    server.lookup_web = slow_search
+    original_lookup = search_routes.lookup_web
+    search_routes.lookup_web = slow_search
     router = make_server("127.0.0.1", 0)
     _start(router)
     url = f"http://127.0.0.1:{router.server_address[1]}/v1/chat/completions"
@@ -242,14 +242,14 @@ def bench_mock(runs: int) -> list[dict]:
         measure_stream(url, PROMPT, timeout=30)
         cold = _summary("mock-cold", _run_series(url, PROMPT, runs, 30))
         # The real lookup caches a query. The repeat series uses that path.
-        server.lookup_web = cached_search
+        search_routes.lookup_web = cached_search
         measure_stream(url, REPEAT, timeout=30)
         repeat = _summary("mock-repeat", _run_series(url, REPEAT, runs, 30))
         return [cold, repeat]
     finally:
         router.shutdown()
         ollama.shutdown()
-        server.lookup_web = lookup_web
+        search_routes.lookup_web = original_lookup
         tmp.cleanup()
 
 

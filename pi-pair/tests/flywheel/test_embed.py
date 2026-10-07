@@ -14,7 +14,7 @@ from unittest import mock
 from pair.flywheel.canned import lookup, normalize_key
 from pair.core.config import ollama_base
 from pair.routes.public_api import openapi_document
-from pair.server import health_document
+from pair.routes.status import health_document
 
 
 class CannedExact(unittest.TestCase):
@@ -62,7 +62,7 @@ class CannedExact(unittest.TestCase):
                 )
 
     def test_health_does_not_report_embed_status(self):
-        with mock.patch("pair.server.snapshot_peers", return_value=[]):
+        with mock.patch("pair.routes.status.snapshot_peers", return_value=[]):
             body = health_document()
         self.assertNotIn("warm", body)
         health = openapi_document()["components"]["schemas"]["Health"]["properties"]
@@ -122,12 +122,22 @@ class CannedExact(unittest.TestCase):
             source = (ROOT / "pair" / name).read_text(encoding="utf-8")
             self.assertNotIn("embed", source, name)
         server = (ROOT / "pair" / "server.py").read_text(encoding="utf-8")
-        self.assertNotIn("/api/embed", server)
-        self.assertNotIn("snowflake", server)
-        head, health = server.split("def health_document", 1)
+        routes = "".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((ROOT / "pair" / "routes").glob("*.py"))
+        )
+        self.assertNotIn("/api/embed", server + routes)
+        self.assertNotIn("snowflake", server + routes)
+        status = (ROOT / "pair" / "routes" / "status.py").read_text(encoding="utf-8")
+        head, health = status.split("def health_document", 1)
         self.assertNotIn("embedder", head)
         rest = health.split("\ndef ", 1)[1]
         self.assertNotIn("embedder", rest)
+        for path in sorted((ROOT / "pair" / "routes").glob("*.py")):
+            if path.name == "status.py":
+                continue
+            self.assertNotIn("embedder", path.read_text(encoding="utf-8"), path.name)
+        self.assertNotIn("embedder", server)
 
     def test_ollama_base_ignores_a_missing_embed_path(self):
         os.environ["PI_PAIR_OLLAMA"] = "http://127.0.0.1:11434"

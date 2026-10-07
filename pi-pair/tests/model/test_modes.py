@@ -16,7 +16,6 @@ from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from pair.core import runtime
-from pair import server as pair_server
 from pair.model.modes import (
     FLASH_MODEL,
     PRO_MODEL,
@@ -27,6 +26,7 @@ from pair.model.modes import (
     tag_ready,
 )
 from pair.turn.shape import EFFORT_HINT
+from pair.routes import search as search_routes
 from pair.server import make_server
 from tests.support.paths import ROOT
 
@@ -204,19 +204,19 @@ class ModeHttp(unittest.TestCase):
         os.environ["PI_PAIR_ROLE"] = "brain"
         os.environ["PI_PAIR_CANNED"] = str(ROOT / "data" / "canned" / "canned_map.json")
         self.search_calls: list[str] = []
-        self._lookup_web = pair_server.lookup_web
+        self._lookup_web = search_routes.lookup_web
 
         def _stub_search(query, opener=None):
             self.search_calls.append(query)
             return {"status": "failed", "sources": [], "context": ""}
 
-        pair_server.lookup_web = _stub_search
+        search_routes.lookup_web = _stub_search
 
     def tearDown(self):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
-        pair_server.lookup_web = self._lookup_web
+        search_routes.lookup_web = self._lookup_web
         runtime.PEERS = self._peers
         runtime.INFER_SLOTS = self._slots
         runtime.gate = self._gate

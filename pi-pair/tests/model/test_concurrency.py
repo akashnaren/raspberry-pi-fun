@@ -18,11 +18,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 from pair.core import runtime
-from pair import server as pair_server
 from pair.core.config import infer_slots
 from pair.core.errors import BUSY, WAITING
 from pair.model.sched import QUEUE_LIMIT, InferenceGate
 from pair.model.knobs import parallel_limit
+from pair.routes import search as search_routes
 from pair.server import make_server
 
 
@@ -199,8 +199,8 @@ class ConcurrentChat(unittest.TestCase):
         HoldOllama.posts = 0
         HoldOllama.entered = threading.Event()
         HoldOllama.release = threading.Event()
-        self._lookup = pair_server.lookup_web
-        pair_server.lookup_web = lambda query, opener=None: {
+        self._lookup = search_routes.lookup_web
+        search_routes.lookup_web = lambda query, opener=None: {
             "status": "failed",
             "sources": [],
             "context": "",
@@ -211,7 +211,7 @@ class ConcurrentChat(unittest.TestCase):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
-        pair_server.lookup_web = self._lookup
+        search_routes.lookup_web = self._lookup
         runtime.PEERS = self._peers
         runtime.INFER_SLOTS = self._slots
         runtime.gate = self._gate

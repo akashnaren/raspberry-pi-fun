@@ -19,12 +19,13 @@ from pathlib import Path
 from pair.flywheel import miss_queue as queue
 
 from pair.core import runtime
-from pair import server as pair_server
 from pair.turn.assist import HARM_REFUSAL
 from pair.model.knobs import inference_knobs
 from pair.model.modes import mode_table
 from pair.flywheel.miss_queue import append_row
-from pair.server import last_completion, make_server
+from pair.routes.reply import last_completion
+from pair.routes import search as search_routes
+from pair.server import make_server
 from pair.model.think import (
     DIRECT_FALLBACK,
     FORCE_NOTE,
@@ -209,8 +210,8 @@ class ThinkHttp(unittest.TestCase):
         canned = Path(self._tmp.name) / "canned_map.json"
         canned.write_text("{}", encoding="utf-8")
         os.environ["PI_PAIR_CANNED"] = str(canned)
-        self._lookup = pair_server.lookup_web
-        pair_server.lookup_web = lambda query, opener=None: {
+        self._lookup = search_routes.lookup_web
+        search_routes.lookup_web = lambda query, opener=None: {
             "status": "failed",
             "sources": [],
             "context": "",
@@ -231,7 +232,7 @@ class ThinkHttp(unittest.TestCase):
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
-        pair_server.lookup_web = self._lookup
+        search_routes.lookup_web = self._lookup
         queue.forward_row = self._forward
         runtime.PEERS = self._peers
         runtime.INFER_SLOTS = self._slots
