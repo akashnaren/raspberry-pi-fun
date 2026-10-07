@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from pair.cancel import Cancel, ClientGone, peer_closed
 from pair.chat import chat_ollama
-from pair.gate import InferenceGate
+from pair.sched import InferenceGate
 
 
 class _SlowBody:

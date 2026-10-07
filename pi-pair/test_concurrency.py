@@ -23,7 +23,7 @@ from pair import runtime
 from pair import server as pair_server
 from pair.config import infer_slots
 from pair.errors import BUSY, WAITING
-from pair.gate import QUEUE_LIMIT, InferenceGate
+from pair.sched import QUEUE_LIMIT, InferenceGate
 from pair.knobs import parallel_limit
 from pair.server import make_server
 

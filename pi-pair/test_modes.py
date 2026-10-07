@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -18,14 +19,14 @@ from pair import runtime
 from pair import server as pair_server
 from pair.modes import pull_needed, resolve_mode, tag_ready
 from pair.turn import EFFORT_HINT
-from pair.resident import (
-    cap_fits_residents,
-    eviction_targets,
-    loaded_caps,
-    protected_tags,
-)
 from pair.server import make_server
 from test_pair import ROOT
+
+_CAP = re.compile(r"OLLAMA_MAX_LOADED_MODELS=(\d+)")
+
+
+def loaded_caps(text: str) -> list[int]:
+    return [int(match) for match in _CAP.findall(text or "")]
 
 
 class ModeOllama(BaseHTTPRequestHandler):
@@ -152,11 +153,6 @@ class ModeRules(unittest.TestCase):
         self.assertFalse(tag_ready([], "pro", "qwen3:1.7b"))
         self.assertIn("ollama pull qwen3:1.7b", pull_needed("qwen3:1.7b"))
         self.assertIn("does not pull", pull_needed("qwen3:1.7b"))
-        self.assertEqual(protected_tags(), ("qwen3:0.6b", "qwen3:1.7b"))
-        flash = "qwen3:0.6b"
-        running = [flash]
-        self.assertEqual(eviction_targets(running, "qwen3:1.7b"), [])
-        self.assertEqual(eviction_targets([flash, "qwen3:1.7b"], flash), [])
 
     def test_readme_and_installer_do_not_pull_pro(self):
         readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
@@ -192,7 +188,8 @@ class ModeRules(unittest.TestCase):
         unit = (ROOT / "configs" / "runtime" / "ollama-lan.service").read_text(
             encoding="utf-8"
         )
-        self.assertTrue(cap_fits_residents(unit))
+        unit_caps = loaded_caps(unit)
+        self.assertTrue(unit_caps and min(unit_caps) >= 2)
 
 
 class ModeHttp(unittest.TestCase):

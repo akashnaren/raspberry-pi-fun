@@ -7,7 +7,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from pair.gate import InferenceGate
+from pair.sched import InferenceGate
 from pair.sched import (
     admission_report,
     background_cancel_report,

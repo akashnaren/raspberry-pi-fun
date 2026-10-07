@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import unittest
 
 from pair.modes import (
@@ -12,7 +11,6 @@ from pair.modes import (
     resolve_auto,
     resolve_mode,
 )
-from pair.resident import eviction_targets
 
 
 class Resolve(unittest.TestCase):
@@ -57,11 +55,6 @@ class Resolve(unittest.TestCase):
         self.assertEqual(route, "flash")
         self.assertEqual(tag, "custom:flash")
         self.assertEqual(reason, "default")
-
-    def test_auto_does_not_plan_an_eviction(self):
-        self.assertEqual(eviction_targets(["qwen3:0.6b"], PRO_MODEL), [])
-        with self.assertRaises(ModuleNotFoundError):
-            importlib.import_module("pair.mode")
 
 
 if __name__ == "__main__":

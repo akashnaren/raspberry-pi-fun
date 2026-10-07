@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from pair.gate import InferenceGate
+from pair.sched import InferenceGate
 from pair.health import parse_temp_c, parse_throttled
 from pair.server import health_document, public_health
 

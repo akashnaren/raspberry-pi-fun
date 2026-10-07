@@ -12,7 +12,7 @@ from pair.config import (
     listen_port,
     load_peers,
 )
-from pair.gate import InferenceGate
+from pair.sched import InferenceGate
 from pair.knobs import clamp_parallel, queue_limit
 
 PEERS: list[dict] = []
