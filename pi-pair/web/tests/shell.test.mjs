@@ -1,4 +1,5 @@
 import fs from "fs";
+import { webSource } from "./support/source.mjs";
 import { register } from "node:module";
 import { parseHTML } from "linkedom";
 import { scrubAssistant } from "../src/chat/copy.ts";
@@ -405,7 +406,7 @@ if (/html,\s*body\s*\{[^}]*scrollbar-width:\s*none/s.test(css)) {
 if (!css.includes(".info-dot") || !/\.info-dot\s*\{[^}]*min-width:\s*32px/s.test(css)) {
   throw new Error("info hit target is under 32px");
 }
-const page = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+const page = webSource();
 if (!page.includes('setAttribute("aria-label", "Retry")') || !page.includes("retryIcon")) {
   throw new Error("retry is still a wrapping word");
 }

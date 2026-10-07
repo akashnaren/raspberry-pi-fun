@@ -1,4 +1,5 @@
 import fs from "fs";
+import { webSource } from "./support/source.mjs";
 import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, adaptiveEndOfUtterance, createUtteranceHold, currentSpeech, dropPostSpeechEcho, echoOfSpeech, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, shouldBargeIn, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "../src/voice/speech.ts";
 
 const assistant = "The hall bench is by the east window.";
@@ -113,7 +114,7 @@ if (isSoloStop("stop please") || isSoloStop("where is the bench?") || isSoloStop
   throw new Error("only the word stop ends voice mode");
 }
 
-const main = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+const main = webSource();
 const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const scss = fs.readFileSync(new URL("../src/styles/main.scss", import.meta.url), "utf8");
 
@@ -153,7 +154,7 @@ const sendAt = begin.indexOf("sendText(turn.content, false, true)");
 if (stopAt < 0 || sendAt < 0 || stopAt > sendAt || !begin.includes("endVoiceMode()")) {
   throw new Error("saying stop is sent as a chat turn");
 }
-if (!session.includes("if (voiceOn)") || !session.includes("endVoiceMode();")) {
+if (!session.includes("if (ui.voiceOn)") || !session.includes("endVoiceMode();")) {
   throw new Error("pressing voice mode again does not end the session");
 }
 if (!main.includes("whenSpeechEnds(releaseVoice)")) {

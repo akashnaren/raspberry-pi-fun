@@ -1,4 +1,5 @@
 import fs from "fs";
+import { webSource } from "./support/source.mjs";
 import {
   MIC_OFF_CLASS,
   MIC_OFF_COLOR,
@@ -106,8 +107,8 @@ if (!micTag.includes(MIC_OFF_CLASS) || micTag.includes(MIC_ON_CLASS)) {
   throw new Error("dictation button does not start idle: " + micTag);
 }
 
-const main = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
-if (!main.includes("paintMicButton(mic, dictating)")) {
+const main = webSource();
+if (!main.includes("paintMicButton(mic, ui.dictating)")) {
   throw new Error("dictation button does not paint listening versus idle");
 }
 
