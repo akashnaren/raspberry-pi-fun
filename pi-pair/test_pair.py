@@ -1292,7 +1292,7 @@ class PairHttp(unittest.TestCase):
         self._pi3_accepts_forwarded_rows()
 
         port = self._pi4()
-        script = ROOT / "scripts" / "chat_label.py"
+        script = ROOT / "scripts" / "qa" / "chat_label.py"
         dry = subprocess.run(
             [
                 sys.executable,

@@ -390,7 +390,7 @@ class Flywheel(unittest.TestCase):
             "akashnaren/pi-mesh-labels",
             "KAGGLE_API_TOKEN",
             "short connect timeout",
-            "scripts/chat_label.py",
+            "scripts/qa/chat_label.py",
             "--dry-run",
             "another caller",
         ):

@@ -3,11 +3,11 @@
 
 Stdlib only. Two modes:
 
-  python3 scripts/bench_ttft.py
+  python3 scripts/bench/ttft.py
       Local mock Ollama (token drip) and the pair router. Search is a short
       stub so the number includes that hop without DuckDuckGo.
 
-  python3 scripts/bench_ttft.py --url http://127.0.0.1:18080
+  python3 scripts/bench/ttft.py --url http://127.0.0.1:18080
       The same prompt against a live router. No mock is started.
 
 Prints nearest-rank p50 and p95 for TTFT and total time, in milliseconds.
@@ -28,7 +28,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

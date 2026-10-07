@@ -6,7 +6,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-_PATH = Path(__file__).resolve().parent / "scripts" / "bench_pi4.py"
+_PATH = Path(__file__).resolve().parent / "scripts" / "bench" / "pi4.py"
 _SPEC = importlib.util.spec_from_file_location("bench_pi4", _PATH)
 assert _SPEC and _SPEC.loader
 _BENCH = importlib.util.module_from_spec(_SPEC)

@@ -382,11 +382,11 @@ LAN mode is `flash`, `pro`, or `auto`, sent as JSON `mode` or `pi_mode`, or head
 
 Other agents on this fleet use the same router. A bot is another caller of this HTTP API. There is no second page, no schedule, and no paid model. POST a chat turn to any board's port 18080. An app that is not the page on that port uses `POST /api/chat` and `PI_GPT_API_KEY`, described under Public API. A miss is still generated only on pi4, and the row is still queued on pi3.
 
-`pi-pair/scripts/chat_label.py` does what the page does for one line. It POSTs the turn with Auto and mesh on, then POSTs a thumbs vote, and a correction when you pass one, so the row on pi3 has the label `post_train` reads. It does not pin pi2 or pi3.
+`pi-pair/scripts/qa/chat_label.py` does what the page does for one line. It POSTs the turn with Auto and mesh on, then POSTs a thumbs vote, and a correction when you pass one, so the row on pi3 has the label `post_train` reads. It does not pin pi2 or pi3.
 
 ```bash
-python3 pi-pair/scripts/chat_label.py --base http://127.0.0.1:18080 --prompt 'status' --vote up
-python3 pi-pair/scripts/chat_label.py --dry-run --prompt 'status' --vote down --correction 'the sentence you wanted'
+python3 pi-pair/scripts/qa/chat_label.py --base http://127.0.0.1:18080 --prompt 'status' --vote up
+python3 pi-pair/scripts/qa/chat_label.py --dry-run --prompt 'status' --vote down --correction 'the sentence you wanted'
 ```
 
 `--dry-run` prints those two posts and does not open a connection.
@@ -458,7 +458,7 @@ curl -sS http://127.0.0.1:18080/api/health -H 'authorization: Bearer YOUR_KEY'
 | `PI_PAIR_SLOTS` | `ollama_num_parallel` (2) | In-flight generations on pi4. Clamped to 1–4. Unset follows `configs/runtime/inference_pi4.json`, the same number `install.sh` writes as `OLLAMA_NUM_PARALLEL`. When the cap is full, up to 8 more chats wait about 60 seconds and the page shows a waiting line. A full queue returns HTTP 503 with a short message. Flash and Pro share this cap. `POST /api/chat` uses this same cap. |
 | `PI_PAIR_HEALTH_TTL` | `2.5` | Seconds to cache peer probes |
 
-Ollama's runner log for the previous Flash tag shows the cache, not a second copy of the weights: 24 MiB of key/value cache at one sequence, 48 MiB at two, 96 MiB at four, each sequence still `num_ctx` 2048. Those cache figures are not a Qwen3 measurement. A same-settings run of that previous tag kept the Ollama process tree under 1 GB at four sequences. The shipped cap is 2. Four sequences were too slow on pi4 (p95 34.9s), and `install.sh` writes that cap of 2 into the Ollama drop-in so a deploy does not put the board back on 4. Re-measure on pi4 after the drop-in is installed and the model is loaded: `python3 scripts/bench_concurrent.py --url http://127.0.0.1:18080 --n 2 --rounds 5`. That prints p50, p95, and the peak resident set of the `ollama` process tree. Direct to the model server is the same script with `--ollama http://127.0.0.1:11434`.
+Ollama's runner log for the previous Flash tag shows the cache, not a second copy of the weights: 24 MiB of key/value cache at one sequence, 48 MiB at two, 96 MiB at four, each sequence still `num_ctx` 2048. Those cache figures are not a Qwen3 measurement. A same-settings run of that previous tag kept the Ollama process tree under 1 GB at four sequences. The shipped cap is 2. Four sequences were too slow on pi4 (p95 34.9s), and `install.sh` writes that cap of 2 into the Ollama drop-in so a deploy does not put the board back on 4. Re-measure on pi4 after the drop-in is installed and the model is loaded: `python3 scripts/bench/concurrent.py --url http://127.0.0.1:18080 --n 2 --rounds 5`. That prints p50, p95, and the peak resident set of the `ollama` process tree. Direct to the model server is the same script with `--ollama http://127.0.0.1:11434`.
 
 ## Failures
 

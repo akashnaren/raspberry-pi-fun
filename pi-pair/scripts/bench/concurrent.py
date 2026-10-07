@@ -4,11 +4,11 @@
 Stdlib only. Does not start or stop Ollama. On pi4, with the service already
 up and qwen3:0.6b loaded:
 
-  python3 scripts/bench_concurrent.py --url http://127.0.0.1:18080 --n 2 --rounds 5
+  python3 scripts/bench/concurrent.py --url http://127.0.0.1:18080 --n 2 --rounds 5
 
 Direct to the model server, same options the router sends:
 
-  python3 scripts/bench_concurrent.py --ollama http://127.0.0.1:11434 --n 2 --rounds 5
+  python3 scripts/bench/concurrent.py --ollama http://127.0.0.1:11434 --n 2 --rounds 5
 
 RSS is the sum of VmRSS for the named process and its children, sampled while
 the requests run. p50 and p95 are nearest-rank over the successful latencies.

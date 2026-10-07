@@ -74,7 +74,7 @@ class RuntimeChoice(unittest.TestCase):
         self.assertFalse(output_layer_ok(kl_delta=0.0, eval_flat=False))
 
     def test_quant_script_dry_run_does_not_download(self):
-        script = ROOT / "scripts" / "build_quants.sh"
+        script = ROOT / "scripts" / "bench" / "build_quants.sh"
         completed = subprocess.run(
             ["bash", str(script), "--dry-run"],
             check=False,
@@ -86,7 +86,7 @@ class RuntimeChoice(unittest.TestCase):
         self.assertNotIn("http", completed.stdout.lower())
 
     def test_vm_bench_stays_on_ollama_without_pi_timings(self):
-        script = ROOT / "scripts" / "bench_runtime.py"
+        script = ROOT / "scripts" / "bench" / "runtime.py"
         completed = subprocess.run(
             ["python3", str(script)],
             check=False,
