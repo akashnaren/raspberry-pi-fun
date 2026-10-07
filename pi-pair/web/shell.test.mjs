@@ -669,11 +669,15 @@ class FakeXHR {
     this.onload = null;
     this.onerror = null;
     this.onabort = null;
+    this.ontimeout = null;
+    this.timeout = 0;
+    this.aborted = false;
     FakeXHR.current = this;
   }
   open() {}
   send() {}
   abort() {
+    this.aborted = true;
     if (typeof this.onabort === "function") this.onabort();
   }
 }
@@ -697,5 +701,80 @@ await pendingUpload.catch(() => {});
 await new Promise((resolve) => setTimeout(resolve, 20));
 if (fileTag.classList.contains("on")) throw new Error("a late upload restored the chip");
 if (box.dataset.attachText) throw new Error("a ghost attachment was kept");
+
+const reading = app.loadFile(new File(["abc"], "notes.pdf", { type: "application/pdf" }));
+await new Promise((resolve) => setTimeout(resolve, 20));
+if (typeof FakeXHR.current.upload.onload === "function") FakeXHR.current.upload.onload();
+if (!document.getElementById("fileName").textContent.includes("reading")) {
+  throw new Error("reading phase missing");
+}
+const readBar = document.getElementById("readBar");
+if (!readBar || readBar.hidden || !readBar.classList.contains("on")) {
+  throw new Error("read bar was not showing");
+}
+FakeXHR.current.ontimeout();
+await reading;
+if (paperclip.classList.contains("live") || paperclip.getAttribute("aria-busy") || paperclip.disabled) {
+  throw new Error("timeout left the paperclip busy");
+}
+if (go.disabled) throw new Error("send stayed disabled after timeout");
+if (!fileTag.classList.contains("err")) throw new Error("timeout did not mark the chip");
+if (readBar.classList.contains("on") || !readBar.hidden) throw new Error("read bar stayed up");
+
+const leaving = app.loadFile(new File(["abc"], "scan.pdf", { type: "application/pdf" }));
+await new Promise((resolve) => setTimeout(resolve, 20));
+window.dispatchEvent(new window.Event("pagehide"));
+if (!FakeXHR.current.aborted) throw new Error("reload did not abort the upload");
+if (paperclip.classList.contains("live") || paperclip.disabled || paperclip.getAttribute("aria-busy")) {
+  throw new Error("reload left the paperclip busy");
+}
+if (readBar.classList.contains("on")) throw new Error("reload left the read bar up");
+await leaving.catch(() => {});
+
+const unloading = app.loadFile(new File(["abc"], "scan.pdf", { type: "application/pdf" }));
+await new Promise((resolve) => setTimeout(resolve, 20));
+window.dispatchEvent(new window.Event("unload"));
+if (!FakeXHR.current.aborted) throw new Error("unload did not abort the upload");
+if (paperclip.classList.contains("live") || paperclip.disabled) {
+  throw new Error("unload left the paperclip busy");
+}
+await unloading.catch(() => {});
+
+const restored = app.loadFile(new File(["abc"], "scan.pdf", { type: "application/pdf" }));
+await new Promise((resolve) => setTimeout(resolve, 20));
+const shown = new window.Event("pageshow");
+shown.persisted = true;
+window.dispatchEvent(shown);
+if (!FakeXHR.current.aborted) throw new Error("bfcache restore did not abort the upload");
+if (paperclip.classList.contains("live") || readBar.classList.contains("on")) {
+  throw new Error("bfcache restore left the upload busy");
+}
+await restored.catch(() => {});
+
+const busy = app.loadFile(new File(["abc"], "shot.jpg", { type: "image/jpeg" }));
+await new Promise((resolve) => setTimeout(resolve, 20));
+FakeXHR.current.status = 429;
+FakeXHR.current.responseText = JSON.stringify({
+  error: "Reading a file is busy. Try again in a moment.",
+});
+FakeXHR.current.onload();
+await busy;
+if (document.getElementById("voiceNote").textContent !== "Reading a file is busy. Try again in a moment.") {
+  throw new Error("busy note was " + document.getElementById("voiceNote").textContent);
+}
+if (paperclip.classList.contains("live") || paperclip.disabled || paperclip.getAttribute("aria-busy")) {
+  throw new Error("busy left the paperclip live");
+}
+
+const slow = app.loadFile(new File(["abc"], "scan.pdf", { type: "application/pdf" }));
+await new Promise((resolve) => setTimeout(resolve, 20));
+FakeXHR.current.status = 504;
+FakeXHR.current.responseText = JSON.stringify({ error: "That took too long. Try again." });
+FakeXHR.current.onload();
+await slow;
+if (document.getElementById("voiceNote").textContent !== "That took too long. Try again.") {
+  throw new Error("slow note was " + document.getElementById("voiceNote").textContent);
+}
+if (paperclip.classList.contains("live")) throw new Error("slow left the paperclip live");
 
 console.log("ok");

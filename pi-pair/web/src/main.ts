@@ -10,7 +10,7 @@ import { primaryKind, primaryLabel } from "./primary-action";
 import { applyTheme, applyVoiceSilence, browserStorage, loadSettings, saveSettings, type ModelMode, type PageSettings, type ThinkLevel, type ThemeName } from "./settings";
 import { dropStrayMarkers, linkCitations, renderFailedSearch, renderSourcesPanelBody, renderSourcesPill, type PanelDetail, type SourceLink as PillSource } from "./sources";
 import { scrubAssistant } from "./copy";
-import { BIG_LINE, friendlyError, WAITING_LINE } from "./errors";
+import { BIG_LINE, DROP_LINE, friendlyError, OCR_BUSY_LINE, SLOW_LINE, WAITING_LINE } from "./errors";
 import { dropFollow, enqueueFollow, renderFollowQueue, takeFollow, type FollowItem } from "./follow-queue";
 import { appendBrandMark, navigationType, shouldPlaySplash, SPLASH_HOLD_MS, SPLASH_KEY } from "./splash";
 import { chatBody } from "./history";
@@ -123,6 +123,7 @@ const followExtra = new Map<number, { text: string; hidden: string; attachment: 
 let voiceUtterance: ReturnType<typeof createUtteranceHold> | null = null;
 
 const ATTACH_BYTES = 4 * 1024 * 1024;
+const ATTACH_TIMEOUT_MS = 60_000;
 const CLIENT_KEY = "pi-client";
 const CHAT_KEY = "pi-chat";
 const TURNS_KEY = "openpi.transcript";
@@ -1656,6 +1657,21 @@ function releaseAttachButton(): void {
   button.classList.remove("live");
   button.disabled = false;
   button.removeAttribute("aria-busy");
+  setReadBar(false);
+}
+
+function setReadBar(on: boolean): void {
+  const bar = document.getElementById("readBar");
+  if (!bar) return;
+  bar.classList.toggle("on", on);
+  bar.hidden = !on;
+}
+
+function shortLine(line: string): string {
+  if (line === OCR_BUSY_LINE) return "busy";
+  if (line === SLOW_LINE) return "too slow";
+  if (line === DROP_LINE) return "dropped";
+  return "couldn't read it";
 }
 
 function showUploadChip(label: string, failed = false): void {
@@ -1698,10 +1714,16 @@ export async function loadFile(file: File | null): Promise<void> {
       const xhr = new XMLHttpRequest();
       attachXhr = xhr;
       xhr.open("POST", "/v1/attachments");
+      xhr.timeout = ATTACH_TIMEOUT_MS;
       xhr.upload.onprogress = (event) => {
         if (!current() || !event.lengthComputable || event.total <= 0) return;
         const pct = Math.min(100, Math.round((100 * event.loaded) / event.total));
         showUploadChip(label + " · " + pct + "%");
+      };
+      xhr.upload.onload = () => {
+        if (!current()) return;
+        showUploadChip(label + " · reading…");
+        setReadBar(true);
       };
       xhr.onload = () => {
         resolve({
@@ -1712,6 +1734,7 @@ export async function loadFile(file: File | null): Promise<void> {
       };
       xhr.onerror = () => reject(new Error("network"));
       xhr.onabort = () => reject(new Error("abort"));
+      xhr.ontimeout = () => reject(new Error("timeout"));
       xhr.send(body);
     });
     let payload: AttachmentResult = {};
@@ -1727,8 +1750,9 @@ export async function loadFile(file: File | null): Promise<void> {
     }
     if (!current()) return;
     if (!response.ok || !String(payload.text || "").trim()) {
-      showUploadChip(label + " · couldn't read it", true);
-      voiceNote("");
+      const line = friendlyError(payload.error || response.status);
+      showUploadChip(label + " · " + shortLine(line), true);
+      voiceNote(line);
       syncSend();
       return;
     }
@@ -1745,11 +1769,23 @@ export async function loadFile(file: File | null): Promise<void> {
     const via = payload.route === "ocr" ? "ocr" : "text";
     const cut = payload.truncated ? " · cut" : "";
     showUploadChip(label + " · " + via + cut + " (" + kb + " KB)");
-  } catch {
-    if (current()) {
-      showUploadChip(label + " · couldn't read it", true);
-      voiceNote("");
+  } catch (err) {
+    if (!current()) return;
+    const message = err instanceof Error ? err.message : "";
+    if (message === "abort") return;
+    if (message === "timeout") {
+      showUploadChip(label + " · " + shortLine(SLOW_LINE), true);
+      attachError = false;
+      voiceNote(SLOW_LINE);
+      return;
     }
+    if (message === "network") {
+      showUploadChip(label + " · " + shortLine(DROP_LINE), true);
+      voiceNote(DROP_LINE);
+      return;
+    }
+    showUploadChip(label + " · couldn't read it", true);
+    voiceNote("");
   } finally {
     if (current()) {
       uploading = false;
@@ -2671,6 +2707,16 @@ composer.addEventListener("paste", (event) => {
   }
 });
 
+function abortAttachForNavigation(): void {
+  if (uploading) cancelAttach();
+}
+window.addEventListener("pagehide", abortAttachForNavigation);
+window.addEventListener("unload", abortAttachForNavigation);
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) cancelAttach();
+});
+releaseAttachButton();
+syncSend();
 restoreTurns();
 if (turns.length) paint();
 void refresh();

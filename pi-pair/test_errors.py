@@ -42,6 +42,7 @@ class FriendlyMap(unittest.TestCase):
             "that PDF has no readable text": PDF_SCAN,
             "OCR is not installed on this Pi": OCR_MISSING,
             "OCR is busy": OCR_BUSY,
+            "reading that file took too long": TIMEOUT,
             "unsupported file type": FILE_TYPE,
             "attachment is over 4 MB": TOO_BIG,
             "that took too long": TIMEOUT,

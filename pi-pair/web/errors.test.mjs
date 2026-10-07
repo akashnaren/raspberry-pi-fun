@@ -5,6 +5,7 @@ const cases = [
   ["Failed to fetch", "Connection dropped. Try again."],
   ["pi4 is at capacity (2 generations in flight). Try again in a moment.", "Too many chats are going at once. Try again in a moment."],
   ["that took too long", "That took too long. Try again."],
+  ["reading that file took too long", "That took too long. Try again."],
   ["attachment is over 4 MB", "That is too big to send. Try a shorter message."],
   ["pi4 offline", "The chat service is not reachable. Try again."],
   ["pi2 cannot be the brain", "That machine cannot answer chats."],

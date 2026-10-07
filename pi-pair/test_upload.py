@@ -6,7 +6,9 @@ import base64
 import binascii
 import json
 import os
+import socket
 import sys
+import tracemalloc
 import zlib
 import tempfile
 import threading
@@ -21,7 +23,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair import ocr, upload
+from pair import ingest_job, ocr, runtime, upload
 from pair.pdftext import extract_pdf_text
 from pair.server import make_server
 
@@ -431,8 +433,128 @@ class MimeRouting(unittest.TestCase):
                 ocr.release()
 
 
+def _s0_pdf(image_bytes: int = 3_200_000) -> bytes:
+    """One text stream plus one random Flate image. This is the wedge fixture."""
+    image = zlib.compress(os.urandom(image_bytes))
+    text = zlib.compress(b"BT (Hello scan) Tj ET")
+    return (
+        b"%PDF-1.4\n"
+        + b"1 0 obj << /Length %d /Filter /FlateDecode >>\nstream\n" % len(text)
+        + text
+        + b"\nendstream\nendobj\n"
+        + b"2 0 obj << /Type /XObject /Subtype /Image /Filter /FlateDecode /Length %d >>\nstream\n"
+        % len(image)
+        + image
+        + b"\nendstream\nendobj\n%%EOF"
+    )
+
+
+def _flate_image_pdf() -> bytes:
+    """A PNG-shaped scan: Flate image, no text operators."""
+    image = zlib.compress(b"\x00" * 64)
+    return (
+        b"%PDF-1.4\n1 0 obj << /Type /XObject /Subtype /Image "
+        b"/Filter /FlateDecode /Length "
+        + str(len(image)).encode("ascii")
+        + b" >>\nstream\n"
+        + image
+        + b"\nendstream\nendobj\n%%EOF"
+    )
+
+
+class PdfTextBounds(unittest.TestCase):
+    def test_s0_fixture_returns_the_page_text_quickly(self):
+        pdf = _s0_pdf()
+        started = time.monotonic()
+        text = extract_pdf_text(pdf)
+        elapsed = time.monotonic() - started
+        self.assertEqual(text, "Hello scan")
+        self.assertLess(elapsed, 1.0)
+
+    def test_zip_bomb_stream_stays_small_and_fast(self):
+        zeros = b"\x00" * 20_000_000
+        packed = zlib.compress(zeros)
+        del zeros
+        pdf = (
+            b"%PDF-1.4\n1 0 obj << /Length "
+            + str(len(packed)).encode("ascii")
+            + b" /Filter /FlateDecode >>\nstream\n"
+            + packed
+            + b"\nendstream\nendobj\n%%EOF"
+        )
+        tracemalloc.start()
+        started = time.monotonic()
+        extract_pdf_text(pdf)
+        elapsed = time.monotonic() - started
+        _current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.assertLess(elapsed, 0.5)
+        self.assertLess(peak, 30 * 1024 * 1024)
+
+    def test_brackets_without_tj_stay_linear(self):
+        stream = b"[" * 50_000
+        pdf = _content_pdf(stream, b"")
+        started = time.monotonic()
+        self.assertEqual(extract_pdf_text(pdf), "")
+        self.assertLess(time.monotonic() - started, 0.5)
+
+    def test_extract_does_not_stall_another_thread(self):
+        pdf = _s0_pdf()
+        gaps: list[float] = []
+        stop = threading.Event()
+
+        def tick() -> None:
+            last = time.monotonic()
+            while not stop.is_set():
+                time.sleep(0.01)
+                now = time.monotonic()
+                gaps.append(now - last)
+                last = now
+
+        thread = threading.Thread(target=tick, daemon=True)
+        thread.start()
+        try:
+            self.assertEqual(extract_pdf_text(pdf), "Hello scan")
+        finally:
+            stop.set()
+            thread.join(timeout=1)
+        self.assertTrue(gaps)
+        self.assertLess(max(gaps), 0.1)
+
+    def test_ingest_parses_a_text_pdf_once(self):
+        calls = {"n": 0}
+        real = upload.extract_pdf_text
+
+        def wrapped(data: bytes) -> str:
+            calls["n"] += 1
+            return real(data)
+
+        with patch("pair.upload.extract_pdf_text", wrapped):
+            result = upload.ingest(
+                "application/pdf", _flate_pdf("Hello"), filename="note.pdf"
+            )
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(result["text"], "Hello")
+        self.assertEqual(result["route"], "pdf")
+
+    def test_flate_image_pdf_routes_to_ocr(self):
+        scanned = _flate_image_pdf()
+        self.assertTrue(upload.is_jpeg_scanned_pdf(scanned))
+        self.assertEqual(
+            upload.route_for("scan.pdf", "application/pdf", scanned), "ocr"
+        )
+        self.assertEqual(
+            upload.route_hint("notes.txt", "application/octet-stream"), "text"
+        )
+        self.assertEqual(
+            upload.route_hint("scan.pdf", "application/pdf", scanned[:32]), ""
+        )
+
+
 class AttachmentHttp(unittest.TestCase):
     def setUp(self):
+        self._inline = ingest_job.INLINE
+        ingest_job.INLINE = True
         self.httpd = make_server("127.0.0.1", 0)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
@@ -455,6 +577,7 @@ class AttachmentHttp(unittest.TestCase):
     def tearDown(self):
         ocr.recognize_image = self._image
         ocr.recognize_pdf = self._pdf
+        ingest_job.INLINE = self._inline
         self.httpd.shutdown()
         self.httpd.server_close()
 
@@ -549,6 +672,30 @@ class AttachmentHttp(unittest.TestCase):
             body["error"], "That is too big to send. Try a shorter message."
         )
 
+    def test_extract_accepts_a_three_megabyte_image(self):
+        blob = b"\xff\xd8\xff" + b"\x00" * (3 * 1024 * 1024)
+        raw = json.dumps(
+            {
+                "filename": "pic.jpg",
+                "content_type": "image/jpeg",
+                "data": base64.b64encode(blob).decode("ascii"),
+            }
+        ).encode()
+        self.assertGreater(len(raw), 1_000_000)
+        self.assertLess(len(raw), 6 * 1024 * 1024)
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/tools/extract",
+            data=raw,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = json.loads(response.read().decode())
+            status = response.status
+        self.assertEqual(status, 200, body)
+        self.assertNotEqual(status, 413)
+        self.assertEqual(body["text"], "from image")
+
     def test_extra_ocr_is_rejected_while_slots_are_held(self):
         hold = threading.Event()
         arrived = threading.Semaphore(0)
@@ -591,6 +738,199 @@ class AttachmentHttp(unittest.TestCase):
             hold.set()
             for thread in threads:
                 thread.join(timeout=3)
+
+
+def _ingest_pids() -> list[int]:
+    found = []
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return found
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            command = (entry / "cmdline").read_bytes().replace(b"\x00", b" ")
+        except OSError:
+            continue
+        if b"pair.ingest_job" in command:
+            found.append(int(entry.name))
+    return found
+
+
+class AttachmentIsolation(unittest.TestCase):
+    """Real child. INLINE stays false so a deadline or a disconnect can kill it."""
+
+    def setUp(self):
+        self._inline = ingest_job.INLINE
+        self._deadline = ingest_job.UPLOAD_DEADLINE_S
+        self._sleep = os.environ.get("PI_PAIR_INGEST_TEST_SLEEP")
+        self._peers = [dict(peer) for peer in runtime.PEERS]
+        ingest_job.INLINE = False
+        os.environ.pop("PI_PAIR_INGEST_TEST_SLEEP", None)
+        runtime.set_peers([])
+        self.httpd = make_server("127.0.0.1", 0)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.port = self.httpd.server_address[1]
+
+    def tearDown(self):
+        ingest_job.INLINE = self._inline
+        ingest_job.UPLOAD_DEADLINE_S = self._deadline
+        if self._sleep is None:
+            os.environ.pop("PI_PAIR_INGEST_TEST_SLEEP", None)
+        else:
+            os.environ["PI_PAIR_INGEST_TEST_SLEEP"] = self._sleep
+        runtime.set_peers(self._peers)
+        for pid in _ingest_pids():
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def _post(self, data: bytes, headers: dict[str, str], timeout: float = 5):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/v1/attachments",
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.status, json.loads(response.read().decode())
+        except urllib.error.HTTPError as error:
+            raw = error.read().decode()
+            return error.code, json.loads(raw or "{}")
+
+    def _elapsed_get(self, path: str) -> float:
+        started = time.monotonic()
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{self.port}{path}", timeout=2
+        ) as response:
+            self.assertEqual(response.status, 200)
+            response.read()
+        return time.monotonic() - started
+
+    def test_s0_upload_leaves_health_responsive(self):
+        pdf = _s0_pdf()
+        box: dict = {}
+
+        def post() -> None:
+            started = time.monotonic()
+            box["result"] = self._post(
+                pdf,
+                {"content-type": "application/pdf", "x-filename": "s0.pdf"},
+            )
+            box["dt"] = time.monotonic() - started
+
+        thread = threading.Thread(target=post)
+        thread.start()
+        samples = [self._elapsed_get("/health") for _ in range(20)]
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertLess(box["dt"], 5)
+        status, body = box["result"]
+        self.assertIn(status, (200, 422))
+        if status == 200:
+            self.assertEqual(body.get("text"), "Hello scan")
+        self.assertTrue(all(sample < 0.3 for sample in samples), samples)
+
+    def test_deadline_kills_the_child(self):
+        ingest_job.UPLOAD_DEADLINE_S = 1
+        os.environ["PI_PAIR_INGEST_TEST_SLEEP"] = "3"
+        box: dict = {}
+
+        def post() -> None:
+            started = time.monotonic()
+            box["result"] = self._post(
+                JPEG,
+                {"content-type": "image/jpeg", "x-filename": "pic.jpg"},
+                timeout=4,
+            )
+            box["dt"] = time.monotonic() - started
+
+        thread = threading.Thread(target=post)
+        thread.start()
+        pid = None
+        limit = time.monotonic() + 2
+        while time.monotonic() < limit and pid is None:
+            found = _ingest_pids()
+            if found:
+                pid = found[0]
+                break
+            time.sleep(0.02)
+        static_s = self._elapsed_get("/static/mesh.css")
+        thread.join(timeout=3)
+        self.assertFalse(thread.is_alive())
+        self.assertLess(box["dt"], 2)
+        status, body = box["result"]
+        self.assertEqual(status, 504, body)
+        self.assertEqual(body.get("error"), "That took too long. Try again.")
+        self.assertIsNotNone(pid)
+        self.assertTrue(_stopped(pid), pid)
+        self.assertLess(static_s, 0.3)
+
+    def test_disconnect_kills_the_child_and_releases_the_gate(self):
+        os.environ["PI_PAIR_INGEST_TEST_SLEEP"] = "3"
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=2)
+        body = JPEG
+        head = (
+            "POST /v1/attachments HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{self.port}\r\n"
+            "Content-Type: image/jpeg\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "X-Filename: pic.jpg\r\n"
+            "Connection: close\r\n\r\n"
+        ).encode()
+        sock.sendall(head + body)
+        pid = None
+        limit = time.monotonic() + 2
+        while time.monotonic() < limit:
+            found = _ingest_pids()
+            if found:
+                pid = found[0]
+                break
+            time.sleep(0.02)
+        self.assertIsNotNone(pid)
+        sock.close()
+        self.assertTrue(_stopped(int(pid)))
+        os.environ.pop("PI_PAIR_INGEST_TEST_SLEEP", None)
+        status, _body = self._post(
+            JPEG, {"content-type": "image/jpeg", "x-filename": "again.jpg"}
+        )
+        self.assertNotEqual(status, 429)
+
+    def test_two_slow_uploads_reject_a_third(self):
+        os.environ["PI_PAIR_INGEST_TEST_SLEEP"] = "3"
+        threads = []
+        try:
+            for _ in range(2):
+                thread = threading.Thread(
+                    target=lambda: self._post(
+                        JPEG,
+                        {"content-type": "image/jpeg", "x-filename": "pic.jpg"},
+                        timeout=8,
+                    )
+                )
+                thread.start()
+                threads.append(thread)
+            limit = time.monotonic() + 2
+            while time.monotonic() < limit and len(_ingest_pids()) < 2:
+                time.sleep(0.02)
+            self.assertGreaterEqual(len(_ingest_pids()), 2)
+            started = time.monotonic()
+            status, body = self._post(
+                JPEG,
+                {"content-type": "image/jpeg", "x-filename": "third.jpg"},
+                timeout=2,
+            )
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertEqual(status, 429, body)
+        finally:
+            os.environ.pop("PI_PAIR_INGEST_TEST_SLEEP", None)
+            for thread in threads:
+                thread.join(timeout=8)
 
 
 def _stopped(pid: int) -> bool:
