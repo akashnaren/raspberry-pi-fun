@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.publish import sync_from_disk
-from pair.queue import node_role
+from pair.flywheel.miss_queue import node_role
+from pair.flywheel.publish import sync_from_disk
 
 
 def main() -> int:

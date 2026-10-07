@@ -33,13 +33,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: pi-pair/web/package-lock.json
       - name: Ruff
         run: |
           ruff check pi-pair
           ruff format --check pi-pair
       - name: Front-end lint
         working-directory: pi-pair/web
-        run: npm ci && npm run lint:js
+        run: npm ci && npm run lint && npm run lint:js
       - name: ShellCheck
         run: |
           sudo apt-get update -qq
@@ -59,11 +61,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Build the chat page
+          cache: npm
+          cache-dependency-path: pi-pair/web/package-lock.json
+      - name: Build, test, and check the chat page
         working-directory: pi-pair/web
-        run: npm ci && npm run lint && npm run build
-      - name: Router, cache, and data-stack tests
-        run: python3 -m unittest discover -s pi-pair -p 'test_*.py' -v
+        run: npm ci && npm run build && npm test
+      - name: Committed static matches the build
+        run: git diff --exit-code -- pi-pair/static
+      - name: Python tests
+        run: python3 -m unittest discover -s pi-pair/tests -t pi-pair -v
 
   data-stack:
     name: data-stack

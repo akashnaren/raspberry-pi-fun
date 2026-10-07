@@ -4,7 +4,7 @@
     "enabled": false
   },
   "files": {
-    "includes": ["src/**/*.{js,mjs,ts}", "*.mjs", "tailwind.config.js"],
+    "includes": ["src/**/*.{js,mjs,ts}", "tests/**/*.mjs", "*.mjs", "tailwind.config.js"],
     "ignoreUnknown": true
   },
   "formatter": {
@@ -16,7 +16,11 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error"
+      }
     }
   }
 }

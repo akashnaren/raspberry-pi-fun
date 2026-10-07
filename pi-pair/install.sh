@@ -45,7 +45,7 @@ else
 fi
 echo
 
-mkdir -p "$INSTALL_DIR/pair/nodes" "$INSTALL_DIR/static" \
+mkdir -p "$INSTALL_DIR/static" \
   "$INSTALL_DIR/scripts/lifecycle" "$INSTALL_DIR/scripts/data" "$INSTALL_DIR/scripts/train" "$INSTALL_DIR/scripts/eval" \
   "$INSTALL_DIR/configs/train" "$INSTALL_DIR/configs/runtime" \
   "$INSTALL_DIR/docs" \
@@ -62,8 +62,14 @@ fi
 if [[ -f "$readme_src" ]]; then
   cp -f "$readme_src" "$INSTALL_DIR/README.md"
 fi
-cp -f "$ROOT/pair/"*.py "$INSTALL_DIR/pair/"
-cp -f "$ROOT/pair/nodes/"*.py "$INSTALL_DIR/pair/nodes/"
+# Mirror the whole package so a moved or deleted module cannot linger on the board.
+if [[ "$(cd "$ROOT/pair" && pwd -P)" != "$(mkdir -p "$INSTALL_DIR/pair" && cd "$INSTALL_DIR/pair" && pwd -P)" ]]; then
+  rm -rf "$INSTALL_DIR/pair.new"
+  cp -a "$ROOT/pair" "$INSTALL_DIR/pair.new"
+  find "$INSTALL_DIR/pair.new" -name __pycache__ -prune -exec rm -rf {} +
+  rm -rf "$INSTALL_DIR/pair"
+  mv "$INSTALL_DIR/pair.new" "$INSTALL_DIR/pair"
+fi
 cp -f "$ROOT/static/"* "$INSTALL_DIR/static/"
 cp -a "$ROOT/scripts/." "$INSTALL_DIR/scripts/"
 cp -a "$ROOT/configs/." "$INSTALL_DIR/configs/"

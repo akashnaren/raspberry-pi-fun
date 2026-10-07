@@ -13,12 +13,12 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.resolve(root, "../static");
 fs.mkdirSync(outDir, { recursive: true });
 
-const twSource = fs.readFileSync(path.join(root, "src/tailwind.css"), "utf8");
+const twSource = fs.readFileSync(path.join(root, "src/styles/tailwind.css"), "utf8");
 const tw = await postcss([
   tailwindcss({ config: path.join(root, "tailwind.config.js") }),
 ]).process(twSource, { from: undefined });
 
-const compiled = sass.compile(path.join(root, "src/styles.scss"), {
+const compiled = sass.compile(path.join(root, "src/styles/main.scss"), {
   style: "compressed",
 });
 const katexRoot = path.dirname(require.resolve("katex/package.json"));
@@ -61,9 +61,10 @@ fs.writeFileSync(
   path.join(outDir, "mesh.css"),
   `${imports.join("")}\n${tw.css}\n${compiled.css}\n${katexCss}`,
 );
-fs.copyFileSync(path.join(root, "index.html"), path.join(outDir, "index.html"));
+const pub = path.join(root, "public");
+fs.copyFileSync(path.join(pub, "index.html"), path.join(outDir, "index.html"));
 for (const name of ["favicon.svg", "favicon-32.png", "apple-touch-icon.png"]) {
-  const src = path.join(root, name);
+  const src = path.join(pub, name);
   if (fs.existsSync(src)) fs.copyFileSync(src, path.join(outDir, name));
 }
 
