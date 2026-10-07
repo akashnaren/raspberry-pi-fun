@@ -61,9 +61,10 @@ fs.writeFileSync(
   path.join(outDir, "mesh.css"),
   `${imports.join("")}\n${tw.css}\n${compiled.css}\n${katexCss}`,
 );
-fs.copyFileSync(path.join(root, "index.html"), path.join(outDir, "index.html"));
+const pub = path.join(root, "public");
+fs.copyFileSync(path.join(pub, "index.html"), path.join(outDir, "index.html"));
 for (const name of ["favicon.svg", "favicon-32.png", "apple-touch-icon.png"]) {
-  const src = path.join(root, name);
+  const src = path.join(pub, name);
   if (fs.existsSync(src)) fs.copyFileSync(src, path.join(outDir, name));
 }
 

@@ -1,8 +1,8 @@
 import fs from "fs";
 import { register } from "node:module";
 
-await register("./ts-resolve.mjs", import.meta.url);
-const { chatBody } = await import("./src/history.ts");
+await register("./support/ts-resolve.mjs", import.meta.url);
+const { chatBody } = await import("../src/history.ts");
 
 const options = {
   model: "flash",
@@ -65,7 +65,7 @@ if (!last || last.role !== "user" || last.content !== "What is the top electric 
 }
 
 const { parseHTML } = await import("linkedom");
-const page = fs.readFileSync(new URL("./index.html", import.meta.url), "utf8");
+const page = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const dom = parseHTML(page);
 const { document, window } = dom;
 const memory = new Map();
@@ -128,7 +128,7 @@ globalThis.fetch = async (input) => {
   }
   return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
 };
-await import("./src/main.ts");
+await import("../src/main.ts");
 await new Promise((resolve) => setTimeout(resolve, 40));
 if (imageUrls.some((url) => url.includes("/v1/images"))) {
   throw new Error("restore fetched images: " + imageUrls.join(" "));

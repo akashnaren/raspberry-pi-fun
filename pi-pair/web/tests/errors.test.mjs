@@ -1,4 +1,4 @@
-import { friendlyError, WAITING_LINE } from "./src/errors.ts";
+import { friendlyError, WAITING_LINE } from "../src/errors.ts";
 
 const cases = [
   ["", "The reply did not come back. Try again."],

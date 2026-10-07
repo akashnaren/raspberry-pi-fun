@@ -596,7 +596,9 @@ class PairHttp(unittest.TestCase):
         self.assertIn("Slower, more careful answers for harder questions.", html)
         self.assertNotIn("__FLASH_TIP__", html)
         self.assertNotIn("__PRO_TIP__", html)
-        source_page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        source_page = (ROOT / "web" / "public" / "index.html").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("__FLASH_TIP__", source_page)
         self.assertIn("__PRO_TIP__", source_page)
         self.assertNotIn("qwen3:0.6b, the fast resident model.", source_page)

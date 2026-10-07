@@ -1,5 +1,5 @@
 import { parseHTML } from "linkedom";
-import { dropFollow, enqueueFollow, FOLLOW_LIMIT, renderFollowQueue, takeFollow } from "./src/follow-queue.ts";
+import { dropFollow, enqueueFollow, FOLLOW_LIMIT, renderFollowQueue, takeFollow } from "../src/follow-queue.ts";
 
 let queue = [];
 let nextId = 1;

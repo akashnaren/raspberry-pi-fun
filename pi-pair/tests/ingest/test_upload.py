@@ -979,7 +979,7 @@ class AttachmentWire(unittest.TestCase):
         attached = (ROOT / "web" / "src" / "attach.ts").read_text(encoding="utf-8")
         self.assertIn('"\\n\\n---\\n"', attached)
         self.assertNotIn("readAsText", source)
-        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        html = (ROOT / "web" / "public" / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="btnAttach"', html)
         self.assertIn("application/pdf", html)
         self.assertIn("image/jpeg", html)

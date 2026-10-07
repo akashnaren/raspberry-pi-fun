@@ -1,11 +1,11 @@
 import fs from "fs";
 import { parseHTML } from "linkedom";
-import { docExcerpt, modelUserContent, userMessagePieces } from "./src/attach.ts";
-import { mountCharts } from "./src/chart.ts";
-import { flowchartSvg, mountDiagrams } from "./src/diagram.ts";
-import { renderMarkdown, renderStreamingMarkdown, stabilizeMarkdown } from "./src/markdown.ts";
-import { linkCitations } from "./src/sources.ts";
-import { serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner } from "./src/presence.ts";
+import { docExcerpt, modelUserContent, userMessagePieces } from "../src/attach.ts";
+import { mountCharts } from "../src/chart.ts";
+import { flowchartSvg, mountDiagrams } from "../src/diagram.ts";
+import { renderMarkdown, renderStreamingMarkdown, stabilizeMarkdown } from "../src/markdown.ts";
+import { linkCitations } from "../src/sources.ts";
+import { serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner } from "../src/presence.ts";
 const partial = "1. First\n2. Second\n```chart\n{\"title\":\"y\"}";
 const stable = stabilizeMarkdown(partial);
 if (!stable.trimEnd().endsWith("```")) throw new Error("an open fence was left open");
@@ -184,9 +184,9 @@ const later = serviceView({
 if (later.signature !== view.signature) throw new Error("uptime ticks rewrote the status log");
 if (!later.now.startsWith("Up 1h 3m")) throw new Error("live uptime did not move");
 
-const page = fs.readFileSync(new URL("./index.html", import.meta.url), "utf8");
-const builtPage = fs.readFileSync(new URL("../static/index.html", import.meta.url), "utf8");
-const builtCss = fs.readFileSync(new URL("../static/mesh.css", import.meta.url), "utf8");
+const page = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+const builtPage = fs.readFileSync(new URL("../../static/index.html", import.meta.url), "utf8");
+const builtCss = fs.readFileSync(new URL("../../static/mesh.css", import.meta.url), "utf8");
 if (page.includes("voice-dots") || builtPage.includes("voice-dots")) {
   throw new Error("the page still has the five voice dots");
 }

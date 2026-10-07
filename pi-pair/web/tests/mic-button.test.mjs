@@ -8,7 +8,7 @@ import {
   MIC_ON_HOVER_FILL,
   micStateClasses,
   paintMicButton,
-} from "./src/mic-button.ts";
+} from "../src/mic-button.ts";
 
 function nestedBlock(source, parent, child) {
   const parentAt = source.indexOf(parent + " {");
@@ -77,7 +77,7 @@ if (!classes.has(MIC_OFF_CLASS) || classes.has(MIC_ON_CLASS) || classes.has("on"
   throw new Error("mic stayed listening after it was turned off: " + [...classes].join(" "));
 }
 
-const scss = fs.readFileSync(new URL("./src/styles.scss", import.meta.url), "utf8");
+const scss = fs.readFileSync(new URL("../src/styles.scss", import.meta.url), "utf8");
 const offRule = nestedBlock(scss, "#btnVoice", "&.mic-off");
 const onRule = nestedBlock(scss, "#btnVoice", "&.mic-on {");
 const hoverRule = nestedBlock(scss, "#btnVoice", "&.mic-on:hover");
@@ -100,13 +100,13 @@ if (offColor === onFill || offFill === onFill || onColor === offColor) {
   throw new Error("listening mic uses the idle color");
 }
 
-const html = fs.readFileSync(new URL("./index.html", import.meta.url), "utf8");
+const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const micTag = html.slice(html.indexOf('id="btnVoice"') - 80, html.indexOf('id="btnVoice"') + 40);
 if (!micTag.includes(MIC_OFF_CLASS) || micTag.includes(MIC_ON_CLASS)) {
   throw new Error("dictation button does not start idle: " + micTag);
 }
 
-const main = fs.readFileSync(new URL("./src/main.ts", import.meta.url), "utf8");
+const main = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
 if (!main.includes("paintMicButton(mic, dictating)")) {
   throw new Error("dictation button does not paint listening versus idle");
 }

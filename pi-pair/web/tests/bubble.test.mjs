@@ -2,9 +2,9 @@ import fs from "fs";
 import { register } from "node:module";
 import { parseHTML } from "linkedom";
 
-await register("./ts-resolve.mjs", import.meta.url);
+await register("./support/ts-resolve.mjs", import.meta.url);
 
-const html = fs.readFileSync(new URL("./index.html", import.meta.url), "utf8");
+const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const { document, window } = parseHTML(html);
 const timers = new Set();
 const rawSetInterval = globalThis.setInterval.bind(globalThis);
@@ -180,7 +180,7 @@ async function sendTurn(text) {
   return streams[streams.length - 1];
 }
 
-await import("./src/main.ts");
+await import("../src/main.ts");
 
 const first = await sendTurn("Where is the bench?");
 await waitFor("live row", () => document.querySelector(".msg.bot.streaming"));

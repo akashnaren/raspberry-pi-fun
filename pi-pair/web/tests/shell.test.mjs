@@ -1,9 +1,9 @@
 import fs from "fs";
 import { register } from "node:module";
 import { parseHTML } from "linkedom";
-import { scrubAssistant } from "./src/copy.ts";
-import { primaryKind, primaryLabel } from "./src/primary-action.ts";
-import { shouldPlaySplash } from "./src/splash.ts";
+import { scrubAssistant } from "../src/copy.ts";
+import { primaryKind, primaryLabel } from "../src/primary-action.ts";
+import { shouldPlaySplash } from "../src/splash.ts";
 
 if (primaryKind(false, false) !== "voice" || primaryLabel("voice") !== "Voice mode") {
   throw new Error("empty composer is not the voice waveform");
@@ -25,9 +25,9 @@ if (!fenced.includes("```chart") || !fenced.includes("Flash mode")) {
   throw new Error("a chart fence was scrubbed: " + fenced);
 }
 
-await register("./ts-resolve.mjs", import.meta.url);
+await register("./support/ts-resolve.mjs", import.meta.url);
 
-const html = fs.readFileSync(new URL("./index.html", import.meta.url), "utf8");
+const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const { document, window } = parseHTML(html);
 const memory = new Map();
 function memStore() {
@@ -154,7 +154,7 @@ globalThis.fetch = async (input, init) => {
   return new Response("missing", { status: 404 });
 };
 
-await import("./src/main.ts");
+await import("../src/main.ts");
 
 const go = document.getElementById("go");
 if (!go.classList.contains("voice") || go.getAttribute("aria-label") !== "Voice mode") {
@@ -383,7 +383,7 @@ if (follow.includes("wavelengths") || follow.includes("<think")) {
 }
 if (!follow.includes("Blue light scatters more.")) throw new Error("follow-up dropped the answer");
 
-const css = fs.readFileSync(new URL("./src/styles.scss", import.meta.url), "utf8");
+const css = fs.readFileSync(new URL("../src/styles.scss", import.meta.url), "utf8");
 const titleRule = css.slice(css.indexOf(".brand.brand-title .brand-name"), css.indexOf(".brand.brand-title .brand-name") + 220);
 if (!/opacity:\s*1/.test(titleRule)) throw new Error("the OpenPi title still waits on an animation");
 if (!/html,\s*body\s*\{[^}]*overflow:\s*hidden/s.test(css)) {
@@ -405,7 +405,7 @@ if (/html,\s*body\s*\{[^}]*scrollbar-width:\s*none/s.test(css)) {
 if (!css.includes(".info-dot") || !/\.info-dot\s*\{[^}]*min-width:\s*32px/s.test(css)) {
   throw new Error("info hit target is under 32px");
 }
-const page = fs.readFileSync(new URL("./src/main.ts", import.meta.url), "utf8");
+const page = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
 if (!page.includes('setAttribute("aria-label", "Retry")') || !page.includes("retryIcon")) {
   throw new Error("retry is still a wrapping word");
 }
@@ -628,7 +628,7 @@ globalThis.fetch = async (input, init) => {
   }
   return meshFetch(input, init);
 };
-const app = await import("./src/main.ts");
+const app = await import("../src/main.ts");
 await app.refreshMemoryRing();
 globalThis.fetch = meshFetch;
 const offset = Number(ring.querySelector(".ring-fill").getAttribute("stroke-dashoffset"));

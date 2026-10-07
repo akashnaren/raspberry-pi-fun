@@ -73,7 +73,7 @@ class Thermal(unittest.TestCase):
     def test_the_tree_has_no_heatsink_copy(self):
         targets = [
             ROOT / "pair",
-            ROOT / "web" / "index.html",
+            ROOT / "web" / "public" / "index.html",
             ROOT / "web" / "src",
             ROOT / "static" / "index.html",
         ]

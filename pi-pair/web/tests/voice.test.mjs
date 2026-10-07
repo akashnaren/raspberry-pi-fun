@@ -1,5 +1,5 @@
 import fs from "fs";
-import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, adaptiveEndOfUtterance, createUtteranceHold, currentSpeech, dropPostSpeechEcho, echoOfSpeech, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, shouldBargeIn, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "./src/voice.ts";
+import { END_OF_UTTERANCE_SILENCE_MS, ENDPOINT_MS, adaptiveEndOfUtterance, createUtteranceHold, currentSpeech, dropPostSpeechEcho, echoOfSpeech, endOfUtteranceSilence, firstSpokenSentence, isSoloStop, noteSpokenDelta, setEndOfUtteranceSilence, shouldBargeIn, speakText, spokenAnswer, startListening, stopSpeaking, turnFromRecognition, whenSpeechPulses, whenSpeechStarts } from "../src/voice.ts";
 
 const assistant = "The hall bench is by the east window.";
 const labels = ["Thinking", "Searching", "Searched", "Search failed", "Answering"];
@@ -113,9 +113,9 @@ if (isSoloStop("stop please") || isSoloStop("where is the bench?") || isSoloStop
   throw new Error("only the word stop ends voice mode");
 }
 
-const main = fs.readFileSync(new URL("./src/main.ts", import.meta.url), "utf8");
-const html = fs.readFileSync(new URL("./index.html", import.meta.url), "utf8");
-const scss = fs.readFileSync(new URL("./src/styles.scss", import.meta.url), "utf8");
+const main = fs.readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+const scss = fs.readFileSync(new URL("../src/styles.scss", import.meta.url), "utf8");
 
 function sliceFn(source, startName, endName) {
   const start = source.indexOf("function " + startName);
@@ -186,7 +186,7 @@ if (main.includes("Voice did not catch that")) {
   throw new Error("the blocking voice message is still in the page");
 }
 
-const voiceSrc = fs.readFileSync(new URL("./src/voice.ts", import.meta.url), "utf8");
+const voiceSrc = fs.readFileSync(new URL("../src/voice.ts", import.meta.url), "utf8");
 if (!Number.isFinite(ENDPOINT_MS) || ENDPOINT_MS >= 1000) {
   throw new Error("wake-to-listen still waits on a long silence");
 }
@@ -586,7 +586,7 @@ globalThis.document = {
   addEventListener() {},
   removeEventListener() {},
 };
-const { createOrb } = await import("./src/orb.ts");
+const { createOrb } = await import("../src/orb.ts");
 const canvas = {
   width: 220,
   height: 220,
