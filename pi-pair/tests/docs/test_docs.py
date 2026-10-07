@@ -56,7 +56,7 @@ class ProductCopy(unittest.TestCase):
         label = "README.md"
         text = root_readme
         readme_dir = ROOT.parent
-        prefix = "pi-pair/docs/rack/"
+        prefix = "docs/rack/"
         if not text.startswith("# pi-pair\n"):
             problems.append("README.md title is not pi-pair")
         if retired in text:

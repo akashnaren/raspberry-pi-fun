@@ -39,7 +39,7 @@ Usage: deploy_pi3.sh [--dry-run | --plan]
   --dry-run   rsync -n. Requires PI3_SSH_HOST, PI3_SSH_USER, and PI3_SSH_KEY.
   --plan      Print the sync plan and exit. No SSH, secrets not required.
 
-See pi-pair/CI-CD.md for the production environment secret names.
+See pi-pair/docs/DEPLOY.md for the production environment secret names.
 EOF
 }
 

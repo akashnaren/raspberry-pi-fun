@@ -16,8 +16,8 @@ It runs on:
 
 | Job | What it does |
 | --- | --- |
-| lint | `ruff==0.13.2` check and `ruff format --check` on `pi-pair`, Biome on `pi-pair/web` (`npm run lint:js`), then shellcheck on `install.sh`, `start.sh`, `mesh-hello.sh`, and `ci/deploy_pi3.sh` |
-| unit | `python3 -m unittest discover -s pi-pair -p 'test_*.py'` — router, health-cache TTL, data-stack negatives, deploy fail-closed |
+| lint | `ruff==0.13.2` check and `ruff format --check` on `pi-pair`, `npm run lint` and Biome (`npm run lint:js`) on `pi-pair/web`, then shellcheck on `install.sh`, `start.sh`, `mesh-hello.sh`, and `ci/deploy_pi3.sh` |
+| unit | `npm run build` and `npm test` in `pi-pair/web`, then `git diff --exit-code -- pi-pair/static`, then `python3 -m unittest discover -s pi-pair/tests -t pi-pair` |
 | data-stack | `pi-pair/ci/validate_data_stack.py` on `pi-pair/data`, then uploads the artifact `data-stack-validation-report` |
 
 Leave **required reviewers off** on development. A reviewer rule makes every PR check wait for a person to approve the environment, and the suite looks hung. This environment does not need secrets. Do not store `PI3_SSH_KEY` here.
@@ -144,3 +144,7 @@ Eval inputs are folded (case and whitespace) and compared to canned inputs. Over
 ## Environments
 
 `development` and `production` both exist on this repository. Software set `PI3_SSH_HOST`, `PI3_SSH_USER`, and `PI3_SSH_KEY` on **production**. `PI3_SSH_PORT` stays optional. `TS_AUTHKEY` is the remaining production secret; add it with the steps above. Do not add reviewers to development. Production reviewers stay a UI choice.
+
+## What a push to main does
+
+Pull requests into `main` use the GitHub Environment `development` (lint, unit tests, data-stack validation). A push to `main` uses the GitHub Environment `production`, joins Tailscale with `TS_AUTHKEY`, and syncs this tree plus `data/canned` to pi3. Names of the secrets, the dry-run input, and how to add a check are in the sections above.
