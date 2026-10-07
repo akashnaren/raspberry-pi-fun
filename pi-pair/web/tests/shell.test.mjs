@@ -1,9 +1,9 @@
 import fs from "fs";
 import { register } from "node:module";
 import { parseHTML } from "linkedom";
-import { scrubAssistant } from "../src/copy.ts";
-import { primaryKind, primaryLabel } from "../src/primary-action.ts";
-import { shouldPlaySplash } from "../src/splash.ts";
+import { scrubAssistant } from "../src/chat/copy.ts";
+import { primaryKind, primaryLabel } from "../src/ui/primary-action.ts";
+import { shouldPlaySplash } from "../src/ui/splash.ts";
 
 if (primaryKind(false, false) !== "voice" || primaryLabel("voice") !== "Voice mode") {
   throw new Error("empty composer is not the voice waveform");
@@ -383,7 +383,7 @@ if (follow.includes("wavelengths") || follow.includes("<think")) {
 }
 if (!follow.includes("Blue light scatters more.")) throw new Error("follow-up dropped the answer");
 
-const css = fs.readFileSync(new URL("../src/styles.scss", import.meta.url), "utf8");
+const css = fs.readFileSync(new URL("../src/styles/main.scss", import.meta.url), "utf8");
 const titleRule = css.slice(css.indexOf(".brand.brand-title .brand-name"), css.indexOf(".brand.brand-title .brand-name") + 220);
 if (!/opacity:\s*1/.test(titleRule)) throw new Error("the OpenPi title still waits on an animation");
 if (!/html,\s*body\s*\{[^}]*overflow:\s*hidden/s.test(css)) {

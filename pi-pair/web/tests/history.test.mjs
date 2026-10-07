@@ -2,7 +2,7 @@ import fs from "fs";
 import { register } from "node:module";
 
 await register("./support/ts-resolve.mjs", import.meta.url);
-const { chatBody } = await import("../src/history.ts");
+const { chatBody } = await import("../src/chat/history.ts");
 
 const options = {
   model: "flash",

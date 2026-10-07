@@ -1,4 +1,4 @@
-import { cardFrom, cardsFrom, lowSubstance, renderImageCardsHtml } from "../src/images.ts";
+import { cardFrom, cardsFrom, lowSubstance, renderImageCardsHtml } from "../src/render/images.ts";
 
 const poster = {
   url: "https://upload.wikimedia.org/wikipedia/en/2/2e/Tour_Eiffel.jpg",

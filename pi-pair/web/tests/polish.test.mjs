@@ -1,11 +1,11 @@
 import fs from "fs";
 import { parseHTML } from "linkedom";
-import { docExcerpt, modelUserContent, userMessagePieces } from "../src/attach.ts";
-import { mountCharts } from "../src/chart.ts";
-import { flowchartSvg, mountDiagrams } from "../src/diagram.ts";
-import { renderMarkdown, renderStreamingMarkdown, stabilizeMarkdown } from "../src/markdown.ts";
-import { linkCitations } from "../src/sources.ts";
-import { serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner } from "../src/presence.ts";
+import { docExcerpt, modelUserContent, userMessagePieces } from "../src/attach/message.ts";
+import { mountCharts } from "../src/render/chart.ts";
+import { flowchartSvg, mountDiagrams } from "../src/render/diagram.ts";
+import { renderMarkdown, renderStreamingMarkdown, stabilizeMarkdown } from "../src/render/markdown.ts";
+import { linkCitations } from "../src/chat/sources.ts";
+import { serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner } from "../src/core/presence.ts";
 const partial = "1. First\n2. Second\n```chart\n{\"title\":\"y\"}";
 const stable = stabilizeMarkdown(partial);
 if (!stable.trimEnd().endsWith("```")) throw new Error("an open fence was left open");

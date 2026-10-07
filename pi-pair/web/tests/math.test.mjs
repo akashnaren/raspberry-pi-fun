@@ -1,4 +1,4 @@
-import { renderMarkdown } from "../src/markdown.ts";
+import { renderMarkdown } from "../src/render/markdown.ts";
 
 const source = [
   "Let \\( r \\) be the radius and \\( A \\) the area.",

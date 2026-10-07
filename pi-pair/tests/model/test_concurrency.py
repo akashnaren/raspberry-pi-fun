@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 from tests.support.paths import ROOT
+from tests.support.web import web_source
 import json
 import os
 import tempfile
@@ -567,8 +568,8 @@ class ConcurrentChat(unittest.TestCase):
         self.assertLessEqual(peak["n"], 1)
 
     def test_page_shows_the_capacity_sentence(self):
-        source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
-        errors = (ROOT / "web" / "src" / "errors.ts").read_text(encoding="utf-8")
+        source = web_source()
+        errors = web_source()
         self.assertIn("WAITING_LINE", source)
         self.assertIn(WAITING, errors)
         self.assertNotIn("pi4 is at capacity", source)

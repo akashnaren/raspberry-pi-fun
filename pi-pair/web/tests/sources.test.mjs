@@ -9,7 +9,7 @@ import {
   sourceCountLabel,
   sourceHost,
   validSources,
-} from "../src/sources.ts";
+} from "../src/chat/sources.ts";
 
 const links = [
   { title: "Bench note", url: "https://example.com/bench" },

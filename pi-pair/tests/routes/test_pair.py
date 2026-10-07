@@ -19,6 +19,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from tests.support.fakes import LlamaFake, OllamaFake, _start
+from tests.support.web import web_source
 
 
 from pair.mesh import health
@@ -554,17 +555,15 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn("MESH_DEFAULT_MODEL", script)
         self.assertNotIn("qwen", script.lower())
         self.assertNotIn("Loading Pro", script)
-        source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
+        source = web_source()
         self.assertIn('if (event.key !== "Enter") return;', source)
         self.assertIn("if (event.shiftKey) return;", source)
         self.assertIn("event.ctrlKey || event.metaKey", source)
         self.assertNotIn("metaKey||e.ctrlKey", source)
-        history = (ROOT / "web" / "src" / "history.ts").read_text(encoding="utf-8")
+        history = web_source()
         self.assertIn("think: options.effort", history)
         self.assertIn("X-Pi-Route", source)
-        settings_src = (ROOT / "web" / "src" / "settings.ts").read_text(
-            encoding="utf-8"
-        )
+        settings_src = web_source()
         self.assertIn('thinking: "medium"', settings_src)
         self.assertIn('mode: "auto"', settings_src)
         self.assertIn('el("span", "pending")', source)

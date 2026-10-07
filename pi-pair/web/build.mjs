@@ -13,12 +13,12 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.resolve(root, "../static");
 fs.mkdirSync(outDir, { recursive: true });
 
-const twSource = fs.readFileSync(path.join(root, "src/tailwind.css"), "utf8");
+const twSource = fs.readFileSync(path.join(root, "src/styles/tailwind.css"), "utf8");
 const tw = await postcss([
   tailwindcss({ config: path.join(root, "tailwind.config.js") }),
 ]).process(twSource, { from: undefined });
 
-const compiled = sass.compile(path.join(root, "src/styles.scss"), {
+const compiled = sass.compile(path.join(root, "src/styles/main.scss"), {
   style: "compressed",
 });
 const katexRoot = path.dirname(require.resolve("katex/package.json"));

@@ -1,7 +1,7 @@
 /** One chat body for typed and spoken turns. Spoken never changes the payload. */
 
-import { modelUserContent } from "./attach";
-import { speechKey } from "./voice";
+import { modelUserContent } from "../attach/message";
+import { speechKey } from "../voice/speech";
 
 export interface HistoryTurn {
   role: string;

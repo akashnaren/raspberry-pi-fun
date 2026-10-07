@@ -8,7 +8,7 @@ import {
   MIC_ON_HOVER_FILL,
   micStateClasses,
   paintMicButton,
-} from "../src/mic-button.ts";
+} from "../src/voice/mic-button.ts";
 
 function nestedBlock(source, parent, child) {
   const parentAt = source.indexOf(parent + " {");
@@ -77,7 +77,7 @@ if (!classes.has(MIC_OFF_CLASS) || classes.has(MIC_ON_CLASS) || classes.has("on"
   throw new Error("mic stayed listening after it was turned off: " + [...classes].join(" "));
 }
 
-const scss = fs.readFileSync(new URL("../src/styles.scss", import.meta.url), "utf8");
+const scss = fs.readFileSync(new URL("../src/styles/main.scss", import.meta.url), "utf8");
 const offRule = nestedBlock(scss, "#btnVoice", "&.mic-off");
 const onRule = nestedBlock(scss, "#btnVoice", "&.mic-on {");
 const hoverRule = nestedBlock(scss, "#btnVoice", "&.mic-on:hover");

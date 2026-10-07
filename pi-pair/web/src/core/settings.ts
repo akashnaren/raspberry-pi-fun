@@ -1,6 +1,6 @@
 /** Persisted page settings. Dark is the default Temporal theme. */
 
-import { END_OF_UTTERANCE_SILENCE_MS, setEndOfUtteranceSilence } from "./voice";
+import { END_OF_UTTERANCE_SILENCE_MS, setEndOfUtteranceSilence } from "../voice/speech";
 
 export const SETTINGS_KEY = "openpi.settings";
 

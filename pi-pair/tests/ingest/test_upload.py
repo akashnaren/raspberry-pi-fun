@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 from tests.support.paths import ROOT
+from tests.support.web import web_source
 import base64
 import binascii
 import json
@@ -968,7 +969,7 @@ class AttachmentWire(unittest.TestCase):
         self.assertIn('cp -a "$ROOT/pair" "$INSTALL_DIR/pair.new"', install)
 
     def test_composer_posts_then_sends_the_text(self):
-        source = (ROOT / "web" / "src" / "main.ts").read_text(encoding="utf-8")
+        source = web_source()
         self.assertIn('"/v1/attachments"', source)
         self.assertIn("XMLHttpRequest", source)
         self.assertIn("onprogress", source)
@@ -976,7 +977,7 @@ class AttachmentWire(unittest.TestCase):
         self.assertIn("ATTACH_BYTES = 4 * 1024 * 1024", source)
         self.assertIn("dataset.attachText", source)
         self.assertIn("modelUserContent", source)
-        attached = (ROOT / "web" / "src" / "attach.ts").read_text(encoding="utf-8")
+        attached = web_source()
         self.assertIn('"\\n\\n---\\n"', attached)
         self.assertNotIn("readAsText", source)
         html = (ROOT / "web" / "public" / "index.html").read_text(encoding="utf-8")
