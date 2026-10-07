@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.turn.abilities import CATEGORIES, category_rates, eval_rows  # noqa: E402
-from pair.turn.shape import PERSONA, estimate_tokens  # noqa: E402
+from pair.turn.abilities import CATEGORIES, category_rates, eval_rows
+from pair.turn.shape import PERSONA, estimate_tokens
 
 
 def main() -> int:

@@ -16,8 +16,8 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 from urllib.request import (
     HTTPHandler,
-    HTTPSHandler,
     HTTPRedirectHandler,
+    HTTPSHandler,
     Request,
     build_opener,
 )

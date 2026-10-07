@@ -127,7 +127,7 @@ def _type_ok(instance: object, expected: str) -> bool:
 
 
 def _unsupported(schema: dict, path: str, errors: list[dict]) -> None:
-    for key, value in schema.items():
+    for key, _value in schema.items():
         if key not in _IMPLEMENTED:
             _add(errors, "schema_keyword", f"unsupported keyword {key} at {path}")
     props = schema.get("properties")
@@ -625,7 +625,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         report = validate(args.data)
-    except Exception as exc:  # noqa: BLE001 — report the crash instead of a traceback-only CI log
+    except Exception as exc:
         report = {
             "ok": False,
             "data_root": str(args.data),

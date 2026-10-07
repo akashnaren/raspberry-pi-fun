@@ -1,11 +1,12 @@
 from __future__ import annotations
+
 import json
 import threading
 import time
 from collections import deque
+
 from pair.core import runtime
 from pair.routes.base import safe_write
-
 
 _IMAGE_BODY_CAP = 8192
 _IMAGE_QUESTION_CAP = 500

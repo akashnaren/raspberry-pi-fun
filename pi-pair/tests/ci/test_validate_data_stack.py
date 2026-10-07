@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import shutil
 import subprocess
@@ -11,6 +9,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from tests.support.paths import ROOT
 
 CI = ROOT / "ci"
 DATA = CI.parent / "data"

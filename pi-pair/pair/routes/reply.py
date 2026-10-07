@@ -1,7 +1,20 @@
 from __future__ import annotations
+
 import json
 import threading
 import time
+
+from pair.core.cancel import ClientGone
+from pair.core.errors import BUSY, WAITING, friendly_error
+from pair.flywheel.miss_queue import note_exchange
+from pair.model.chat_once import chat_llamacpp, chat_ollama
+from pair.model.chat_stream import iter_ollama_channels, stream_llamacpp, stream_ollama
+from pair.model.think import peel_think
+from pair.routes.base import safe_write, status_event, write_event
+from pair.routes.chat import _block, _prompt_note, _tuned_knobs, apply_tier
+from pair.routes.memory import _memory_prompt
+from pair.routes.search import _searched, _source_count
+from pair.routes.status import _claim_wait, mode_fields
 from pair.turn.abilities import (
     JSON_RETRY,
     clean_reply,
@@ -12,23 +25,12 @@ from pair.turn.abilities import (
     tool_notes,
 )
 from pair.turn.assist import is_harmful, scrub_reply, settle_reply, stream_release
-from pair.core.cancel import ClientGone
-from pair.model.chat_once import chat_llamacpp, chat_ollama
-from pair.core.errors import BUSY, WAITING, friendly_error
-from pair.flywheel.miss_queue import note_exchange
-from pair.model.chat_stream import iter_ollama_channels, stream_llamacpp, stream_ollama
-from pair.model.think import peel_think
 from pair.turn.shape import (
     public_failure,
     shape_messages,
     structure_hint,
     turns_for_memory,
 )
-from pair.routes.base import safe_write, status_event, write_event
-from pair.routes.chat import _block, _prompt_note, _tuned_knobs, apply_tier
-from pair.routes.memory import _memory_prompt
-from pair.routes.search import _searched, _source_count
-from pair.routes.status import _claim_wait, mode_fields
 
 KEEPALIVE_S = 5.0
 
@@ -271,7 +273,7 @@ class ReplyRoutes:
             return settled.rstrip() + "\n\n" + nxt
         return settled
 
-    def _stream(
+    def _stream(  # noqa: C901
         self,
         peer,
         kind,
@@ -292,7 +294,7 @@ class ReplyRoutes:
         ready_answer: str | None = None,
         slot: dict | None = None,
         search_job: dict | None = None,
-    ) -> None:  # noqa: C901
+    ) -> None:
         self.send_response(200)
         self._cors()
         self.send_header("Content-Type", "text/event-stream")

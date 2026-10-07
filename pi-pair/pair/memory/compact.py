@@ -111,7 +111,7 @@ def _flash_summary(cancel):
         if peer is None or not model:
             return ""
         from pair.core.cancel import Cancel, ClientGone
-        from pair.model.chat_once import open_json, ollama_payload
+        from pair.model.chat_once import ollama_payload, open_json
 
         flag = Cancel()
         stop = threading.Event()

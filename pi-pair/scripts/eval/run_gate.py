@@ -10,11 +10,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.flywheel.canned import load_map
 from pair.core.config import data_root
+from pair.core.yaml_lite import load_path
+from pair.flywheel.canned import load_map
 from pair.flywheel.lifecycle import _gate, _heldout_keys, train_config_path
 from pair.flywheel.registry import require_registered
-from pair.core.yaml_lite import load_path
 
 
 def main() -> int:
@@ -35,4 +35,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as error:
         print(str(error), file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

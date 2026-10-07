@@ -9,8 +9,8 @@ import threading
 import urllib.request
 from pathlib import Path
 
-from pair.core.config import data_root
 from pair.core import runtime
+from pair.core.config import data_root
 
 _LOCK = threading.Lock()
 QUEUE_BOUND = 128

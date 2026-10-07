@@ -12,15 +12,12 @@ import urllib.error
 import urllib.request
 from unittest.mock import patch
 
-from pair.ingest import job as ingest_job, ocr
-
 from pair.core import runtime
+from pair.ingest import job as ingest_job
+from pair.ingest import ocr
+from pair.ingest.ocr import recognize_image
 from pair.mesh.guard import may_generate
 from pair.mesh.health import peer_load
-from pair.nodes import websearch
-from pair.nodes.worker import forbidden_routes, handle
-from pair.ingest.ocr import recognize_image
-from pair.server import Handler, make_server
 from pair.mesh.tools import (
     SEARCH_MEDIAN_TARGET_S,
     SEARCH_P95_TARGET_S,
@@ -33,6 +30,9 @@ from pair.mesh.tools import (
     schedule_prefix_prime,
     simulated_search_latencies,
 )
+from pair.nodes import websearch
+from pair.nodes.worker import forbidden_routes, handle
+from pair.server import Handler, make_server
 
 
 class Dispatch(unittest.TestCase):

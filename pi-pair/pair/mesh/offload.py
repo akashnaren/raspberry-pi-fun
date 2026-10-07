@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import time
 from urllib.parse import urlparse
 
-import http.client
-
+from pair.core import runtime
 from pair.core.config import ROOT
 from pair.flywheel.miss_queue import node_role
 from pair.search.lookup import lookup_web
-from pair.core import runtime
 
 MESH_PATH = ROOT / "configs" / "runtime" / "mesh_roles.json"
 DEFAULT_DATASET = "akashnaren/pi-mesh-labels"

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from pair.mesh import health
-
 from pair.core import runtime
+from pair.mesh import health
 from pair.mesh.guard import PI4_MISS_DOWN, may_generate, weak_brain_error
 
 

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import importlib.util
 import unittest
+
+from tests.support.paths import ROOT
 
 _PATH = ROOT / "scripts" / "bench" / "pi4.py"
 _SPEC = importlib.util.spec_from_file_location("bench_pi4", _PATH)

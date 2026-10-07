@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.model.sched import (  # noqa: E402
+from pair.mesh.tools import generation_routes
+from pair.model.sched import (
     admission_report,
     background_cancel_report,
     client_report,
@@ -21,7 +22,6 @@ from pair.model.sched import (  # noqa: E402
     heat_report,
     tool_job_report,
 )
-from pair.mesh.tools import generation_routes  # noqa: E402
 
 
 def main() -> int:

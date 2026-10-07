@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.render.charts import chart_samples, render_chart  # noqa: E402
+from pair.render.charts import chart_samples, render_chart
 
 
 def main() -> int:

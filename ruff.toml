@@ -1,5 +1,15 @@
-# mini_chat.py and the unittest modules put the pi-pair root on sys.path
-# before importing the stdlib-only `pair` package. That import has to follow
-# the path edit, so E402 is the layout rather than an accident.
+target-version = "py39"
+src = ["pi-pair"]
+
 [lint]
-ignore = ["E402"]
+select = ["E4", "E7", "E9", "F", "I", "B", "C90", "PLE", "PLW0602", "RUF100"]
+
+[lint.per-file-ignores]
+"pi-pair/mini_chat.py" = ["E402"]
+"pi-pair/scripts/**" = ["E402"]
+
+[lint.mccabe]
+max-complexity = 20
+
+[lint.isort]
+known-first-party = ["pair", "tests"]

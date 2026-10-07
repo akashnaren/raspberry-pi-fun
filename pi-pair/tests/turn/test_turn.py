@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import inspect
 import io
 import json
@@ -18,18 +16,17 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-
-from pair.core import runtime
 from pair import server as pair_server
-from pair.routes import reply as reply_routes
-from pair.routes import search as search_routes
+from pair.core import runtime
+from pair.core.errors import GENERIC, TIMEOUT, UNREACHABLE
 from pair.model.chat_once import start_model_warm, warm_residents
 from pair.model.modes import FLASH_MODEL, PRO_MODEL
-from pair.core.errors import GENERIC, TIMEOUT, UNREACHABLE
+from pair.routes import reply as reply_routes
+from pair.routes import search as search_routes
 from pair.turn.shape import (
-    PERSONA,
-    EFFORT_HINT,
     ATTACH_MARK,
+    EFFORT_HINT,
+    PERSONA,
     char_budget,
     estimate_tokens,
     fence_user_text,
@@ -40,6 +37,7 @@ from pair.turn.shape import (
     shape_messages,
 )
 from tests.support.fakes import OllamaFake, ScriptOllama, _start
+from tests.support.paths import ROOT
 
 
 class TurnShape(unittest.TestCase):
@@ -1273,8 +1271,8 @@ class TurnHttp(unittest.TestCase):
         page-visible text becomes the refusal. Exact-N and a computed sequence
         still arrive as the full corrected list.
         """
-        from pair.turn.assist import HARM_REFUSAL
         from pair.routes.reply import last_completion
+        from pair.turn.assist import HARM_REFUSAL
 
         def assemble(raw: str) -> str:
             text = ""

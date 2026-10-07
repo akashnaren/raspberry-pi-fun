@@ -11,12 +11,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from pair.flywheel.canned import load_map, normalize_key, write_map
 from pair.core.config import ROOT, data_root
-from pair.flywheel.publish import record_public_labels, sync_public_labels
-from pair.flywheel.miss_queue import node_role
-from pair.flywheel.registry import RegistryError, require_registered
 from pair.core.yaml_lite import load_path
+from pair.flywheel.canned import load_map, normalize_key, write_map
+from pair.flywheel.miss_queue import node_role
+from pair.flywheel.publish import record_public_labels, sync_public_labels
+from pair.flywheel.registry import RegistryError, require_registered
 
 REJECT_MARKERS = (
     "cannot be the brain",

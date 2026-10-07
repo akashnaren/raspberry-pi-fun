@@ -12,8 +12,8 @@ from pair.core.config import (
     listen_port,
     load_peers,
 )
-from pair.model.sched import InferenceGate
 from pair.model.knobs import clamp_parallel, queue_limit
+from pair.model.sched import InferenceGate
 
 PEERS: list[dict] = []
 MODEL = default_model()

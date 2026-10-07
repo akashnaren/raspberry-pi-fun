@@ -11,9 +11,9 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from unittest.mock import patch
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import patch
 
 from pair.core import runtime
 from pair.model.modes import (
@@ -25,9 +25,9 @@ from pair.model.modes import (
     resolve_mode,
     tag_ready,
 )
-from pair.turn.shape import EFFORT_HINT
 from pair.routes import search as search_routes
 from pair.server import make_server
+from pair.turn.shape import EFFORT_HINT
 from tests.support.paths import ROOT
 
 _CAP = re.compile(r"OLLAMA_MAX_LOADED_MODELS=(\d+)")

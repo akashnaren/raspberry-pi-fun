@@ -17,9 +17,9 @@ import math
 import re
 from datetime import date
 
-from pair.turn.calc import fully_answers, notes_for
 from pair.core.errors import friendly_error
 from pair.model.knobs import attachment_limit, inference_knobs
+from pair.turn.calc import fully_answers, notes_for
 
 ATTACH_MARK = "\n\n---\n"
 CHARS_PER_TOKEN = 3.2

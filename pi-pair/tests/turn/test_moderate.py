@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import unittest
 from unittest.mock import patch
 
-
-from pair.turn.assist import (  # noqa: E402
+from pair.model.knobs import inference_knobs
+from pair.turn.assist import (
     CRISIS_REFUSAL,
     HARM_REFUSAL,
     stream_release,
 )
-from pair.model.knobs import inference_knobs  # noqa: E402
-from pair.turn.moderate import moderate  # noqa: E402
+from pair.turn.moderate import moderate
+from tests.support.paths import ROOT
 
 _ON = patch("pair.turn.moderate.safety_filter", return_value=True)
 

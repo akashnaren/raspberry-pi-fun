@@ -1,37 +1,35 @@
 """HTTP UI, OpenAI-compatible /v1/chat/completions, and the keyed public API."""
 
 from __future__ import annotations
+
 import hashlib
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pair.model.chat_once import start_model_warm
-from pair.core.config import STATIC_DIR
-from pair.core.errors import GENERIC
-from pair.model.modes import mode_table, mode_tips
-from pair.model.preload import start_pro_warm
-from pair.core import runtime
-from pair.routes.base import safe_write
-from pair.routes.static import _TYPES, index_body, static_file
-from pair.routes.status import health_document, public_health
-from pair.routes.chat import ChatRoutes
-from pair.routes.reply import ReplyRoutes
-from pair.routes.relay import RelayRoutes
-from pair.routes.search import SearchRoutes
-from pair.routes.files import FileRoutes
-from pair.routes.images import ImageRoutes
-from pair.routes.tools import ToolRoutes
-from pair.routes.memory import MemoryRoutes
-from pair.routes.flywheel import FlywheelRoutes
-from pair.routes.public_api import PublicApiRoutes
-from pair.routes.status import StatusRoutes
-from pair.routes.static import StaticRoutes
-from pair.routes.base import BaseRoutes
 
 import pair.routes.base as _base
 import pair.routes.chat as _chat
-import pair.routes.status as _status
 import pair.routes.memory as _memory
 import pair.routes.public_api as _public
+import pair.routes.status as _status
+from pair.core import runtime
+from pair.core.config import STATIC_DIR
+from pair.core.errors import GENERIC
+from pair.model.chat_once import start_model_warm
+from pair.model.modes import mode_table, mode_tips
+from pair.model.preload import start_pro_warm
+from pair.routes.base import BaseRoutes, safe_write
+from pair.routes.chat import ChatRoutes
+from pair.routes.files import FileRoutes
+from pair.routes.flywheel import FlywheelRoutes
+from pair.routes.images import ImageRoutes
+from pair.routes.memory import MemoryRoutes
+from pair.routes.public_api import PublicApiRoutes
+from pair.routes.relay import RelayRoutes
+from pair.routes.reply import ReplyRoutes
+from pair.routes.search import SearchRoutes
+from pair.routes.static import _TYPES, StaticRoutes, index_body, static_file
+from pair.routes.status import StatusRoutes, health_document, public_health
+from pair.routes.tools import ToolRoutes
 
 _base.apply_tier = _chat.apply_tier
 _base.mode_fields = _status.mode_fields

@@ -16,6 +16,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from pair.nodes.worker import forbidden_routes, handle
 from pair.render.charts import (
     chart_samples,
     chart_type,
@@ -29,7 +30,6 @@ from pair.render.documents import (
     render_document,
     save_document,
 )
-from pair.nodes.worker import forbidden_routes, handle
 from pair.server import make_server
 
 

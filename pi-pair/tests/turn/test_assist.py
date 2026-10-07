@@ -15,12 +15,9 @@ Harmful set (6) plus paraphrases: refused before generation when the filter is o
 from __future__ import annotations
 
 import unittest
-
-from tests.support.prompts import HARM_SET, PARAPHRASES, TOP_SET
 from unittest.mock import patch
 
-
-from pair.turn.assist import (  # noqa: E402
+from pair.turn.assist import (
     CRISIS_REFUSAL,
     HARM_REFUSAL,
     HELPFUL_NUDGE,
@@ -34,8 +31,11 @@ from pair.turn.assist import (  # noqa: E402
     settle_reply,
     visible_canned,
 )
-from pair.turn.shape import PERSONA  # noqa: E402
-from pair.turn.shape import shape_messages  # noqa: E402
+from pair.turn.shape import (
+    PERSONA,
+    shape_messages,
+)
+from tests.support.prompts import HARM_SET, PARAPHRASES, TOP_SET
 
 REFUSAL = "I'm sorry, but I can't assist with that.\n1. junk"
 
@@ -149,8 +149,8 @@ class Assist(unittest.TestCase):
             text = settle_reply(
                 prompt,
                 leaked,
-                lambda: calls.append("retry"),
-                lambda: calls.append("ground"),
+                lambda calls=calls: calls.append("retry"),
+                lambda calls=calls: calls.append("ground"),
             )
             self.assertEqual(text, refusal_for(prompt), prompt)
             self.assertNotIn("do the thing", text, prompt)

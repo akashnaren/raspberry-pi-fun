@@ -8,12 +8,12 @@ import urllib.request
 
 from pair.core import runtime
 from pair.core.config import on_pi4
+from pair.core.timing import from_ollama
 from pair.mesh.guard import may_generate, require_generative
 from pair.model.http_pool import open_json_request
 from pair.model.knobs import inference_knobs, keep_alive, ollama_options
 from pair.model.modes import FLASH, PRO, mode_table
 from pair.model.think import sample_knobs, split_ollama_message
-from pair.core.timing import from_ollama
 
 _WARM_THREAD: threading.Thread | None = None
 

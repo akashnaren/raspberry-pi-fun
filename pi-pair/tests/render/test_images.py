@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import ast
 import json
 import os
@@ -12,9 +10,8 @@ import time
 import unittest
 from urllib.parse import quote, unquote, urlparse
 
-
-from pair.render import images  # noqa: E402
-from pair.render.images import (  # noqa: E402
+from pair.render import images
+from pair.render.images import (
     _fetch_json,
     _public_http,
     candidates,
@@ -22,6 +19,7 @@ from pair.render.images import (  # noqa: E402
     normalize_title,
     sanitize_card,
 )
+from tests.support.paths import ROOT
 
 PHOTO = "https://upload.wikimedia.org/wikipedia/commons/a/a8/Tour.jpg"
 PAGE = "https://en.wikipedia.org/wiki/Eiffel_Tower"

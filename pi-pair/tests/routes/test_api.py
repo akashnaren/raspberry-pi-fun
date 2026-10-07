@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import os
 import stat
@@ -14,10 +12,9 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
+from unittest.mock import patch
 
 from pair.core import runtime
 from pair.core.errors import ASK_FIRST, BAD_MESSAGE, BUSY, TOO_BIG
@@ -25,6 +22,7 @@ from pair.routes import images as image_routes
 from pair.routes import search as search_routes
 from pair.routes.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
 from pair.server import make_server
+from tests.support.paths import ROOT
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:

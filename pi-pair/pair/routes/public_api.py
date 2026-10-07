@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+
 from pair.routes.base import safe_write
 from pair.routes.status import health_document, public_health
 

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import unittest
 
+from pair.render.charts import render_chart
+from pair.render.documents import render_document
+from pair.server import Handler
 from pair.turn.abilities import (
     CATEGORIES,
     category_rates,
@@ -12,9 +15,6 @@ from pair.turn.abilities import (
     parse_fences,
     tool_notes,
 )
-from pair.render.charts import render_chart
-from pair.render.documents import render_document
-from pair.server import Handler
 from pair.turn.shape import PERSONA
 
 

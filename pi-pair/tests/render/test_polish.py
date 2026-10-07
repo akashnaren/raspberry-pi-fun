@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import os
 import unittest
 from unittest.mock import patch
 
-
-from pair.ingest.docfit import DOC_FIT_CHARS, excerpt_limit, fit_document, fit_outbound  # noqa: E402
-from pair.turn.shape import is_structured_request, structure_hint  # noqa: E402
-from pair.model.preload import (  # noqa: E402
+from pair.ingest.docfit import (
+    DOC_FIT_CHARS,
+    excerpt_limit,
+    fit_document,
+    fit_outbound,
+)
+from pair.model.preload import (
     PRELOAD_TIMEOUT_S,
     pro_preload_payload,
     rewarm_pro_if_evicted,
 )
+from pair.turn.shape import is_structured_request, structure_hint
+from tests.support.paths import ROOT
 
 
 class Diagrams(unittest.TestCase):

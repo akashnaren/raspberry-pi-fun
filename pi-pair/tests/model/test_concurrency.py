@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
-from tests.support.web import web_source
 import json
 import os
 import tempfile
@@ -16,14 +13,15 @@ import urllib.request
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-
 from pair.core import runtime
 from pair.core.config import infer_slots
 from pair.core.errors import BUSY, WAITING
-from pair.model.sched import QUEUE_LIMIT, InferenceGate
 from pair.model.knobs import parallel_limit
+from pair.model.sched import QUEUE_LIMIT, InferenceGate
 from pair.routes import search as search_routes
 from pair.server import make_server
+from tests.support.paths import ROOT
+from tests.support.web import web_source
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:

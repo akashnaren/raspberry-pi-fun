@@ -6,10 +6,10 @@ import json
 import time
 
 from pair.core.cancel import ClientGone
-from pair.model.chat_once import llamacpp_model, ollama_payload, open_json
-from pair.mesh.guard import require_generative
-from pair.model.knobs import inference_knobs
 from pair.core.timing import from_ollama
+from pair.mesh.guard import require_generative
+from pair.model.chat_once import llamacpp_model, ollama_payload, open_json
+from pair.model.knobs import inference_knobs
 from pair.model.think import (
     clip_reasoning,
     peel_think,

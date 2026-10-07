@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.model.runtime_choice import (  # noqa: E402
+from pair.model.runtime_choice import (
     DECODE_GAIN,
     KL_LIMIT,
     PREFILL_GAIN,

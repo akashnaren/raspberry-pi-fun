@@ -1,10 +1,12 @@
 from __future__ import annotations
+
 import json
 import os
 import urllib.error
 import urllib.request
-from pair.flywheel.miss_queue import node_role
+
 from pair.core import runtime
+from pair.flywheel.miss_queue import node_role
 from pair.routes.base import safe_write
 
 # Base64 of a 4 MB upload is about 5.6 MB. This is the extract body only.

@@ -40,7 +40,6 @@ _MAP_GEN = 0
 
 def load_map(path: Path | None = None) -> dict[str, str]:
     """The canned map. A repeat read with the same mtime skips the disk."""
-    global _MAP_GEN
     target = path or map_path()
     try:
         stat = target.stat()

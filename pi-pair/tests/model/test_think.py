@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import os
 import tempfile
@@ -11,21 +9,17 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
-from unittest.mock import patch
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
-from pair.flywheel import miss_queue as queue
+from unittest.mock import patch
 
 from pair.core import runtime
-from pair.turn.assist import HARM_REFUSAL
+from pair.core.errors import GENERIC
+from pair.flywheel import miss_queue as queue
+from pair.flywheel.miss_queue import append_row
 from pair.model.knobs import inference_knobs
 from pair.model.modes import mode_table
-from pair.flywheel.miss_queue import append_row
-from pair.routes.reply import last_completion
-from pair.routes import search as search_routes
-from pair.server import make_server
 from pair.model.think import (
     DIRECT_FALLBACK,
     FORCE_NOTE,
@@ -38,8 +32,12 @@ from pair.model.think import (
     stop_thinking,
     visible_answer,
 )
-from pair.core.errors import GENERIC
+from pair.routes import search as search_routes
+from pair.routes.reply import last_completion
+from pair.server import make_server
+from pair.turn.assist import HARM_REFUSAL
 from pair.turn.shape import EFFORT_HINT
+from tests.support.paths import ROOT
 
 
 class ThinkLevels(unittest.TestCase):

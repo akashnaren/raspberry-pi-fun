@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import os
 import subprocess
 import unittest
+
+from tests.support.paths import ROOT
 
 DEPLOY = ROOT / "ci" / "deploy_pi3.sh"
 FAKE_KEY = (

@@ -1,11 +1,13 @@
 from __future__ import annotations
+
 import json
 import os
 import urllib.error
 import urllib.request
+
+from pair.core import runtime
 from pair.core.errors import friendly_body
 from pair.mesh.guard import PI4_MISS_DOWN, may_generate
-from pair.core import runtime
 from pair.routes.base import safe_write
 from pair.routes.chat import apply_tier
 

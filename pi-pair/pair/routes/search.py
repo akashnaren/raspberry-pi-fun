@@ -1,17 +1,18 @@
 from __future__ import annotations
+
 import json
 import threading
 import time
 from urllib.parse import urlparse
+
+from pair.flywheel.miss_queue import node_role
+from pair.mesh.offload import lookup_for_brain
 from pair.model.chat_once import warm_in_flight
 from pair.model.knobs import search_note_limit
 from pair.model.modes import mode_table
-from pair.flywheel.miss_queue import node_role
-from pair.mesh.offload import lookup_for_brain
+from pair.routes.base import safe_write
 from pair.search.lookup import lookup_web
 from pair.turn.shape import prepare_search_note
-from pair.routes.base import safe_write
-
 
 FLASH_SOURCE_CAP = 3
 PRO_SOURCE_CAP = 8

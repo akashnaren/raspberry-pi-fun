@@ -2,32 +2,30 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
-from tests.support.web import web_source
 import base64
 import binascii
 import json
 import os
 import socket
 import sys
-import tracemalloc
-import zlib
 import tempfile
 import threading
 import time
+import tracemalloc
 import unittest
 import urllib.error
 import urllib.request
+import zlib
 from pathlib import Path
 from unittest.mock import patch
 
-
-from pair.ingest import job as ingest_job, ocr, upload
-
 from pair.core import runtime
+from pair.ingest import job as ingest_job
+from pair.ingest import ocr, upload
 from pair.ingest.pdftext import extract_pdf_text
 from pair.server import make_server
+from tests.support.paths import ROOT
+from tests.support.web import web_source
 
 JPEG = b"\xff\xd8\xff\xd9"
 JPEG_PDF = (

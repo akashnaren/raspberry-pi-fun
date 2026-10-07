@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import os
 import shutil
@@ -12,14 +10,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
+from pair.core.yaml_lite import load_path
 from pair.flywheel.canned import _folded_table, lookup, normalize_key
-from pair.model.chat_once import chat_ollama
-from pair.mesh.guard import may_generate
 from pair.flywheel.lifecycle import GateError, _fold, _prepare, post_train
 from pair.flywheel.miss_queue import QUEUE_BOUND, append_row, apply_label, note_exchange
 from pair.flywheel.registry import RegistryError, require_registered
-from pair.core.yaml_lite import load_path
+from pair.mesh.guard import may_generate
+from pair.model.chat_once import chat_ollama
+from tests.support.paths import ROOT
 
 
 class Flywheel(unittest.TestCase):

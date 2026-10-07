@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import threading
 import time
 import unittest
 from unittest.mock import patch
 
-from pair.model.sched import InferenceGate
 from pair.mesh.health import parse_temp_c, parse_throttled
+from pair.model.sched import InferenceGate
 from pair.routes.status import health_document, public_health
+from tests.support.paths import ROOT
 
 
 class OneSlot(unittest.TestCase):

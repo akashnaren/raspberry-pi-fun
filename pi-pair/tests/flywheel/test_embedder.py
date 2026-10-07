@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import importlib.util
 import json
 import os
@@ -15,6 +13,7 @@ from unittest.mock import patch
 from pair.nodes import embedder
 from pair.nodes.worker import handle, health_body
 from pair.routes.status import health_document, public_health
+from tests.support.paths import ROOT
 
 
 class _Resp:

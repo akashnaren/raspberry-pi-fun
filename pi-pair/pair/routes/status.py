@@ -1,11 +1,13 @@
 from __future__ import annotations
+
 import json
 import time
-from pair.mesh.health import board_thermal, snapshot_peers
-from pair.core.thermal import sample as thermal_sample
-from pair.model.modes import mode_table
-from pair.flywheel.miss_queue import node_role
+
 from pair.core import runtime
+from pair.core.thermal import sample as thermal_sample
+from pair.flywheel.miss_queue import node_role
+from pair.mesh.health import board_thermal, snapshot_peers
+from pair.model.modes import mode_table
 from pair.routes.base import safe_write
 
 

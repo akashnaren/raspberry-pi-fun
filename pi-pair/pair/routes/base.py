@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 import ipaddress
 import json
 import os
 from urllib.parse import urlparse
+
 from pair.core.errors import TOO_BIG, friendly_error
 
 CHAT_BODY_CAP = 1_000_000

@@ -17,9 +17,9 @@ import threading
 import time
 import urllib.request
 
+from pair.core import runtime
 from pair.core.config import PI2_ALT_PORTS
 from pair.mesh.guard import may_generate
-from pair.core import runtime
 
 # Peer /health and /api/tags budget. Callers treat a miss past this as down.
 PEER_PROBE_S = 2.5

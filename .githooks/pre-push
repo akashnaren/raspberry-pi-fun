@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec make -C "$(git rev-parse --show-toplevel)" lint test

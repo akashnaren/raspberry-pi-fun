@@ -1,12 +1,13 @@
 from __future__ import annotations
+
 import gzip
 import hashlib
 import threading
 from pathlib import Path
+
 from pair.core.config import STATIC_DIR
 from pair.model.modes import mode_tips
 from pair.routes.base import safe_write
-
 
 _TYPES = {
     ".css": "text/css; charset=utf-8",

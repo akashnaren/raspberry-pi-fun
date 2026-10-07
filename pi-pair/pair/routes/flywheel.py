@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 import json
+
 from pair.flywheel.miss_queue import append_row, apply_label, node_role
 from pair.routes.base import safe_write
 from pair.routes.reply import last_completion

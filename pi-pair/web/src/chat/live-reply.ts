@@ -254,7 +254,7 @@ export function addLiveBot(expectPro = false): LiveTurn {
 export function keepPartial(
   live: LiveTurn | null,
   text: string,
-  prompt: string,
+  _prompt: string,
   effort: string,
   search: SearchInfo | null,
   stages: StageName[],

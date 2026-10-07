@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import os
 import tempfile
@@ -11,10 +9,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pair.flywheel.canned import lookup, normalize_key
 from pair.core.config import ollama_base
+from pair.flywheel.canned import lookup, normalize_key
 from pair.routes.public_api import openapi_document
 from pair.routes.status import health_document
+from tests.support.paths import ROOT
 
 
 class CannedExact(unittest.TestCase):

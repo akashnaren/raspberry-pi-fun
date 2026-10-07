@@ -7,7 +7,6 @@ import threading
 import unittest
 from http.client import HTTPConnection
 
-
 from pair.routes.base import allowed_api_origin
 from pair.server import make_server
 

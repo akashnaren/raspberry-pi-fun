@@ -15,8 +15,8 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from pair.render.charts import parse_markdown_table
 from pair.core.config import data_root
+from pair.render.charts import parse_markdown_table
 
 MAX_AGE_S = 24 * 60 * 60
 MAX_FILES = 32

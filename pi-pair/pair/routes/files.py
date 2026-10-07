@@ -1,12 +1,14 @@
 from __future__ import annotations
+
 import json
 import threading
 import time
 import urllib.error
 import urllib.request
+
+from pair.core import runtime
 from pair.core.cancel import peer_closed
 from pair.flywheel.miss_queue import node_role
-from pair.core import runtime
 from pair.ingest.upload import (
     UploadRejected,
     file_part,
@@ -208,7 +210,8 @@ class FileRoutes:
         if not _ATTACH_GATE.acquire(blocking=False):
             self._error("OCR is busy", status=429)
             return
-        from pair.ingest import job as ingest_job, ocr
+        from pair.ingest import job as ingest_job
+        from pair.ingest import ocr
 
         held = ocr.hold_embed()
         try:
@@ -252,7 +255,8 @@ class FileRoutes:
         """Same ingest as an upload, so a text PDF is not rasterized first."""
         import base64
 
-        from pair.ingest import job as ingest_job, ocr
+        from pair.ingest import job as ingest_job
+        from pair.ingest import ocr
 
         if not _ATTACH_GATE.acquire(blocking=False):
             return 429, {"ok": False, "error": "OCR is busy", "status": 429}

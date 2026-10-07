@@ -10,12 +10,12 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from pair.turn.abilities import clean_reply, parse_fences, settle_blocks, tool_notes
-from pair.render.charts import render_chart, with_headers
 from pair.memory.compact import run_compact
-from pair.render.documents import render_document
 from pair.memory.store import facts_block, remember_user, save_summary, summary_text
+from pair.render.charts import render_chart, with_headers
+from pair.render.documents import render_document
 from pair.server import Handler
+from pair.turn.abilities import clean_reply, parse_fences, settle_blocks, tool_notes
 from pair.turn.shape import (
     PERSONA,
     needs_web,

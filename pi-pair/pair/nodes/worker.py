@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import base64
 
-from pair.nodes import websearch
 from pair.mesh.tools import GENERATION_PATHS, registry
+from pair.nodes import websearch
 
 ROUTES = {tool.path: tool.name for tool in registry().values()}
 

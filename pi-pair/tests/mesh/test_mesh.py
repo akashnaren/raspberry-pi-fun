@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import base64
 import hashlib
 import hmac
@@ -17,27 +15,27 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest import mock
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
+from unittest import mock
 
 from pair.core import runtime
-from pair.mesh.guard import may_generate
 from pair.flywheel.lifecycle import post_train
-from pair.mesh.offload import lookup_for_brain, mesh_config, search_timeouts
 from pair.flywheel.publish import (
     redact_label,
     sync_huggingface,
     sync_kaggle,
     sync_public_labels,
 )
-from pair.routes.search import SEARCH_BODY_CAP
+from pair.mesh.guard import may_generate
+from pair.mesh.offload import lookup_for_brain, mesh_config, search_timeouts
 from pair.routes import reply as reply_routes
 from pair.routes import search as search_routes
+from pair.routes.search import SEARCH_BODY_CAP
 from pair.server import make_server
+from tests.support.paths import ROOT
 
 SECRET = "zz-secret-bench-phrase email ada@example.com phone 415-555-0130"
 TOKEN = "test-hf-token"

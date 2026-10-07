@@ -12,8 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from pair.core import runtime
-from pair.server import make_server
 from pair.core.timing import from_ollama, present
+from pair.server import make_server
 
 
 class TimingMath(unittest.TestCase):

@@ -7,8 +7,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-from pair.model.sched import InferenceGate
+from pair.mesh.tools import generation_routes
 from pair.model.sched import (
+    InferenceGate,
     admission_report,
     background_cancel_report,
     client_report,
@@ -18,7 +19,6 @@ from pair.model.sched import (
     heat_report,
     tool_job_report,
 )
-from pair.mesh.tools import generation_routes
 
 
 class SchedulerReports(unittest.TestCase):

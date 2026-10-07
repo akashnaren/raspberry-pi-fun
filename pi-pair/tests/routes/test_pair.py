@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import os
 import sys
@@ -13,26 +11,24 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from unittest.mock import patch
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-
-from tests.support.fakes import LlamaFake, OllamaFake, _start
-from tests.support.web import web_source
-
-
-from pair.mesh import health
+from unittest.mock import patch
 
 from pair.core import runtime
+from pair.core.config import DEFAULT_PEERS, load_peers, normalize_peer
+from pair.mesh import health
+from pair.mesh.peers import model_on_peer, pick
+from pair.model.chat_once import llamacpp_model
+from pair.model.chat_stream import llamacpp_delta, ollama_delta
 from pair.routes import relay as relay_routes
 from pair.routes import search as search_routes
 from pair.routes import status as status_routes
-from pair.model.chat_once import llamacpp_model
-from pair.core.config import DEFAULT_PEERS, load_peers, normalize_peer
-from pair.mesh.peers import model_on_peer, pick
 from pair.server import make_server
-from pair.model.chat_stream import llamacpp_delta, ollama_delta
+from tests.support.fakes import LlamaFake, OllamaFake, _start
+from tests.support.paths import ROOT
+from tests.support.web import web_source
 
 
 def _composer_keydown(script: str) -> str:

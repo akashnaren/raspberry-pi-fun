@@ -10,9 +10,8 @@ import unittest
 import urllib.request
 from unittest.mock import patch
 
-from pair.memory import store as memory
-
 from pair.core import runtime
+from pair.memory import store as memory
 from pair.memory.compact import plan, run_compact, schedule, should_compact
 from pair.memory.ledger import Ledger, ledger_for, reset, verbatim_budget
 from pair.memory.store import scope_key

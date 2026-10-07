@@ -19,16 +19,16 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pair.turn.abilities import clean_reply, parse_fences, settle_blocks  # noqa: E402
-from pair.render.charts import parse_markdown_table, render_chart  # noqa: E402
-from pair.render.documents import render_document  # noqa: E402
+from pair.render.charts import parse_markdown_table, render_chart
+from pair.render.documents import render_document
+from pair.turn.abilities import clean_reply, parse_fences, settle_blocks
 from pair.turn.shape import (
     PERSONA,
     needs_web,
     persona_text,
     sample_turns,
     shape_messages,
-)  # noqa: E402
+)
 
 PROMPTS = (
     "My dog Biscuit likes the park.",

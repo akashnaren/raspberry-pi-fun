@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import os
 import unittest
 from unittest.mock import patch
 
-
 from pair.model.chat_once import chat_ollama
-from pair.model.knobs import inference_knobs, keep_alive
 from pair.model.chat_stream import stream_ollama
+from pair.model.knobs import inference_knobs, keep_alive
+from tests.support.paths import ROOT
 
 
 class _Body:

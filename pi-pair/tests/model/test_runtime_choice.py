@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-from tests.support.paths import ROOT
 import json
 import subprocess
 import unittest
@@ -14,6 +12,7 @@ from pair.model.runtime_choice import (
     output_layer_ok,
     quality_held,
 )
+from tests.support.paths import ROOT
 
 
 class RuntimeChoice(unittest.TestCase):

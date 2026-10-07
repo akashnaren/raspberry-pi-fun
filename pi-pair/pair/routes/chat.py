@@ -1,15 +1,19 @@
 from __future__ import annotations
+
 import json
 import os
 import threading
 import time
-from pair.turn.abilities import tail_hints
-from pair.turn.moderate import moderate
+
+from pair.core import runtime
 from pair.core.cancel import Cancel, ClientGone, peer_closed
-from pair.model.chat_once import llamacpp_model
-from pair.ingest.docfit import fit_outbound
 from pair.core.errors import ASK_FIRST, BUSY, FLASH_WARMING, MODEL_MISSING
+from pair.core.timing import assemble, present
+from pair.flywheel.miss_queue import node_role
+from pair.ingest.docfit import fit_outbound
 from pair.mesh.guard import may_generate, weak_brain_error
+from pair.mesh.peers import pick
+from pair.model.chat_once import llamacpp_model
 from pair.model.knobs import decode_effort, inference_knobs, mode_limits
 from pair.model.modes import (
     mode_table,
@@ -18,13 +22,15 @@ from pair.model.modes import (
     resolve_mode,
     tag_ready,
 )
-from pair.mesh.peers import pick
 from pair.model.preload import resident_models, schedule_pro_warm, wait_for_resident
-from pair.routes.public_api import stamp
-from pair.flywheel.miss_queue import node_role
-from pair.core import runtime
 from pair.model.think import decode_plan
-from pair.core.timing import assemble, present
+from pair.routes.base import safe_write, status_event, write_event
+from pair.routes.memory import _memory_prompt
+from pair.routes.public_api import stamp
+from pair.routes.search import _begin_lookup
+from pair.routes.status import _claim_wait, listed_chat_models, mode_fields
+from pair.turn.abilities import tail_hints
+from pair.turn.moderate import moderate
 from pair.turn.shape import (
     is_structured_request,
     needs_web,
@@ -32,10 +38,6 @@ from pair.turn.shape import (
     structure_hint,
     turns_for_memory,
 )
-from pair.routes.base import safe_write, status_event, write_event
-from pair.routes.memory import _memory_prompt
-from pair.routes.search import _begin_lookup
-from pair.routes.status import _claim_wait, listed_chat_models, mode_fields
 
 _CHAT_ROLES = {"system", "user", "assistant"}
 
