@@ -672,6 +672,30 @@ class AttachmentHttp(unittest.TestCase):
             body["error"], "That is too big to send. Try a shorter message."
         )
 
+    def test_extract_accepts_a_three_megabyte_image(self):
+        blob = b"\xff\xd8\xff" + b"\x00" * (3 * 1024 * 1024)
+        raw = json.dumps(
+            {
+                "filename": "pic.jpg",
+                "content_type": "image/jpeg",
+                "data": base64.b64encode(blob).decode("ascii"),
+            }
+        ).encode()
+        self.assertGreater(len(raw), 1_000_000)
+        self.assertLess(len(raw), 6 * 1024 * 1024)
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/tools/extract",
+            data=raw,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = json.loads(response.read().decode())
+            status = response.status
+        self.assertEqual(status, 200, body)
+        self.assertNotEqual(status, 413)
+        self.assertEqual(body["text"], "from image")
+
     def test_extra_ocr_is_rejected_while_slots_are_held(self):
         hold = threading.Event()
         arrived = threading.Semaphore(0)

@@ -16,7 +16,12 @@ def forbidden_routes() -> list[str]:
 
 
 def _extract(payload: dict) -> dict:
-    """Text files pass through. Images and PDFs use the local OCR binaries."""
+    """Text files pass through. Images and PDFs use the same ingest as uploads.
+
+    Legacy callers send `kind` and no `content_type`. A text PDF goes through
+    ingest so it is not rasterized. New callers with `content_type` are handled
+    in the server before this function runs.
+    """
     name = str(payload.get("filename") or "file")
     raw = payload.get("data") or ""
     try:
@@ -27,15 +32,19 @@ def _extract(payload: dict) -> dict:
     if kind == "text" or name.lower().endswith((".txt", ".md", ".csv")):
         text = blob.decode("utf-8", "replace").strip()
         return {"ok": bool(text), "text": text, "filename": name}
-    from pair.ocr import OcrFailed, OcrNotInstalled, recognize_image, recognize_pdf
+    from pair.upload import UploadRejected, ingest
 
+    if name.lower().endswith(".pdf") or kind == "pdf":
+        content_type = "application/pdf"
+        filename = name if name.lower().endswith(".pdf") else "file.pdf"
+    else:
+        content_type = "image/png"
+        filename = name or "image.png"
     try:
-        if name.lower().endswith(".pdf") or kind == "pdf":
-            text = recognize_pdf(blob)
-        else:
-            text = recognize_image(blob)
-    except (OcrFailed, OcrNotInstalled) as exc:
+        result = ingest(content_type, blob, filename)
+    except UploadRejected as exc:
         return {"ok": False, "text": "", "error": str(exc), "filename": name}
+    text = str(result.get("text") or "")
     return {"ok": bool(text), "text": text, "filename": name}
 
 

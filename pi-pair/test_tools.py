@@ -12,13 +12,13 @@ import urllib.error
 import urllib.request
 from unittest.mock import patch
 
-from pair import runtime
+from pair import ingest_job, ocr, runtime
 from pair.guard import may_generate
 from pair.health import peer_load
 from pair.nodes import websearch
 from pair.nodes.worker import forbidden_routes, handle
 from pair.ocr import recognize_image
-from pair.server import make_server
+from pair.server import Handler, make_server
 from pair.tools import (
     SEARCH_MEDIAN_TARGET_S,
     SEARCH_P95_TARGET_S,
@@ -391,6 +391,190 @@ class WorkerHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(stored["model"])
         self.assertTrue(stored["facts"][0]["text"].startswith("The user said:"))
+
+
+class ExtractOffload(unittest.TestCase):
+    """Brain uploads OCR on pi3. A down pi3 falls back; a slow or 415 pi3 does not."""
+
+    def setUp(self):
+        self._role = os.environ.get("PI_PAIR_ROLE")
+        self._inline = ingest_job.INLINE
+        self._deadline = ingest_job.UPLOAD_DEADLINE_S
+        self._peers = [dict(peer) for peer in runtime.PEERS]
+        self._image = ocr.recognize_image
+        self.servers = []
+        self.extract_hits = 0
+        self.local_runs = 0
+        self.sleep_s = 0.0
+        self.force_status = 0
+        ingest_job.INLINE = True
+        os.environ["PI_PAIR_ROLE"] = "brain"
+        ocr.recognize_image = lambda _data: "from image"
+        from pair.server import _local_extract as real_local
+
+        real_extract = Handler._run_extract
+
+        def local(*args, **kwargs):
+            self.local_runs += 1
+            return real_local(*args, **kwargs)
+
+        def run_extract(handler, payload):
+            self.extract_hits += 1
+            if self.sleep_s:
+                time.sleep(self.sleep_s)
+                return 200, {"ok": True, "text": "late", "route": "ocr"}
+            if self.force_status:
+                return self.force_status, {
+                    "ok": False,
+                    "error": "that PDF has no readable text",
+                    "status": self.force_status,
+                }
+            return real_extract(handler, payload)
+
+        self._local_patch = patch("pair.server._local_extract", local)
+        self._extract_patch = patch.object(Handler, "_run_extract", run_extract)
+        self._local_patch.start()
+        self._extract_patch.start()
+        self.pi3 = self._serve()
+        self.brain = self._serve()
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi2",
+                    "host": "127.0.0.1",
+                    "port": 9,
+                    "role": "health",
+                    "generative": False,
+                },
+                {
+                    "name": "pi3",
+                    "host": "127.0.0.1",
+                    "port": self.pi3,
+                    "role": "dataset",
+                    "generative": False,
+                },
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": self.brain,
+                    "role": "brain",
+                    "generative": True,
+                },
+            ]
+        )
+
+    def tearDown(self):
+        self._extract_patch.stop()
+        self._local_patch.stop()
+        for httpd in self.servers:
+            httpd.shutdown()
+            httpd.server_close()
+        ingest_job.INLINE = self._inline
+        ingest_job.UPLOAD_DEADLINE_S = self._deadline
+        ocr.recognize_image = self._image
+        runtime.set_peers(self._peers)
+        if self._role is None:
+            os.environ.pop("PI_PAIR_ROLE", None)
+        else:
+            os.environ["PI_PAIR_ROLE"] = self._role
+
+    def _serve(self) -> int:
+        httpd = make_server("127.0.0.1", 0)
+        self.servers.append(httpd)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        return httpd.server_address[1]
+
+    def _post(
+        self, port: int, data: bytes, headers: dict[str, str], timeout: float = 5
+    ):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/attachments",
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return (
+                    response.status,
+                    json.loads(response.read().decode()),
+                    response.headers.get("X-Pi-Extract"),
+                )
+        except urllib.error.HTTPError as error:
+            return (
+                error.code,
+                json.loads(error.read().decode() or "{}"),
+                error.headers.get("X-Pi-Extract"),
+            )
+
+    def _post_image(self):
+        return self._post(
+            self.brain,
+            b"\xff\xd8\xff\xd9",
+            {"content-type": "image/jpeg", "x-filename": "pic.jpg"},
+        )
+
+    def test_image_upload_runs_on_pi3_once(self):
+        status, body, via = self._post_image()
+        self.assertEqual(status, 200, body)
+        self.assertEqual(via, "pi3")
+        self.assertEqual(body["text"], "from image")
+        self.assertEqual(self.extract_hits, 1)
+        self.assertEqual(self.local_runs, 0)
+
+    def test_refused_pi3_falls_back_locally(self):
+        for httpd in self.servers:
+            if httpd.server_address[1] == self.pi3:
+                httpd.shutdown()
+                httpd.server_close()
+        status, body, via = self._post_image()
+        self.assertEqual(status, 200, body)
+        self.assertEqual(via, "local")
+        self.assertEqual(body["text"], "from image")
+        self.assertEqual(self.local_runs, 1)
+
+    def test_slow_pi3_is_504_without_a_local_run(self):
+        self.sleep_s = 3
+        ingest_job.UPLOAD_DEADLINE_S = 6
+        started = time.monotonic()
+        status, body, via = self._post_image()
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(status, 504, body)
+        self.assertEqual(via, "pi3")
+        self.assertEqual(self.local_runs, 0)
+
+    def test_pi3_415_is_not_retried_locally(self):
+        self.force_status = 415
+        status, body, via = self._post_image()
+        self.assertEqual(status, 415, body)
+        self.assertEqual(via, "pi3")
+        self.assertEqual(self.local_runs, 0)
+
+    def test_legacy_text_pdf_is_not_rasterized(self):
+        import base64
+        import zlib
+
+        from pair.nodes.worker import _extract
+
+        content = zlib.compress(b"BT (Hello) Tj ET")
+        pdf = (
+            b"%PDF-1.4\n1 0 obj << /Length "
+            + str(len(content)).encode("ascii")
+            + b" /Filter /FlateDecode >>\nstream\n"
+            + content
+            + b"\nendstream\nendobj\n%%EOF"
+        )
+        with patch("pair.ocr.recognize_pdf") as raster:
+            body = _extract(
+                {
+                    "filename": "note.pdf",
+                    "kind": "pdf",
+                    "data": base64.b64encode(pdf).decode("ascii"),
+                }
+            )
+        raster.assert_not_called()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["text"], "Hello")
 
 
 if __name__ == "__main__":
