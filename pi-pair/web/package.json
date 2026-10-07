@@ -5,6 +5,7 @@
   "scripts": {
     "lint": "tsc --noEmit",
     "lint:js": "biome lint --diagnostic-level=error .",
+    "test": "node --experimental-strip-types --test *.test.mjs",
     "build": "tsc --noEmit && node build.mjs"
   },
   "devDependencies": {
