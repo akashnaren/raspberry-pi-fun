@@ -1,6 +1,6 @@
 # pi-pair
 
-Access and use the Platform: https://would-bride-celebrities-enables.trycloudflare.com/
+Access and use the Platform: https://seller-hotels-stay-role.trycloudflare.com/
 
 Chat for a three-board Raspberry Pi rack. Stdlib Python on the boards, no pip. The page is served on 18080.
 
