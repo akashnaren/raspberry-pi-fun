@@ -42,8 +42,6 @@ _DEFAULTS = {
     # Local harmful-content filter. Off leaves refusal to a separate stack
     # that replaces pair.turn.moderate.moderate. On restores the in-process gate.
     "safety_filter": False,
-    # Seconds the search check may run before the health-gated fallback.
-    "search_decide_timeout_s": 3.0,
 }
 
 

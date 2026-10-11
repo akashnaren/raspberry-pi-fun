@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 
@@ -29,8 +28,8 @@ from pair.routes.memory import _memory_prompt
 from pair.routes.public_api import stamp
 from pair.routes.status import _claim_wait, listed_chat_models, mode_fields
 from pair.turn.abilities import tail_hints
-from pair.turn.decide import search_candidate, web_search_request
 from pair.turn.moderate import moderate
+from pair.turn.search_ask import explicit_search, web_search_request
 from pair.turn.shape import (
     GROUNDED_RULE,
     NO_RESULTS_RULE,
@@ -92,14 +91,6 @@ def _prompt_note(search_note) -> str:
     if search_note.get("status") == "ok" and note:
         return note + "\n" + GROUNDED_RULE
     return NO_RESULTS_RULE
-
-
-def _prime_prefix(messages) -> None:
-    if os.environ.get("PI_PAIR_PREFIX_PRIME") != "1":
-        return
-    from pair.mesh.tools import schedule_prefix_prime
-
-    schedule_prefix_prime(messages)
 
 
 def _cap_temperature(temperature: float, searched: bool) -> float:
@@ -177,60 +168,29 @@ class ChatRoutes:
     def _reset_timing(self) -> None:
         self._queue_ms = 0
         self._search_ms = 0
-        self._decide_ms = 0
         self._decide_source = ""
         self._decide_label = ""
+        self._search_query = ""
         self._usage = {}
         self._ttft_ms = 0
         self._queue_t0 = None
 
-    def _mark_user_search(self) -> None:
-        self._decide_ms = 0
-        self._decide_source = "user"
-        self._decide_label = "search"
+    def _arm_search(self, prompt: str, force: bool, mesh: bool) -> bool:
+        """Toggle on always searches. Otherwise only an explicit ask does."""
+        from pair.turn.shape import user_question
 
-    def _decide(self, peer, kind, model, outbound, prompt, knobs, facts, summary):
-        from pair.turn.decide import decide_search
-
-        decision = decide_search(
-            peer,
-            kind,
-            model,
-            outbound,
-            prompt,
-            knobs,
-            facts,
-            summary,
-            getattr(self, "_cancel", None),
-        )
-        self._decide_ms = decision.ms
-        self._decide_source = decision.source
-        self._decide_label = "search" if decision.search else "skip"
-        return decision
-
-    def _resolve_search(
-        self,
-        force: bool,
-        candidate: bool,
-        peer,
-        kind,
-        model,
-        outbound,
-        prompt,
-        knobs,
-        facts,
-        summary,
-    ) -> bool:
-        if force:
-            self._mark_user_search()
-            return True
-        if not candidate:
+        if not mesh:
             return False
-        return bool(
-            self._decide(
-                peer, kind, model, outbound, prompt, knobs, facts, summary
-            ).search
-        )
+        if force:
+            source = "user"
+        elif explicit_search(prompt):
+            source = "keyword"
+        else:
+            return False
+        self._decide_source = source
+        self._decide_label = "search"
+        self._search_query = user_question(prompt).strip() or (prompt or "").strip()
+        return True
 
     def _stamp_decide(self, payload: dict) -> None:
         if self._public():
@@ -241,6 +201,10 @@ class ChatRoutes:
             return
         payload["pi_decide"] = label
         payload["pi_decide_source"] = source
+        if label == "search":
+            query = getattr(self, "_search_query", "") or ""
+            if query:
+                payload["pi_search_query"] = query
 
     def _mark_queue(self) -> None:
         started = getattr(self, "_queue_t0", None)
@@ -251,7 +215,6 @@ class ChatRoutes:
     def _attach_timing(self, payload: dict, started: float) -> None:
         timing = assemble(
             queue_ms=getattr(self, "_queue_ms", 0),
-            decide_ms=getattr(self, "_decide_ms", 0),
             search_ms=getattr(self, "_search_ms", 0),
             usage=getattr(self, "_usage", None),
             total_ms=int((time.time() - started) * 1000),
@@ -450,7 +413,6 @@ class ChatRoutes:
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
             self._local_context = _recall_context(self, outbound, prompt)
-            candidate = search_candidate(prompt, mesh)
             tuned = _tuned_knobs(used if kind != "llamacpp" else model)
             ctx = int(tuned.get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
@@ -495,6 +457,8 @@ class ChatRoutes:
             self, model, temperature, max_tokens
         )
         self._answer_cap = int(max_tokens or 0)
+        do_search = self._arm_search(prompt, force_search, mesh)
+        temperature = _cap_temperature(temperature, do_search)
         use_model = grounded is None
         slot = {"held": False, "waiting": False}
         if use_model:
@@ -517,7 +481,6 @@ class ChatRoutes:
 
                 overlap(lambda: prepare_prefix(outbound))
         try:
-            armed_force = bool(force_search and mesh)
             if want_stream:
                 self._stream(
                     peer,
@@ -530,8 +493,7 @@ class ChatRoutes:
                     started,
                     prompt,
                     think_name,
-                    search_candidate=candidate,
-                    force_search=armed_force,
+                    do_search=do_search,
                     searched=False,
                     search_note=None,
                     mode_name=mode_name,
@@ -554,21 +516,7 @@ class ChatRoutes:
                 if slot["held"]:
                     self._mark_queue()
                 fact_text, summary_text = _memory_prompt(self._memory_scope())
-                do_search = self._resolve_search(
-                    armed_force,
-                    candidate,
-                    peer,
-                    kind,
-                    model,
-                    outbound,
-                    prompt,
-                    tuned,
-                    fact_text,
-                    summary_text,
-                )
-                temperature = _cap_temperature(temperature, do_search)
                 if do_search:
-                    _prime_prefix(outbound)
                     self._searched = True
                     outbound, search_note = self._timed_search(
                         outbound,

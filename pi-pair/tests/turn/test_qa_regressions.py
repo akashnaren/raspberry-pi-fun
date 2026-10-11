@@ -8,7 +8,6 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
 
 from pair.memory.compact import run_compact
 from pair.memory.store import facts_block, remember_user, save_summary, summary_text
@@ -16,7 +15,7 @@ from pair.render.charts import render_chart, with_headers
 from pair.render.documents import render_document
 from pair.server import Handler
 from pair.turn.abilities import clean_reply, parse_fences, settle_blocks, tool_notes
-from pair.turn.decide import search_candidate
+from pair.turn.search_ask import explicit_search
 from pair.turn.shape import (
     PERSONA,
     sample_turns,
@@ -352,10 +351,8 @@ class LocalAnswers(unittest.TestCase):
             ),
         )
         self.assertEqual(calls, [])
-        with patch.dict(os.environ, {"PI_PAIR_ROLE": "brain"}):
-            for prompt in prompts:
-                self.assertFalse(search_candidate(prompt, True), prompt)
-            self.assertTrue(search_candidate(chained, True))
+        for prompt in (*prompts, chained, cactus):
+            self.assertFalse(explicit_search(prompt), prompt)
 
 
 if __name__ == "__main__":

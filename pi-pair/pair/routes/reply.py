@@ -14,7 +14,6 @@ from pair.routes.base import safe_write, status_event, write_event
 from pair.routes.chat import (
     _block,
     _cap_temperature,
-    _prime_prefix,
     _prompt_note,
     _tuned_knobs,
     apply_tier,
@@ -292,8 +291,7 @@ class ReplyRoutes:
         started,
         prompt: str,
         think_name: str = "",
-        search_candidate: bool = False,
-        force_search: bool = False,
+        do_search: bool = False,
         searched: bool = False,
         search_note: dict | None = None,
         mode_name: str = "",
@@ -366,40 +364,36 @@ class ReplyRoutes:
         think_extra = {"pi_think": think_name} if think_name else None
         if not emit_status("thinking", think_extra):
             return
-        fact_text, summary_text = _memory_prompt(self._memory_scope())
-        knobs = tuned if isinstance(tuned, dict) else _tuned_knobs(model)
-        do_search = self._resolve_search(
-            force_search,
-            search_candidate,
-            peer,
-            kind,
-            model,
-            messages,
-            prompt,
-            knobs,
-            fact_text,
-            summary_text,
-        )
-        temperature = _cap_temperature(temperature, do_search)
-        if do_search:
-            _prime_prefix(messages)
-            self._searched = True
-            if not emit_status("searching", {"pi_tool": "search"}):
-                return
-            if not searched:
-                messages, search_note = self._timed_search(
-                    messages,
-                    prompt,
-                    model,
-                    getattr(self, "_cancel", None),
-                    job=None,
-                )
-            found = {"pi_tool": "search"}
-            if search_note:
-                found["pi_search"] = search_note["status"]
-                found["pi_sources"] = search_note["sources"]
-            if not emit_status("searching", found):
-                return
+        try:
+            fact_text, summary_text = _memory_prompt(self._memory_scope())
+            knobs = tuned if isinstance(tuned, dict) else _tuned_knobs(model)
+            temperature = _cap_temperature(temperature, do_search)
+            if do_search:
+                self._searched = True
+                if not emit_status("searching", {"pi_tool": "search"}):
+                    return
+                if not searched:
+                    messages, search_note = self._timed_search(
+                        messages,
+                        prompt,
+                        model,
+                        getattr(self, "_cancel", None),
+                        job=None,
+                    )
+                found = {"pi_tool": "search"}
+                if search_note:
+                    found["pi_search"] = search_note["status"]
+                    found["pi_sources"] = search_note["sources"]
+                if not emit_status("searching", found):
+                    return
+        except ClientGone:
+            return
+        except Exception as error:
+            err = {"error": public_failure(error, search_note)}
+            apply_tier(self, err)
+            safe_write(self, f"data: {json.dumps(err)}\n\n".encode(), flush=True)
+            safe_write(self, b"data: [DONE]\n\n", flush=True)
+            return
         grounded = ready_answer
         answer_extra = dict(think_extra or {})
         if search_note:

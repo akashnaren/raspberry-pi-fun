@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import unittest
-from unittest.mock import patch
 
 from pair.turn.abilities import settle_blocks, tool_notes
 from pair.turn.calc import evaluate_expr, fully_answers, notes_for
-from pair.turn.decide import search_candidate
+from pair.turn.search_ask import explicit_search
 from pair.turn.shape import shape_messages
 
 
@@ -49,8 +47,7 @@ class CalculatorNotes(unittest.TestCase):
         notes = tool_notes(reply, search=search, prompt=prompt)
         self.assertIn("Calculator: 0.15*240+12 = 48", notes)
         self.assertEqual(calls, [])
-        with patch.dict(os.environ, {"PI_PAIR_ROLE": "brain"}):
-            self.assertTrue(search_candidate(prompt, True))
+        self.assertFalse(explicit_search(prompt))
 
     def test_the_note_is_placed_before_the_question(self):
         prompt = "what is 847*23?"

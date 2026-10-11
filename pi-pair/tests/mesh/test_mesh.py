@@ -35,7 +35,6 @@ from pair.routes import reply as reply_routes
 from pair.routes import search as search_routes
 from pair.routes.search import SEARCH_BODY_CAP
 from pair.server import make_server
-from tests.support.fakes import _decide_body
 from tests.support.paths import ROOT
 
 SECRET = "zz-secret-bench-phrase email ada@example.com phone 415-555-0130"
@@ -160,13 +159,9 @@ class OllamaPage(_Quiet, BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        decided = _decide_body(self, payload)
-        if decided is not None:
-            body = decided
-        else:
-            type(self).posts += 1
-            type(self).last_payload = payload
-            body = json.dumps({"message": {"content": "local answer"}}).encode()
+        type(self).posts += 1
+        type(self).last_payload = payload
+        body = json.dumps({"message": {"content": "local answer"}}).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))

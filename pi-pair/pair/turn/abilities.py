@@ -103,7 +103,7 @@ def ground_citations(text: str, source_count: int) -> str:
 
 
 def strip_fences(text: str) -> str:
-    """Drop an empty fence, and a fence whose label is not a language token."""
+    """Drop an empty fence. A fence whose label is not a language token keeps its text."""
 
     def repl(match: re.Match) -> str:
         label = (match.group(1) or "").strip()
@@ -111,7 +111,7 @@ def strip_fences(text: str) -> str:
         if not body:
             return ""
         if label and not _LANG_TOKEN.fullmatch(label):
-            return ""
+            return body
         return match.group(0)
 
     return _ANY_FENCE.sub(repl, text or "")
