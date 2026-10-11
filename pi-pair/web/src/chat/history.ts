@@ -18,6 +18,7 @@ export interface ChatOptions {
   sys?: string;
   fresh?: boolean;
   spoken?: boolean;
+  webSearch?: boolean;
 }
 
 export interface ChatBody {
@@ -28,6 +29,7 @@ export interface ChatBody {
   pi_mode: string;
   pi_target: string;
   pi_mesh: string;
+  web_search: boolean;
 }
 
 function visibleAssistant(text: string): string {
@@ -93,5 +95,6 @@ export function chatBody(turns: HistoryTurn[], options: ChatOptions): ChatBody {
     pi_mode: options.mode,
     pi_target: "auto",
     pi_mesh: "on",
+    web_search: options.webSearch === true,
   };
 }

@@ -318,6 +318,15 @@ def openapi_document() -> dict:
                             "default": False,
                             "description": "When true, the reply is server-sent events.",
                         },
+                        "web_search": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "When true, skip the model check and search "
+                                "before answering. Omit or false to let the "
+                                "model decide. Any other JSON type is rejected."
+                            ),
+                        },
                         "think": {
                             "type": "string",
                             "enum": ["low", "medium", "high"],

@@ -12,7 +12,7 @@ import { ui } from "./core/state";
 import type { Turn } from "./core/types";
 import { compactMemory, hideMemPopSoon, holdRingTitle, refreshMemoryRing, showMemPop } from "./memory/ring";
 import { bootSplash, paintBrand } from "./ui/brand";
-import { closeInfoTips, dismissPopovers, infoTip, newChat, openInfo, paintModelMode, paintThemeChoice, paintThinking, persistSettings, setModelMode, setTheme, setThinking } from "./ui/controls";
+import { closeInfoTips, dismissPopovers, infoTip, newChat, openInfo, paintModelMode, paintThemeChoice, paintThinking, paintWebSearch, persistSettings, setModelMode, setTheme, setThinking, setWebSearch } from "./ui/controls";
 import { setSettingsOpen, setSourcesOpen } from "./ui/panels";
 import { armBarge, endVoiceMode, ensureOrb, releaseVoice, setVoiceState, toggleVoice, toggleVoiceMode } from "./voice/mode";
 import { firstSpokenSentence, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice/speech";
@@ -162,6 +162,8 @@ applyVoiceSilence(ui.pageSettings.voiceSilenceMs);
 paintThinking();
 paintModelMode();
 paintThemeChoice();
+paintWebSearch();
+byId("webSearch").onclick = () => setWebSearch(!ui.webSearch);
 whenSpeechStarts((text) => {
   if (!ui.voiceOn) return;
   ui.speakingLine = text || ui.speakingLine;

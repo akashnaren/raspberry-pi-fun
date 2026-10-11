@@ -35,6 +35,7 @@ from pair.routes import reply as reply_routes
 from pair.routes import search as search_routes
 from pair.routes.search import SEARCH_BODY_CAP
 from pair.server import make_server
+from tests.support.fakes import _decide_body
 from tests.support.paths import ROOT
 
 SECRET = "zz-secret-bench-phrase email ada@example.com phone 415-555-0130"
@@ -145,6 +146,8 @@ class FailedSearch(_Quiet, BaseHTTPRequestHandler):
 class OllamaPage(_Quiet, BaseHTTPRequestHandler):
     posts = 0
     last_payload = None
+    decide = "SKIP"
+    decide_posts = 0
 
     def do_GET(self):
         body = json.dumps({"models": [{"name": "qwen3:0.6b"}]}).encode()
@@ -157,9 +160,13 @@ class OllamaPage(_Quiet, BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        type(self).posts += 1
-        type(self).last_payload = payload
-        body = json.dumps({"message": {"content": "local answer"}}).encode()
+        decided = _decide_body(self, payload)
+        if decided is not None:
+            body = decided
+        else:
+            type(self).posts += 1
+            type(self).last_payload = payload
+            body = json.dumps({"message": {"content": "local answer"}}).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
@@ -507,6 +514,8 @@ class ChatOffload(unittest.TestCase):
         SearchPage.seen = []
         OllamaPage.posts = 0
         OllamaPage.last_payload = None
+        OllamaPage.decide = "SEARCH"
+        OllamaPage.decide_posts = 0
 
     def tearDown(self):
         for httpd in self.servers:

@@ -27,13 +27,13 @@ from pair.model.think import decode_plan
 from pair.routes.base import safe_write, status_event, write_event
 from pair.routes.memory import _memory_prompt
 from pair.routes.public_api import stamp
-from pair.routes.search import _begin_lookup
 from pair.routes.status import _claim_wait, listed_chat_models, mode_fields
 from pair.turn.abilities import tail_hints
+from pair.turn.decide import search_candidate, web_search_request
 from pair.turn.moderate import moderate
 from pair.turn.shape import (
-    is_structured_request,
-    needs_web,
+    GROUNDED_RULE,
+    NO_RESULTS_RULE,
     shape_messages,
     structure_hint,
     turns_for_memory,
@@ -61,22 +61,6 @@ def _named_can_generate(target: str) -> bool:
     return named is not None and may_generate(named)
 
 
-def one_user_turn(messages) -> bool:
-    """The canned map is for a single new line. A session with history stays on pi4."""
-    users = 0
-    for message in messages or []:
-        if not isinstance(message, dict):
-            continue
-        role = message.get("role") or "user"
-        if role == "assistant":
-            return False
-        if role == "user":
-            users += 1
-            if users > 1:
-                return False
-    return True
-
-
 def last_user_text(messages) -> str:
     for message in reversed(messages or []):
         if not isinstance(message, dict):
@@ -101,9 +85,27 @@ def _tuned_knobs(model: str) -> dict:
 
 
 def _prompt_note(search_note) -> str:
+    """Ground the answer when a lookup ran. No note when it did not."""
     if not isinstance(search_note, dict):
         return ""
-    return str(search_note.get("prompt_note") or "")
+    note = str(search_note.get("prompt_note") or "")
+    if search_note.get("status") == "ok" and note:
+        return note + "\n" + GROUNDED_RULE
+    return NO_RESULTS_RULE
+
+
+def _prime_prefix(messages) -> None:
+    if os.environ.get("PI_PAIR_PREFIX_PRIME") != "1":
+        return
+    from pair.mesh.tools import schedule_prefix_prime
+
+    schedule_prefix_prime(messages)
+
+
+def _cap_temperature(temperature: float, searched: bool) -> float:
+    if not searched:
+        return temperature
+    return min(float(temperature), 0.3)
 
 
 def _apply_model_sample(handler, model: str, temperature: float, max_tokens: int):
@@ -175,9 +177,70 @@ class ChatRoutes:
     def _reset_timing(self) -> None:
         self._queue_ms = 0
         self._search_ms = 0
+        self._decide_ms = 0
+        self._decide_source = ""
+        self._decide_label = ""
         self._usage = {}
         self._ttft_ms = 0
         self._queue_t0 = None
+
+    def _mark_user_search(self) -> None:
+        self._decide_ms = 0
+        self._decide_source = "user"
+        self._decide_label = "search"
+
+    def _decide(self, peer, kind, model, outbound, prompt, knobs, facts, summary):
+        from pair.turn.decide import decide_search
+
+        decision = decide_search(
+            peer,
+            kind,
+            model,
+            outbound,
+            prompt,
+            knobs,
+            facts,
+            summary,
+            getattr(self, "_cancel", None),
+        )
+        self._decide_ms = decision.ms
+        self._decide_source = decision.source
+        self._decide_label = "search" if decision.search else "skip"
+        return decision
+
+    def _resolve_search(
+        self,
+        force: bool,
+        candidate: bool,
+        peer,
+        kind,
+        model,
+        outbound,
+        prompt,
+        knobs,
+        facts,
+        summary,
+    ) -> bool:
+        if force:
+            self._mark_user_search()
+            return True
+        if not candidate:
+            return False
+        return bool(
+            self._decide(
+                peer, kind, model, outbound, prompt, knobs, facts, summary
+            ).search
+        )
+
+    def _stamp_decide(self, payload: dict) -> None:
+        if self._public():
+            return
+        source = getattr(self, "_decide_source", "") or ""
+        label = getattr(self, "_decide_label", "") or ""
+        if not source or not label:
+            return
+        payload["pi_decide"] = label
+        payload["pi_decide_source"] = source
 
     def _mark_queue(self) -> None:
         started = getattr(self, "_queue_t0", None)
@@ -188,12 +251,14 @@ class ChatRoutes:
     def _attach_timing(self, payload: dict, started: float) -> None:
         timing = assemble(
             queue_ms=getattr(self, "_queue_ms", 0),
+            decide_ms=getattr(self, "_decide_ms", 0),
             search_ms=getattr(self, "_search_ms", 0),
             usage=getattr(self, "_usage", None),
             total_ms=int((time.time() - started) * 1000),
             ttft_ms=getattr(self, "_ttft_ms", 0),
         )
         payload["pi_timing"] = present(timing, self._public())
+        self._stamp_decide(payload)
 
     def _effort_name(self) -> str:
         """Low, Medium, or High when the turn named one. Empty otherwise."""
@@ -360,6 +425,11 @@ class ChatRoutes:
         if node_role() != "brain":
             self._relay_to_brain(raw)
             return
+        try:
+            force_search = web_search_request(data)
+        except ValueError as error:
+            self._error(str(error), status=400)
+            return
         # Pro must already be on disk. A missing tag is not a pull, and it does
         # not take a generation slot. Auto names a mode_table tag and does not
         # plan a swap.
@@ -379,27 +449,13 @@ class ChatRoutes:
             ]
             kind = peer.get("kind") or "ollama"
             used = llamacpp_model(peer, model) if kind == "llamacpp" else model
-            structured = is_structured_request(prompt)
             self._local_context = _recall_context(self, outbound, prompt)
-            do_search = (
-                bool(mesh and node_role() == "brain")
-                and not structured
-                and needs_web(
-                    prompt,
-                    follow_up=not one_user_turn(messages),
-                    context=self._local_context,
-                )
-            )
+            candidate = search_candidate(prompt, mesh)
             tuned = _tuned_knobs(used if kind != "llamacpp" else model)
             ctx = int(tuned.get("num_ctx") or 2048)
             outbound = fit_outbound(outbound, num_ctx=ctx, reply_tokens=max_tokens)
             hint = tail_hints(prompt, structure_hint(prompt) or "")
             search_note = None
-            search_job = _begin_lookup(prompt, model) if do_search else None
-            if do_search and os.environ.get("PI_PAIR_PREFIX_PRIME") == "1":
-                from pair.mesh.tools import schedule_prefix_prime
-
-                schedule_prefix_prime(outbound)
             grounded = None
         except ClientGone:
             raise
@@ -461,6 +517,7 @@ class ChatRoutes:
 
                 overlap(lambda: prepare_prefix(outbound))
         try:
+            armed_force = bool(force_search and mesh)
             if want_stream:
                 self._stream(
                     peer,
@@ -473,7 +530,8 @@ class ChatRoutes:
                     started,
                     prompt,
                     think_name,
-                    do_search,
+                    search_candidate=candidate,
+                    force_search=armed_force,
                     searched=False,
                     search_note=None,
                     mode_name=mode_name,
@@ -481,7 +539,7 @@ class ChatRoutes:
                     resident_name=resident_name,
                     ready_answer=grounded,
                     slot=slot,
-                    search_job=search_job,
+                    tuned=tuned,
                 )
             else:
                 if slot["waiting"] and not _claim_wait(
@@ -495,16 +553,30 @@ class ChatRoutes:
                     return
                 if slot["held"]:
                     self._mark_queue()
+                fact_text, summary_text = _memory_prompt(self._memory_scope())
+                do_search = self._resolve_search(
+                    armed_force,
+                    candidate,
+                    peer,
+                    kind,
+                    model,
+                    outbound,
+                    prompt,
+                    tuned,
+                    fact_text,
+                    summary_text,
+                )
+                temperature = _cap_temperature(temperature, do_search)
                 if do_search:
+                    _prime_prefix(outbound)
                     self._searched = True
                     outbound, search_note = self._timed_search(
                         outbound,
                         prompt,
                         model,
                         getattr(self, "_cancel", None),
-                        job=search_job,
+                        job=None,
                     )
-                fact_text, summary_text = _memory_prompt(self._memory_scope())
                 source_rows = list(outbound)
                 outbound = shape_messages(
                     outbound,

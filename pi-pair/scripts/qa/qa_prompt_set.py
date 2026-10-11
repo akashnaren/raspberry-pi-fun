@@ -24,7 +24,6 @@ from pair.render.documents import render_document
 from pair.turn.abilities import clean_reply, parse_fences, settle_blocks
 from pair.turn.shape import (
     PERSONA,
-    needs_web,
     persona_text,
     sample_turns,
     shape_messages,
@@ -364,9 +363,6 @@ def main() -> int:
         "persona_tokens_ok": 40 <= len(persona) / 3.2 <= 220,
         "stock_absent": not any(phrase in lowered for phrase in STOCK),
         "no_example_fence": "```" not in persona,
-        "personal_skips_search": not needs_web(PROMPTS[0])
-        and not needs_web(PROMPTS[1]),
-        "fresh_searches": needs_web(PROMPTS[2]),
         "no_persona_echo": echoed not in cleaned and question not in cleaned,
         "empty_fence_gone": "```" not in cleaned and "junk" not in cleaned,
         "stray_markers_gone": "[n]" not in cleaned and "[53]" not in cleaned,

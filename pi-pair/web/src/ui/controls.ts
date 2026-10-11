@@ -3,6 +3,7 @@ import { clearFollowQueue } from "../chat/follow-queue-view";
 import { autoGrow } from "../chat/send";
 import { paint } from "../chat/transcript";
 import { abortImageJobs } from "../chat/turn-images";
+import { writeWebSearch } from "../chat/web-search";
 import { byId } from "../core/dom";
 import { freshId } from "../core/session";
 import { applyTheme, browserStorage, saveSettings, type ThemeName } from "../core/settings";
@@ -24,6 +25,19 @@ export function persistSettings(): void {
     pictures: ui.picturesOn,
   };
   saveSettings(browserStorage("local"), ui.pageSettings);
+}
+
+export function paintWebSearch(): void {
+  const button = document.getElementById("webSearch");
+  if (!button) return;
+  button.classList.toggle("on", ui.webSearch);
+  button.setAttribute("aria-pressed", ui.webSearch ? "true" : "false");
+}
+
+export function setWebSearch(on: boolean): void {
+  ui.webSearch = on;
+  writeWebSearch(browserStorage("session"), on);
+  paintWebSearch();
 }
 
 export function paintThinking(): void {

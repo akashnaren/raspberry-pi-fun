@@ -1473,6 +1473,28 @@ body.voice-session {
   &:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.28); outline-offset: 1px; }
 }
 
+.search-btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: #101010;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+
+  &:hover { color: var(--ink); }
+  &.on {
+    color: #fff;
+    background: rgba(126, 200, 184, 0.16);
+    box-shadow: 0 0 0 1px rgba(126, 200, 184, 0.45);
+  }
+  &:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.28); outline-offset: 1px; }
+}
+
 .composer-tools {
   display: flex;
   align-items: center;
@@ -1770,6 +1792,7 @@ body.voice-session {
   .composer-wrap { padding-left: 12px; padding-right: 12px; }
   .composer-bar { flex-wrap: nowrap; }
   .think-btn { min-width: 0; padding: 7px 8px; }
+  .search-btn { height: 30px; padding: 0 8px; font-size: 11px; }
 }
 
 .msg.streaming .body.arrived { animation: answer-in 0.45s ease; }
@@ -1823,8 +1846,13 @@ html[data-theme="light"] {
   color-scheme: light;
 
   #q, .empty p { color: var(--ink); }
-  .think-set, .seg, .mode-btn { background: #f7f6f2; border-color: rgba(0, 0, 0, 0.08); }
+  .think-set, .seg, .mode-btn, .search-btn { background: #f7f6f2; border-color: rgba(0, 0, 0, 0.08); }
   .think-btn.on, .seg-btn.on { color: var(--ink); background: rgba(0, 0, 0, 0.08); }
+  .search-btn.on {
+    color: #042117;
+    background: rgba(61, 220, 151, 0.35);
+    box-shadow: 0 0 0 1px rgba(12, 107, 88, 0.45);
+  }
   .composer, .drawer, .field input, .field select, .field textarea, #voiceSilence {
     border-color: rgba(0, 0, 0, 0.1);
   }

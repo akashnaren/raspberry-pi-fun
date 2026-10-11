@@ -392,6 +392,8 @@ class PairHttp(unittest.TestCase):
         OllamaFake.posts = 0
         OllamaFake.last_payload = None
         OllamaFake.catalog = ["qwen3:0.6b"]
+        OllamaFake.decide = "SKIP"
+        OllamaFake.decide_posts = 0
         self.search_calls = []
         self._lookup_web = search_routes.lookup_web
 
@@ -600,6 +602,7 @@ class PairHttp(unittest.TestCase):
         self.assertIn("__PRO_TIP__", source_page)
         self.assertNotIn("qwen3:0.6b, the fast resident model.", source_page)
         self.assertNotIn("qwen3:1.7b, loaded when the question needs it.", source_page)
+        OllamaFake.decide = "SEARCH"
         self.assertEqual(health_body["peers_up"], 1)
         self.assertEqual(health_body["peers"][0]["kind"], "ollama")
         status, headers, body = self._post(
@@ -1077,6 +1080,7 @@ class PairHttp(unittest.TestCase):
 
     def test_miss_puts_search_snippets_in_the_prompt(self):
         self._pi3_accepts_forwarded_rows()
+        OllamaFake.decide = "SEARCH"
         prompt = "What is the latest height of the bench in the hall?"
 
         def fake(query, opener=None):
@@ -1121,6 +1125,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(row["answer"], "hello from peer")
 
     def test_failed_search_still_answers_locally(self):
+        OllamaFake.decide = "SEARCH"
         prompt = "What is the latest weather on the far pier?"
 
         def boom(query, opener=None):
@@ -1392,6 +1397,7 @@ class PairHttp(unittest.TestCase):
 
     def test_status_events_follow_the_work(self):
         port = self._pi4()
+        OllamaFake.decide = "SEARCH"
         headers, raw = self._stream_raw(
             port,
             "What is the latest place of the hall bench?",
@@ -1426,6 +1432,7 @@ class PairHttp(unittest.TestCase):
 
         self.search_calls.clear()
         OllamaFake.posts = 0
+        OllamaFake.decide = "SKIP"
         _headers, hit = self._stream_raw(
             port,
             "Hi!",
@@ -1452,6 +1459,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(self.search_calls, [])
         self.assertEqual(OllamaFake.posts, 1)
 
+        OllamaFake.decide = "SEARCH"
         status, response_headers, body = self._post(
             port,
             {
@@ -1471,6 +1479,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_search"], "failed")
         self.assertEqual(response_headers.get("X-Pi-Search"), "failed")
 
+        OllamaFake.decide = "SKIP"
         status, response_headers, body = self._post(
             port,
             {
@@ -1491,6 +1500,7 @@ class PairHttp(unittest.TestCase):
 
         limit = search_note_limit()
         self.assertEqual(limit, 720)
+        OllamaFake.decide = "SEARCH"
         prompt = "What is the latest width of the east window?"
         page = "snippet " * 400
 
@@ -1527,7 +1537,13 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(notes["role"], "system")
         self.assertTrue(notes["content"].startswith("Notes:"))
         self.assertIn("Web search notes.", notes["content"])
-        self.assertLessEqual(len(notes["content"]), limit + len("Notes:\n"))
+        from pair.turn.shape import GROUNDED_RULE
+
+        self.assertTrue(notes["content"].endswith(GROUNDED_RULE))
+        self.assertLessEqual(
+            len(notes["content"]) - len("\n" + GROUNDED_RULE),
+            limit + len("Notes:\n"),
+        )
         self.assertIn("snippet", notes["content"])
         self.assertLess(len(notes["content"]), len(page))
 
@@ -1752,6 +1768,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:0.6b")
 
     def test_flash_search_keeps_three_sources(self):
+        OllamaFake.decide = "SEARCH"
+
         def fake(query, opener=None):
             self.search_calls.append(query)
             return {
@@ -1779,6 +1797,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_sources"][2]["url"], "https://ex2.test/a")
 
     def test_search_sources_stop_at_eight(self):
+        OllamaFake.decide = "SEARCH"
+
         def fake(query, opener=None):
             self.search_calls.append(query)
             return {
@@ -1810,6 +1830,157 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(body["pi_sources"][7]["url"], "https://ex7.test/a")
         self.assertEqual(body["pi_mode"], "pro")
         self.assertEqual(OllamaFake.last_payload["model"], "qwen3:1.7b")
+
+    def _mesh_post(self, port, content, extra=None):
+        payload = {
+            "model": "qwen3:0.6b",
+            "messages": [{"role": "user", "content": content}],
+            "stream": False,
+            "pi_mesh": "on",
+        }
+        if extra:
+            payload.update(extra)
+        return self._post(
+            port,
+            payload,
+            {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+        )
+
+    def test_model_search_on_a_named_person(self):
+        from pair.turn.shape import NO_RESULTS_RULE
+
+        OllamaFake.decide = "SEARCH"
+        OllamaFake.posts = 0
+        OllamaFake.decide_posts = 0
+        prompt = "Who is Natan Weitzman from Tesla - use your tools web search"
+        port = self._pi4()
+        status, _headers, body = self._mesh_post(port, prompt)
+        self.assertEqual(status, 200)
+        self.assertIn("searching", body["pi_stages"])
+        self.assertEqual(self.search_calls, [prompt])
+        self.assertIn(NO_RESULTS_RULE, json.dumps(OllamaFake.last_payload["messages"]))
+        self.assertLessEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
+        self.assertEqual(OllamaFake.last_payload["options"]["num_ctx"], 2048)
+        self.assertEqual(body["pi_decide"], "search")
+        self.assertEqual(body["pi_decide_source"], "model")
+        self.assertEqual(OllamaFake.decide_posts, 1)
+        self.assertEqual(OllamaFake.posts, 1)
+
+    def test_model_skip_on_a_greeting(self):
+        OllamaFake.decide = "SKIP"
+        OllamaFake.posts = 0
+        OllamaFake.decide_posts = 0
+        port = self._pi4()
+        status, _headers, body = self._mesh_post(port, "hi")
+        self.assertEqual(status, 200)
+        self.assertNotIn("searching", body["pi_stages"])
+        self.assertEqual(self.search_calls, [])
+        self.assertEqual(body["pi_decide"], "skip")
+        self.assertEqual(body["pi_decide_source"], "model")
+        self.assertEqual(OllamaFake.decide_posts, 1)
+        self.assertEqual(OllamaFake.posts, 1)
+
+    def test_arithmetic_skips_the_search_check(self):
+        OllamaFake.decide = "SEARCH"
+        OllamaFake.posts = 0
+        OllamaFake.decide_posts = 0
+        port = self._pi4()
+        status, _headers, body = self._mesh_post(port, "What is 2+2?")
+        self.assertEqual(status, 200)
+        self.assertEqual(OllamaFake.decide_posts, 0)
+        self.assertEqual(self.search_calls, [])
+        self.assertNotIn("searching", body["pi_stages"])
+        self.assertEqual(body["pi_timing"]["decide_ms"], 0)
+        self.assertNotIn("pi_decide", body)
+        self.assertEqual(OllamaFake.posts, 1)
+
+    def test_stream_search_keeps_the_status_order(self):
+        OllamaFake.decide = "SEARCH"
+        port = self._pi4()
+        prompt = "Who is Natan Weitzman from Tesla - use your tools web search"
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            data=json.dumps(
+                {
+                    "model": "qwen3:0.6b",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": True,
+                    "pi_mesh": "on",
+                }
+            ).encode(),
+            headers={
+                "content-type": "application/json",
+                "X-Pi-Target": "auto",
+                "X-Pi-Mesh": "on",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            raw = response.read().decode()
+        self.assertEqual(
+            _statuses(raw), ["thinking", "searching", "searching", "answering"]
+        )
+        finals = [
+            item
+            for item in _sse_payloads(raw)
+            if item.get("pi_decide_source") == "model"
+        ]
+        self.assertEqual(finals[-1]["pi_decide"], "search")
+        self.assertEqual(self.search_calls, [prompt])
+
+    def test_web_search_true_forces_a_lookup(self):
+        from pair.turn.shape import NO_RESULTS_RULE
+
+        OllamaFake.decide = "SEARCH"
+        OllamaFake.posts = 0
+        OllamaFake.decide_posts = 0
+        port = self._pi4()
+        status, _headers, body = self._mesh_post(port, "hi", {"web_search": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.search_calls, ["hi"])
+        self.assertIn("searching", body["pi_stages"])
+        self.assertEqual(OllamaFake.decide_posts, 0)
+        self.assertEqual(body["pi_decide"], "search")
+        self.assertEqual(body["pi_decide_source"], "user")
+        self.assertEqual(body["pi_timing"]["decide_ms"], 0)
+        self.assertLessEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
+        self.assertIn(NO_RESULTS_RULE, json.dumps(OllamaFake.last_payload["messages"]))
+        self.assertEqual(OllamaFake.posts, 1)
+
+    def test_web_search_false_leaves_the_model_check(self):
+        OllamaFake.decide = "SKIP"
+        OllamaFake.posts = 0
+        OllamaFake.decide_posts = 0
+        port = self._pi4()
+        status, _headers, body = self._mesh_post(port, "hi", {"web_search": False})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.search_calls, [])
+        self.assertEqual(body["pi_decide_source"], "model")
+        self.assertEqual(body["pi_decide"], "skip")
+        self.assertEqual(OllamaFake.decide_posts, 1)
+
+    def test_web_search_forces_even_arithmetic(self):
+        OllamaFake.decide = "SEARCH"
+        OllamaFake.posts = 0
+        OllamaFake.decide_posts = 0
+        prompt = "What is 2+2?"
+        port = self._pi4()
+        status, _headers, body = self._mesh_post(port, prompt, {"web_search": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.search_calls, [prompt])
+        self.assertEqual(OllamaFake.decide_posts, 0)
+        self.assertEqual(body["pi_decide_source"], "user")
+        self.assertEqual(body["pi_timing"]["decide_ms"], 0)
+
+    def test_web_search_must_be_a_boolean(self):
+        port = self._pi4()
+        for value in (1, "true", "yes", None):
+            OllamaFake.posts = 0
+            OllamaFake.decide_posts = 0
+            status, _headers, body = self._mesh_post(port, "hi", {"web_search": value})
+            self.assertEqual(status, 400, value)
+            self.assertEqual(body["error"], "web_search must be true or false.")
+            self.assertEqual(OllamaFake.posts, 0, value)
+            self.assertEqual(OllamaFake.decide_posts, 0, value)
 
 
 class EmbedRoute(unittest.TestCase):

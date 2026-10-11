@@ -42,10 +42,8 @@ _DEFAULTS = {
     # Local harmful-content filter. Off leaves refusal to a separate stack
     # that replaces pair.turn.moderate.moderate. On restores the in-process gate.
     "safety_filter": False,
-    # Search every question except attachments, bare arithmetic, very short
-    # lines, and short follow-ups. Off keeps automatic search to time cues.
-    # The model asks for any other fact with a search fence.
-    "ground_all": False,
+    # Seconds the search check may run before the health-gated fallback.
+    "search_decide_timeout_s": 3.0,
 }
 
 

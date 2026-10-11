@@ -11,7 +11,14 @@ from pair.model.chat_once import chat_llamacpp, chat_ollama
 from pair.model.chat_stream import iter_ollama_channels, stream_llamacpp, stream_ollama
 from pair.model.think import peel_think
 from pair.routes.base import safe_write, status_event, write_event
-from pair.routes.chat import _block, _prompt_note, _tuned_knobs, apply_tier
+from pair.routes.chat import (
+    _block,
+    _cap_temperature,
+    _prime_prefix,
+    _prompt_note,
+    _tuned_knobs,
+    apply_tier,
+)
 from pair.routes.memory import _memory_prompt
 from pair.routes.search import _searched, _source_count
 from pair.routes.status import _claim_wait, mode_fields
@@ -285,7 +292,8 @@ class ReplyRoutes:
         started,
         prompt: str,
         think_name: str = "",
-        do_search: bool = False,
+        search_candidate: bool = False,
+        force_search: bool = False,
         searched: bool = False,
         search_note: dict | None = None,
         mode_name: str = "",
@@ -293,7 +301,7 @@ class ReplyRoutes:
         resident_name: str = "",
         ready_answer: str | None = None,
         slot: dict | None = None,
-        search_job: dict | None = None,
+        tuned: dict | None = None,
     ) -> None:
         self.send_response(200)
         self._cors()
@@ -358,7 +366,23 @@ class ReplyRoutes:
         think_extra = {"pi_think": think_name} if think_name else None
         if not emit_status("thinking", think_extra):
             return
+        fact_text, summary_text = _memory_prompt(self._memory_scope())
+        knobs = tuned if isinstance(tuned, dict) else _tuned_knobs(model)
+        do_search = self._resolve_search(
+            force_search,
+            search_candidate,
+            peer,
+            kind,
+            model,
+            messages,
+            prompt,
+            knobs,
+            fact_text,
+            summary_text,
+        )
+        temperature = _cap_temperature(temperature, do_search)
         if do_search:
+            _prime_prefix(messages)
             self._searched = True
             if not emit_status("searching", {"pi_tool": "search"}):
                 return
@@ -368,7 +392,7 @@ class ReplyRoutes:
                     prompt,
                     model,
                     getattr(self, "_cancel", None),
-                    job=search_job,
+                    job=None,
                 )
             found = {"pi_tool": "search"}
             if search_note:
@@ -383,12 +407,11 @@ class ReplyRoutes:
             answer_extra["pi_sources"] = search_note["sources"]
         if not emit_status("answering", answer_extra or None):
             return
-        fact_text, summary_text = _memory_prompt(self._memory_scope())
         source_rows = list(messages)
         messages = shape_messages(
             messages,
             prompt,
-            _tuned_knobs(model),
+            knobs,
             think_name,
             _prompt_note(search_note),
             hints=tail_hints(prompt, structure_hint(prompt) or ""),

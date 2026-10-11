@@ -16,9 +16,9 @@ from pair.render.charts import render_chart, with_headers
 from pair.render.documents import render_document
 from pair.server import Handler
 from pair.turn.abilities import clean_reply, parse_fences, settle_blocks, tool_notes
+from pair.turn.decide import search_candidate
 from pair.turn.shape import (
     PERSONA,
-    needs_web,
     sample_turns,
     shape_messages,
     turns_for_memory,
@@ -308,11 +308,6 @@ class LocalAnswers(unittest.TestCase):
             "What is 1234 + 5678 - 999?",
             "What is 15% of 2340?",
         )
-        for knobs in ({"ground_all": True}, {"ground_all": False}):
-            with patch("pair.turn.shape.inference_knobs", return_value=knobs):
-                for prompt in prompts:
-                    self.assertFalse(needs_web(prompt), prompt)
-                self.assertTrue(needs_web("Who won the most recent Super Bowl?"))
         calls = []
 
         def search(query):
@@ -327,11 +322,6 @@ class LocalAnswers(unittest.TestCase):
         tool_notes("```search\npercent\n```", search=search, prompt=percent)
         cactus = "How often should I water the cactus?"
         context = "The user said: water the cactus every Sunday morning."
-        with patch(
-            "pair.turn.shape.inference_knobs", return_value={"ground_all": True}
-        ):
-            self.assertTrue(needs_web(cactus, follow_up=True))
-            self.assertTrue(needs_web(cactus, follow_up=True, context=context))
         tool_notes(
             "```search\ncactus watering\n```",
             search=search,
@@ -362,7 +352,10 @@ class LocalAnswers(unittest.TestCase):
             ),
         )
         self.assertEqual(calls, [])
-        self.assertFalse(needs_web(chained))
+        with patch.dict(os.environ, {"PI_PAIR_ROLE": "brain"}):
+            for prompt in prompts:
+                self.assertFalse(search_candidate(prompt, True), prompt)
+            self.assertTrue(search_candidate(chained, True))
 
 
 if __name__ == "__main__":
