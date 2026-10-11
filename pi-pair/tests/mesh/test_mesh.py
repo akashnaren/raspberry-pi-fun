@@ -564,7 +564,7 @@ class ChatOffload(unittest.TestCase):
                     "messages": [
                         {
                             "role": "user",
-                            "content": "What is the latest height of the zinc bench?",
+                            "content": "look up the height of the zinc bench",
                         }
                     ],
                     "stream": False,
@@ -600,9 +600,7 @@ class ChatOffload(unittest.TestCase):
         runtime.reset_health()
         status, body = self._chat(port, "on")
         self.assertEqual(status, 200)
-        self.assertEqual(
-            self.local_calls, ["What is the latest height of the zinc bench?"]
-        )
+        self.assertEqual(self.local_calls, ["look up the height of the zinc bench"])
         self.assertEqual(OllamaPage.posts, 2)
         self.assertNotIn("bench from pi2", json.dumps(OllamaPage.last_payload))
 

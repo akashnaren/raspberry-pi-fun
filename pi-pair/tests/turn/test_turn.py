@@ -621,7 +621,7 @@ class TurnHttp(unittest.TestCase):
                         "messages": [
                             {
                                 "role": "user",
-                                "content": "What is the latest place of the spare kettle?",
+                                "content": "look up the place of the spare kettle",
                             }
                         ],
                         "stream": True,
@@ -1390,7 +1390,7 @@ class TurnHttp(unittest.TestCase):
         status, _headers, body = self._post(
             port,
             {
-                "messages": [{"role": "user", "content": "latest horror movies"}],
+                "messages": [{"role": "user", "content": "look up horror movies"}],
                 "stream": False,
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
@@ -1398,7 +1398,7 @@ class TurnHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], invented)
         self.assertEqual(ScriptOllama.posts, 1)
-        self.assertEqual(self.search_calls, ["latest horror movies"])
+        self.assertEqual(self.search_calls, ["look up horror movies"])
         hinted = "\n".join(
             item.get("content", "") for item in ScriptOllama.seen[0]["messages"]
         )
