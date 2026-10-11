@@ -321,6 +321,10 @@ class ConcurrentChat(unittest.TestCase):
         for thread in threads:
             thread.join(timeout=5)
         self.assertTrue(all(item is not None and item[0] == 200 for item in results))
+        # The slot is released in the request finally, after the body is readable.
+        deadline = time.perf_counter() + 1.0
+        while runtime.gate.in_flight() and time.perf_counter() < deadline:
+            time.sleep(0.01)
         self.assertEqual(runtime.gate.in_flight(), 0)
 
     def test_stream_over_cap_is_json_503(self):
