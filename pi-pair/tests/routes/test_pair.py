@@ -1081,7 +1081,7 @@ class PairHttp(unittest.TestCase):
     def test_miss_puts_search_snippets_in_the_prompt(self):
         self._pi3_accepts_forwarded_rows()
         OllamaFake.decide = "SEARCH"
-        prompt = "What is the latest height of the bench in the hall?"
+        prompt = "look up the height of the bench in the hall"
 
         def fake(query, opener=None):
             self.search_calls.append(query)
@@ -1127,7 +1127,7 @@ class PairHttp(unittest.TestCase):
 
     def test_failed_search_still_answers_locally(self):
         OllamaFake.decide = "SEARCH"
-        prompt = "What is the latest weather on the far pier?"
+        prompt = "look up the weather on the far pier"
 
         def boom(query, opener=None):
             self.search_calls.append(query)
@@ -1401,7 +1401,7 @@ class PairHttp(unittest.TestCase):
         OllamaFake.decide = "SEARCH"
         headers, raw = self._stream_raw(
             port,
-            "What is the latest place of the hall bench?",
+            "look up the place of the hall bench",
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
@@ -1468,7 +1468,7 @@ class PairHttp(unittest.TestCase):
                 "messages": [
                     {
                         "role": "user",
-                        "content": "What is the latest height of the hall bench?",
+                        "content": "look up the height of the hall bench",
                     }
                 ],
                 "stream": False,
@@ -1502,7 +1502,7 @@ class PairHttp(unittest.TestCase):
         limit = search_note_limit()
         self.assertEqual(limit, 720)
         OllamaFake.decide = "SEARCH"
-        prompt = "What is the latest width of the east window?"
+        prompt = "look up the width of the east window"
         page = "snippet " * 400
 
         def fake(query, opener=None):
@@ -1788,9 +1788,7 @@ class PairHttp(unittest.TestCase):
             port,
             {
                 "model": "qwen3:0.6b",
-                "messages": [
-                    {"role": "user", "content": "where is the current long bench"}
-                ],
+                "messages": [{"role": "user", "content": "look up the long bench"}],
                 "stream": False,
             },
         )
@@ -1820,9 +1818,7 @@ class PairHttp(unittest.TestCase):
             {
                 "mode": "pro",
                 "model": "qwen3:1.7b",
-                "messages": [
-                    {"role": "user", "content": "where is the current long bench"}
-                ],
+                "messages": [{"role": "user", "content": "look up the long bench"}],
                 "stream": False,
             },
         )

@@ -324,7 +324,10 @@ def openapi_document() -> dict:
                             "description": (
                                 "When true, search before answering. Omit or "
                                 "false to search only if the message asks to "
-                                "search or asks for news or something current. "
+                                "search or asks for the news (latest news, "
+                                "news about, news on, latest on, in the news, "
+                                "what's the latest). A bare news, latest, "
+                                "current, or today does not. "
                                 "Any other JSON type is rejected."
                             ),
                         },

@@ -20,7 +20,7 @@ pi2, pi3, and pi4 all sit in one custom 3D-printed server rack. Tailscale names 
 | pi3 | dataset | OCR, documents, charts, memory, compaction, Arctic xs embed. No decode. |
 | pi2 | health | Web search and image cards. No decode. |
 
-Search runs when the composer Search control is on. If it is off, the turn still searches when the line asks to search, look something up, use the web or tools, or google, or when it asks for news, the latest, current, or today. Every other line is one local decode. The lookup stays on pi2.
+Search runs when the composer Search control is on. If it is off, the turn still searches when the line asks to search, look something up, use the web or tools, or google, or when it asks for the news in a short shape: latest news, news about, news on, latest on, in the news, what's the latest, or latest <word> news. A bare news, latest, current, or today, and every other line, is one local decode. The lookup stays on pi2.
 
 ## Layout
 

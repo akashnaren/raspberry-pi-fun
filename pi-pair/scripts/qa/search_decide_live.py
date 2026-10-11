@@ -5,8 +5,9 @@ Stdlib only. Mesh on, Flash, except the cities prompt which uses auto.
 Prints each turn. Exits non-zero when a check fails.
 
 The Search control searches every turn. With it off, only an explicit ask
-searches (search, look up, the web, tools, google, news, latest, current,
-today). hi, 2+2, code, and a poem stay near the recorded baseline:
+searches (search, look up, the web, tools, google, or a news shape such as
+latest news). A bare news, latest, current, or today does not. hi, 2+2,
+code, and a poem stay near the recorded baseline:
 median total_ms at most max(baseline + 500, baseline * 1.2).
 
     python3 pi-pair/scripts/qa/search_decide_live.py \
