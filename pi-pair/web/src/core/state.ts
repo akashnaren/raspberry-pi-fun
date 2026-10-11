@@ -1,3 +1,4 @@
+import { readWebSearch } from "../chat/web-search";
 import { browserStorage, loadSettings } from "./settings";
 import { storedId } from "./session";
 import type { ModelMode, PageSettings, ThinkLevel } from "./settings";
@@ -17,6 +18,7 @@ interface Ui {
   pageSettings: PageSettings;
   thinking: ThinkLevel;
   modelMode: ModelMode;
+  webSearch: boolean;
   enterToSend: boolean;
   picturesOn: boolean;
   listening: boolean;
@@ -80,6 +82,7 @@ export const ui: Ui = {
   pageSettings: loadSettings(browserStorage("local")),
   thinking: "medium",
   modelMode: "auto",
+  webSearch: readWebSearch(browserStorage("session")),
   enterToSend: false,
   picturesOn: false,
   listening: false,

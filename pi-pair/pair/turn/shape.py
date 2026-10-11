@@ -1,12 +1,9 @@
 """Shape one turn before pi4 decodes it.
 
-With ground_all, search runs unless the turn is an attachment, only
-arithmetic, shorter than three words, or a short follow-up with no question
-mark. With the knob off, search is a time cue and the model asks for a
-lookup with a search fence. Attachment text and search notes are untrusted
-data: control tokens and role labels are stripped, the file and the notes
-are fenced, and the whole prompt is cut so a 2048-token context still has
-room to answer.
+Attachment text and search notes are untrusted data: control tokens and
+role labels are stripped, the file and the notes are fenced, and the whole
+prompt is cut so a 2048-token context still has room to answer. After a
+web search, a grounding rule is the last note the model reads.
 """
 
 from __future__ import annotations
@@ -15,11 +12,10 @@ import functools
 import json
 import math
 import re
-from datetime import date
 
 from pair.core.errors import friendly_error
 from pair.model.knobs import attachment_limit, inference_knobs
-from pair.turn.calc import fully_answers, notes_for
+from pair.turn.calc import notes_for
 
 ATTACH_MARK = "\n\n---\n"
 CHARS_PER_TOKEN = 3.2
@@ -101,12 +97,6 @@ _FLOW = re.compile(
     r"\b(?:draw|sketch|show)\b.{0,40}\b(?:flow|diagram|steps)\b",
     re.I,
 )
-_FRESH = re.compile(r"\b(?:news|latest|current)\b", re.I)
-_RECENCY = re.compile(
-    r"\b(?:recent|now|today|yesterday|newest|still|yet|this\s+(?:year|week|month))\b",
-    re.I,
-)
-_YEAR = re.compile(r"\b(\d{4})\b")
 _CONTROL = re.compile(
     r"<\|/?im_start\|>|<\|/?im_end\|>|<<\/?SYS>>|\[\/?INST\]|</?s>|<\|/?system\|>",
     re.I,
@@ -227,58 +217,26 @@ def structure_hint(prompt: str) -> str | None:
     return None
 
 
-def _time_sensitive(question: str) -> bool:
-    """A time cue, not a topic list. Only a nearby calendar year counts."""
-    if _FRESH.search(question) or _RECENCY.search(question):
-        return True
-    year = date.today().year
-    for match in _YEAR.finditer(question):
-        value = int(match.group(1))
-        if year - 1 <= value <= year + 1:
-            return True
-    return False
+GROUNDED_RULE = (
+    "Answer only from the web search notes above. Name the site for each fact. "
+    "If the notes do not mention what was asked, say the search did not find it and stop. "
+    "Never guess a name, job title, role, date, or number."
+)
+NO_RESULTS_RULE = (
+    "A web search ran but found nothing useful. Say in one sentence that you could not "
+    "find reliable results, and offer to try other wording. Never guess a name, job "
+    "title, role, date, or number."
+)
 
 
 def answered_locally(prompt: str, context: str = "") -> bool:
     """True when the calculator can finish the question from its expression.
 
-    Earlier notes are not scanned with a word list. A model search fence is
-    limited separately: once per turn, and only if no tool result exists yet.
+    A model search fence is limited separately: once per turn, and only if
+    no tool result exists yet.
     """
     del context
     return notes_for(user_question(prompt)) is not None
-
-
-@functools.lru_cache(maxsize=256)
-def _needs_web(prompt: str, follow_up: bool, ground_all: bool) -> bool:
-    question = user_question(prompt)
-    if attachment_tail(prompt):
-        return False
-    if ground_all:
-        if fully_answers(question):
-            return False
-        if len(question.split()) < 3:
-            return False
-        if follow_up and len(question) <= 60 and "?" not in question:
-            return False
-        return True
-    return _time_sensitive(question)
-
-
-def needs_web(prompt: str, follow_up: bool = False, context: str = "") -> bool:
-    """Search unless the turn is local, or only when the question is current.
-
-    `ground_all` searches every question except an attachment, a message the
-    calculator can finish, fewer than three words, or a short follow-up with
-    no question mark. When the knob is off, search is a time cue. A search
-    fence is how the model asks for any other fact. That fence runs once per
-    turn, and only when this turn does not already have a tool result.
-    """
-    del context
-    if notes_for(user_question(prompt or "")):
-        return False
-    ground_all = bool(inference_knobs().get("ground_all", False))
-    return _needs_web(prompt or "", bool(follow_up), ground_all)
 
 
 def fence_user_text(content: str, limit: int) -> str:

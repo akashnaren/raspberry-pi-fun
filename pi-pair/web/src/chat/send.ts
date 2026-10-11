@@ -95,6 +95,7 @@ export async function sendText(
       sys,
       fresh,
       spoken,
+      webSearch: ui.webSearch,
     });
 
     let response: Response | null = null;
