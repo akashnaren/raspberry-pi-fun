@@ -322,9 +322,10 @@ def openapi_document() -> dict:
                             "type": "boolean",
                             "default": False,
                             "description": (
-                                "When true, skip the model check and search "
-                                "before answering. Omit or false to let the "
-                                "model decide. Any other JSON type is rejected."
+                                "When true, search before answering. Omit or "
+                                "false to search only if the message asks to "
+                                "search or asks for news or something current. "
+                                "Any other JSON type is rejected."
                             ),
                         },
                         "think": {

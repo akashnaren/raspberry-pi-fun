@@ -119,6 +119,11 @@ class Abilities(unittest.TestCase):
         self.assertEqual(file_cleaned.count("```doc"), 1)
         self.assertIn("Hi", file_cleaned)
 
+    def test_a_notes_fence_keeps_its_body(self):
+        cleaned = clean_reply("```Notes:\nThe Shining\n```", "Name a film.")
+        self.assertIn("The Shining", cleaned)
+        self.assertNotIn("```", cleaned)
+
     def test_pdf_xlsx_and_md_fences_become_files(self):
         def rendered(body: str):
             kind = "txt"

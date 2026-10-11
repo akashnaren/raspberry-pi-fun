@@ -14,7 +14,6 @@ _USAGE = ("prefill_tokens", "prefill_ms", "eval_tokens", "eval_ms")
 def blank() -> dict:
     return {
         "queue_ms": 0,
-        "decide_ms": 0,
         "search_ms": 0,
         "prefill_tokens": 0,
         "prefill_ms": 0,
@@ -54,7 +53,6 @@ def _rate(tokens: int, millis: int) -> float:
 def assemble(
     *,
     queue_ms: int = 0,
-    decide_ms: int = 0,
     search_ms: int = 0,
     usage: dict | None = None,
     total_ms: int = 0,
@@ -62,7 +60,6 @@ def assemble(
 ) -> dict:
     timing = blank()
     timing["queue_ms"] = max(0, _as_int(queue_ms))
-    timing["decide_ms"] = max(0, _as_int(decide_ms))
     timing["search_ms"] = max(0, _as_int(search_ms))
     taken = usage if isinstance(usage, dict) else {}
     for key in _USAGE:
@@ -78,7 +75,6 @@ def present(timing: dict, public: bool):
     """LAN gets the breakdown. The public link gets total_ms only."""
     row = assemble(
         queue_ms=timing.get("queue_ms", 0),
-        decide_ms=timing.get("decide_ms", 0),
         search_ms=timing.get("search_ms", 0),
         usage=timing,
         total_ms=timing.get("total_ms", 0),

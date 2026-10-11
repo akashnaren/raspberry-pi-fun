@@ -242,35 +242,3 @@ def latency_stats(samples: list[float]) -> dict:
         return ordered[index]
 
     return {"n": len(ordered), "median_s": pick(0.5), "p95_s": pick(0.95)}
-
-
-def schedule_prefix_prime(messages: list[dict]) -> bool:
-    """Warm the cached persona while tools run. Idle gate only. Never a second decode."""
-    from pair.core import runtime
-    from pair.model.chat_once import warm_chat_model
-    from pair.model.modes import mode_table
-
-    peers = list(runtime.PEERS)
-    if not any(str(peer.get("name") or "") in WEAK_NAMES for peer in peers):
-        return False
-    brain = next(
-        (
-            peer
-            for peer in peers
-            if peer.get("name") == "pi4" and peer.get("generative")
-        ),
-        None,
-    )
-    if brain is None or runtime.gate.in_flight() or runtime.gate.waiting():
-        return False
-    model = str(mode_table().get("flash") or "")
-    if not model:
-        return False
-
-    def run() -> None:
-        if runtime.gate.in_flight():
-            return
-        warm_chat_model(brain, model, timeout=5)
-
-    threading.Thread(target=run, name="prefix-prime", daemon=True).start()
-    return True

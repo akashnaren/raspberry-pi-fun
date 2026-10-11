@@ -22,7 +22,6 @@ from pair.routes import images as image_routes
 from pair.routes import search as search_routes
 from pair.routes.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
 from pair.server import make_server
-from tests.support.fakes import _decide_body
 from tests.support.paths import ROOT
 
 
@@ -86,10 +85,6 @@ class OllamaFake(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        decided = _decide_body(self, payload)
-        if decided is not None:
-            self._json(decided)
-            return
         type(self).posts += 1
         type(self).last_payload = payload
         self._json(json.dumps({"message": {"content": "hello from peer"}}).encode())

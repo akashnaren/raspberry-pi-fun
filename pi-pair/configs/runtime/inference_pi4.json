@@ -15,7 +15,6 @@
   "flash_num_batch": 128,
   "pro_num_batch": 128,
   "search_note_chars": 720,
-  "search_decide_timeout_s": 3.0,
   "safety_filter": false,
   "role": "pi4",
   "rollback": {

@@ -6,21 +6,6 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from pair.turn.decide import DECIDE_PROMPT
-
-
-def _decide_body(handler, payload: dict) -> bytes | None:
-    """A search check is not an answer post. None when this payload is the answer."""
-    messages = payload.get("messages") or []
-    last = messages[-1] if messages else None
-    content = last.get("content") if isinstance(last, dict) else ""
-    if content != DECIDE_PROMPT:
-        return None
-    kind = type(handler)
-    kind.decide_posts = int(getattr(kind, "decide_posts", 0)) + 1
-    word = str(getattr(kind, "decide", "SKIP") or "SKIP")
-    return json.dumps({"message": {"content": word}}).encode()
-
 
 def _start(httpd: ThreadingHTTPServer) -> None:
     thread = threading.Thread(
@@ -51,10 +36,6 @@ class OllamaFake(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        decided = _decide_body(self, payload)
-        if decided is not None:
-            self._json(decided)
-            return
         type(self).posts += 1
         type(self).last_payload = payload
         if payload.get("stream"):
@@ -130,10 +111,6 @@ class ScriptOllama(OllamaFake):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        decided = _decide_body(self, payload)
-        if decided is not None:
-            self._json(decided)
-            return
         type(self).posts += 1
         type(self).last_payload = payload
         type(self).seen.append(payload)

@@ -178,46 +178,6 @@ def chat_llamacpp(
     return content, use
 
 
-def classify_once(peer, kind, model, messages, knobs, timeout: float) -> str:
-    """Three tokens, greedy, same context as the answer. Raw text, not peeled.
-
-    pi2 and pi3 never reach this. require_generative refuses them first.
-    """
-    require_generative(peer)
-    if (kind or "ollama") == "llamacpp":
-        use = llamacpp_model(peer, model)
-        url = f"http://{peer['host']}:{peer['port']}/v1/chat/completions"
-        payload = {
-            "model": use,
-            "messages": messages,
-            "stream": False,
-            "temperature": 0,
-            "max_tokens": 3,
-            "stop": ["\n"],
-        }
-        out = _post_json(url, payload, timeout)
-        choice = (out.get("choices") or [{}])[0]
-        content = (choice.get("message") or {}).get("content") or ""
-        return content if isinstance(content, str) else str(content)
-    url = f"http://{peer['host']}:{peer['port']}/api/chat"
-    payload = ollama_payload(
-        model,
-        messages,
-        0.0,
-        3,
-        False,
-        knobs,
-        think=False,
-        top_p=1.0,
-        top_k=1,
-        presence_penalty=0.0,
-    )
-    payload["options"]["stop"] = ["\n"]
-    out = _post_json(url, payload, timeout)
-    content = (out.get("message") or {}).get("content") or ""
-    return content if isinstance(content, str) else str(content)
-
-
 def warm_chat_model(peer: dict, model: str, timeout: float = 45) -> bool:
     """Load one tag with keep_alive -1. A missing tag returns False and is not pulled."""
     if not may_generate(peer) or not model:
