@@ -943,8 +943,12 @@ def _stopped(pid: int) -> bool:
         status = Path(f"/proc/{pid}/status")
         if not status.exists():
             return True
+        try:
+            text = status.read_text(encoding="utf-8", errors="replace")
+        except (FileNotFoundError, ProcessLookupError):
+            return True
         state = ""
-        for line in status.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in text.splitlines():
             if line.startswith("State:"):
                 state = line.split()[1]
                 break

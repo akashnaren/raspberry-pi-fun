@@ -428,6 +428,28 @@ if (!docs.closest("#ioPanel .drawer-body") || !docs.closest(".set-foot")) {
 if (!css.includes(".api-docs-link") || !css.includes(".set-foot")) {
   throw new Error("API docs link has no styles");
 }
+const repo = document.getElementById("repoLink");
+const paper = document.getElementById("paperLink");
+const foot = docs.closest(".set-foot");
+if (
+  !repo ||
+  repo.getAttribute("href") !== "https://github.com/akashnaren/raspberry-pi-fun" ||
+  repo.getAttribute("target") !== "_blank" ||
+  repo.getAttribute("rel") !== "noopener" ||
+  !repo.getAttribute("aria-label") ||
+  !repo.closest(".set-foot") ||
+  repo.closest(".set-foot") !== foot ||
+  !paper ||
+  paper.getAttribute("href") !== "https://akashnaren.github.io/research/pi-0.2-high/paper.pdf" ||
+  paper.getAttribute("target") !== "_blank" ||
+  paper.getAttribute("rel") !== "noopener" ||
+  paper.getAttribute("aria-label") !== "OpenPi research paper (PDF), opens in a new tab" ||
+  !paper.classList.contains("api-docs-link") ||
+  paper.closest(".set-foot") !== foot ||
+  foot.textContent.replace(/\s+/g, " ").trim() !== "API docs · Git repo · Research paper"
+) {
+  throw new Error("repo or research paper link missing or misplaced next to the API docs link");
+}
 const lightAt = css.indexOf('html[data-theme="light"]');
 if (lightAt < 0 || !css.slice(lightAt).includes(".api-docs-link")) {
   throw new Error("API docs link has no light-theme color");
