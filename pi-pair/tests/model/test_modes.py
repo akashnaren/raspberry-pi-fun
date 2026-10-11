@@ -28,7 +28,6 @@ from pair.model.modes import (
 from pair.routes import search as search_routes
 from pair.server import make_server
 from pair.turn.shape import EFFORT_HINT
-from tests.support.fakes import _decide_body
 from tests.support.paths import ROOT
 
 _CAP = re.compile(r"OLLAMA_MAX_LOADED_MODELS=(\d+)")
@@ -39,8 +38,6 @@ def loaded_caps(text: str) -> list[int]:
 
 
 class ModeOllama(BaseHTTPRequestHandler):
-    decide = "SKIP"
-    decide_posts = 0
     tags = ["qwen3:0.6b", "qwen3:1.7b"]
     loaded = ["qwen3:0.6b"]
     calls: list = []
@@ -76,11 +73,6 @@ class ModeOllama(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
         path = self.path.split("?")[0]
-        if path == "/api/chat":
-            decided = _decide_body(self, payload)
-            if decided is not None:
-                self._json(decided)
-                return
         type(self).calls.append(("POST", path, payload))
         if path == "/api/generate":
             name = payload.get("model")

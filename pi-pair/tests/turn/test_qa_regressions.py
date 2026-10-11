@@ -8,7 +8,6 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
 
 from pair.memory.compact import run_compact
 from pair.memory.store import facts_block, remember_user, save_summary, summary_text
@@ -16,7 +15,6 @@ from pair.render.charts import render_chart, with_headers
 from pair.render.documents import render_document
 from pair.server import Handler
 from pair.turn.abilities import clean_reply, parse_fences, settle_blocks, tool_notes
-from pair.turn.decide import search_candidate
 from pair.turn.shape import (
     PERSONA,
     sample_turns,
@@ -68,14 +66,7 @@ class ExampleFence(unittest.TestCase):
         self.assertIn("Canberra.", cleaned)
         self.assertNotIn("```", cleaned)
         self.assertNotIn(PERSONA, cleaned)
-        calls = []
-
-        def search(query):
-            calls.append(query)
-            return {"context": "no"}
-
-        self.assertEqual(tool_notes(copied, search=search, prompt=CAPITAL), "")
-        self.assertEqual(calls, [])
+        self.assertEqual(tool_notes(copied, prompt=CAPITAL), "")
 
         class Dummy:
             _extra_call = False
@@ -294,68 +285,31 @@ class FileAndChart(unittest.TestCase):
         fence = parse_fences(kept)[0]
         self.assertEqual(fence["name"], "doc")
         self.assertIn("kind: pdf", fence["body"])
-        self.assertEqual(tool_notes(stub, search=lambda _q: {}, prompt=question), "")
-        self.assertEqual(
-            tool_notes("```chart\nchart\n```", search=lambda _q: {}, prompt=CHART),
-            "",
-        )
+        self.assertEqual(tool_notes(stub, prompt=question), "")
+        self.assertEqual(tool_notes("```chart\nchart\n```", prompt=CHART), "")
         self.assertEqual(list(Path(self._docs.name).glob("docs/*")), [])
 
 
 class LocalAnswers(unittest.TestCase):
-    def test_arithmetic_and_memory_skip_search(self):
-        prompts = (
-            "What is 1234 + 5678 - 999?",
-            "What is 15% of 2340?",
-        )
-        calls = []
-
-        def search(query):
-            calls.append(query)
-            return {"context": "notes"}
-
+    def test_arithmetic_notes_come_from_calc_fences(self):
         calc = "What is 1234 + 5678 - 999?"
-        self.assertIn("5913", clean_reply("```search\naddition\n```", calc))
-        tool_notes("```search\naddition\n```", search=search, prompt=calc)
+        kept = clean_reply("```search\naddition\n```", calc)
+        self.assertIn("```search", kept)
+        self.assertIn("addition", kept)
         percent = "What is 15% of 2340?"
-        self.assertIn("351", clean_reply("```search\npercent\n```", percent))
-        tool_notes("```search\npercent\n```", search=search, prompt=percent)
-        cactus = "How often should I water the cactus?"
-        context = "The user said: water the cactus every Sunday morning."
-        tool_notes(
-            "```search\ncactus watering\n```",
-            search=search,
-            prompt=cactus,
-            context=context,
-        )
-        self.assertEqual(calls, ["cactus watering"])
-        calls.clear()
-        tool_notes(
-            "```search\nsuper bowl winner\n```\n```search\nagain\n```",
-            search=search,
-            prompt="Who won the most recent Super Bowl?",
-        )
-        self.assertEqual(calls, ["super bowl winner"])
-        calls.clear()
+        self.assertIn("percent", clean_reply("```search\npercent\n```", percent))
         chained = "What is 15% of 240, then add 12?"
         notes = tool_notes(
             "```calc\n0.15*240+12\n```\n```search\n15 percent of 240\n```",
-            search=search,
             prompt=chained,
         )
         self.assertIn("0.15*240+12 = 48", notes)
-        self.assertNotIn(
-            "```search",
-            settle_blocks(
-                "```calc\n0.15*240+12\n```\n```search\n15 percent of 240\n```",
-                chained,
-            ),
+        settled = settle_blocks(
+            "```calc\n0.15*240+12\n```\n```search\n15 percent of 240\n```",
+            chained,
         )
-        self.assertEqual(calls, [])
-        with patch.dict(os.environ, {"PI_PAIR_ROLE": "brain"}):
-            for prompt in prompts:
-                self.assertFalse(search_candidate(prompt, True), prompt)
-            self.assertTrue(search_candidate(chained, True))
+        self.assertIn("```search", settled)
+        self.assertIn("```calc", settled)
 
 
 if __name__ == "__main__":

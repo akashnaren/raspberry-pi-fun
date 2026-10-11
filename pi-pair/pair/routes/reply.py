@@ -11,16 +11,9 @@ from pair.model.chat_once import chat_llamacpp, chat_ollama
 from pair.model.chat_stream import iter_ollama_channels, stream_llamacpp, stream_ollama
 from pair.model.think import peel_think
 from pair.routes.base import safe_write, status_event, write_event
-from pair.routes.chat import (
-    _block,
-    _cap_temperature,
-    _prime_prefix,
-    _prompt_note,
-    _tuned_knobs,
-    apply_tier,
-)
+from pair.routes.chat import _block, _tuned_knobs, apply_tier
 from pair.routes.memory import _memory_prompt
-from pair.routes.search import _searched, _source_count
+from pair.routes.search import _source_count
 from pair.routes.status import _claim_wait, mode_fields
 from pair.turn.abilities import (
     JSON_RETRY,
@@ -32,11 +25,13 @@ from pair.turn.abilities import (
     tool_notes,
 )
 from pair.turn.assist import is_harmful, scrub_reply, settle_reply, stream_release
+from pair.turn.search_tool import SEARCH_TOOL, pending_tool_text, tool_query, tool_round
 from pair.turn.shape import (
     public_failure,
     shape_messages,
     structure_hint,
     turns_for_memory,
+    user_question,
 )
 
 KEEPALIVE_S = 5.0
@@ -156,8 +151,10 @@ class ReplyRoutes:
         max_tokens,
         prompt: str,
         search_note: dict | None,
+        tools=None,
     ) -> tuple[str, str, bool]:
         """One completion. A failed decode is one sentence."""
+        self._pending_tool = None
         meta: dict = {}
         try:
             if kind == "llamacpp":
@@ -180,6 +177,7 @@ class ReplyRoutes:
                     meta=meta,
                     plan=getattr(self, "_decode_plan", None),
                     cancel=self._cancel,
+                    tools=tools,
                 )
         except (OSError, json.JSONDecodeError) as error:
             self._last_reasoning = ""
@@ -202,6 +200,15 @@ class ReplyRoutes:
         if refused:
             self._last_reasoning = ""
             return refused, used, False
+        if tools:
+            found = tool_query({}, content, prompt)
+            if meta.get("saw_tool"):
+                found = str(meta.get("tool_query") or "").strip() or user_question(
+                    prompt
+                )
+            if found is not None:
+                self._pending_tool = found
+                return content, used, False
         if not str(content).strip():
             raise DecodeFailed(friendly_error(""))
         content = self._one_more_round(
@@ -220,7 +227,6 @@ class ReplyRoutes:
             prompt,
             _source_count(search_note),
             context=getattr(self, "_local_context", ""),
-            have_tools=_searched(search_note),
         )
         cut = (getattr(self, "_usage", {}) or {}).get("done_reason") == "length"
         content = mend_cut_tail(content, cut)
@@ -244,9 +250,8 @@ class ReplyRoutes:
         if getattr(self, "_extra_call", False):
             return content
         context = getattr(self, "_local_context", "")
-        have = _searched(search_note)
-        settled = settle_blocks(content, prompt, context=context, have_tools=have)
-        notes = tool_notes(settled, prompt=prompt, context=context, have_tools=have)
+        settled = settle_blocks(content, prompt, context=context)
+        notes = tool_notes(settled, prompt=prompt, context=context)
         retry = needs_json_retry(prompt, settled) and not notes
         if not notes and not retry:
             return settled
@@ -280,6 +285,187 @@ class ReplyRoutes:
             return settled.rstrip() + "\n\n" + nxt
         return settled
 
+    def _brain_tools(self, kind: str, peer: dict):
+        """Ollama on pi4 always sends the same tool. llama.cpp sends none."""
+        if kind == "llamacpp" or str((peer or {}).get("name") or "") != "pi4":
+            return None
+        return [SEARCH_TOOL]
+
+    def _mark_search(self, label: str, source: str, query: str = "") -> None:
+        self._decide_label = label
+        self._decide_source = source
+        self._search_query = query
+
+    def _lookup_for_tool(self, messages, query: str, model: str, mesh: bool, peer):
+        if mesh and str((peer or {}).get("name") or "") == "pi4":
+            return self._timed_search(
+                messages,
+                query,
+                model,
+                getattr(self, "_cancel", None),
+                job=None,
+            )
+        return messages, {"status": "off", "sources": []}
+
+    @staticmethod
+    def _visible_search(note):
+        if isinstance(note, dict) and note.get("status") in ("ok", "failed"):
+            return note
+        return None
+
+    def _answer_channels(
+        self, peer, kind, model, messages, temperature, max_tokens, tools, on_tool
+    ):
+        plan = getattr(self, "_decode_plan", None)
+        if kind == "llamacpp":
+            return (
+                ("content", delta)
+                for delta in stream_llamacpp(
+                    peer,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    cancel=self._cancel,
+                )
+            )
+        if plan is not None:
+            return iter_ollama_channels(
+                peer,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                plan=plan,
+                cancel=self._cancel,
+                usage=self._usage,
+                tools=tools,
+            )
+
+        def _on_tool(query: str) -> None:
+            if on_tool is not None:
+                on_tool(query)
+
+        return (
+            ("content", delta)
+            for delta in stream_ollama(
+                peer,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                plan=plan,
+                cancel=self._cancel,
+                usage=self._usage,
+                tools=tools,
+                on_tool=_on_tool,
+            )
+        )
+
+    def _search_round(self, messages, query: str, note, temperature: float):
+        """One lookup is already done. The next decode reads that tool result."""
+        self._tool_rounds = int(getattr(self, "_tool_rounds", 0) or 0) + 1
+        return tool_round(messages, query, note), min(float(temperature), 0.3)
+
+    def _answer_with_search(
+        self,
+        peer,
+        kind,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        prompt: str,
+        force_search: bool = False,
+        mesh: bool = True,
+    ):
+        """Non-stream tool round. A turn with no tool call is one decode."""
+        tools = self._brain_tools(kind, peer)
+        self._tool_rounds = 0
+        self._pending_tool = None
+        stages = ["thinking"]
+        note = None
+        if force_search:
+            query = user_question(prompt) or (prompt or "").strip()
+            self._mark_search("search", "user", query)
+            messages, note = self._lookup_for_tool(messages, query, model, mesh, peer)
+            stages.append("searching")
+            messages, temperature = self._search_round(
+                messages, query, note, temperature
+            )
+            content, used, train = self._decode_reply(
+                peer,
+                kind,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                prompt,
+                note,
+                tools,
+            )
+            if self._pending_tool is not None:
+                self._tool_rounds = 2
+                content, used, train = self._decode_reply(
+                    peer,
+                    kind,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    prompt,
+                    note,
+                    None,
+                )
+            stages.append("answering")
+            return content, used, train, self._visible_search(note), stages
+        content, used, train = self._decode_reply(
+            peer,
+            kind,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            prompt,
+            None,
+            tools,
+        )
+        query = self._pending_tool
+        if query is None:
+            self._mark_search("skip", "model", "")
+            stages.append("answering")
+            return content, used, train, None, stages
+        self._mark_search("search", "model", query)
+        messages, note = self._lookup_for_tool(messages, query, model, mesh, peer)
+        stages.append("searching")
+        messages, temperature = self._search_round(messages, query, note, temperature)
+        content, used, train = self._decode_reply(
+            peer,
+            kind,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            prompt,
+            note,
+            tools,
+        )
+        if self._pending_tool is not None:
+            self._tool_rounds = 2
+            content, used, train = self._decode_reply(
+                peer,
+                kind,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                prompt,
+                note,
+                None,
+            )
+        stages.append("answering")
+        return content, used, train, self._visible_search(note), stages
+
     def _stream(  # noqa: C901
         self,
         peer,
@@ -292,10 +478,8 @@ class ReplyRoutes:
         started,
         prompt: str,
         think_name: str = "",
-        search_candidate: bool = False,
         force_search: bool = False,
-        searched: bool = False,
-        search_note: dict | None = None,
+        mesh: bool = True,
         mode_name: str = "",
         route_name: str = "",
         resident_name: str = "",
@@ -366,150 +550,113 @@ class ReplyRoutes:
         think_extra = {"pi_think": think_name} if think_name else None
         if not emit_status("thinking", think_extra):
             return
-        fact_text, summary_text = _memory_prompt(self._memory_scope())
-        knobs = tuned if isinstance(tuned, dict) else _tuned_knobs(model)
-        do_search = self._resolve_search(
-            force_search,
-            search_candidate,
-            peer,
-            kind,
-            model,
-            messages,
-            prompt,
-            knobs,
-            fact_text,
-            summary_text,
-        )
-        temperature = _cap_temperature(temperature, do_search)
-        if do_search:
-            _prime_prefix(messages)
-            self._searched = True
-            if not emit_status("searching", {"pi_tool": "search"}):
-                return
-            if not searched:
-                messages, search_note = self._timed_search(
-                    messages,
-                    prompt,
-                    model,
-                    getattr(self, "_cancel", None),
-                    job=None,
-                )
-            found = {"pi_tool": "search"}
-            if search_note:
-                found["pi_search"] = search_note["status"]
-                found["pi_sources"] = search_note["sources"]
-            if not emit_status("searching", found):
-                return
-        grounded = ready_answer
-        answer_extra = dict(think_extra or {})
-        if search_note:
-            answer_extra["pi_search"] = search_note["status"]
-            answer_extra["pi_sources"] = search_note["sources"]
-        if not emit_status("answering", answer_extra or None):
-            return
-        source_rows = list(messages)
-        messages = shape_messages(
-            messages,
-            prompt,
-            knobs,
-            think_name,
-            _prompt_note(search_note),
-            hints=tail_hints(prompt, structure_hint(prompt) or ""),
-            facts=fact_text,
-            summary=summary_text,
-        )
-        self._memory_rows = turns_for_memory(source_rows, messages)
-        if grounded is not None:
-            self._emit_ready_answer(
-                peer,
-                kind,
-                used,
-                prompt,
-                grounded,
-                started,
-                think_name,
-                search_note,
-                stages,
-                mode_name,
-                route_name,
-                resident_name,
-            )
-            return
-        if not self._public():
-            safe_write(
-                self,
-                f": pi-pair peer={peer['name']} kind={kind} model={used}\n\n".encode(),
-                flush=True,
-            )
-        first = {
-            "id": "pi-pair",
-            "object": "chat.completion.chunk",
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"role": "assistant"},
-                    "finish_reason": None,
-                }
-            ],
-            "pi_peer": peer["name"],
-            "pi_chip": "brain: pi4" if peer["name"] == "pi4" else peer["name"],
-            "pi_model": used,
-            "pi_kind": kind,
-        }
-        if think_name:
-            first["pi_think"] = think_name
-        if search_note:
-            first["pi_search"] = search_note["status"]
-            first["pi_sources"] = search_note["sources"]
-        first.update(note)
-        apply_tier(self, first)
-        safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
+        search_note = None
+        tools = self._brain_tools(kind, peer)
+        self._tool_rounds = 0
         parts: list[str] = []
+        closed = False
+        held = True
+        policy = ""
+        flushed = 0
         try:
-            plan = getattr(self, "_decode_plan", None)
-            if kind == "llamacpp":
-                channels = (
-                    ("content", delta)
-                    for delta in stream_llamacpp(
-                        peer,
-                        model,
-                        messages,
-                        temperature,
-                        max_tokens,
-                        cancel=self._cancel,
-                    )
+            fact_text, summary_text = _memory_prompt(self._memory_scope())
+            knobs = tuned if isinstance(tuned, dict) else _tuned_knobs(model)
+            source_rows = list(messages)
+            messages = shape_messages(
+                messages,
+                prompt,
+                knobs,
+                think_name,
+                "",
+                hints=tail_hints(prompt, structure_hint(prompt) or ""),
+                facts=fact_text,
+                summary=summary_text,
+            )
+            self._memory_rows = turns_for_memory(source_rows, messages)
+            pass_tools = tools
+            search_passes = 0
+            if force_search:
+                query = user_question(prompt) or (prompt or "").strip()
+                self._mark_search("search", "user", query)
+                if not emit_status("searching", {"pi_tool": "search"}):
+                    return
+                messages, search_note = self._lookup_for_tool(
+                    messages, query, model, mesh, peer
                 )
-            elif plan is not None:
-                channels = iter_ollama_channels(
+                found = {"pi_tool": "search"}
+                visible_note = self._visible_search(search_note)
+                if visible_note:
+                    found["pi_search"] = visible_note["status"]
+                    found["pi_sources"] = visible_note.get("sources") or []
+                if not emit_status("searching", found):
+                    return
+                messages, temperature = self._search_round(
+                    messages, query, search_note, temperature
+                )
+                search_passes = 1
+            grounded = ready_answer
+            if grounded is not None:
+                if not emit_status("answering", think_extra):
+                    return
+                self._emit_ready_answer(
                     peer,
-                    model,
-                    messages,
-                    temperature,
-                    max_tokens,
-                    plan=plan,
-                    cancel=self._cancel,
-                    usage=self._usage,
+                    kind,
+                    used,
+                    prompt,
+                    grounded,
+                    started,
+                    think_name,
+                    self._visible_search(search_note),
+                    stages,
+                    mode_name,
+                    route_name,
+                    resident_name,
                 )
-            else:
-                channels = (
-                    ("content", delta)
-                    for delta in stream_ollama(
-                        peer,
-                        model,
-                        messages,
-                        temperature,
-                        max_tokens,
-                        plan=plan,
-                        cancel=self._cancel,
-                        usage=self._usage,
-                    )
+                return
+            if not self._public():
+                safe_write(
+                    self,
+                    f": pi-pair peer={peer['name']} kind={kind} model={used}\n\n".encode(),
+                    flush=True,
                 )
-            closed = False
-            held = True
-            policy = ""
-            flushed = 0
-            thinking_parts: list[str] = []
-            thinking_flushed = 0
+            first = {
+                "id": "pi-pair",
+                "object": "chat.completion.chunk",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant"},
+                        "finish_reason": None,
+                    }
+                ],
+                "pi_peer": peer["name"],
+                "pi_chip": "brain: pi4" if peer["name"] == "pi4" else peer["name"],
+                "pi_model": used,
+                "pi_kind": kind,
+            }
+            if think_name:
+                first["pi_think"] = think_name
+            visible_note = self._visible_search(search_note)
+            if visible_note:
+                first["pi_search"] = visible_note["status"]
+                first["pi_sources"] = visible_note.get("sources") or []
+            first.update(note)
+            apply_tier(self, first)
+            safe_write(self, f"data: {json.dumps(first)}\n\n".encode(), flush=True)
+            answering_sent = False
+
+            def show_answering() -> bool:
+                nonlocal answering_sent
+                if answering_sent:
+                    return True
+                extra = dict(think_extra or {})
+                shown = self._visible_search(search_note)
+                if shown:
+                    extra["pi_search"] = shown["status"]
+                    extra["pi_sources"] = shown.get("sources") or []
+                answering_sent = True
+                return emit_status("answering", extra or None)
+
             reasoning_sent = False
 
             def write_json(payload: dict) -> bool:
@@ -552,76 +699,187 @@ class ReplyRoutes:
                     reasoning_sent = True
                 return ok
 
-            for channel, delta in channels:
-                if not delta:
-                    continue
-                if channel == "thinking":
-                    nxt = "".join(thinking_parts) + delta
-                    release = stream_release(nxt)
-                    if release == "refuse":
-                        # The span that completes the match is not written.
-                        # A thought prefix that already went out is cleared.
-                        policy = _block(nxt)
-                        thinking_parts.clear()
-                        if not clear_reasoning():
+            while True:
+                tool_box: dict = {"query": None}
+
+                def _take_tool(query: str, box=tool_box) -> None:
+                    if box["query"] is None:
+                        box["query"] = query
+
+                channels = self._answer_channels(
+                    peer,
+                    kind,
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens,
+                    pass_tools,
+                    _take_tool,
+                )
+                parts = []
+                closed = False
+                held = True
+                policy = ""
+                flushed = 0
+                released = False
+                thinking_parts = []
+                thinking_flushed = 0
+                for channel, delta in channels:
+                    if channel == "tool":
+                        _take_tool(delta)
+                        continue
+                    if not delta:
+                        continue
+                    if channel == "thinking":
+                        nxt = "".join(thinking_parts) + delta
+                        release = stream_release(nxt)
+                        if release == "refuse":
+                            # The span that completes the match is not written.
+                            # A thought prefix that already went out is cleared.
+                            policy = _block(nxt)
+                            thinking_parts.clear()
+                            if not clear_reasoning():
+                                closed = True
+                            break
+                        thinking_parts.append(delta)
+                        joined_thought = "".join(thinking_parts)
+                        piece = joined_thought[thinking_flushed:]
+                        thinking_flushed = len(joined_thought)
+                        if piece and not emit_reasoning(piece):
                             closed = True
-                        break
-                    thinking_parts.append(delta)
-                    joined_thought = "".join(thinking_parts)
-                    piece = joined_thought[thinking_flushed:]
-                    thinking_flushed = len(joined_thought)
-                    if piece and not emit_reasoning(piece):
-                        closed = True
-                        break
-                    continue
-                parts.append(delta)
-                joined = "".join(parts)
-                release = stream_release(joined)
-                if release == "refuse":
-                    policy = _block(joined)
-                    parts.clear()
-                    thinking_parts.clear()
-                    if not clear_reasoning():
-                        closed = True
-                    break
-                old = flushed
-                if "<" in joined and "think" in joined.lower():
-                    visible, leaked = peel_think(joined)
-                    if leaked and stream_release(leaked) == "refuse":
-                        policy = _block(leaked)
+                            break
+                        continue
+                    parts.append(delta)
+                    joined = "".join(parts)
+                    release = stream_release(joined)
+                    if release == "refuse":
+                        policy = _block(joined)
                         parts.clear()
                         thinking_parts.clear()
-                        flushed = len(joined) if old else 0
                         if not clear_reasoning():
                             closed = True
                         break
-                    prior, _prior_leak = peel_think(joined[:old])
-                    piece = visible[len(prior) :] if visible.startswith(prior) else ""
-                    flushed = len(joined)
-                    if piece:
+                    if not released and pass_tools and pending_tool_text(joined):
+                        continue
+                    if not released:
+                        released = True
+                        if not show_answering():
+                            closed = True
+                            break
+                    old = flushed
+                    if "<" in joined and "think" in joined.lower():
+                        visible, leaked = peel_think(joined)
+                        if leaked and stream_release(leaked) == "refuse":
+                            policy = _block(leaked)
+                            parts.clear()
+                            thinking_parts.clear()
+                            flushed = len(joined) if old else 0
+                            if not clear_reasoning():
+                                closed = True
+                            break
+                        prior, _prior_leak = peel_think(joined[:old])
+                        piece = (
+                            visible[len(prior) :] if visible.startswith(prior) else ""
+                        )
+                        flushed = len(joined)
+                        if piece:
+                            held = False
+                    else:
+                        piece = joined[old:]
+                        flushed = len(joined)
                         held = False
-                else:
-                    piece = joined[old:]
-                    flushed = len(joined)
-                    held = False
-                if not piece:
+                    if not piece:
+                        continue
+                    if not getattr(self, "_ttft_ms", 0):
+                        self._ttft_ms = max(0, int((time.time() - started) * 1000))
+                    chunk = {
+                        "id": "pi-pair",
+                        "object": "chat.completion.chunk",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": piece},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    if not write_json(chunk):
+                        closed = True
+                        break
+                query = tool_box["query"]
+                if released:
+                    query = None
+                elif query is None and pass_tools:
+                    query = tool_query({}, "".join(parts), prompt)
+                if query is not None and not str(query).strip():
+                    query = user_question(prompt) or (prompt or "").strip()
+                if (
+                    not policy
+                    and not closed
+                    and query is not None
+                    and search_passes == 0
+                ):
+                    self._mark_search("search", "model", query)
+                    if not emit_status("searching", {"pi_tool": "search"}):
+                        return
+                    messages, search_note = self._lookup_for_tool(
+                        messages, query, model, mesh, peer
+                    )
+                    found = {"pi_tool": "search"}
+                    visible_note = self._visible_search(search_note)
+                    if visible_note:
+                        found["pi_search"] = visible_note["status"]
+                        found["pi_sources"] = visible_note.get("sources") or []
+                    if not emit_status("searching", found):
+                        return
+                    messages, temperature = self._search_round(
+                        messages, query, search_note, temperature
+                    )
+                    search_passes = 1
                     continue
-                if not getattr(self, "_ttft_ms", 0):
-                    self._ttft_ms = max(0, int((time.time() - started) * 1000))
-                chunk = {
-                    "id": "pi-pair",
-                    "object": "chat.completion.chunk",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": piece},
-                            "finish_reason": None,
+                if (
+                    not policy
+                    and not closed
+                    and query is not None
+                    and search_passes >= 1
+                    and pass_tools
+                ):
+                    self._tool_rounds = 2
+                    pass_tools = None
+                    search_passes = 2
+                    continue
+                if (
+                    not released
+                    and parts
+                    and query is None
+                    and not policy
+                    and not closed
+                ):
+                    if not show_answering():
+                        closed = True
+                    else:
+                        piece = "".join(parts)
+                        flushed = len(piece)
+                        held = False
+                        if not getattr(self, "_ttft_ms", 0):
+                            self._ttft_ms = max(0, int((time.time() - started) * 1000))
+                        chunk = {
+                            "id": "pi-pair",
+                            "object": "chat.completion.chunk",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": piece},
+                                    "finish_reason": None,
+                                }
+                            ],
                         }
-                    ],
-                }
-                if not write_json(chunk):
-                    closed = True
-                    break
+                        if not write_json(chunk):
+                            closed = True
+                if search_passes == 0 and not force_search:
+                    self._mark_search("skip", "model", "")
+                break
+            search_note = self._visible_search(search_note)
             if not closed and not policy:
                 raw_answer = "".join(parts)
                 if "<" in raw_answer and "think" in raw_answer.lower():
@@ -695,7 +953,6 @@ class ReplyRoutes:
                     prompt,
                     _source_count(search_note),
                     context=getattr(self, "_local_context", ""),
-                    have_tools=_searched(search_note),
                 )
                 visible = "\n".join(
                     line for line in streamed.splitlines() if line.strip()
@@ -861,15 +1118,18 @@ class ReplyRoutes:
         resident_name: str = "",
         ready_answer: str | None = None,
         memory_turns=None,
+        force_search: bool = False,
+        mesh: bool = True,
     ) -> None:
         grounded = ready_answer
         train = True
         if grounded is not None:
             content = grounded
             used = model
+            stages = stages or ["answering"]
         else:
             try:
-                content, used, train = self._decode_reply(
+                content, used, train, search_note, stages = self._answer_with_search(
                     peer,
                     kind,
                     model,
@@ -877,7 +1137,8 @@ class ReplyRoutes:
                     temperature,
                     max_tokens,
                     prompt,
-                    search_note,
+                    force_search=force_search,
+                    mesh=mesh,
                 )
             except DecodeFailed as error:
                 self._error(str(error))

@@ -50,7 +50,7 @@ class Abilities(unittest.TestCase):
         self.assertIn("equals 4", out)
         note = calls[0][3][-1]["content"]
         self.assertIn("Calculator: 2+2 = 4", note)
-        self.assertEqual(len(tool_notes(reply, search=lambda _q: {})), len(note))
+        self.assertEqual(len(tool_notes(reply)), len(note))
 
     def test_plain_text_does_not_take_a_second_call(self):
         class Dummy:

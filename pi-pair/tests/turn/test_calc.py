@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import unittest
-from unittest.mock import patch
 
 from pair.turn.abilities import settle_blocks, tool_notes
 from pair.turn.calc import evaluate_expr, fully_answers, notes_for
-from pair.turn.decide import search_candidate
 from pair.turn.shape import shape_messages
 
 
@@ -38,19 +35,13 @@ class CalculatorNotes(unittest.TestCase):
         self.assertIsNone(notes_for(prompt))
         self.assertEqual(evaluate_expr("0.15*240+12"), "48")
         self.assertEqual(evaluate_expr("15%*240+12"), "48")
-        calls = []
-
-        def search(query):
-            calls.append(query)
-            return {"context": "web"}
-
         reply = "```calc\n0.15*240+12\n```\n```search\n15 percent of 240\n```"
-        self.assertNotIn("```search", settle_blocks(reply, prompt))
-        notes = tool_notes(reply, search=search, prompt=prompt)
+        settled = settle_blocks(reply, prompt)
+        self.assertIn("```calc", settled)
+        self.assertIn("```search", settled)
+        notes = tool_notes(reply, prompt=prompt)
         self.assertIn("Calculator: 0.15*240+12 = 48", notes)
-        self.assertEqual(calls, [])
-        with patch.dict(os.environ, {"PI_PAIR_ROLE": "brain"}):
-            self.assertTrue(search_candidate(prompt, True))
+        self.assertNotIn("15 percent", notes)
 
     def test_the_note_is_placed_before_the_question(self):
         prompt = "what is 847*23?"

@@ -1,7 +1,7 @@
 """Chat abilities that stay generic: fences, citations, and one extra model call.
 
-A turn may contain at most two fenced tools, named search, calc, plot, or doc.
-The fence name is the only signal. There is no JSON function call.
+A turn may contain at most two fenced tools, named calc, plot, or doc.
+The fence name is the only signal. Web search is a native tool call, not a fence.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import re
 from pair.turn.calc import evaluate_expr
 from pair.turn.shape import ATTACH_MARK, estimate_tokens
 
-_TOOL_LANG = "search|calc|plot|chart|bar|doc|pdf|docx|xlsx|md|markdown|txt|csv"
+_TOOL_LANG = "calc|plot|chart|bar|doc|pdf|docx|xlsx|md|markdown|txt|csv"
 _FENCE = re.compile(rf"```({_TOOL_LANG})[ \t]*\n(.*?)```", re.S | re.I)
 _ANY_FENCE = re.compile(r"```([^\n`]*)\n?([\s\S]*?)```")
 _JSON_FENCE = re.compile(r"```json\n(.*?)```", re.S)
@@ -103,7 +103,7 @@ def ground_citations(text: str, source_count: int) -> str:
 
 
 def strip_fences(text: str) -> str:
-    """Drop an empty fence, and a fence whose label is not a language token."""
+    """Drop an empty fence. A fence whose label is not a language token keeps its text."""
 
     def repl(match: re.Match) -> str:
         label = (match.group(1) or "").strip()
@@ -111,7 +111,7 @@ def strip_fences(text: str) -> str:
         if not body:
             return ""
         if label and not _LANG_TOKEN.fullmatch(label):
-            return ""
+            return body
         return match.group(0)
 
     return _ANY_FENCE.sub(repl, text or "")
@@ -290,8 +290,6 @@ def _real_block(name: str, body: str, persona: str, question: str = "") -> bool:
         return False
     if name == "calc":
         return bool(_calc_line(body))
-    if name == "search":
-        return bool((body or "").strip())
     if name in {"doc", "plot"}:
         return _substantive_block(name, body, question)
     return bool(payload)
@@ -333,16 +331,14 @@ def settle_blocks(
     prompt: str = "",
     persona: str = "",
     context: str = "",
-    have_tools: bool = False,
 ) -> str:
     """Keep a chart or file only when the model wrote a substantive block.
 
     A doc or plot fence becomes a file or chart when its body is more than
     the fence label or a restatement of the request. Otherwise that body is
     chat text. Nothing here wraps a plain reply as a download, and nothing
-    here builds a table from the user's wording. A search fence runs at most
-    once, and not when this turn already has a tool result. A block copied
-    from the system prompt is dropped. A rejected block is not a tool call.
+    here builds a table from the user's wording. A block copied from the
+    system prompt is dropped. A rejected block is not a tool call.
     """
     from pair.turn.shape import PERSONA, notes_for, sample_turns, user_question
 
@@ -356,26 +352,12 @@ def settle_blocks(
         raw = match.group(2)
         name, _body = _as_tool(match.group(1), raw)
         found.append((match, name, raw))
-    other = any(
-        name != "search" and _real_block(name, raw, source_persona, question)
-        for _match, name, raw in found
-    )
-    block_search = bool(have_tools or other or notes_for(question))
     pieces: list[str] = []
     last = 0
-    saw_search = False
     for match, name, raw in found:
         pieces.append(source[last : match.start()])
         keep = ""
-        if name == "search":
-            if (
-                not saw_search
-                and not block_search
-                and _real_block(name, raw, source_persona, question)
-            ):
-                keep = match.group(0)
-                saw_search = True
-        elif _real_block(name, raw, source_persona, question):
+        if _real_block(name, raw, source_persona, question):
             keep = _kept_fence(match.group(0), match.group(1), name, raw)
         elif name in {"doc", "plot"}:
             keep = _chat_text(raw, source_persona)
@@ -532,13 +514,12 @@ def clean_reply(
     source_count: int = 0,
     persona: str = "",
     context: str = "",
-    have_tools: bool = False,
 ) -> str:
     """Drop empty fences, repeated fences, echoed prompt lines, and stray [n]."""
     from pair.turn.shape import PERSONA, user_question
 
     cleaned = normalize_figure_fences(text or "")
-    cleaned = settle_blocks(cleaned, prompt, persona, context, have_tools=have_tools)
+    cleaned = settle_blocks(cleaned, prompt, persona, context)
     cleaned = dedupe_fences(strip_fences(cleaned))
     question = " ".join(user_question(prompt or "").split())
     banned = _persona_lines(persona or PERSONA)
@@ -613,20 +594,6 @@ def _calc_note(body: str) -> str:
     return "Calculator: no result."
 
 
-def _search_note(body: str, search) -> str:
-    query = " ".join((body or "").split())
-    if not query:
-        return "Search returned nothing."
-    try:
-        found = search(query)
-    except Exception:
-        return "Search returned nothing."
-    if not isinstance(found, dict):
-        return "Search returned nothing."
-    context = str(found.get("context") or "").strip()
-    return context or "Search returned nothing."
-
-
 def _plot_note(body: str) -> str:
     from pair.render.charts import render_chart
 
@@ -660,34 +627,21 @@ def _doc_note(body: str) -> str:
 
 def tool_notes(
     text: str,
-    search=None,
     *,
     prompt: str = "",
     context: str = "",
-    have_tools: bool = False,
 ) -> str:
     """Run at most two fences. A rejected block is not a tool call."""
-    text = settle_blocks(text, prompt=prompt, context=context, have_tools=have_tools)
+    text = settle_blocks(text, prompt=prompt, context=context)
     fences = parse_fences(text)
     if not fences:
         return ""
-    if search is None:
-        from pair.nodes.websearch import search as web_search
-
-        search = web_search
-
     lines = []
-    saw_search = False
     for fence in fences:
         name = fence["name"]
         body = fence["body"]
         if name == "calc":
             lines.append(_calc_note(body))
-        elif name == "search":
-            if saw_search:
-                continue
-            saw_search = True
-            lines.append(_search_note(body, search))
         elif name == "plot":
             lines.append(_plot_note(body))
         elif name == "doc":
@@ -795,7 +749,7 @@ def eval_rows() -> list[dict]:
             {
                 "id": f"tools-{index}",
                 "category": "tools",
-                "text": "```calc\n2+2\n```\n```search\nquery\n```\n```plot\nx\n```",
+                "text": "```calc\n2+2\n```\n```plot\nx,y\n1,2\n```",
             }
         )
         rows.append({"id": f"effort-{index}", "category": "effort"})
@@ -820,7 +774,7 @@ def _passes(row: dict) -> bool:
             and not any(phrase in lowered for phrase in stock)
         )
     if category == "calc":
-        note = tool_notes(f"```calc\n{row['expr']}\n```", search=lambda _q: {})
+        note = tool_notes(f"```calc\n{row['expr']}\n```")
         return str(evaluate_expr(row["expr"])) in note
     if category == "citations":
         grounded = ground_citations(row["text"], 2)
@@ -844,7 +798,7 @@ def _passes(row: dict) -> bool:
         found = parse_fences(row["text"])
         return len(found) == 2 and [item["name"] for item in found] == [
             "calc",
-            "search",
+            "plot",
         ]
     if category == "effort":
         hint = EFFORT_HINT["high"]

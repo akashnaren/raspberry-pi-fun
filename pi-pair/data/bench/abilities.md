@@ -1,7 +1,7 @@
 # Ability bench
 
 - items: 200
-- persona tokens: 183
+- persona tokens: 170
 - model: not run (0.6b is not on this VM)
 
 - persona: 1.0

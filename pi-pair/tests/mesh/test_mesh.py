@@ -35,7 +35,7 @@ from pair.routes import reply as reply_routes
 from pair.routes import search as search_routes
 from pair.routes.search import SEARCH_BODY_CAP
 from pair.server import make_server
-from tests.support.fakes import _decide_body
+from tests.support.fakes import tool_reply
 from tests.support.paths import ROOT
 
 SECRET = "zz-secret-bench-phrase email ada@example.com phone 415-555-0130"
@@ -146,8 +146,8 @@ class FailedSearch(_Quiet, BaseHTTPRequestHandler):
 class OllamaPage(_Quiet, BaseHTTPRequestHandler):
     posts = 0
     last_payload = None
-    decide = "SKIP"
-    decide_posts = 0
+    tool_query = ""
+    tool_twice = False
 
     def do_GET(self):
         body = json.dumps({"models": [{"name": "qwen3:0.6b"}]}).encode()
@@ -160,13 +160,10 @@ class OllamaPage(_Quiet, BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        decided = _decide_body(self, payload)
-        if decided is not None:
-            body = decided
-        else:
-            type(self).posts += 1
-            type(self).last_payload = payload
-            body = json.dumps({"message": {"content": "local answer"}}).encode()
+        called = tool_reply(self, payload)
+        type(self).posts += 1
+        type(self).last_payload = payload
+        body = called or json.dumps({"message": {"content": "local answer"}}).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
@@ -514,8 +511,8 @@ class ChatOffload(unittest.TestCase):
         SearchPage.seen = []
         OllamaPage.posts = 0
         OllamaPage.last_payload = None
-        OllamaPage.decide = "SEARCH"
-        OllamaPage.decide_posts = 0
+        OllamaPage.tool_query = ""
+        OllamaPage.tool_twice = False
 
     def tearDown(self):
         for httpd in self.servers:
@@ -588,11 +585,12 @@ class ChatOffload(unittest.TestCase):
         search_port = _listen(self.servers, SearchPage)
         ollama_port = _listen(self.servers, OllamaPage)
         port = self._arm(search_port, ollama_port)
+        OllamaPage.tool_query = "What is the latest height of the zinc bench?"
         status, body = self._chat(port, "on")
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], "local answer")
         self.assertEqual(self.local_calls, [])
-        self.assertEqual(OllamaPage.posts, 1)
+        self.assertEqual(OllamaPage.posts, 2)
         blob = json.dumps(OllamaPage.last_payload)
         self.assertIn("bench from pi2", blob)
         self.assertTrue(all(item.startswith("/v1/search ") for item in SearchPage.seen))
@@ -608,7 +606,7 @@ class ChatOffload(unittest.TestCase):
         self.assertEqual(
             self.local_calls, ["What is the latest height of the zinc bench?"]
         )
-        self.assertEqual(OllamaPage.posts, 2)
+        self.assertEqual(OllamaPage.posts, 4)
         self.assertNotIn("bench from pi2", json.dumps(OllamaPage.last_payload))
 
     def test_mesh_off_does_not_ask_pi2(self):

@@ -1,9 +1,9 @@
 """Shape one turn before pi4 decodes it.
 
 Attachment text and search notes are untrusted data: control tokens and
-role labels are stripped, the file and the notes are fenced, and the whole
-prompt is cut so a 2048-token context still has room to answer. After a
-web search, a grounding rule is the last note the model reads.
+role labels are stripped, the file is fenced, and the whole prompt is cut
+so a 2048-token context still has room to answer. Search notes are plain
+lines for a tool result, not a system fence.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import functools
 import json
 import math
 import re
+from urllib.parse import urlparse
 
 from pair.core.errors import friendly_error
 from pair.model.knobs import attachment_limit, inference_knobs
@@ -98,7 +99,8 @@ _FLOW = re.compile(
     re.I,
 )
 _CONTROL = re.compile(
-    r"<\|/?im_start\|>|<\|/?im_end\|>|<<\/?SYS>>|\[\/?INST\]|</?s>|<\|/?system\|>",
+    r"<\|/?im_start\|>|<\|/?im_end\|>|<<\/?SYS>>|\[\/?INST\]|</?s>|<\|/?system\|>|"
+    r"</?tool_call>|</?tool_response>",
     re.I,
 )
 _INJECT = re.compile(
@@ -217,24 +219,8 @@ def structure_hint(prompt: str) -> str | None:
     return None
 
 
-GROUNDED_RULE = (
-    "Answer only from the web search notes above. Name the site for each fact. "
-    "If the notes do not mention what was asked, say the search did not find it and stop. "
-    "Never guess a name, job title, role, date, or number."
-)
-NO_RESULTS_RULE = (
-    "A web search ran but found nothing useful. Say in one sentence that you could not "
-    "find reliable results, and offer to try other wording. Never guess a name, job "
-    "title, role, date, or number."
-)
-
-
 def answered_locally(prompt: str, context: str = "") -> bool:
-    """True when the calculator can finish the question from its expression.
-
-    A model search fence is limited separately: once per turn, and only if
-    no tool result exists yet.
-    """
+    """True when the calculator can finish the question from its expression."""
     del context
     return notes_for(user_question(prompt)) is not None
 
@@ -272,38 +258,49 @@ def clip_words(text: str, keep: int) -> str:
     return chunk.rstrip() + mark
 
 
-def prepare_search_note(full: str, limit: int) -> str:
-    """Fence notes the model sees. The stored page text stays outside this copy.
+def _site_name(url: str) -> str:
+    host = urlparse(url).hostname or ""
+    if host.startswith("www."):
+        host = host[4:]
+    return host
 
-    The first line still starts with "Web search notes." so a caller can
-    recognize the row. Role labels and control characters are stripped.
-    The rest is data inside <search>, cut on a word to `limit`.
-    """
-    cleaned = _clean_untrusted(full)
-    if not cleaned:
-        return ""
-    lines = cleaned.splitlines()
-    first = lines[0].strip()
-    if first.startswith("Web search notes"):
-        header = first
-        body = "\n".join(lines[1:]).strip()
-    else:
-        header = "Web search notes."
-        body = cleaned
-    body = body.replace("</search>", "</ search>").replace("<search>", "< search>")
-    if limit <= 0:
-        return clip_words(header, 1)
+
+def _result_line(text: str) -> str:
+    body = text[2:].strip() if text.startswith("- ") else text
+    body = re.sub(r"[<>]", "", body)
+
+    def site(match: re.Match) -> str:
+        name = _site_name(match.group(1))
+        return f"({name})" if name else match.group(0)
+
+    body = re.sub(r"\((https?://[^)\s]+)\)", site, body).strip()
     if not body:
-        return clip_words(header, limit)
-    prefix = header + "\n<search>\n"
-    suffix = "\n</search>"
-    overhead = len(prefix) + len(suffix)
-    if overhead >= limit:
-        return clip_words(header, limit)
-    shown = prefix + clip_words(body, limit - overhead) + suffix
-    if len(shown) <= limit:
-        return shown
-    return clip_words(header, limit)
+        return ""
+    return "- " + body
+
+
+def search_result_text(full: str, limit: int) -> str:
+    """Plain ``- title (site): snippet`` lines, cut to `limit`.
+
+    Control tokens are stripped. There is no Notes header and no search fence.
+    The tool message is the fence.
+    """
+    cleaned = _clean_untrusted(full or "")
+    if not cleaned or limit <= 0:
+        return ""
+    lines = []
+    for raw in cleaned.splitlines():
+        text = raw.strip()
+        if not text or text.lower().startswith("web search notes"):
+            continue
+        text = text.replace("<search>", "").replace("</search>", "").strip()
+        line = _result_line(text)
+        if line:
+            lines.append(line)
+    body = "\n".join(lines).strip()
+    if not body or len(body) <= limit:
+        return body
+    return clip_words(body, limit)
 
 
 def fence_messages(messages, knobs: dict | None = None) -> list:

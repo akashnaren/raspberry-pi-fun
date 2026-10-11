@@ -12,7 +12,7 @@ from pair.model.knobs import search_note_limit
 from pair.model.modes import mode_table
 from pair.routes.base import safe_write
 from pair.search.lookup import lookup_web
-from pair.turn.shape import prepare_search_note
+from pair.turn.shape import search_result_text
 
 FLASH_SOURCE_CAP = 3
 PRO_SOURCE_CAP = 8
@@ -110,17 +110,12 @@ def _with_search(
         title = str(item.get("title") or url).strip() or url
         sources.append({"title": title[:120], "url": url})
     full = str(found.get("context") or "").strip()
-    shown = prepare_search_note(full, search_note_limit())
+    shown = search_result_text(full, search_note_limit())
     note = {"status": status, "sources": sources, "context": full}
     if status == "ok" and shown:
         note["prompt_note"] = shown
     _join_cancel(warm, 40, cancel)
     return messages, note
-
-
-def _searched(search_note) -> bool:
-    """True when this turn already received a search result."""
-    return isinstance(search_note, dict) and search_note.get("status") == "ok"
 
 
 def _source_count(search_note) -> int:

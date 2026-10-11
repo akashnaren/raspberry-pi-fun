@@ -44,6 +44,7 @@ def ollama_payload(
     top_p: float | None = None,
     top_k: int | None = None,
     presence_penalty: float | None = None,
+    tools=None,
 ) -> dict:
     """The one Ollama chat body. keep_alive is the pi4 knob, not a per-call TTL.
 
@@ -58,7 +59,7 @@ def ollama_payload(
         options["top_k"] = int(top_k)
     if presence_penalty is not None:
         options["presence_penalty"] = float(presence_penalty)
-    return {
+    body = {
         "model": model,
         "messages": messages,
         "stream": stream,
@@ -66,6 +67,9 @@ def ollama_payload(
         "think": bool(think),
         "options": options,
     }
+    if tools:
+        body["tools"] = tools
+    return body
 
 
 def llamacpp_model(peer, model: str) -> str:
@@ -73,6 +77,20 @@ def llamacpp_model(peer, model: str) -> str:
     if models and (":" in model or model not in models):
         return models[0]
     return model
+
+
+def _remember_tool(meta: dict | None, message: dict, answer: str, tools) -> None:
+    if meta is None:
+        return
+    if not tools:
+        meta["saw_tool"] = False
+        meta["tool_query"] = ""
+        return
+    from pair.turn.search_tool import tool_query
+
+    found = tool_query(message, answer, "")
+    meta["saw_tool"] = found is not None
+    meta["tool_query"] = found or ""
 
 
 def chat_ollama(
@@ -84,6 +102,7 @@ def chat_ollama(
     meta: dict | None = None,
     plan=None,
     cancel=None,
+    tools=None,
 ):
     require_generative(peer)
     think = bool(plan and plan.think)
@@ -93,6 +112,7 @@ def chat_ollama(
         answer_parts: list[str] = []
         thinking_parts: list[str] = []
         taken: dict = {}
+        tool_message: dict = {}
         for kind, text in iter_ollama_channels(
             peer,
             model,
@@ -102,8 +122,20 @@ def chat_ollama(
             plan=plan,
             cancel=cancel,
             usage=taken,
+            tools=tools,
         ):
-            if kind == "thinking" and text:
+            if kind == "tool":
+                tool_message = {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "web_search",
+                                "arguments": {"query": text},
+                            }
+                        }
+                    ]
+                }
+            elif kind == "thinking" and text:
                 thinking_parts.append(text)
             elif text:
                 answer_parts.append(text)
@@ -112,6 +144,7 @@ def chat_ollama(
             meta["done_reason"] = "stop"
             meta["reasoning"] = "".join(thinking_parts).strip()
             meta["usage"] = taken
+        _remember_tool(meta, tool_message, answer, tools)
         return answer, model
     knobs = inference_knobs()
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
@@ -128,13 +161,16 @@ def chat_ollama(
         top_p=top_p,
         top_k=top_k,
         presence_penalty=penalty,
+        tools=tools,
     )
     out = _post_json(url, payload, timeout=180)
-    answer, thinking = split_ollama_message(out.get("message") or {})
+    message = out.get("message") or {}
+    answer, thinking = split_ollama_message(message)
     if meta is not None:
         meta["done_reason"] = str(out.get("done_reason") or "")
         meta["reasoning"] = thinking
         meta["usage"] = from_ollama(out)
+    _remember_tool(meta, message if isinstance(message, dict) else {}, answer, tools)
     return answer, model
 
 
@@ -178,62 +214,27 @@ def chat_llamacpp(
     return content, use
 
 
-def classify_once(peer, kind, model, messages, knobs, timeout: float) -> str:
-    """Three tokens, greedy, same context as the answer. Raw text, not peeled.
-
-    pi2 and pi3 never reach this. require_generative refuses them first.
-    """
-    require_generative(peer)
-    if (kind or "ollama") == "llamacpp":
-        use = llamacpp_model(peer, model)
-        url = f"http://{peer['host']}:{peer['port']}/v1/chat/completions"
-        payload = {
-            "model": use,
-            "messages": messages,
-            "stream": False,
-            "temperature": 0,
-            "max_tokens": 3,
-            "stop": ["\n"],
-        }
-        out = _post_json(url, payload, timeout)
-        choice = (out.get("choices") or [{}])[0]
-        content = (choice.get("message") or {}).get("content") or ""
-        return content if isinstance(content, str) else str(content)
-    url = f"http://{peer['host']}:{peer['port']}/api/chat"
-    payload = ollama_payload(
-        model,
-        messages,
-        0.0,
-        3,
-        False,
-        knobs,
-        think=False,
-        top_p=1.0,
-        top_k=1,
-        presence_penalty=0.0,
-    )
-    payload["options"]["stop"] = ["\n"]
-    out = _post_json(url, payload, timeout)
-    content = (out.get("message") or {}).get("content") or ""
-    return content if isinstance(content, str) else str(content)
-
-
 def warm_chat_model(peer: dict, model: str, timeout: float = 45) -> bool:
-    """Load one tag with keep_alive -1. A missing tag returns False and is not pulled."""
+    """Load one tag with keep_alive -1. A missing tag returns False and is not pulled.
+
+    The warm uses the real answer prefix and the web_search tool, so the first
+    turn after a restart hits the same cache.
+    """
     if not may_generate(peer) or not model:
         return False
-    from pair.turn.shape import persona_text
+    from pair.turn.search_tool import SEARCH_TOOL
+    from pair.turn.shape import shape_messages
 
+    knobs = inference_knobs()
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
     payload = ollama_payload(
         model,
-        [
-            {"role": "system", "content": persona_text()},
-            {"role": "user", "content": "ok"},
-        ],
+        shape_messages([{"role": "user", "content": "ok"}], "ok", knobs),
         0.0,
         1,
         False,
+        knobs,
+        tools=[SEARCH_TOOL],
     )
     try:
         with open_json(url, payload, timeout) as response:

@@ -20,18 +20,19 @@ from pair.model.think import (
 
 
 def ollama_parts(line: str):
-    """Return (content, thinking, done, skip, done_reason, usage).
+    """Return (content, thinking, done, skip, done_reason, usage, tool_calls).
 
     `thinking` is Ollama's separate channel. It is not answer text.
     `usage` is Ollama's eval counters on the done line, else None.
+    `tool_calls` is the message list, or None when this frame has none.
     """
     line = line.strip()
     if not line:
-        return "", "", False, True, "", None
+        return "", "", False, True, "", None, None
     try:
         obj = json.loads(line)
     except json.JSONDecodeError:
-        return "", "", False, True, "", None
+        return "", "", False, True, "", None, None
     message = obj.get("message") if isinstance(obj.get("message"), dict) else {}
     content = message.get("content") or ""
     thinking = message.get("thinking") or ""
@@ -39,15 +40,18 @@ def ollama_parts(line: str):
         content = ""
     if not isinstance(thinking, str):
         thinking = ""
+    calls = message.get("tool_calls")
+    if not isinstance(calls, list):
+        calls = None
     done = bool(obj.get("done"))
     reason = str(obj.get("done_reason") or "") if done else ""
     usage = from_ollama(obj) if done else None
-    return content, thinking, done, False, reason, usage
+    return content, thinking, done, False, reason, usage, calls
 
 
 def ollama_delta(line: str):
     """Return (text, done, skip). skip means the line was not a JSON object."""
-    content, _thinking, done, skip, _reason, _usage = ollama_parts(line)
+    content, _thinking, done, skip, _reason, _usage, _calls = ollama_parts(line)
     return content, done, skip
 
 
@@ -159,8 +163,9 @@ def iter_ollama_channels(
     plan=None,
     cancel=None,
     usage: dict | None = None,
+    tools=None,
 ):
-    """Yield ('thinking', text) or ('content', text) from one Ollama call.
+    """Yield ('thinking', text), ('content', text), or ('tool', query).
 
     Levels pass think=false. A hand-built thinking plan still stops at the
     token cap or at about 25 seconds, and there is no second call. `<think>`
@@ -185,6 +190,7 @@ def iter_ollama_channels(
         top_p=top_p,
         top_k=top_k,
         presence_penalty=penalty,
+        tools=tools,
     )
     accumulated = ""
     content_parts: list[str] = []
@@ -197,12 +203,20 @@ def iter_ollama_channels(
     try:
         with open_json(url, payload, timeout=first_timeout, cancel=cancel) as response:
             for line in _read_ndjson(response, cancel):
-                content, thinking, done, skip, reason, frame_usage = ollama_parts(line)
+                content, thinking, done, skip, reason, frame_usage, calls = (
+                    ollama_parts(line)
+                )
                 if skip:
                     continue
                 _keep_usage(usage, frame_usage)
                 if done and usage is not None:
                     usage["done_reason"] = reason
+                if calls:
+                    from pair.turn.search_tool import tool_query
+
+                    found = tool_query({"tool_calls": calls}, "", "")
+                    if found is not None:
+                        yield "tool", found
                 now = time.monotonic()
                 if thinking and not capped:
                     merged = accumulated + thinking
@@ -236,7 +250,10 @@ def iter_ollama_channels(
                     if peel_think("".join(content_parts))[0].strip():
                         saw_content = True
                     yield "content", content
-                if done or (capped and not saw_content):
+                if tools is None:
+                    if done or (capped and not saw_content):
+                        break
+                elif done:
                     break
     except TimeoutError:
         return
@@ -251,6 +268,8 @@ def stream_ollama(
     plan=None,
     cancel=None,
     usage: dict | None = None,
+    tools=None,
+    on_tool=None,
 ):
     """Yield answer deltas from Ollama /api/chat with stream:true (NDJSON)."""
 
@@ -265,7 +284,12 @@ def stream_ollama(
             plan=plan,
             cancel=cancel,
             usage=usage,
+            tools=tools,
         ):
+            if kind == "tool":
+                if on_tool is not None:
+                    on_tool(text)
+                continue
             if kind == "content" and text:
                 yield text
 

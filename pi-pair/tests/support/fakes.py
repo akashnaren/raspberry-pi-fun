@@ -6,20 +6,51 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from pair.turn.decide import DECIDE_PROMPT
+
+def _has_tool_result(payload: dict) -> bool:
+    for row in payload.get("messages") or []:
+        if isinstance(row, dict) and row.get("role") == "tool":
+            return True
+    return False
 
 
-def _decide_body(handler, payload: dict) -> bytes | None:
-    """A search check is not an answer post. None when this payload is the answer."""
-    messages = payload.get("messages") or []
-    last = messages[-1] if messages else None
-    content = last.get("content") if isinstance(last, dict) else ""
-    if content != DECIDE_PROMPT:
-        return None
+def tool_reply(handler, payload: dict) -> bytes | None:
+    """A web_search tool call, or None when this payload is the answer.
+
+    `tool_query` is the query the fake emits. `tool_twice` emits another call
+    after the tool result, so the app can refuse to run a second lookup.
+    """
     kind = type(handler)
-    kind.decide_posts = int(getattr(kind, "decide_posts", 0)) + 1
-    word = str(getattr(kind, "decide", "SKIP") or "SKIP")
-    return json.dumps({"message": {"content": word}}).encode()
+    query = str(getattr(kind, "tool_query", "") or "")
+    if not query or not payload.get("tools"):
+        return None
+    if _has_tool_result(payload) and not getattr(kind, "tool_twice", False):
+        return None
+    body = {
+        "message": {
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "web_search",
+                        "arguments": {"query": query},
+                    }
+                }
+            ],
+        },
+        "done": True,
+        "done_reason": "stop",
+    }
+    return json.dumps(body).encode()
+
+
+def _note_payload(handler, payload: dict) -> None:
+    kind = type(handler)
+    kind.posts = int(getattr(kind, "posts", 0)) + 1
+    kind.last_payload = payload
+    seen = getattr(kind, "payloads", None)
+    if isinstance(seen, list):
+        seen.append(payload)
 
 
 def _start(httpd: ThreadingHTTPServer) -> None:
@@ -32,9 +63,10 @@ def _start(httpd: ThreadingHTTPServer) -> None:
 class OllamaFake(BaseHTTPRequestHandler):
     posts = 0
     last_payload = None
+    payloads: list = []
     catalog = ["qwen3:0.6b"]
-    decide = "SKIP"
-    decide_posts = 0
+    tool_query = ""
+    tool_twice = False
 
     def log_message(self, *args):
         pass
@@ -51,12 +83,18 @@ class OllamaFake(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        decided = _decide_body(self, payload)
-        if decided is not None:
-            self._json(decided)
+        called = tool_reply(self, payload)
+        if called is not None:
+            _note_payload(self, payload)
+            if payload.get("stream"):
+                self.send_response(200)
+                self.send_header("content-type", "application/x-ndjson")
+                self.end_headers()
+                self.wfile.write(called + b"\n")
+                return
+            self._json(called)
             return
-        type(self).posts += 1
-        type(self).last_payload = payload
+        _note_payload(self, payload)
         if payload.get("stream"):
             self.send_response(200)
             self.send_header("content-type", "application/x-ndjson")
@@ -124,18 +162,26 @@ class LlamaFake(BaseHTTPRequestHandler):
 class ScriptOllama(OllamaFake):
     replies: list = []
     seen: list = []
-    decide = "SKIP"
-    decide_posts = 0
+    payloads: list = []
+    tool_query = ""
+    tool_twice = False
 
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        decided = _decide_body(self, payload)
-        if decided is not None:
-            self._json(decided)
+        called = tool_reply(self, payload)
+        if called is not None:
+            _note_payload(self, payload)
+            type(self).seen.append(payload)
+            if payload.get("stream"):
+                self.send_response(200)
+                self.send_header("content-type", "application/x-ndjson")
+                self.end_headers()
+                self.wfile.write(called + b"\n")
+                return
+            self._json(called)
             return
-        type(self).posts += 1
-        type(self).last_payload = payload
+        _note_payload(self, payload)
         type(self).seen.append(payload)
         reply = (
             type(self).replies.pop(0)

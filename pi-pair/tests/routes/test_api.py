@@ -22,7 +22,6 @@ from pair.routes import images as image_routes
 from pair.routes import search as search_routes
 from pair.routes.public_api import API_KEY_ENV, FLASH_MODE, apply_mode
 from pair.server import make_server
-from tests.support.fakes import _decide_body
 from tests.support.paths import ROOT
 
 
@@ -69,8 +68,6 @@ class BrainPage(BaseHTTPRequestHandler):
 class OllamaFake(BaseHTTPRequestHandler):
     posts = 0
     last_payload = None
-    decide = "SKIP"
-    decide_posts = 0
 
     def log_message(self, *args):
         pass
@@ -86,10 +83,6 @@ class OllamaFake(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         payload = json.loads(self.rfile.read(length).decode() or "{}")
-        decided = _decide_body(self, payload)
-        if decided is not None:
-            self._json(decided)
-            return
         type(self).posts += 1
         type(self).last_payload = payload
         self._json(json.dumps({"message": {"content": "hello from peer"}}).encode())
@@ -140,8 +133,6 @@ class PublicApi(unittest.TestCase):
         queue.forward_row = lambda row, opener=None, timeout=1.5: True
         OllamaFake.posts = 0
         OllamaFake.last_payload = None
-        OllamaFake.decide = "SKIP"
-        OllamaFake.decide_posts = 0
         BrainPage.last_payload = None
         peer_port = self._listen(OllamaFake)
         runtime.set_peers(

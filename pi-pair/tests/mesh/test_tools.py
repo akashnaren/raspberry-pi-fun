@@ -16,7 +16,6 @@ from pair.core import runtime
 from pair.ingest import job as ingest_job
 from pair.ingest import ocr
 from pair.ingest.ocr import recognize_image
-from pair.mesh.guard import may_generate
 from pair.mesh.health import peer_load
 from pair.mesh.tools import (
     SEARCH_MEDIAN_TARGET_S,
@@ -27,7 +26,6 @@ from pair.mesh.tools import (
     generation_routes,
     latency_stats,
     registry,
-    schedule_prefix_prime,
     simulated_search_latencies,
 )
 from pair.nodes import websearch
@@ -307,34 +305,6 @@ class WorkerHttp(unittest.TestCase):
                 text = recognize_image(b"not-an-image")
         self.assertEqual(text, "from pi3")
         local.assert_not_called()
-
-    def test_prefix_prime_waits_until_the_decode_slot_is_idle(self):
-        previous = list(runtime.PEERS)
-        runtime.set_peers(
-            [
-                {
-                    "name": "pi2",
-                    "host": "127.0.0.1",
-                    "port": 9,
-                    "role": "health",
-                    "generative": False,
-                },
-                {
-                    "name": "pi4",
-                    "host": "127.0.0.1",
-                    "port": 9,
-                    "role": "brain",
-                    "generative": True,
-                },
-            ]
-        )
-        self.assertTrue(runtime.gate.try_acquire())
-        try:
-            self.assertFalse(schedule_prefix_prime([{"role": "user", "content": "hi"}]))
-        finally:
-            runtime.gate.release()
-            runtime.set_peers(previous)
-        self.assertFalse(may_generate({"name": "pi2", "role": "health"}))
 
     def test_images_handler_calls_cards_and_the_brain_refuses_the_route(self):
         with patch(
