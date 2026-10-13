@@ -26,7 +26,7 @@ echo "Source:  $ROOT"
 echo "Target:  $INSTALL_DIR"
 echo "Name:    $NODE_NAME"
 echo "Role:    $ROLE"
-echo "Proxy:   127.0.0.1 and the tailnet address, port ${PAIR_PORT}"
+echo "Proxy:   0.0.0.0 port ${PAIR_PORT}. Funnel targets 127.0.0.1:${PAIR_PORT} only."
 if ! command -v tesseract >/dev/null 2>&1 || ! command -v pdftoppm >/dev/null 2>&1; then
   echo "Attachment OCR needs local binaries (sudo once, no cloud OCR API):"
   echo "  sudo apt-get install -y tesseract-ocr poppler-utils"
@@ -219,11 +219,10 @@ PY
   echo
   echo "--- Ollama bind (run these yourself if needed) ---"
   echo "OLLAMA_HOST is a single address. The Pro preload dials 127.0.0.1:11434."
-  echo "peers.json dials this board's tailnet address on port 11434, so that address"
-  echo "has to accept the connection too. 0.0.0.0 covers both, and it also opens the"
-  echo "model port on every other interface. Do not publish 11434 through Tailscale"
-  echo "Funnel. Funnel targets the chat port on 127.0.0.1 only. On a board that also"
-  echo "has a public or guest interface, bind the tailnet address instead of 0.0.0.0."
+  echo "peers.json dials this board's LAN address on port 11434, so that address"
+  echo "has to accept the connection too. 0.0.0.0 covers both."
+  echo "Port 11434 must never be published through Tailscale Funnel."
+  echo "Funnel for the chat port must point only at 127.0.0.1:${PAIR_PORT}."
   echo "Chat models stay loaded. ${OLLAMA_NUM_PARALLEL} chat sequences share ${OLLAMA_MODEL_PRIMARY}."
   echo "The chat router rejects a further generation with HTTP 503."
   cat << SUDO
@@ -341,7 +340,7 @@ UNIT_FILE="$UNIT_DIR/${SERVICE_NAME}.service"
 cat > "$UNIT_FILE" << UNIT
 [Unit]
 Description=Pi GPT 1.0
-After=network-online.target tailscaled.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -350,6 +349,7 @@ WorkingDirectory=$INSTALL_DIR
 Environment=PI_PAIR_NAME=$NODE_NAME
 Environment=PI_PAIR_ROLE=$ROLE
 Environment=PI_PAIR_PORT=$PAIR_PORT
+Environment=PI_PAIR_HOST=0.0.0.0
 Environment=PI_PAIR_PEERS=$INSTALL_DIR/peers.json
 Environment=MESH_MODEL=${OLLAMA_MODEL_PRIMARY}
 ${REMOTE_SEARCH_LINE}
@@ -364,8 +364,8 @@ WantedBy=default.target
 UNIT
 
 echo "Wrote $UNIT_FILE"
-echo "The service listens on 127.0.0.1 and this board's tailnet address."
-echo "Set PI_PAIR_HOST to a comma-separated list to override. Do not use 0.0.0.0 on a Funnel host."
+echo "The service listens on 0.0.0.0 so LAN peers can reach port ${PAIR_PORT}."
+echo "Funnel must point only at 127.0.0.1:${PAIR_PORT}. Never funnel port 11434."
 echo
 echo "--- Enable user service (no sudo) ---"
 echo "  systemctl --user daemon-reload"

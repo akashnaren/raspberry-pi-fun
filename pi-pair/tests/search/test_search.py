@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 from unittest import mock
+from urllib.error import URLError
 
 import pair.search.lookup as search
 from pair.search.lookup import (
@@ -513,3 +514,36 @@ class SearchParse(unittest.TestCase):
         hopped = lookup_web("bench height", opener=follow)
         self.assertNotIn("second hop", hopped["context"])
         self.assertTrue(all("duckduckgo.com" in url for url, _pin in seen))
+
+    def test_pin_prefers_ipv4_and_ipv6_connect_failure_falls_back(self):
+        def resolve(host):
+            return {
+                "wiki.example": ["2620:0:863:ed1a::1", "1.1.1.1"],
+                "v6only.example": ["2620:0:863:ed1a::1", "2606:4700:4700::1111"],
+            }[host]
+
+        search._resolve = resolve
+        self.assertEqual(search._pin_for("https://wiki.example/w"), "1.1.1.1")
+        seen = []
+
+        def opener(request, timeout=None):
+            seen.append(request.pinned_ip)
+            if ":" in request.pinned_ip:
+                raise URLError(OSError("no route"))
+            return _Resp("ok")
+
+        body, _ctype = _fetch("https://wiki.example/w", opener, 1, 64)
+        self.assertEqual(body, b"ok")
+        self.assertEqual(seen, ["1.1.1.1"])
+
+        seen.clear()
+
+        def v6(request, timeout=None):
+            seen.append(request.pinned_ip)
+            if request.pinned_ip == "2620:0:863:ed1a::1":
+                raise URLError(OSError("no route"))
+            return _Resp("second")
+
+        body, _ctype = _fetch("https://v6only.example/w", v6, 1, 64)
+        self.assertEqual(body, b"second")
+        self.assertEqual(seen, ["2620:0:863:ed1a::1", "2606:4700:4700::1111"])

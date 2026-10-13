@@ -9,6 +9,7 @@ import re
 import time
 import unittest
 from unittest import mock
+from urllib.error import URLError
 from urllib.parse import quote, unquote, urlparse
 
 import pair.search.lookup as lookup
@@ -211,6 +212,34 @@ class ImageCards(unittest.TestCase):
         lookup._resolve = lambda host: ["10.9.9.9"]
         with self.assertRaises(ValueError):
             _fetch_json("https://en.wikipedia.org/w/api.php?q=1", refuse)
+
+    def test_fetch_prefers_ipv4_and_falls_back_when_ipv6_connect_fails(self):
+        lookup._resolve = lambda host: ["2620:0:863:ed1a::1", "1.1.1.1"]
+        seen = []
+
+        def opener(request, timeout=None):
+            seen.append(request.pinned_ip)
+            return _Resp('{"ok": true}')
+
+        data = _fetch_json("https://en.wikipedia.org/w/api.php?q=1", opener)
+        self.assertTrue(data["ok"])
+        self.assertEqual(seen, ["1.1.1.1"])
+
+        lookup._resolve = lambda host: [
+            "2620:0:863:ed1a::1",
+            "2606:4700:4700::1111",
+        ]
+        seen.clear()
+
+        def fail_v6(request, timeout=None):
+            seen.append(request.pinned_ip)
+            if request.pinned_ip == "2620:0:863:ed1a::1":
+                raise URLError(OSError("no route"))
+            return _Resp('{"ok": true}')
+
+        data = _fetch_json("https://en.wikipedia.org/w/api.php?q=1", fail_v6)
+        self.assertTrue(data["ok"])
+        self.assertEqual(seen, ["2620:0:863:ed1a::1", "2606:4700:4700::1111"])
 
     def test_fetch_stays_on_english_wikipedia_and_caps_the_body(self):
         def opener(request, timeout=None):

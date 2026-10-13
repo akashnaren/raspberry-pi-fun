@@ -8,7 +8,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from unittest.mock import patch
+from pathlib import Path
 
 from pair.core import runtime
 from pair.core.config import listen_hosts
@@ -247,33 +247,149 @@ class FunnelHttp(unittest.TestCase):
         self.assertEqual(status, 413)
 
 
+class _Mesh(BaseRoutes):
+    def __init__(self, peer: str, headers: dict | None = None, path: str = "/health"):
+        self.client_address = (peer, 9)
+        self.headers = headers or {}
+        self.path = path
+        self.codes: list[int] = []
+
+    def send_response(self, code: int, message: str | None = None) -> None:
+        self.codes.append(code)
+
+    def send_header(self, keyword: str, value: str) -> None:
+        return None
+
+    def end_headers(self) -> None:
+        return None
+
+    def _cors(self) -> None:
+        return None
+
+    def _drain_request_body(self) -> None:
+        return None
+
+    def _error(
+        self, message: str, status: int = 502, headers: dict | None = None
+    ) -> None:
+        self.codes.append(status)
+
+
 class ListenHosts(unittest.TestCase):
-    def test_default_is_loopback_plus_the_tailnet(self):
+    def test_default_bind_is_every_interface(self):
         saved = os.environ.pop("PI_PAIR_HOST", None)
         try:
-            with patch(
-                "pair.core.config.local_ipv4",
-                return_value=[
-                    ("eth0", "10.0.0.166"),
-                    ("tailscale0", "100.64.1.8"),
-                    ("wlan0", "192.168.1.20"),
-                ],
-            ):
-                self.assertEqual(listen_hosts(), ["127.0.0.1", "100.64.1.8"])
-            with patch(
-                "pair.core.config.local_ipv4",
-                return_value=[("tailscale0", "10.0.0.166")],
-            ):
-                self.assertEqual(listen_hosts(), ["127.0.0.1", "10.0.0.166"])
+            self.assertEqual(listen_hosts(), ["0.0.0.0"])
+            os.environ["PI_PAIR_HOST"] = ""
+            self.assertEqual(listen_hosts(), ["0.0.0.0"])
             os.environ["PI_PAIR_HOST"] = "127.0.0.1,10.0.0.228"
             self.assertEqual(listen_hosts(), ["127.0.0.1", "10.0.0.228"])
-            os.environ["PI_PAIR_HOST"] = "0.0.0.0"
-            self.assertEqual(listen_hosts(), ["0.0.0.0"])
         finally:
             if saved is None:
                 os.environ.pop("PI_PAIR_HOST", None)
             else:
                 os.environ["PI_PAIR_HOST"] = saved
+        script = Path(__file__).resolve().parents[2] / "install.sh"
+        self.assertIn(
+            "Environment=PI_PAIR_HOST=0.0.0.0", script.read_text(encoding="utf-8")
+        )
+
+    def test_lan_peer_is_reachable_and_not_public(self):
+        for peer in ("10.0.0.181", "10.0.0.228", "10.0.0.166"):
+            call = _Mesh(peer, path="/docs")
+            self.assertFalse(call._public(), peer)
+            self.assertFalse(call._guard(), peer)
+            self.assertEqual(call.codes, [])
+
+        saved_role = os.environ.get("PI_PAIR_ROLE")
+        os.environ["PI_PAIR_ROLE"] = "dataset"
+        reset_limits()
+        with runtime._health_lock:
+            runtime._health_cache["peers"] = [
+                {
+                    "name": "pi2",
+                    "host": "10.0.0.181",
+                    "port": 18080,
+                    "role": "health",
+                    "ok": True,
+                    "models": [],
+                    "latency_ms": 3,
+                }
+            ]
+            runtime._health_cache["t"] = time.time()
+        httpd = make_server("0.0.0.0", 0)
+        thread = _start(httpd)
+        port = httpd.server_address[1]
+        try:
+            request = urllib.request.Request(f"http://127.0.0.1:{port}/health")
+            with urllib.request.urlopen(request, timeout=5) as response:
+                body = response.read()
+                self.assertEqual(response.status, 200)
+            self.assertIn(b"10.0.0.181", body)
+            docs = urllib.request.Request(f"http://127.0.0.1:{port}/docs")
+            with urllib.request.urlopen(docs, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+            reset_limits()
+            if saved_role is None:
+                os.environ.pop("PI_PAIR_ROLE", None)
+            else:
+                os.environ["PI_PAIR_ROLE"] = saved_role
+
+    def test_tailnet_peer_is_trusted_until_a_tunnel_header(self):
+        for peer in (
+            "100.100.197.18",
+            "100.64.0.1",
+            "100.127.255.254",
+            "fd7a:115c:a1e0::1",
+            "fd7a:115c:a1e0:1::abcd",
+            "::ffff:100.64.1.8",
+        ):
+            call = _Mesh(peer, path="/docs")
+            self.assertFalse(call._public(), peer)
+            self.assertFalse(call._guard(), peer)
+            self.assertEqual(call.codes, [], peer)
+
+        outside = _Mesh("100.128.0.1", path="/docs")
+        self.assertTrue(outside._public())
+        other_ula = _Mesh("fd7a:115c:a1e1::1", path="/docs")
+        self.assertTrue(other_ula._public())
+
+        funnel = _Mesh(
+            "100.100.197.18",
+            {"Tailscale-Funnel-Request": "true"},
+            path="/docs",
+        )
+        self.assertTrue(funnel._public())
+        self.assertTrue(funnel._guard())
+        self.assertEqual(funnel.codes, [404])
+
+        cloud = _Mesh("fd7a:115c:a1e0::1", {"Cf-Connecting-Ip": "203.0.113.9"})
+        self.assertTrue(cloud._public())
+        ray = _Mesh("100.64.1.8", {"Cf-Ray": "abc"})
+        self.assertTrue(ray._public())
+
+        os.environ["PI_PAIR_RATE_DEFAULT"] = "1/60"
+        reset_limits()
+        try:
+            mesh = _Mesh("100.64.8.8", path="/health")
+            self.assertFalse(mesh._limited())
+            self.assertFalse(mesh._limited())
+            self.assertEqual(mesh.codes, [])
+            limited = _Mesh(
+                "100.64.8.8",
+                {"Tailscale-Funnel-Request": "true"},
+                path="/health",
+            )
+            self.assertFalse(limited._limited())
+            self.assertTrue(limited._limited())
+            self.assertEqual(limited.codes, [429])
+        finally:
+            os.environ.pop("PI_PAIR_RATE_DEFAULT", None)
+            reset_limits()
 
 
 if __name__ == "__main__":

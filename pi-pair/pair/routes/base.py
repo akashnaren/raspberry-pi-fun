@@ -59,6 +59,12 @@ _RFC1918 = (
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
 )
+# Tailscale mesh. Inbound peers on these ranges are LAN. Funnel and
+# Cloudflare headers still force public, and outbound fetches still block them.
+_TAILNET = (
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("fd7a:115c:a1e0::/48"),
+)
 _PUBLIC_HIDDEN = {"x-pi-peer", "x-pi-chip"}
 _CLOSED_EXACT = {
     "/docs",
@@ -102,13 +108,17 @@ def _ip(host: str):
 
 
 def _lan_address(host: str) -> bool:
-    """True for loopback and RFC 1918. Anything else is treated as public."""
+    """True for loopback, RFC 1918, and the Tailscale mesh ranges.
+
+    100.64.0.0/10 and fd7a:115c:a1e0::/48 are trusted peers. A request that
+    carries Tailscale-Funnel-Request or a Cloudflare header is still public.
+    """
     ip = _ip(host)
     if ip is None:
         return False
     if ip.is_loopback:
         return True
-    return any(ip.version == net.version and ip in net for net in _RFC1918)
+    return any(ip.version == net.version and ip in net for net in _RFC1918 + _TAILNET)
 
 
 def _loopback(host: str) -> bool:
@@ -251,8 +261,9 @@ class BaseRoutes:
     def _public(self) -> bool:
         """True on Funnel or Cloudflare, or when the socket peer is not on the LAN.
 
-        Loopback alone is the LAN. Funnel arrives from 127.0.0.1, so the
-        Tailscale-Funnel-Request header is what marks those visitors public.
+        Loopback, RFC 1918, and the tailnet (100.64.0.0/10, fd7a:115c:a1e0::/48)
+        are the mesh. Funnel arrives from 127.0.0.1, so Tailscale-Funnel-Request
+        marks those visitors public even when the peer address is a mesh address.
         X-Forwarded-For never turns a public visitor back into a LAN client.
         """
         if _marked_public(getattr(self, "headers", None)):

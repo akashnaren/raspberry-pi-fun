@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import fcntl
-import ipaddress
 import json
 import os
-import socket
-import struct
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,83 +46,20 @@ DEFAULT_PEERS = [
 ]
 
 
-# Tailscale's IPv4 pool. Python does not mark this range private.
-_TAILNET = ipaddress.ip_network("100.64.0.0/10")
-_SIOCGIFADDR = 0x8915
-
-
-def _iface_ipv4(name: str) -> str:
-    """Primary IPv4 on one interface. Empty when the interface has none."""
-    raw = name.encode("utf-8")
-    if not raw or len(raw) > 15:
-        return ""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        packed = fcntl.ioctl(sock.fileno(), _SIOCGIFADDR, struct.pack("256s", raw))
-    except OSError:
-        return ""
-    finally:
-        sock.close()
-    try:
-        return socket.inet_ntoa(packed[20:24])
-    except OSError:
-        return ""
-
-
-def local_ipv4() -> list[tuple[str, str]]:
-    """IPv4 addresses on this machine, as (interface, address)."""
-    try:
-        names = os.listdir("/sys/class/net")
-    except OSError:
-        return []
-    found: list[tuple[str, str]] = []
-    for name in names:
-        if name == "lo":
-            continue
-        addr = _iface_ipv4(name)
-        if addr:
-            found.append((name, addr))
-    return found
-
-
-def _on_tailnet(name: str, addr: str) -> bool:
-    if name.startswith("tailscale"):
-        return True
-    try:
-        ip = ipaddress.ip_address(addr)
-    except ValueError:
-        return False
-    return ip.version == 4 and ip in _TAILNET
-
-
-def tailnet_addrs() -> list[str]:
-    """Addresses pi2 and pi3 can still dial. Not the LAN NIC."""
-    found: list[str] = []
-    for name, addr in local_ipv4():
-        if _on_tailnet(name, addr) and addr not in found:
-            found.append(addr)
-    return found
-
-
 def listen_hosts() -> list[str]:
-    """Bind list. Unset is loopback plus the tailnet, not every interface.
+    """Bind list. Unset is 0.0.0.0 so LAN peers on 10.0.0.x can connect.
 
-    PI_PAIR_HOST overrides that. Commas separate addresses. 0.0.0.0 still
-    means every interface when an operator sets it on purpose.
+    PI_PAIR_HOST overrides that. Commas separate addresses. Public visitors
+    are classified by Tailscale Funnel and Cloudflare headers. Funnel must
+    target 127.0.0.1:18080 only. Port 11434 is never a Funnel target.
     """
-    raw = os.environ.get("PI_PAIR_HOST", "").strip()
-    if raw:
-        hosts: list[str] = []
-        for item in raw.split(","):
-            host = item.strip()
-            if host and host not in hosts:
-                hosts.append(host)
-        return hosts or ["127.0.0.1"]
-    hosts = ["127.0.0.1"]
-    for addr in tailnet_addrs():
-        if addr not in hosts:
-            hosts.append(addr)
-    return hosts
+    raw = os.environ.get("PI_PAIR_HOST", "0.0.0.0").strip() or "0.0.0.0"
+    hosts: list[str] = []
+    for item in raw.split(","):
+        host = item.strip()
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts or ["0.0.0.0"]
 
 
 def listen_host() -> str:

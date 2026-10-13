@@ -9,7 +9,7 @@ cd pi-pair
 python3 mini_chat.py
 ```
 
-`bash start.sh` is the same command. With `PI_PAIR_HOST` unset the process binds `127.0.0.1` and this machine's tailnet address (an address in `100.64.0.0/10`, or any address on a `tailscale` interface), port `18080`. pi2 and pi3 keep reaching the board on that tailnet address. Tailscale Funnel should target the loopback port only. A comma-separated `PI_PAIR_HOST` overrides the list. `0.0.0.0` listens on every interface and is the wrong bind for a Funnel host. The process serves the files already in `static/`. Rebuilding the page is a development step and is not part of the running server:
+`bash start.sh` is the same command. With `PI_PAIR_HOST` unset the process binds `0.0.0.0`, port `18080`, so LAN peers such as pi2 `10.0.0.181` and pi3 `10.0.0.228` can reach web search, the miss queue, and `/health`. Tailscale Funnel must point only at `127.0.0.1:18080`. A request that carries `Tailscale-Funnel-Request` or a Cloudflare header is public even though it arrives on loopback. Peers on RFC 1918 and on the tailnet (`100.64.0.0/10` and `fd7a:115c:a1e0::/48`) stay trusted unless one of those headers is present. A comma-separated `PI_PAIR_HOST` overrides the bind list. Port `11434` must never be a Funnel target. The process serves the files already in `static/`. Rebuilding the page is a development step and is not part of the running server:
 
 ```bash
 cd pi-pair/web
@@ -75,7 +75,7 @@ sudo apt-get install -y tesseract-ocr poppler-utils
 
 A pinned peer that is down returns `<name> offline`. A pinned weak peer returns the brain refusal above, whether or not the process is up. Auto does not move a miss onto another Pi.
 
-`OLLAMA_HOST` is one address. The Pro preload on pi4 dials `127.0.0.1:11434`. The pi4 row in `peers.json` dials the tailnet address on port `11434`, so Ollama has to accept that address as well. `OLLAMA_HOST=0.0.0.0:11434` covers both and also opens the model port on every other interface. Bind the tailnet address when this board has a public or guest NIC. Do not publish port `11434` through Tailscale Funnel. Funnel traffic for the chat port arrives at `127.0.0.1` with `Tailscale-Funnel-Request` and `X-Forwarded-For`. `install.sh` prints the same bind note and does not set `PI_PAIR_HOST=0.0.0.0`.
+`OLLAMA_HOST` is one address. The Pro preload on pi4 dials `127.0.0.1:11434`. The pi4 row in `peers.json` dials `10.0.0.166` on port `11434`. `OLLAMA_HOST=0.0.0.0:11434` covers both. Port `11434` must never be published through Tailscale Funnel. Funnel for the chat port points only at `127.0.0.1:18080` and arrives with `Tailscale-Funnel-Request` and `X-Forwarded-For`. `install.sh` writes `PI_PAIR_HOST=0.0.0.0` and prints the same note.
 
 ## Failures
 

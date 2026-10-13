@@ -13,11 +13,10 @@ import re
 import threading
 import time
 import unicodedata
-from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urlencode, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from pair.search.lookup import _pin_for, _PinHTTP, _PinHTTPS
+from pair.search.lookup import _open_pinned, _pin_for, _PinHTTP, _PinHTTPS
 
 SEARCH_API = "https://en.wikipedia.org/w/api.php"
 SUMMARY_API = "https://en.wikipedia.org/api/rest_v1/page/summary/"
@@ -320,30 +319,21 @@ def _close(response) -> None:
         close()
 
 
-def _open(request, opener):
-    try:
-        if opener is not None:
-            return opener(request, timeout=FETCH_TIMEOUT)
-        return _OPENER.open(request, timeout=FETCH_TIMEOUT)
-    except HTTPError as error:
-        return error
-
-
 def _fetch_json(url: str, opener) -> dict:
     current = url
     redirects = 0
     while True:
         if not _api_url(current):
             raise ValueError("blocked url")
-        pin = _pin_for(current)
-        if not pin:
-            raise ValueError("blocked url")
-        request = Request(
+        response = _open_pinned(
             current,
-            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            lambda target=current: Request(
+                target,
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            ),
+            opener,
+            FETCH_TIMEOUT,
         )
-        request.pinned_ip = pin
-        response = _open(request, opener)
         status = getattr(response, "status", None)
         if status is None:
             status = getattr(response, "code", 200)
