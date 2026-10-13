@@ -46,8 +46,24 @@ DEFAULT_PEERS = [
 ]
 
 
+def listen_hosts() -> list[str]:
+    """Bind list. Unset is 0.0.0.0 so LAN peers on 10.0.0.x can connect.
+
+    PI_PAIR_HOST overrides that. Commas separate addresses. Public visitors
+    are classified by Tailscale Funnel and Cloudflare headers. Funnel must
+    target 127.0.0.1:18080 only. Port 11434 is never a Funnel target.
+    """
+    raw = os.environ.get("PI_PAIR_HOST", "0.0.0.0").strip() or "0.0.0.0"
+    hosts: list[str] = []
+    for item in raw.split(","):
+        host = item.strip()
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts or ["0.0.0.0"]
+
+
 def listen_host() -> str:
-    return os.environ.get("PI_PAIR_HOST", "0.0.0.0") or "0.0.0.0"
+    return listen_hosts()[0]
 
 
 def listen_port() -> int:

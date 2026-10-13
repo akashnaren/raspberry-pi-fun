@@ -6,13 +6,21 @@ from pair.flywheel.miss_queue import append_row, apply_label, node_role
 from pair.routes.base import safe_write
 from pair.routes.reply import last_completion
 
+# A queue row is one prompt and one answer. The train fold keeps 4 KB and 8 KB.
+ENQUEUE_BODY_CAP = 32 * 1024
+
 
 class FlywheelRoutes:
     def _enqueue(self) -> None:
         if node_role() != "dataset":
             self._error("train queue is accepted only on the dataset host", status=403)
             return
-        row = self._read_json(label="queue row", empty_ok=True)
+        row = self._read_json(
+            cap=ENQUEUE_BODY_CAP,
+            label="queue row",
+            oversize="That is too big to send. Try a shorter message.",
+            empty_ok=True,
+        )
         if row is None:
             return
         prompt = str(row.get("prompt") or "").strip()
@@ -37,7 +45,12 @@ class FlywheelRoutes:
         safe_write(self, body)
 
     def _feedback(self) -> None:
-        row = self._read_json(label="feedback", empty_ok=True)
+        row = self._read_json(
+            cap=ENQUEUE_BODY_CAP,
+            label="feedback",
+            oversize="That is too big to send. Try a shorter message.",
+            empty_ok=True,
+        )
         if row is None:
             return
         prompt = str(row.get("prompt") or "").strip()

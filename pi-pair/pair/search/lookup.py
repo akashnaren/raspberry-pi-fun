@@ -12,7 +12,7 @@ import socket
 import threading
 import time
 from ipaddress import ip_address, ip_network
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 from urllib.request import (
     HTTPHandler,
@@ -194,11 +194,11 @@ def _resolve(host: str) -> list[str]:
     return found
 
 
-def _pin_for(url: str) -> str | None:
-    """One checked address, or None when any record is private or lookup fails."""
+def _pins_for(url: str) -> list[str]:
+    """Checked addresses, IPv4 first. Empty when any record is private or lookup fails."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        return None
+        return []
     host = (parsed.hostname or "").lower().rstrip(".")
     if (
         not host
@@ -206,26 +206,63 @@ def _pin_for(url: str) -> str | None:
         or host.endswith(".local")
         or host.endswith(".localhost")
     ):
-        return None
+        return []
     literal = _literal_ip(host)
     if literal is not None:
         if _address_blocked(literal):
-            return None
-        return str(literal)
+            return []
+        return [str(literal)]
     addresses = _resolve(host)
     if not addresses:
-        return None
-    chosen = ""
+        return []
+    chosen: list[str] = []
     for addr in addresses:
         try:
             ip = ip_address(addr)
         except ValueError:
-            return None
+            return []
         if _address_blocked(ip):
-            return None
-        if not chosen:
-            chosen = addr
-    return chosen or None
+            return []
+        if addr not in chosen:
+            chosen.append(addr)
+    chosen.sort(key=lambda item: ip_address(item).version)
+    return chosen
+
+
+def _pin_for(url: str) -> str | None:
+    """Preferred checked address, or None when any record is private or lookup fails."""
+    pins = _pins_for(url)
+    return pins[0] if pins else None
+
+
+def _ipv6_pin(pin: str) -> bool:
+    try:
+        return ip_address(pin).version == 6
+    except ValueError:
+        return False
+
+
+def _open_pinned(url: str, build, opener, timeout: float):
+    """Open on the preferred pin. An IPv6 connect failure tries the next address.
+
+    HTTPError is a response. An IPv4 connect failure stops the walk.
+    """
+    pins = _pins_for(url)
+    if not pins:
+        raise ValueError("blocked url")
+    last = None
+    for index, pin in enumerate(pins):
+        request = build()
+        request.pinned_ip = pin
+        try:
+            return _open(request, timeout, opener)
+        except HTTPError as error:
+            return error
+        except (OSError, URLError) as error:
+            last = error
+            if not _ipv6_pin(pin) or index + 1 == len(pins):
+                raise
+    raise last or OSError("unpinned host")
 
 
 def _public_http(url: str) -> bool:
@@ -295,27 +332,22 @@ def _fetch(url: str, opener, timeout: float, cap: int) -> tuple[bytes, str]:
     current = url
     redirects = 0
     while True:
-        pin = _pin_for(current)
-        if not pin:
-            raise ValueError("blocked url")
-        request = Request(
+        response = _open_pinned(
             current,
-            headers={
-                "User-Agent": USER_AGENT,
-                "Accept": "text/html,text/plain,application/json",
-            },
+            lambda target=current: Request(
+                target,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "text/html,text/plain,application/json",
+                },
+            ),
+            opener,
+            timeout,
         )
-        request.pinned_ip = pin
-        try:
-            response = _open(request, timeout, opener)
-            status = getattr(response, "status", None)
-            if status is None:
-                status = getattr(response, "code", 200)
-            headers = getattr(response, "headers", {}) or {}
-        except HTTPError as error:
-            response = error
-            status = error.code
-            headers = error.headers
+        status = getattr(response, "status", None)
+        if status is None:
+            status = getattr(response, "code", 200)
+        headers = getattr(response, "headers", {}) or {}
         if status in (301, 302, 303, 307, 308):
             loc = _header(headers, "Location")
             _close(response)

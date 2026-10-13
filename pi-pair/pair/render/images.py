@@ -13,10 +13,10 @@ import re
 import threading
 import time
 import unicodedata
-from ipaddress import ip_address, ip_network
-from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urlencode, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+from pair.search.lookup import _open_pinned, _pin_for, _PinHTTP, _PinHTTPS
 
 SEARCH_API = "https://en.wikipedia.org/w/api.php"
 SUMMARY_API = "https://en.wikipedia.org/api/rest_v1/page/summary/"
@@ -31,7 +31,6 @@ MISS_TTL_S = 60 * 60
 SEARCH_TTL_S = 10 * 60
 _BODY_CAP = 200_000
 _IMAGE_HOSTS = {"upload.wikimedia.org", "thumb.wikimedia.org"}
-_CGNAT = ip_network("100.64.0.0/10")
 _FENCE_CLOSED = re.compile(r"```[\s\S]*?```")
 _FENCE_OPEN = re.compile(r"```[\s\S]*\Z")
 _ITEM_LINE = re.compile(r"(?m)^\s*(?:\d{1,2}[.)]\s+|[-*]\s+)(.+)$")
@@ -48,7 +47,7 @@ class _NoFollow(HTTPRedirectHandler):
         return None
 
 
-_OPENER = build_opener(_NoFollow)
+_OPENER = build_opener(_NoFollow(), _PinHTTP(), _PinHTTPS())
 
 
 class _TtlCache:
@@ -123,24 +122,8 @@ def _absolute(url: str) -> str:
     return url
 
 
-def _blocked_ip(host: str) -> bool:
-    try:
-        ip = ip_address(host)
-    except ValueError:
-        return False
-    if (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    ):
-        return True
-    return ip.version == 4 and ip in _CGNAT
-
-
 def _public_http(url: str) -> bool:
+    """Same resolve-and-pin check as a page read. A private answer blocks the URL."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return False
@@ -148,17 +131,7 @@ def _public_http(url: str) -> bool:
         return False
     if parsed.port not in (None, 80, 443):
         return False
-    host = (parsed.hostname or "").lower().rstrip(".")
-    if (
-        not host
-        or host == "localhost"
-        or host.endswith(".local")
-        or host.endswith(".localhost")
-    ):
-        return False
-    if _blocked_ip(host):
-        return False
-    return True
+    return _pin_for(url) is not None
 
 
 def _host(url: str) -> str:
@@ -346,26 +319,21 @@ def _close(response) -> None:
         close()
 
 
-def _open(request, opener):
-    try:
-        if opener is not None:
-            return opener(request, timeout=FETCH_TIMEOUT)
-        return _OPENER.open(request, timeout=FETCH_TIMEOUT)
-    except HTTPError as error:
-        return error
-
-
 def _fetch_json(url: str, opener) -> dict:
     current = url
     redirects = 0
     while True:
         if not _api_url(current):
             raise ValueError("blocked url")
-        request = Request(
+        response = _open_pinned(
             current,
-            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            lambda target=current: Request(
+                target,
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            ),
+            opener,
+            FETCH_TIMEOUT,
         )
-        response = _open(request, opener)
         status = getattr(response, "status", None)
         if status is None:
             status = getattr(response, "code", 200)

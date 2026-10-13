@@ -1,4 +1,4 @@
-"""CORS on /api/* is an allowlist. The page and /v1 stay open."""
+"""CORS echoes the page's own origin. /api/* can add PI_PAIR_CORS_ORIGINS."""
 
 from __future__ import annotations
 
@@ -107,15 +107,24 @@ class ApiCors(unittest.TestCase):
             self.assertIsNone(script["origin"])
 
             page = _headers(port, "GET", "/", {"Origin": "https://evil.example"})
-            self.assertEqual(page["origin"], "*")
+            self.assertIsNone(page["origin"])
+            self.assertNotEqual(page["allow"], "*")
+            same_page = _headers(
+                port,
+                "GET",
+                "/",
+                {"Origin": f"http://127.0.0.1:{port}"},
+            )
+            self.assertEqual(same_page["origin"], f"http://127.0.0.1:{port}")
             lane = _headers(
                 port,
                 "OPTIONS",
                 "/v1/chat/completions",
                 {"Origin": "https://evil.example"},
             )
-            self.assertEqual(lane["origin"], "*")
-            self.assertEqual(lane["allow"], "*")
+            self.assertIsNone(lane["origin"])
+            self.assertNotEqual(lane["allow"], "*")
+            self.assertIn("Content-Type", lane["allow"])
         finally:
             httpd.shutdown()
             httpd.server_close()
