@@ -92,14 +92,19 @@ curl -sS http://127.0.0.1:18080/api/health -H 'authorization: Bearer YOUR_KEY'
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `PI_PAIR_HOST` | `0.0.0.0` | Bind address |
+| `PI_PAIR_HOST` | `127.0.0.1` plus the tailnet address | Bind list. Commas separate addresses. Unset is loopback and the tailnet (`100.64.0.0/10`, or a `tailscale` interface), so pi2 and pi3 can still connect. `0.0.0.0` is every interface, and only when set on purpose. |
 | `PI_PAIR_PORT` | `18080` | Page and router |
 | `PI_PAIR_PEERS` | `./peers.json` if it exists, else the built-in fleet | Peer list |
 | `PI_PAIR_ROLE` | from `PI_PAIR_NAME`, else dataset | `brain`, `dataset`, or `health` |
 | `PI_PAIR_NAME` | unset | Hostname hint (`pi2`, `pi3`, `pi4`) |
 | `PI_PAIR_DATA` | `data/` | Root of the map, seeds, and queue |
 | `PI_PAIR_CANNED` | `data/canned/canned_map.json` | Override the map file |
-| `PI_PAIR_OLLAMA` | `http://127.0.0.1:11434` | Local Ollama origin for the Pro preload on the pi4 brain. `OLLAMA_HOST` is the fallback. |
+| `PI_PAIR_OLLAMA` | `http://127.0.0.1:11434` | Local Ollama origin for the Pro preload on the pi4 brain. `OLLAMA_HOST` is the fallback. `OLLAMA_HOST` itself is one bind address: loopback for the preload, or the tailnet address when `peers.json` dials that address on port `11434`. `0.0.0.0` opens the model port on every interface. Do not funnel port `11434`. |
+| `PI_PAIR_RATE_DEFAULT` | `60/60` | Public requests per window (`count/seconds`) for routes that are not listed below. LAN clients are not limited. |
+| `PI_PAIR_RATE_CHAT` | `12/60` | Public `POST /v1/chat/completions` and `POST /api/chat`. |
+| `PI_PAIR_RATE_UPLOAD` | `6/60` | Public `POST /v1/attachments` and `GET /v1/files/*`. |
+| `PI_PAIR_RATE_SEARCH` | `20/60` | Public `POST /v1/search`. |
+| `PI_PAIR_RATE_IMAGES` | `20/60` | Public `POST /v1/images`. |
 | `PI_PAIR_ADAPTERS` | `adapters/` | Manifest directory |
 | `PI_PAIR_TRAIN_CONFIG` | `configs/train/sft_canned.yaml` | Run file |
 | `MESH_MODEL` | `qwen3:0.6b` | Name shown on the page. A LAN chat with no mode still runs Flash from `configs/runtime/inference_pi4.json`. |

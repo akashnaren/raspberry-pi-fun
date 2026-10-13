@@ -6,6 +6,7 @@ import os
 from urllib.parse import urlparse
 
 from pair.core.errors import TOO_BIG, friendly_error
+from pair.routes.limit import admit
 
 CHAT_BODY_CAP = 1_000_000
 _DRAIN_CAP = 8 * 1024 * 1024
@@ -59,17 +60,103 @@ _RFC1918 = (
     ipaddress.ip_network("192.168.0.0/16"),
 )
 _PUBLIC_HIDDEN = {"x-pi-peer", "x-pi-chip"}
+_CLOSED_EXACT = {
+    "/docs",
+    "/docs/",
+    "/swagger",
+    "/swagger/",
+    "/openapi.json",
+    "/swagger.json",
+}
+_PAGE_HEADERS = (
+    "Content-Type, X-Pi-Mode, X-Pi-Target, X-Pi-Mesh, X-Pi-Think, "
+    "X-Pi-Client, X-Pi-Chat, X-Pi-Request-Id"
+)
+_CSP = (
+    "default-src 'self'; "
+    "base-uri 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'self'; "
+    "script-src 'self' 'unsafe-inline' https://unpkg.com; "
+    "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+    "img-src 'self' data: blob: https://upload.wikimedia.org https://thumb.wikimedia.org; "
+    "font-src 'self' data:; "
+    "connect-src 'self'"
+)
+_SECURITY = (
+    ("Content-Security-Policy", _CSP),
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "no-referrer"),
+)
+
+
+def _ip(host: str):
+    try:
+        ip = ipaddress.ip_address((host or "").strip())
+    except ValueError:
+        return None
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return mapped if mapped is not None else ip
 
 
 def _lan_address(host: str) -> bool:
     """True for loopback and RFC 1918. Anything else is treated as public."""
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
+    ip = _ip(host)
+    if ip is None:
         return False
     if ip.is_loopback:
         return True
     return any(ip.version == net.version and ip in net for net in _RFC1918)
+
+
+def _loopback(host: str) -> bool:
+    ip = _ip(host)
+    return bool(ip is not None and ip.is_loopback)
+
+
+def trusted_client_ip(peer: str, forwarded_for: str) -> str:
+    """Socket peer, unless that peer is the local proxy.
+
+    X-Forwarded-For is read only for a loopback peer (127.0.0.1 or ::1).
+    A single proxy appends the client it saw, so the rightmost valid address
+    is the one that counts. Any other peer keeps its socket address.
+    """
+    peer = (peer or "").strip()
+    if not _loopback(peer):
+        return peer
+    chosen = ""
+    for part in (forwarded_for or "").split(","):
+        token = part.strip().strip('"')
+        if token.startswith("[") and "]" in token:
+            token = token[1 : token.index("]")]
+        try:
+            ipaddress.ip_address(token)
+        except ValueError:
+            continue
+        chosen = token
+    return chosen or peer
+
+
+def _marked_public(headers) -> bool:
+    """True when a tunnel header says this request did not come from the LAN."""
+    if headers is None or not hasattr(headers, "get"):
+        return False
+    if headers.get("Tailscale-Funnel-Request") is not None:
+        return True
+    if headers.get("Cf-Ray") or headers.get("Cf-Connecting-Ip"):
+        return True
+    loop = str(headers.get("Cdn-Loop") or "").lower()
+    return "cloudflare" in loop
+
+
+def public_closed(path: str) -> bool:
+    """Docs and tool routes stay off the public tunnel."""
+    path = (path or "").split("?", 1)[0]
+    if path == "/tools" or path.startswith("/tools/"):
+        return True
+    return path in _CLOSED_EXACT
 
 
 def _canonical_origin(value: str) -> str:
@@ -93,10 +180,11 @@ def _canonical_origin(value: str) -> str:
 
 
 def allowed_api_origin(origin: str, host: str, allowlist: str = "") -> str:
-    """Origin to echo on /api/*, or empty when the browser must not be allowed.
+    """Origin to echo, or empty when the browser must not be allowed.
 
     The page's own host matches without a setting. PI_PAIR_CORS_ORIGINS adds
-    more, comma-separated. There is no wildcard on these routes.
+    more, comma-separated, and only the /api routes pass that list.
+    There is no wildcard.
     """
     echo = _canonical_origin(origin)
     if not echo:
@@ -121,7 +209,15 @@ class BaseRoutes:
 
     def send_response(self, code: int, message: str | None = None) -> None:
         self._sent_pi: set[str] = set()
+        self._security_sent = False
         super().send_response(code, message)
+
+    def end_headers(self) -> None:
+        if not getattr(self, "_security_sent", False):
+            self._security_sent = True
+            for name, value in _SECURITY:
+                super().send_header(name, value)
+        super().end_headers()
 
     def send_header(self, keyword: str, value: str) -> None:
         name = str(keyword)
@@ -138,15 +234,78 @@ class BaseRoutes:
             sent.add(key)
         super().send_header(keyword, value)
 
+    def _peer(self) -> str:
+        address = getattr(self, "client_address", None)
+        if not address:
+            return ""
+        return str(address[0] or "")
+
+    def _client_ip(self) -> str:
+        """Address for the rate limit. Forwarded only from the loopback proxy."""
+        headers = getattr(self, "headers", None)
+        forwarded = ""
+        if headers is not None and hasattr(headers, "get"):
+            forwarded = str(headers.get("X-Forwarded-For") or "")
+        return trusted_client_ip(self._peer(), forwarded)
+
     def _public(self) -> bool:
-        """True on the Cloudflare tunnel, or when the client is not on the LAN."""
-        if self.headers.get("Cf-Ray") or self.headers.get("Cf-Connecting-Ip"):
+        """True on Funnel or Cloudflare, or when the socket peer is not on the LAN.
+
+        Loopback alone is the LAN. Funnel arrives from 127.0.0.1, so the
+        Tailscale-Funnel-Request header is what marks those visitors public.
+        X-Forwarded-For never turns a public visitor back into a LAN client.
+        """
+        if _marked_public(getattr(self, "headers", None)):
             return True
-        loop = (self.headers.get("Cdn-Loop") or "").lower()
-        if "cloudflare" in loop:
+        return not _lan_address(self._peer())
+
+    def _request_length(self) -> int:
+        headers = getattr(self, "headers", None)
+        if headers is None or not hasattr(headers, "get"):
+            return 0
+        raw = headers.get("content-length")
+        if raw is None or str(raw).strip() == "":
+            return 0
+        try:
+            length = int(str(raw).strip())
+        except ValueError:
+            return 0
+        return length if length > 0 else 0
+
+    def _drain_request_body(self) -> None:
+        length = self._request_length()
+        if length > _DRAIN_CAP:
+            self.close_connection = True
+            return
+        self._drain_body(length)
+
+    def _limited(self) -> bool:
+        """429 when this public client is out of tokens. LAN traffic is open."""
+        if not self._public():
+            return False
+        path = (getattr(self, "path", "") or "").split("?", 1)[0]
+        allowed, retry = admit(self._client_ip(), path)
+        if allowed:
+            return False
+        self._drain_request_body()
+        self._error(
+            "Too many requests. Try again in a moment.",
+            status=429,
+            headers={"Retry-After": str(retry)},
+        )
+        return True
+
+    def _guard(self) -> bool:
+        """Answer a public request that is too fast or pointed at a closed route."""
+        if self._limited():
             return True
-        host = str(self.client_address[0]) if self.client_address else ""
-        return not _lan_address(host)
+        path = (getattr(self, "path", "") or "").split("?", 1)[0]
+        if self._public() and public_closed(path):
+            self._drain_request_body()
+            self.send_response(404)
+            self.end_headers()
+            return True
+        return False
 
     def _api_route(self) -> bool:
         path = (self.path or "").split("?", 1)[0]
@@ -167,8 +326,15 @@ class BaseRoutes:
                 "Authorization, Content-Type, X-API-Key",
             )
         else:
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "*")
+            origin = allowed_api_origin(
+                self.headers.get("Origin", ""),
+                self.headers.get("Host", ""),
+                "",
+            )
+            self.send_header("Vary", "Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Headers", _PAGE_HEADERS)
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         public = getattr(self, "public_mode", "") or ""
         tier = getattr(self, "pi_mode", "") or ""

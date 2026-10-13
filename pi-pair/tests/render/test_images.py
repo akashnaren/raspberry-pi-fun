@@ -8,8 +8,10 @@ import os
 import re
 import time
 import unittest
+from unittest import mock
 from urllib.parse import quote, unquote, urlparse
 
+import pair.search.lookup as lookup
 from pair.render import images
 from pair.render.images import (
     _fetch_json,
@@ -71,8 +73,11 @@ class ImageCards(unittest.TestCase):
         images.reset_image_cache()
         images.JOB_BUDGET_S = 4.0
         os.environ.pop("PI_PAIR_IMAGE_PNG", None)
+        self._resolve = lookup._resolve
+        lookup._resolve = lambda host: ["8.8.8.8"]
 
     def tearDown(self):
+        lookup._resolve = self._resolve
         images.reset_image_cache()
         images.JOB_BUDGET_S = 4.0
         os.environ.pop("PI_PAIR_IMAGE_PNG", None)
@@ -166,6 +171,46 @@ class ImageCards(unittest.TestCase):
         finally:
             os.environ.pop("PI_PAIR_IMAGE_PNG", None)
         self.assertTrue(png["url"].endswith(".png"))
+
+    def test_private_resolution_is_blocked_and_the_fetch_is_pinned(self):
+        def resolve(host):
+            if host == "rebind.example":
+                return ["10.2.2.2"]
+            if host == "split.example":
+                return ["1.1.1.1", "10.0.0.9"]
+            if host == "en.wikipedia.org":
+                return ["1.1.1.1"]
+            return ["198.51.100.8"]
+
+        lookup._resolve = resolve
+        self.assertFalse(_public_http("https://rebind.example/a.jpg"))
+        self.assertFalse(_public_http("https://split.example/a.jpg"))
+        self.assertFalse(_public_http("http://127.0.0.1/a.jpg"))
+        self.assertTrue(_public_http("https://en.wikipedia.org/w/api.php"))
+
+        created = []
+
+        def create(address, timeout=None, source_address=None):
+            created.append(address)
+            raise OSError("stop")
+
+        def boom(*_args, **_kwargs):
+            raise AssertionError("re-resolved")
+
+        with (
+            mock.patch("socket.getaddrinfo", boom),
+            mock.patch("socket.create_connection", create),
+        ):
+            with self.assertRaises(OSError):
+                _fetch_json("https://en.wikipedia.org/w/api.php?q=1", None)
+        self.assertEqual(created, [("1.1.1.1", 443)])
+
+        def refuse(request, timeout=None):
+            raise AssertionError(getattr(request, "full_url", request))
+
+        lookup._resolve = lambda host: ["10.9.9.9"]
+        with self.assertRaises(ValueError):
+            _fetch_json("https://en.wikipedia.org/w/api.php?q=1", refuse)
 
     def test_fetch_stays_on_english_wikipedia_and_caps_the_body(self):
         def opener(request, timeout=None):

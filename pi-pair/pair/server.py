@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pair.routes.base as _base
@@ -12,7 +13,7 @@ import pair.routes.memory as _memory
 import pair.routes.public_api as _public
 import pair.routes.status as _status
 from pair.core import runtime
-from pair.core.config import STATIC_DIR
+from pair.core.config import STATIC_DIR, listen_hosts
 from pair.core.errors import GENERIC
 from pair.model.chat_once import start_model_warm
 from pair.model.modes import mode_table, mode_tips
@@ -54,11 +55,15 @@ class Handler(
     BaseHTTPRequestHandler,
 ):
     def do_OPTIONS(self) -> None:
+        if self._guard():
+            return
         self.send_response(204)
         self._cors()
         self.end_headers()
 
     def do_GET(self) -> None:
+        if self._guard():
+            return
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             page = STATIC_DIR / "index.html"
@@ -120,6 +125,8 @@ class Handler(
             self._error(GENERIC, status=500)
 
     def _dispatch_post(self) -> None:
+        if self._guard():
+            return
         path = self.path.split("?")[0]
         if path == "/v1/search":
             self._search()
@@ -155,6 +162,8 @@ class Handler(
         self._serve_chat(data, json.dumps(data).encode())
 
     def do_DELETE(self) -> None:
+        if self._guard():
+            return
         path = self.path.split("?")[0]
         if path == "/v1/memory":
             self._memory_delete("")
@@ -180,16 +189,33 @@ def make_server(
     return PiServer((bind_host, bind_port), Handler)
 
 
+def _serve_all(servers: list[ThreadingHTTPServer]) -> None:
+    if len(servers) == 1:
+        servers[0].serve_forever()
+        return
+    for extra in servers[1:]:
+        threading.Thread(
+            target=extra.serve_forever, name="pi-pair-bind", daemon=True
+        ).start()
+    try:
+        servers[0].serve_forever()
+    finally:
+        for extra in servers[1:]:
+            extra.shutdown()
+            extra.server_close()
+
+
 def main() -> None:
     runtime.configure()
+    hosts = listen_hosts()
     print(
-        f"OpenPi 1.0 on {runtime.HOST}:{runtime.PORT} model={runtime.MODEL} "
+        f"OpenPi 1.0 on {','.join(hosts)}:{runtime.PORT} model={runtime.MODEL} "
         f"flash={mode_table().get('flash')} pro={mode_table().get('pro')} "
         f"slots={runtime.INFER_SLOTS} cache_ttl={runtime.HEALTH_CACHE_TTL}s "
         f"brain=pi4 search=pi2 dataset=pi3",
         flush=True,
     )
-    server = make_server()
+    servers = [make_server(host, runtime.PORT) for host in hosts]
     start_pro_warm()
     start_model_warm()
-    server.serve_forever()
+    _serve_all(servers)
