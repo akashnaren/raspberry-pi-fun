@@ -38,10 +38,14 @@ class TrustedProxy(unittest.TestCase):
         self.assertTrue(public._public())
         self.assertEqual(public._client_ip(), "192.0.2.10")
 
-    def test_loopback_proxy_uses_the_appended_client(self):
+    def test_loopback_proxy_uses_the_original_client(self):
         self.assertEqual(
             trusted_client_ip("127.0.0.1", "1.2.3.4, 203.0.113.9"),
-            "203.0.113.9",
+            "1.2.3.4",
+        )
+        self.assertEqual(
+            trusted_client_ip("127.0.0.1", "junk, 198.51.100.7, 172.70.1.1"),
+            "198.51.100.7",
         )
         self.assertEqual(trusted_client_ip("::1", "203.0.113.8"), "203.0.113.8")
         self.assertEqual(trusted_client_ip("127.0.0.1", "not-an-ip"), "127.0.0.1")
@@ -60,6 +64,71 @@ class TrustedProxy(unittest.TestCase):
         self.assertEqual(funnel._client_ip(), "10.0.0.5")
         cloud = _Call("127.0.0.1", {"Cf-Connecting-Ip": "203.0.113.4"})
         self.assertTrue(cloud._public())
+
+
+class ProxyClientHeaders(unittest.TestCase):
+    def test_cf_connecting_ip_wins_on_loopback(self):
+        call = _Call(
+            "127.0.0.1",
+            {
+                "Cf-Connecting-Ip": "203.0.113.4",
+                "Tailscale-Ingress-Src": "198.51.100.2:4431",
+                "X-Forwarded-For": "192.0.2.1, 172.70.9.9",
+            },
+        )
+        self.assertEqual(call._client_ip(), "203.0.113.4")
+
+    def test_tailscale_ingress_src_is_next(self):
+        call = _Call(
+            "::1",
+            {
+                "Tailscale-Ingress-Src": "198.51.100.2:4431",
+                "X-Forwarded-For": "192.0.2.1",
+            },
+        )
+        self.assertEqual(call._client_ip(), "198.51.100.2")
+        v6 = _Call("127.0.0.1", {"Tailscale-Ingress-Src": "[2001:db8::5]:443"})
+        self.assertEqual(v6._client_ip(), "2001:db8::5")
+
+    def test_invalid_header_falls_through(self):
+        call = _Call(
+            "127.0.0.1",
+            {"Cf-Connecting-Ip": "evil", "X-Forwarded-For": "192.0.2.1, 172.70.1.1"},
+        )
+        self.assertEqual(call._client_ip(), "192.0.2.1")
+        bare = _Call("127.0.0.1", {"Cf-Connecting-Ip": "nope"})
+        self.assertEqual(bare._client_ip(), "127.0.0.1")
+
+    def test_headers_ignored_from_non_loopback_peer(self):
+        for peer in ("10.0.0.5", "100.101.102.103", "192.0.2.10"):
+            call = _Call(
+                peer,
+                {
+                    "Cf-Connecting-Ip": "203.0.113.4",
+                    "Tailscale-Ingress-Src": "198.51.100.2:1",
+                    "X-Forwarded-For": "192.0.2.1",
+                },
+            )
+            self.assertEqual(call._client_ip(), peer)
+
+    def test_rotating_cloudflare_hops_share_one_bucket(self):
+        os.environ["PI_PAIR_RATE_DEFAULT"] = "2/60"
+        reset_limits()
+        try:
+            results = []
+            for hop in range(5):
+                call = _Call(
+                    "127.0.0.1",
+                    {
+                        "Cf-Connecting-Ip": "203.0.113.77",
+                        "X-Forwarded-For": f"203.0.113.77, 172.70.0.{hop}",
+                    },
+                )
+                results.append(admit(call._client_ip(), "/health")[0])
+            self.assertEqual(results, [True, True, False, False, False])
+        finally:
+            os.environ.pop("PI_PAIR_RATE_DEFAULT", None)
+            reset_limits()
 
 
 class RateLimit(unittest.TestCase):

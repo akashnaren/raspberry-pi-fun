@@ -126,27 +126,47 @@ def _loopback(host: str) -> bool:
     return bool(ip is not None and ip.is_loopback)
 
 
-def trusted_client_ip(peer: str, forwarded_for: str) -> str:
-    """Socket peer, unless that peer is the local proxy.
+_CLIENT_IP_HEADERS = ("Cf-Connecting-Ip", "Tailscale-Ingress-Src")
 
-    X-Forwarded-For is read only for a loopback peer (127.0.0.1 or ::1).
-    A single proxy appends the client it saw, so the rightmost valid address
-    is the one that counts. Any other peer keeps its socket address.
+
+def _ip_token(value: str) -> str:
+    """The address in one header value, or "" when it is not an IP."""
+    token = (value or "").strip().strip('"')
+    if token.startswith("[") and "]" in token:
+        token = token[1 : token.index("]")]
+    elif token.count(":") == 1:
+        token = token.split(":", 1)[0]
+    try:
+        return str(ipaddress.ip_address(token))
+    except ValueError:
+        return ""
+
+
+def trusted_client_ip(peer: str, forwarded_for: str, headers=None) -> str:
+    """Socket peer, unless that peer is the local tunnel proxy.
+
+    Proxy headers are read only for a loopback peer (127.0.0.1 or ::1).
+    In order: Cf-Connecting-Ip (cloudflared), Tailscale-Ingress-Src (Funnel,
+    ip or ip:port),
+    then the leftmost valid X-Forwarded-For entry. The leftmost entry is
+    the original client; the rightmost is the last hop, which behind
+    Cloudflare changes per request and defeats the per-IP limit. Every
+    value must parse as an IP address. Any other peer keeps its socket
+    address and its headers are ignored.
     """
     peer = (peer or "").strip()
     if not _loopback(peer):
         return peer
-    chosen = ""
+    if headers is not None and hasattr(headers, "get"):
+        for name in _CLIENT_IP_HEADERS:
+            chosen = _ip_token(str(headers.get(name) or ""))
+            if chosen:
+                return chosen
     for part in (forwarded_for or "").split(","):
-        token = part.strip().strip('"')
-        if token.startswith("[") and "]" in token:
-            token = token[1 : token.index("]")]
-        try:
-            ipaddress.ip_address(token)
-        except ValueError:
-            continue
-        chosen = token
-    return chosen or peer
+        chosen = _ip_token(part)
+        if chosen:
+            return chosen
+    return peer
 
 
 def _marked_public(headers) -> bool:
@@ -256,7 +276,7 @@ class BaseRoutes:
         forwarded = ""
         if headers is not None and hasattr(headers, "get"):
             forwarded = str(headers.get("X-Forwarded-For") or "")
-        return trusted_client_ip(self._peer(), forwarded)
+        return trusted_client_ip(self._peer(), forwarded, headers)
 
     def _public(self) -> bool:
         """True on Funnel or Cloudflare, or when the socket peer is not on the LAN.
