@@ -37,10 +37,13 @@ class _Bucket:
         self.tokens = burst
         self.updated = now
 
-    def take(self, now: float) -> tuple[bool, int]:
+    def refill(self, now: float) -> None:
         elapsed = max(0.0, now - self.updated)
         self.updated = now
         self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
+
+    def take(self, now: float) -> tuple[bool, int]:
+        self.refill(now)
         if self.tokens >= 1.0:
             self.tokens -= 1.0
             return True, 0
@@ -95,9 +98,11 @@ def _limit(kind: str) -> tuple[float, float]:
     return count / window, float(count)
 
 
-def _prune() -> None:
+def _prune(now: float) -> None:
     if len(_BUCKETS) <= _CAP:
         return
+    for bucket in _BUCKETS.values():
+        bucket.refill(now)
     idle = [key for key, bucket in _BUCKETS.items() if bucket.tokens >= bucket.burst]
     for key in idle:
         _BUCKETS.pop(key, None)
@@ -131,5 +136,5 @@ def admit(ip: str, path: str, now: float | None = None) -> tuple[bool, int]:
         if bucket is None or bucket.rate != rate or bucket.burst != burst:
             bucket = _Bucket(rate, burst, moment)
             _BUCKETS[key] = bucket
-            _prune()
+            _prune(moment)
         return bucket.take(moment)

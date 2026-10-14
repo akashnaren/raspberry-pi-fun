@@ -143,8 +143,8 @@ def _cloudflare_request(headers) -> bool:
     """cloudflared: Cf-Ray, or Cdn-Loop containing "cloudflare".
 
     Cf-Connecting-Ip is not a marker. Funnel forwards whatever the
-    client sent. A Cloudflare marker wins over Tailscale-Funnel-Request
-    because cloudflared forwards that header too.
+    client sent, and cloudflared forwards a client Funnel header, so
+    a request that carries both is neither ingress.
     """
     if headers.get("Cf-Ray"):
         return True
@@ -175,9 +175,13 @@ def trusted_client_ip(peer: str, forwarded_for: str, headers=None) -> str:
 
     Headers are read only for a loopback peer (127.0.0.1 or ::1).
 
-    cloudflared (Cf-Ray, or Cdn-Loop containing "cloudflare") keys
-    only on Cf-Connecting-Ip, even when Tailscale-Funnel-Request is
-    also present. A missing or invalid value uses the loopback peer.
+    A Cloudflare marker together with Tailscale-Funnel-Request uses
+    the loopback peer. Each tunnel forwards the other's header, so
+    both together name no client. Cf-Connecting-Ip is ignored there.
+
+    cloudflared alone (Cf-Ray, or Cdn-Loop containing "cloudflare")
+    keys only on Cf-Connecting-Ip. A missing or invalid value uses
+    the loopback peer.
 
     Funnel is Tailscale-Funnel-Request with no Cloudflare marker.
     Tailscale deletes a client-sent Funnel header and sets its own,
@@ -193,9 +197,13 @@ def trusted_client_ip(peer: str, forwarded_for: str, headers=None) -> str:
         return peer
     if headers is None or not hasattr(headers, "get"):
         return peer
-    if _cloudflare_request(headers):
+    funnel = headers.get("Tailscale-Funnel-Request") is not None
+    cloudflare = _cloudflare_request(headers)
+    if funnel and cloudflare:
+        return peer
+    if cloudflare:
         return _ip_token(str(headers.get("Cf-Connecting-Ip") or "")) or peer
-    if headers.get("Tailscale-Funnel-Request") is not None:
+    if funnel:
         forwarded = _forwarded_value(headers, forwarded_for)
         return _single_forwarded_ip(forwarded) or peer
     return peer

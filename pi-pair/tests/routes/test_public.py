@@ -12,6 +12,7 @@ from pathlib import Path
 
 from pair.core import runtime
 from pair.core.config import listen_hosts
+from pair.routes import limit as rate_limit
 from pair.routes.base import BaseRoutes, trusted_client_ip
 from pair.routes.flywheel import ENQUEUE_BODY_CAP
 from pair.routes.limit import admit, reset_limits, route_class
@@ -193,9 +194,39 @@ class ProxyClientHeaders(unittest.TestCase):
                         "X-Forwarded-For": f"192.0.2.{hop}",
                     },
                 )
-                self.assertEqual(call._client_ip(), "203.0.113.4")
+                self.assertEqual(call._client_ip(), "127.0.0.1")
                 results.append(admit(call._client_ip(), "/health")[0])
             self.assertEqual(results, [True, True, False, False])
+        finally:
+            self._clear_bucket()
+
+    def test_funnel_forged_cf_ray_shares_the_peer_bucket(self):
+        self._bucket("1/60")
+        try:
+            results = []
+            for hop in range(20):
+                call = _Call(
+                    "127.0.0.1",
+                    {
+                        "Tailscale-Funnel-Request": "?1",
+                        "X-Forwarded-For": "6.6.6.6",
+                        "Cf-Ray": "x",
+                        "Cf-Connecting-Ip": f"7.7.7.{hop}",
+                    },
+                )
+                self.assertEqual(call._client_ip(), "127.0.0.1")
+                results.append(admit(call._client_ip(), "/health")[0])
+            self.assertEqual(results, [True] + [False] * 19)
+            loop = _Call(
+                "127.0.0.1",
+                {
+                    "Cdn-Loop": "Cloudflare",
+                    "Tailscale-Funnel-Request": "?1",
+                    "Cf-Connecting-Ip": "203.0.113.9",
+                    "X-Forwarded-For": "8.8.8.8",
+                },
+            )
+            self.assertEqual(loop._client_ip(), "127.0.0.1")
         finally:
             self._clear_bucket()
 
@@ -244,7 +275,6 @@ class ProxyClientHeaders(unittest.TestCase):
             {
                 "Cf-Ray": "8a1b2c3d4e5f6a7b-EWR",
                 "Cf-Connecting-Ip": "203.0.113.4",
-                "Tailscale-Funnel-Request": "?1",
                 "Tailscale-Ingress-Src": "198.51.100.2:4431",
                 "X-Forwarded-For": "192.0.2.1",
             },
@@ -254,7 +284,6 @@ class ProxyClientHeaders(unittest.TestCase):
             "::1",
             {
                 "Cdn-Loop": "cloudflare; loops=1",
-                "Tailscale-Funnel-Request": "?1",
                 "Cf-Connecting-Ip": "203.0.113.5",
                 "X-Forwarded-For": "192.0.2.8",
             },
@@ -341,6 +370,24 @@ class RateLimit(unittest.TestCase):
         for thread in threads:
             thread.join()
         self.assertEqual(len(ok), 5)
+
+    def test_cleanup_refills_before_dropping_idle_buckets(self):
+        saved = rate_limit._CAP
+        rate_limit._CAP = 10
+        os.environ["PI_PAIR_RATE_DEFAULT"] = "1/60"
+        reset_limits()
+        try:
+            self.assertTrue(admit("198.51.100.9", "/health", now=0)[0])
+            self.assertFalse(admit("198.51.100.9", "/health", now=0)[0])
+            self.assertTrue(admit("198.51.100.1", "/health", now=-100)[0])
+            self.assertTrue(admit("198.51.100.2", "/health", now=-100)[0])
+            rate_limit._CAP = 2
+            self.assertTrue(admit("198.51.100.3", "/health", now=10)[0])
+            self.assertFalse(admit("198.51.100.9", "/health", now=10)[0])
+        finally:
+            rate_limit._CAP = saved
+            os.environ.pop("PI_PAIR_RATE_DEFAULT", None)
+            reset_limits()
 
 
 def _start(httpd) -> threading.Thread:
