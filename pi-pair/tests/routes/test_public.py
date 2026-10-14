@@ -508,7 +508,13 @@ class FunnelHttp(unittest.TestCase):
     def test_public_tunnels_serve_api_docs(self):
         cloudflare = {"Cf-Connecting-Ip": "203.0.113.9", "Cf-Ray": "abc"}
         for headers in ({"Tailscale-Funnel-Request": "true"}, cloudflare):
-            for path in ("/docs", "/docs/", "/swagger", "/openapi.json", "/swagger.json"):
+            for path in (
+                "/docs",
+                "/docs/",
+                "/swagger",
+                "/openapi.json",
+                "/swagger.json",
+            ):
                 status, _headers, raw = self._open("GET", path, headers=headers)
                 self.assertEqual(status, 200, (path, headers))
                 self.assertNotIn(b"10.0.0.", raw, path)
