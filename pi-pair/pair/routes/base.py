@@ -126,27 +126,87 @@ def _loopback(host: str) -> bool:
     return bool(ip is not None and ip.is_loopback)
 
 
-def trusted_client_ip(peer: str, forwarded_for: str) -> str:
-    """Socket peer, unless that peer is the local proxy.
+def _ip_token(value: str) -> str:
+    """The address in one header value, or "" when it is not an IP."""
+    token = (value or "").strip().strip('"')
+    if token.startswith("[") and "]" in token:
+        token = token[1 : token.index("]")]
+    elif token.count(":") == 1:
+        token = token.split(":", 1)[0]
+    try:
+        return str(ipaddress.ip_address(token))
+    except ValueError:
+        return ""
 
-    X-Forwarded-For is read only for a loopback peer (127.0.0.1 or ::1).
-    A single proxy appends the client it saw, so the rightmost valid address
-    is the one that counts. Any other peer keeps its socket address.
+
+def _cloudflare_request(headers) -> bool:
+    """cloudflared: Cf-Ray, or Cdn-Loop containing "cloudflare".
+
+    Cf-Connecting-Ip is not a marker. Funnel forwards whatever the
+    client sent, and cloudflared forwards a client Funnel header, so
+    a request that carries both is neither ingress.
+    """
+    if headers.get("Cf-Ray"):
+        return True
+    return "cloudflare" in str(headers.get("Cdn-Loop") or "").lower()
+
+
+def _single_forwarded_ip(value: str) -> str:
+    """The address in X-Forwarded-For when that header is one IP.
+
+    Funnel overwrites the header with the client address. A list, or
+    anything that is not one IP, is not that value.
+    """
+    parts = [part.strip() for part in (value or "").split(",") if part.strip()]
+    if len(parts) != 1:
+        return ""
+    return _ip_token(parts[0])
+
+
+def _forwarded_value(headers, forwarded_for: str) -> str:
+    header = headers.get("X-Forwarded-For")
+    if header is not None and str(header).strip():
+        return str(header)
+    return forwarded_for or ""
+
+
+def trusted_client_ip(peer: str, forwarded_for: str, headers=None) -> str:
+    """Socket peer, unless that peer is the local tunnel proxy.
+
+    Headers are read only for a loopback peer (127.0.0.1 or ::1).
+
+    A Cloudflare marker together with Tailscale-Funnel-Request uses
+    the loopback peer. Each tunnel forwards the other's header, so
+    both together name no client. Cf-Connecting-Ip is ignored there.
+
+    cloudflared alone (Cf-Ray, or Cdn-Loop containing "cloudflare")
+    keys only on Cf-Connecting-Ip. A missing or invalid value uses
+    the loopback peer.
+
+    Funnel is Tailscale-Funnel-Request with no Cloudflare marker.
+    Tailscale deletes a client-sent Funnel header and sets its own,
+    and it overwrites X-Forwarded-For with one client address. The
+    key is that header when it holds exactly one IP; otherwise the
+    loopback peer. Tailscale-Ingress-Src never arrives from Funnel,
+    so any value is the client's and is ignored.
+
+    Every other peer keeps its socket address.
     """
     peer = (peer or "").strip()
     if not _loopback(peer):
         return peer
-    chosen = ""
-    for part in (forwarded_for or "").split(","):
-        token = part.strip().strip('"')
-        if token.startswith("[") and "]" in token:
-            token = token[1 : token.index("]")]
-        try:
-            ipaddress.ip_address(token)
-        except ValueError:
-            continue
-        chosen = token
-    return chosen or peer
+    if headers is None or not hasattr(headers, "get"):
+        return peer
+    funnel = headers.get("Tailscale-Funnel-Request") is not None
+    cloudflare = _cloudflare_request(headers)
+    if funnel and cloudflare:
+        return peer
+    if cloudflare:
+        return _ip_token(str(headers.get("Cf-Connecting-Ip") or "")) or peer
+    if funnel:
+        forwarded = _forwarded_value(headers, forwarded_for)
+        return _single_forwarded_ip(forwarded) or peer
+    return peer
 
 
 def _marked_public(headers) -> bool:
@@ -251,12 +311,8 @@ class BaseRoutes:
         return str(address[0] or "")
 
     def _client_ip(self) -> str:
-        """Address for the rate limit. Forwarded only from the loopback proxy."""
-        headers = getattr(self, "headers", None)
-        forwarded = ""
-        if headers is not None and hasattr(headers, "get"):
-            forwarded = str(headers.get("X-Forwarded-For") or "")
-        return trusted_client_ip(self._peer(), forwarded)
+        """Address for the rate limit. Tunnel headers count only on loopback."""
+        return trusted_client_ip(self._peer(), "", getattr(self, "headers", None))
 
     def _public(self) -> bool:
         """True on Funnel or Cloudflare, or when the socket peer is not on the LAN.

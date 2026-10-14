@@ -1,11 +1,12 @@
 """Per-IP token bucket for public traffic. Stdlib only.
 
 LAN peers are not counted. The caller passes the client address from the
-trusted-proxy helper, so a spoofed X-Forwarded-For cannot pick a bucket.
+trusted-proxy helper. IPv6 addresses share a /64. IPv4 keeps the full address.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import threading
 import time
@@ -36,10 +37,13 @@ class _Bucket:
         self.tokens = burst
         self.updated = now
 
-    def take(self, now: float) -> tuple[bool, int]:
+    def refill(self, now: float) -> None:
         elapsed = max(0.0, now - self.updated)
         self.updated = now
         self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
+
+    def take(self, now: float) -> tuple[bool, int]:
+        self.refill(now)
         if self.tokens >= 1.0:
             self.tokens -= 1.0
             return True, 0
@@ -94,26 +98,50 @@ def _limit(kind: str) -> tuple[float, float]:
     return count / window, float(count)
 
 
-def _prune() -> None:
-    if len(_BUCKETS) <= _CAP:
+def _prune(now: float) -> None:
+    """Make room for one new key. Idle buckets go first, then the least recently used."""
+    if len(_BUCKETS) < _CAP:
         return
-    idle = [key for key, bucket in _BUCKETS.items() if bucket.tokens >= bucket.burst]
-    for key in idle:
-        _BUCKETS.pop(key, None)
-    while len(_BUCKETS) > _CAP:
+    for bucket in _BUCKETS.values():
+        bucket.refill(now)
+    for key, bucket in list(_BUCKETS.items()):
+        if bucket.tokens >= bucket.burst:
+            _BUCKETS.pop(key, None)
+    while len(_BUCKETS) >= _CAP:
         _BUCKETS.pop(next(iter(_BUCKETS)), None)
+
+
+def _bucket_id(ip: str) -> str:
+    """IPv6 shares a /64. IPv4, including a v4-mapped address, stays whole."""
+    text = (ip or "").strip()
+    try:
+        addr = ipaddress.ip_address(text)
+    except ValueError:
+        return text or "-"
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        addr = mapped
+    if addr.version == 6:
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    return str(addr)
 
 
 def admit(ip: str, path: str, now: float | None = None) -> tuple[bool, int]:
     """Take one token. The second value is Retry-After seconds when refused."""
     kind = route_class(path)
-    key = f"{kind}:{ip or '-'}"
+    key = f"{kind}:{_bucket_id(ip)}"
     moment = time.monotonic() if now is None else now
     rate, burst = _limit(kind)
     with _LOCK:
         bucket = _BUCKETS.get(key)
-        if bucket is None or bucket.rate != rate or bucket.burst != burst:
+        if bucket is None:
+            _prune(moment)
             bucket = _Bucket(rate, burst, moment)
-            _BUCKETS[key] = bucket
-            _prune()
+        elif bucket.rate != rate or bucket.burst != burst:
+            _BUCKETS.pop(key, None)
+            bucket = _Bucket(rate, burst, moment)
+        else:
+            # Dict order is least-recently-used at the front.
+            _BUCKETS.pop(key)
+        _BUCKETS[key] = bucket
         return bucket.take(moment)
