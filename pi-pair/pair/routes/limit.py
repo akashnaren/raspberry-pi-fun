@@ -99,14 +99,15 @@ def _limit(kind: str) -> tuple[float, float]:
 
 
 def _prune(now: float) -> None:
-    if len(_BUCKETS) <= _CAP:
+    """Make room for one new key. Idle buckets go first, then the least recently used."""
+    if len(_BUCKETS) < _CAP:
         return
     for bucket in _BUCKETS.values():
         bucket.refill(now)
-    idle = [key for key, bucket in _BUCKETS.items() if bucket.tokens >= bucket.burst]
-    for key in idle:
-        _BUCKETS.pop(key, None)
-    while len(_BUCKETS) > _CAP:
+    for key, bucket in list(_BUCKETS.items()):
+        if bucket.tokens >= bucket.burst:
+            _BUCKETS.pop(key, None)
+    while len(_BUCKETS) >= _CAP:
         _BUCKETS.pop(next(iter(_BUCKETS)), None)
 
 
@@ -133,8 +134,14 @@ def admit(ip: str, path: str, now: float | None = None) -> tuple[bool, int]:
     rate, burst = _limit(kind)
     with _LOCK:
         bucket = _BUCKETS.get(key)
-        if bucket is None or bucket.rate != rate or bucket.burst != burst:
-            bucket = _Bucket(rate, burst, moment)
-            _BUCKETS[key] = bucket
+        if bucket is None:
             _prune(moment)
+            bucket = _Bucket(rate, burst, moment)
+        elif bucket.rate != rate or bucket.burst != burst:
+            _BUCKETS.pop(key, None)
+            bucket = _Bucket(rate, burst, moment)
+        else:
+            # Dict order is least-recently-used at the front.
+            _BUCKETS.pop(key)
+        _BUCKETS[key] = bucket
         return bucket.take(moment)

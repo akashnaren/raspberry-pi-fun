@@ -389,6 +389,36 @@ class RateLimit(unittest.TestCase):
             os.environ.pop("PI_PAIR_RATE_DEFAULT", None)
             reset_limits()
 
+    def test_a_full_table_still_limits_a_new_client(self):
+        os.environ["PI_PAIR_RATE_CHAT"] = "12/60"
+        reset_limits()
+        try:
+            for i in range(rate_limit._CAP + 1):
+                admit(f"2001:db8:0:{i:x}::1", "/api/chat", now=1.0)
+            allowed = [admit("9.9.9.9", "/api/chat", now=1.0)[0] for _ in range(30)]
+            self.assertEqual(allowed.count(True), 12)
+        finally:
+            os.environ.pop("PI_PAIR_RATE_CHAT", None)
+            reset_limits()
+
+    def test_full_table_evicts_the_least_recently_used(self):
+        saved = rate_limit._CAP
+        rate_limit._CAP = 2
+        os.environ["PI_PAIR_RATE_DEFAULT"] = "1/60"
+        reset_limits()
+        try:
+            self.assertTrue(admit("203.0.113.1", "/health", now=0)[0])
+            self.assertTrue(admit("203.0.113.2", "/health", now=1)[0])
+            self.assertFalse(admit("203.0.113.1", "/health", now=2)[0])
+            self.assertTrue(admit("203.0.113.3", "/health", now=2)[0])
+            self.assertFalse(admit("203.0.113.1", "/health", now=2)[0])
+            self.assertFalse(admit("203.0.113.3", "/health", now=2)[0])
+            self.assertTrue(admit("203.0.113.2", "/health", now=2)[0])
+        finally:
+            rate_limit._CAP = saved
+            os.environ.pop("PI_PAIR_RATE_DEFAULT", None)
+            reset_limits()
+
 
 def _start(httpd) -> threading.Thread:
     thread = threading.Thread(
