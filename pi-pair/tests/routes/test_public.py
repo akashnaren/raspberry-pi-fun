@@ -38,17 +38,25 @@ class TrustedProxy(unittest.TestCase):
         self.assertTrue(public._public())
         self.assertEqual(public._client_ip(), "192.0.2.10")
 
-    def test_loopback_proxy_uses_the_original_client(self):
+    def test_loopback_without_an_ingress_marker_uses_the_peer(self):
         self.assertEqual(
             trusted_client_ip("127.0.0.1", "1.2.3.4, 203.0.113.9"),
-            "1.2.3.4",
+            "127.0.0.1",
         )
         self.assertEqual(
             trusted_client_ip("127.0.0.1", "junk, 198.51.100.7, 172.70.1.1"),
-            "198.51.100.7",
+            "127.0.0.1",
         )
-        self.assertEqual(trusted_client_ip("::1", "203.0.113.8"), "203.0.113.8")
+        self.assertEqual(trusted_client_ip("::1", "203.0.113.8"), "::1")
         self.assertEqual(trusted_client_ip("127.0.0.1", "not-an-ip"), "127.0.0.1")
+        bare = _Call(
+            "127.0.0.1",
+            {
+                "Cf-Connecting-Ip": "203.0.113.4",
+                "X-Forwarded-For": "192.0.2.1",
+            },
+        )
+        self.assertEqual(bare._client_ip(), "127.0.0.1")
 
     def test_funnel_header_is_public_even_from_loopback(self):
         plain = _Call("127.0.0.1", {"X-Forwarded-For": "8.8.8.8"})
@@ -61,13 +69,21 @@ class TrustedProxy(unittest.TestCase):
             },
         )
         self.assertTrue(funnel._public())
-        self.assertEqual(funnel._client_ip(), "10.0.0.5")
+        self.assertEqual(funnel._client_ip(), "127.0.0.1")
         cloud = _Call("127.0.0.1", {"Cf-Connecting-Ip": "203.0.113.4"})
         self.assertTrue(cloud._public())
 
 
 class ProxyClientHeaders(unittest.TestCase):
-    def test_cf_connecting_ip_wins_on_loopback(self):
+    def _bucket(self, results_limit: str):
+        os.environ["PI_PAIR_RATE_DEFAULT"] = results_limit
+        reset_limits()
+
+    def _clear_bucket(self):
+        os.environ.pop("PI_PAIR_RATE_DEFAULT", None)
+        reset_limits()
+
+    def test_ingress_src_beats_a_client_supplied_cf_connecting_ip(self):
         call = _Call(
             "127.0.0.1",
             {
@@ -76,7 +92,7 @@ class ProxyClientHeaders(unittest.TestCase):
                 "X-Forwarded-For": "192.0.2.1, 172.70.9.9",
             },
         )
-        self.assertEqual(call._client_ip(), "203.0.113.4")
+        self.assertEqual(call._client_ip(), "198.51.100.2")
 
     def test_tailscale_ingress_src_is_next(self):
         call = _Call(
@@ -95,7 +111,7 @@ class ProxyClientHeaders(unittest.TestCase):
             "127.0.0.1",
             {"Cf-Connecting-Ip": "evil", "X-Forwarded-For": "192.0.2.1, 172.70.1.1"},
         )
-        self.assertEqual(call._client_ip(), "192.0.2.1")
+        self.assertEqual(call._client_ip(), "127.0.0.1")
         bare = _Call("127.0.0.1", {"Cf-Connecting-Ip": "nope"})
         self.assertEqual(bare._client_ip(), "127.0.0.1")
 
@@ -120,6 +136,7 @@ class ProxyClientHeaders(unittest.TestCase):
                 call = _Call(
                     "127.0.0.1",
                     {
+                        "Cf-Ray": "8a1b2c3d4e5f6a7b-EWR",
                         "Cf-Connecting-Ip": "203.0.113.77",
                         "X-Forwarded-For": f"203.0.113.77, 172.70.0.{hop}",
                     },
@@ -129,6 +146,111 @@ class ProxyClientHeaders(unittest.TestCase):
         finally:
             os.environ.pop("PI_PAIR_RATE_DEFAULT", None)
             reset_limits()
+
+    def test_funnel_rotating_cf_connecting_ip_shares_one_bucket(self):
+        self._bucket("2/60")
+        try:
+            results = []
+            for hop in range(4):
+                call = _Call(
+                    "127.0.0.1",
+                    {
+                        "Tailscale-Funnel-Request": "true",
+                        "Tailscale-Ingress-Src": "198.51.100.2:4431",
+                        "Cf-Connecting-Ip": f"203.0.113.{hop}",
+                        "Cf-Ray": f"ray-{hop}",
+                        "X-Forwarded-For": f"192.0.2.{hop}, 172.70.0.{hop}",
+                    },
+                )
+                self.assertEqual(call._client_ip(), "198.51.100.2")
+                results.append(admit(call._client_ip(), "/health")[0])
+            self.assertEqual(results, [True, True, False, False])
+        finally:
+            self._clear_bucket()
+
+    def test_funnel_rotating_forwarded_for_shares_one_bucket(self):
+        self._bucket("2/60")
+        try:
+            results = []
+            for hop in range(4):
+                call = _Call(
+                    "127.0.0.1",
+                    {
+                        "Tailscale-Funnel-Request": "true",
+                        "X-Forwarded-For": f"203.0.113.{hop}, 172.70.0.{hop}",
+                    },
+                )
+                self.assertEqual(call._client_ip(), "127.0.0.1")
+                results.append(admit(call._client_ip(), "/health")[0])
+            self.assertEqual(results, [True, True, False, False])
+        finally:
+            self._clear_bucket()
+
+    def test_funnel_without_ingress_src_uses_the_peer(self):
+        call = _Call(
+            "127.0.0.1",
+            {
+                "Tailscale-Funnel-Request": "true",
+                "Cf-Connecting-Ip": "203.0.113.4",
+                "X-Forwarded-For": "192.0.2.1, 172.70.1.1",
+            },
+        )
+        self.assertEqual(call._client_ip(), "127.0.0.1")
+
+    def test_cloudflared_uses_only_cf_connecting_ip(self):
+        ray = _Call(
+            "127.0.0.1",
+            {
+                "Cf-Ray": "8a1b2c3d4e5f6a7b-EWR",
+                "Cf-Connecting-Ip": "203.0.113.4",
+                "Tailscale-Ingress-Src": "198.51.100.2:4431",
+                "X-Forwarded-For": "192.0.2.1, 172.70.9.9",
+            },
+        )
+        self.assertEqual(ray._client_ip(), "203.0.113.4")
+        loop = _Call(
+            "::1",
+            {
+                "Cdn-Loop": "cloudflare; loops=1",
+                "Cf-Connecting-Ip": "203.0.113.5",
+                "X-Forwarded-For": "192.0.2.8",
+            },
+        )
+        self.assertEqual(loop._client_ip(), "203.0.113.5")
+        missing = _Call(
+            "127.0.0.1",
+            {
+                "Cf-Ray": "8a1b2c3d4e5f6a7b-EWR",
+                "Cf-Connecting-Ip": "not-an-ip",
+                "Tailscale-Ingress-Src": "198.51.100.2:4431",
+                "X-Forwarded-For": "192.0.2.9",
+            },
+        )
+        self.assertEqual(missing._client_ip(), "127.0.0.1")
+
+    def test_ipv6_clients_in_one_prefix_share_one_bucket(self):
+        self._bucket("1/60")
+        try:
+
+            def hit(host: str) -> bool:
+                source = host if ":" not in host else f"[{host}]"
+                call = _Call(
+                    "127.0.0.1",
+                    {
+                        "Tailscale-Funnel-Request": "true",
+                        "Tailscale-Ingress-Src": f"{source}:443",
+                    },
+                )
+                return admit(call._client_ip(), "/health")[0]
+
+            self.assertTrue(hit("2001:db8:aa:bb::1"))
+            self.assertFalse(hit("2001:db8:aa:bb::ffff"))
+            self.assertTrue(hit("2001:db8:aa:bc::1"))
+            self.assertTrue(hit("203.0.113.10"))
+            self.assertTrue(hit("203.0.113.11"))
+            self.assertFalse(hit("::ffff:203.0.113.10"))
+        finally:
+            self._clear_bucket()
 
 
 class RateLimit(unittest.TestCase):
@@ -283,7 +405,7 @@ class FunnelHttp(unittest.TestCase):
         reset_limits()
         funnel = {
             "Tailscale-Funnel-Request": "true",
-            "X-Forwarded-For": "203.0.113.44",
+            "Tailscale-Ingress-Src": "203.0.113.44:4431",
         }
         first, _headers, _raw = self._open("GET", "/health", headers=funnel)
         self.assertEqual(first, 200)
@@ -298,7 +420,7 @@ class FunnelHttp(unittest.TestCase):
             "/health",
             headers={
                 "Tailscale-Funnel-Request": "true",
-                "X-Forwarded-For": "203.0.113.45",
+                "Tailscale-Ingress-Src": "203.0.113.45:4431",
             },
         )
         self.assertEqual(other, 200)

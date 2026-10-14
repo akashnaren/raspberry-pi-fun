@@ -126,9 +126,6 @@ def _loopback(host: str) -> bool:
     return bool(ip is not None and ip.is_loopback)
 
 
-_CLIENT_IP_HEADERS = ("Cf-Connecting-Ip", "Tailscale-Ingress-Src")
-
-
 def _ip_token(value: str) -> str:
     """The address in one header value, or "" when it is not an IP."""
     token = (value or "").strip().strip('"')
@@ -142,30 +139,54 @@ def _ip_token(value: str) -> str:
         return ""
 
 
+def _cloudflare_request(headers) -> bool:
+    """cloudflared. Cf-Connecting-Ip is not a marker: Funnel forwards it.
+
+    Recognized by Cf-Ray, or by Cdn-Loop containing "cloudflare".
+    """
+    if headers.get("Cf-Ray"):
+        return True
+    return "cloudflare" in str(headers.get("Cdn-Loop") or "").lower()
+
+
+def _funnel_request(headers) -> bool:
+    """Funnel sets Tailscale-Funnel-Request and Tailscale-Ingress-Src.
+
+    Tailscale-Funnel-Request is the marker, including when the client
+    also sent Cloudflare headers. Tailscale-Ingress-Src marks Funnel
+    on its own only when those Cloudflare markers are absent, so a
+    cloudflared client cannot rotate buckets by inventing it.
+    """
+    if headers.get("Tailscale-Funnel-Request") is not None:
+        return True
+    if _cloudflare_request(headers):
+        return False
+    return headers.get("Tailscale-Ingress-Src") is not None
+
+
 def trusted_client_ip(peer: str, forwarded_for: str, headers=None) -> str:
     """Socket peer, unless that peer is the local tunnel proxy.
 
-    Proxy headers are read only for a loopback peer (127.0.0.1 or ::1).
-    In order: Cf-Connecting-Ip (cloudflared), Tailscale-Ingress-Src (Funnel,
-    ip or ip:port),
-    then the leftmost valid X-Forwarded-For entry. The leftmost entry is
-    the original client; the rightmost is the last hop, which behind
-    Cloudflare changes per request and defeats the per-IP limit. Every
-    value must parse as an IP address. Any other peer keeps its socket
-    address and its headers are ignored.
+    Headers are read only for a loopback peer (127.0.0.1 or ::1).
+    One ingress supplies the client key. Every other client-IP header
+    is ignored. X-Forwarded-For is never a key.
+
+    A Funnel request uses only Tailscale-Ingress-Src (an address or
+    address:port). A cloudflared request uses only Cf-Connecting-Ip,
+    and only when Tailscale-Funnel-Request is absent. A missing or
+    invalid value uses the loopback peer, so those requests share one
+    bucket. Any other peer keeps its socket address. The forwarded_for
+    argument is ignored.
     """
     peer = (peer or "").strip()
     if not _loopback(peer):
         return peer
-    if headers is not None and hasattr(headers, "get"):
-        for name in _CLIENT_IP_HEADERS:
-            chosen = _ip_token(str(headers.get(name) or ""))
-            if chosen:
-                return chosen
-    for part in (forwarded_for or "").split(","):
-        chosen = _ip_token(part)
-        if chosen:
-            return chosen
+    if headers is None or not hasattr(headers, "get"):
+        return peer
+    if _funnel_request(headers):
+        return _ip_token(str(headers.get("Tailscale-Ingress-Src") or "")) or peer
+    if _cloudflare_request(headers):
+        return _ip_token(str(headers.get("Cf-Connecting-Ip") or "")) or peer
     return peer
 
 
@@ -271,12 +292,8 @@ class BaseRoutes:
         return str(address[0] or "")
 
     def _client_ip(self) -> str:
-        """Address for the rate limit. Forwarded only from the loopback proxy."""
-        headers = getattr(self, "headers", None)
-        forwarded = ""
-        if headers is not None and hasattr(headers, "get"):
-            forwarded = str(headers.get("X-Forwarded-For") or "")
-        return trusted_client_ip(self._peer(), forwarded, headers)
+        """Address for the rate limit. Tunnel headers count only on loopback."""
+        return trusted_client_ip(self._peer(), "", getattr(self, "headers", None))
 
     def _public(self) -> bool:
         """True on Funnel or Cloudflare, or when the socket peer is not on the LAN.
