@@ -66,14 +66,6 @@ _TAILNET = (
     ipaddress.ip_network("fd7a:115c:a1e0::/48"),
 )
 _PUBLIC_HIDDEN = {"x-pi-peer", "x-pi-chip"}
-_CLOSED_EXACT = {
-    "/docs",
-    "/docs/",
-    "/swagger",
-    "/swagger/",
-    "/openapi.json",
-    "/swagger.json",
-}
 _PAGE_HEADERS = (
     "Content-Type, X-Pi-Mode, X-Pi-Target, X-Pi-Mesh, X-Pi-Think, "
     "X-Pi-Client, X-Pi-Chat, X-Pi-Request-Id"
@@ -222,11 +214,9 @@ def _marked_public(headers) -> bool:
 
 
 def public_closed(path: str) -> bool:
-    """Docs and tool routes stay off the public tunnel."""
+    """Tool routes stay off the public tunnel. The API docs and OpenAPI JSON stay open."""
     path = (path or "").split("?", 1)[0]
-    if path == "/tools" or path.startswith("/tools/"):
-        return True
-    return path in _CLOSED_EXACT
+    return path == "/tools" or path.startswith("/tools/")
 
 
 def _canonical_origin(value: str) -> str:
