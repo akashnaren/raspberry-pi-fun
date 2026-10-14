@@ -481,7 +481,7 @@ class FunnelHttp(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, error.headers, error.read()
 
-    def test_funnel_redacts_health_and_hides_docs_and_tools(self):
+    def test_funnel_redacts_health_and_hides_tools(self):
         funnel = {"Tailscale-Funnel-Request": "true"}
         status, _headers, raw = self._open("GET", "/health", headers=funnel)
         self.assertEqual(status, 200)
@@ -493,15 +493,8 @@ class FunnelHttp(unittest.TestCase):
         self.assertEqual(open_status, 200)
         self.assertIn("10.0.0.181", open_raw.decode())
 
-        for path in (
-            "/docs",
-            "/swagger",
-            "/openapi.json",
-            "/swagger.json",
-            "/tools/health",
-        ):
-            hidden, _headers, _raw = self._open("GET", path, headers=funnel)
-            self.assertEqual(hidden, 404, path)
+        hidden, _headers, _raw = self._open("GET", "/tools/health", headers=funnel)
+        self.assertEqual(hidden, 404)
         shown, _headers, _raw = self._open("GET", "/docs")
         self.assertEqual(shown, 200)
         posted, _headers, _raw = self._open(
@@ -511,6 +504,16 @@ class FunnelHttp(unittest.TestCase):
             headers={**funnel, "content-type": "application/json"},
         )
         self.assertEqual(posted, 404)
+
+    def test_public_tunnels_serve_api_docs(self):
+        cloudflare = {"Cf-Connecting-Ip": "203.0.113.9", "Cf-Ray": "abc"}
+        for headers in ({"Tailscale-Funnel-Request": "true"}, cloudflare):
+            for path in ("/docs", "/docs/", "/swagger", "/openapi.json", "/swagger.json"):
+                status, _headers, raw = self._open("GET", path, headers=headers)
+                self.assertEqual(status, 200, (path, headers))
+                self.assertNotIn(b"10.0.0.", raw, path)
+            tools, _headers, _raw = self._open("GET", "/tools/health", headers=headers)
+            self.assertEqual(tools, 404)
 
     def test_security_headers_and_rate_limit(self):
         status, headers, _raw = self._open("GET", "/health")
@@ -672,11 +675,17 @@ class ListenHosts(unittest.TestCase):
         funnel = _Mesh(
             "100.100.197.18",
             {"Tailscale-Funnel-Request": "true"},
-            path="/docs",
+            path="/tools/health",
         )
         self.assertTrue(funnel._public())
         self.assertTrue(funnel._guard())
         self.assertEqual(funnel.codes, [404])
+        funnel_docs = _Mesh(
+            "100.100.197.18",
+            {"Tailscale-Funnel-Request": "true"},
+            path="/docs",
+        )
+        self.assertFalse(funnel_docs._guard())
 
         cloud = _Mesh("fd7a:115c:a1e0::1", {"Cf-Connecting-Ip": "203.0.113.9"})
         self.assertTrue(cloud._public())
