@@ -140,53 +140,64 @@ def _ip_token(value: str) -> str:
 
 
 def _cloudflare_request(headers) -> bool:
-    """cloudflared. Cf-Connecting-Ip is not a marker: Funnel forwards it.
+    """cloudflared: Cf-Ray, or Cdn-Loop containing "cloudflare".
 
-    Recognized by Cf-Ray, or by Cdn-Loop containing "cloudflare".
+    Cf-Connecting-Ip is not a marker. Funnel forwards whatever the
+    client sent. A Cloudflare marker wins over Tailscale-Funnel-Request
+    because cloudflared forwards that header too.
     """
     if headers.get("Cf-Ray"):
         return True
     return "cloudflare" in str(headers.get("Cdn-Loop") or "").lower()
 
 
-def _funnel_request(headers) -> bool:
-    """Funnel sets Tailscale-Funnel-Request and Tailscale-Ingress-Src.
+def _single_forwarded_ip(value: str) -> str:
+    """The address in X-Forwarded-For when that header is one IP.
 
-    Tailscale-Funnel-Request is the marker, including when the client
-    also sent Cloudflare headers. Tailscale-Ingress-Src marks Funnel
-    on its own only when those Cloudflare markers are absent, so a
-    cloudflared client cannot rotate buckets by inventing it.
+    Funnel overwrites the header with the client address. A list, or
+    anything that is not one IP, is not that value.
     """
-    if headers.get("Tailscale-Funnel-Request") is not None:
-        return True
-    if _cloudflare_request(headers):
-        return False
-    return headers.get("Tailscale-Ingress-Src") is not None
+    parts = [part.strip() for part in (value or "").split(",") if part.strip()]
+    if len(parts) != 1:
+        return ""
+    return _ip_token(parts[0])
+
+
+def _forwarded_value(headers, forwarded_for: str) -> str:
+    header = headers.get("X-Forwarded-For")
+    if header is not None and str(header).strip():
+        return str(header)
+    return forwarded_for or ""
 
 
 def trusted_client_ip(peer: str, forwarded_for: str, headers=None) -> str:
     """Socket peer, unless that peer is the local tunnel proxy.
 
     Headers are read only for a loopback peer (127.0.0.1 or ::1).
-    One ingress supplies the client key. Every other client-IP header
-    is ignored. X-Forwarded-For is never a key.
 
-    A Funnel request uses only Tailscale-Ingress-Src (an address or
-    address:port). A cloudflared request uses only Cf-Connecting-Ip,
-    and only when Tailscale-Funnel-Request is absent. A missing or
-    invalid value uses the loopback peer, so those requests share one
-    bucket. Any other peer keeps its socket address. The forwarded_for
-    argument is ignored.
+    cloudflared (Cf-Ray, or Cdn-Loop containing "cloudflare") keys
+    only on Cf-Connecting-Ip, even when Tailscale-Funnel-Request is
+    also present. A missing or invalid value uses the loopback peer.
+
+    Funnel is Tailscale-Funnel-Request with no Cloudflare marker.
+    Tailscale deletes a client-sent Funnel header and sets its own,
+    and it overwrites X-Forwarded-For with one client address. The
+    key is that header when it holds exactly one IP; otherwise the
+    loopback peer. Tailscale-Ingress-Src never arrives from Funnel,
+    so any value is the client's and is ignored.
+
+    Every other peer keeps its socket address.
     """
     peer = (peer or "").strip()
     if not _loopback(peer):
         return peer
     if headers is None or not hasattr(headers, "get"):
         return peer
-    if _funnel_request(headers):
-        return _ip_token(str(headers.get("Tailscale-Ingress-Src") or "")) or peer
     if _cloudflare_request(headers):
         return _ip_token(str(headers.get("Cf-Connecting-Ip") or "")) or peer
+    if headers.get("Tailscale-Funnel-Request") is not None:
+        forwarded = _forwarded_value(headers, forwarded_for)
+        return _single_forwarded_ip(forwarded) or peer
     return peer
 
 
