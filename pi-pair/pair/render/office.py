@@ -1,25 +1,30 @@
 """Headless LibreOffice conversions that cannot hang or fill the disk.
 
 The profile, scratch files, and converted output share one temporary
-directory. That directory is removed when the conversion finishes, fails,
-or is killed. The wait is at most CONVERT_TIMEOUT_S seconds. On expiry
-the whole process group is killed, so a soffice child cannot keep writing.
+directory. The wait is at most CONVERT_TIMEOUT_S seconds. A watchdog kills
+the process group if that directory grows past MAX_TEMP_BYTES. The finally
+block always signals the group, even when the wrapper has already exited,
+and then deletes the directory.
 """
 
 from __future__ import annotations
 
+import errno
 import os
+import resource
 import shutil
 import signal
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 CONVERT_TIMEOUT_S = 60
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+MAX_TEMP_BYTES = 256 * 1024 * 1024
 # One scratch file inside the profile can grow while soffice is stuck.
-# The output cap is smaller; this stops the temp file that filled the disk.
 _MAX_FILE_BYTES = 64 * 1024 * 1024
+_POLL_S = 0.1
 
 
 class OfficeError(Exception):
@@ -52,16 +57,12 @@ def convert_office(
     try:
         profile, outdir, source = _prepare(root, data, source_ext)
         proc = _spawn(_argv(source, profile, outdir, target, command), root)
-        try:
-            _stdout, stderr = proc.communicate(timeout=limit)
-        except subprocess.TimeoutExpired:
-            _kill_group(proc)
-            raise OfficeError("timed out") from None
+        _stdout, stderr = _wait(proc, root, limit)
         if proc.returncode != 0:
             raise OfficeError(_tail(stderr))
         return _read_output(outdir, target)
     finally:
-        if proc is not None and proc.poll() is None:
+        if proc is not None:
             _kill_group(proc)
         shutil.rmtree(root, ignore_errors=True)
 
@@ -106,10 +107,17 @@ def _argv(
         str(outdir),
         str(source),
     ]
-    prlimit = shutil.which("prlimit")
-    if prlimit:
-        return [prlimit, f"--fsize={_MAX_FILE_BYTES}", "--", *argv]
     return argv
+
+
+def _limit_fsize() -> None:
+    """Cap each file this process and its children create."""
+    ceiling = _MAX_FILE_BYTES
+    _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    if hard == resource.RLIM_INFINITY or hard > ceiling:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (ceiling, ceiling))
+        return
+    resource.setrlimit(resource.RLIMIT_FSIZE, (hard, hard))
 
 
 def _spawn(argv: list[str], root: Path) -> subprocess.Popen[bytes]:
@@ -131,6 +139,7 @@ def _spawn(argv: list[str], root: Path) -> subprocess.Popen[bytes]:
             cwd=root,
             env=env,
             start_new_session=True,
+            preexec_fn=_limit_fsize,
         )
     except FileNotFoundError as exc:
         name = argv[0] if argv else "soffice"
@@ -154,16 +163,54 @@ def _tail(stderr: bytes | None) -> str:
     return lines[-1][:180] if lines else "conversion failed"
 
 
+def _wait(
+    proc: subprocess.Popen[bytes], root: Path, timeout: float
+) -> tuple[bytes, bytes]:
+    """Wait out the timeout, and stop early when the temp dir grows too far."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if _tree_size(root) > MAX_TEMP_BYTES:
+            raise OfficeError("temp dir too large")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise OfficeError("timed out")
+        try:
+            stdout, stderr = proc.communicate(timeout=min(_POLL_S, remaining))
+        except subprocess.TimeoutExpired:
+            continue
+        if _tree_size(root) > MAX_TEMP_BYTES:
+            raise OfficeError("temp dir too large")
+        return stdout or b"", stderr or b""
+
+
+def _tree_size(root: Path) -> int:
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [
+            name for name in dirnames if not os.path.islink(os.path.join(dirpath, name))
+        ]
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            if os.path.islink(path):
+                continue
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                continue
+    return total
+
+
 def _kill_group(proc: subprocess.Popen[bytes]) -> None:
-    """SIGKILL the session started for this conversion, then reap it."""
-    if proc.poll() is None and proc.pid:
+    """SIGKILL the session, even if its leader has already exited, then reap."""
+    if proc.pid:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                proc.kill()
-            except OSError:
-                pass
+        except OSError as exc:
+            if exc.errno != errno.ESRCH:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
     try:
         proc.wait(timeout=2)
     except subprocess.TimeoutExpired:
@@ -171,7 +218,10 @@ def _kill_group(proc: subprocess.Popen[bytes]) -> None:
             proc.kill()
         except OSError:
             pass
-        proc.wait(timeout=2)
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
     for stream in (proc.stdout, proc.stderr, proc.stdin):
         if stream is None:
             continue

@@ -8,6 +8,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -146,6 +147,29 @@ def _table(text: str):
     return parsed
 
 
+def _live_soffice() -> set[int]:
+    """Pids of soffice or oosplash that are still running, not zombies."""
+    found = set()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            command = (entry / "cmdline").read_bytes()
+            status = (entry / "status").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if b"soffice" not in command and b"oosplash" not in command:
+            continue
+        state = ""
+        for line in status.splitlines():
+            if line.startswith("State:"):
+                state = line.split()[1]
+                break
+        if state not in {"Z", "X"}:
+            found.add(int(entry.name))
+    return found
+
+
 class Documents(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -229,18 +253,33 @@ class Documents(unittest.TestCase):
         if soffice_bin() is None:
             self.skipTest("LibreOffice is not installed")
         self.assertLessEqual(CONVERT_TIMEOUT_S, 60)
-        source = "Hello mesh\n\n| item | value |\n| --- | --- |\n| a | 2 |\n"
-        for kind, target in (("docx", "txt"), ("xlsx", "csv"), ("pdf", "png")):
-            data, ext = render_document(source, kind)
-            opened = convert_office(data, ext, target, timeout=CONVERT_TIMEOUT_S)
-            if kind == "pdf":
-                self.assertTrue(opened.startswith(b"\x89PNG"))
-                self.assertIn(b"Hello mesh", data)
-                continue
-            text = opened.decode("utf-8", errors="replace")
-            self.assertIn("item", text)
-            if kind == "docx":
-                self.assertIn("Hello mesh", text)
+        started = time.monotonic()
+        before = _live_soffice()
+        failed: Exception | None = None
+        try:
+            source = "Hello mesh\n\n| item | value |\n| --- | --- |\n| a | 2 |\n"
+            for kind, target in (("docx", "txt"), ("xlsx", "csv"), ("pdf", "png")):
+                data, ext = render_document(source, kind)
+                opened = convert_office(data, ext, target, timeout=CONVERT_TIMEOUT_S)
+                if kind == "pdf":
+                    self.assertTrue(opened.startswith(b"\x89PNG"))
+                    self.assertIn(b"Hello mesh", data)
+                    continue
+                text = opened.decode("utf-8", errors="replace")
+                self.assertIn("item", text)
+                if kind == "docx":
+                    self.assertIn("Hello mesh", text)
+        except Exception as exc:
+            failed = exc
+        deadline = time.monotonic() + 1
+        leaked = _live_soffice() - before
+        while leaked and time.monotonic() < deadline:
+            time.sleep(0.02)
+            leaked = _live_soffice() - before
+        self.assertFalse(leaked, leaked)
+        self.assertLess(time.monotonic() - started, 3 * CONVERT_TIMEOUT_S + 5)
+        if failed is not None:
+            raise failed
 
 
 class BrainRender(unittest.TestCase):

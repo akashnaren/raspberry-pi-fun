@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pair.render import office
 
@@ -129,3 +130,96 @@ open(os.environ["PI_PAIR_OFFICE_MARK"], "w", encoding="ascii").write(os.getcwd()
             )
         self.assertEqual(str(caught.exception), "output too large")
         self.assertFalse(self._root().exists())
+
+    def test_a_wrapper_that_exits_while_its_child_holds_the_pipes_leaves_no_process(
+        self,
+    ):
+        started = time.monotonic()
+        with self.assertRaises(office.OfficeError) as caught:
+            office.convert_office(
+                b"x",
+                "docx",
+                "txt",
+                timeout=0.4,
+                command=[
+                    "sh",
+                    "-c",
+                    'sleep 30 & echo $! > "$PI_PAIR_OFFICE_MARK"; exit 0',
+                ],
+            )
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(str(caught.exception), "timed out")
+        pid = int(Path(self._mark).read_text(encoding="ascii").strip())
+        self.assertTrue(_stopped(pid), pid)
+
+    def test_a_wrapper_whose_child_detaches_leaves_no_process(self):
+        started = time.monotonic()
+        with self.assertRaises(office.OfficeError) as caught:
+            office.convert_office(
+                b"x",
+                "docx",
+                "txt",
+                timeout=2,
+                command=[
+                    "sh",
+                    "-c",
+                    "sleep 30 >/dev/null 2>&1 </dev/null & "
+                    'echo $! > "$PI_PAIR_OFFICE_MARK"; exit 0',
+                ],
+            )
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(str(caught.exception), "no output")
+        pid = int(Path(self._mark).read_text(encoding="ascii").strip())
+        self.assertTrue(_stopped(pid), pid)
+
+    def test_a_temp_dir_over_the_cap_kills_the_group(self):
+        self.assertEqual(office.MAX_TEMP_BYTES, 256 * 1024 * 1024)
+        script = """
+import os, time
+open(os.environ["PI_PAIR_OFFICE_MARK"], "w", encoding="ascii").write(
+    "%s %s\\n" % (os.getpid(), os.getcwd())
+)
+index = 0
+while True:
+    open("blob%d" % index, "wb").write(b"x" * 20000)
+    index += 1
+    time.sleep(0.05)
+"""
+        started = time.monotonic()
+        with patch.object(office, "MAX_TEMP_BYTES", 10_000):
+            with self.assertRaises(office.OfficeError) as caught:
+                office.convert_office(
+                    b"x",
+                    "docx",
+                    "txt",
+                    timeout=5,
+                    command=[sys.executable, "-c", script],
+                )
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(str(caught.exception), "temp dir too large")
+        text = Path(self._mark).read_text(encoding="ascii").split()
+        self.assertEqual(len(text), 2)
+        self.assertTrue(_stopped(int(text[0])), text[0])
+        self.assertFalse(Path(text[1]).exists(), text[1])
+
+    def test_a_file_over_the_process_limit_does_not_finish(self):
+        script = """
+import os
+open(os.environ["PI_PAIR_OFFICE_MARK"], "w", encoding="ascii").write(
+    "%s\\n" % os.getpid()
+)
+open("big.bin", "wb").write(b"x" * 100000)
+open(os.environ["PI_PAIR_OFFICE_MARK"], "w", encoding="ascii").write("finished\\n")
+"""
+        with patch.object(office, "_MAX_FILE_BYTES", 8192):
+            with self.assertRaises(office.OfficeError):
+                office.convert_office(
+                    b"x",
+                    "docx",
+                    "txt",
+                    timeout=5,
+                    command=[sys.executable, "-c", script],
+                )
+        text = Path(self._mark).read_text(encoding="ascii")
+        self.assertNotIn("finished", text)
+        self.assertTrue(_stopped(int(text.split()[0])))
