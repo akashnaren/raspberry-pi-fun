@@ -6,8 +6,6 @@ import base64
 import io
 import json
 import os
-import shutil
-import subprocess
 import tempfile
 import threading
 import unittest
@@ -30,6 +28,7 @@ from pair.render.documents import (
     render_document,
     save_document,
 )
+from pair.render.office import CONVERT_TIMEOUT_S, convert_office, soffice_bin
 from pair.server import make_server
 
 
@@ -227,44 +226,21 @@ class Documents(unittest.TestCase):
         self.assertEqual(found[0][:4], b"%PDF")
 
     def test_libreoffice_opens_the_office_files(self):
-        soffice = shutil.which("soffice") or shutil.which("libreoffice")
-        if not soffice:
+        if soffice_bin() is None:
             self.skipTest("LibreOffice is not installed")
+        self.assertLessEqual(CONVERT_TIMEOUT_S, 60)
         source = "Hello mesh\n\n| item | value |\n| --- | --- |\n| a | 2 |\n"
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            for kind, target in (("docx", "txt"), ("xlsx", "csv"), ("pdf", "png")):
-                data, ext = render_document(source, kind)
-                src = root / f"note.{ext}"
-                src.write_bytes(data)
-                out = root / kind
-                out.mkdir()
-                proc = subprocess.run(
-                    [
-                        soffice,
-                        "--headless",
-                        "--convert-to",
-                        target,
-                        "--outdir",
-                        str(out),
-                        str(src),
-                    ],
-                    check=False,
-                    capture_output=True,
-                    timeout=120,
-                )
-                self.assertEqual(
-                    proc.returncode, 0, proc.stderr.decode("utf-8", "replace")
-                )
-                converted = next(out.glob(f"note.{target}"))
-                if kind == "pdf":
-                    self.assertTrue(converted.read_bytes().startswith(b"\x89PNG"))
-                    self.assertIn(b"Hello mesh", data)
-                    continue
-                opened = converted.read_text(encoding="utf-8", errors="replace")
-                self.assertIn("item", opened)
-                if kind == "docx":
-                    self.assertIn("Hello mesh", opened)
+        for kind, target in (("docx", "txt"), ("xlsx", "csv"), ("pdf", "png")):
+            data, ext = render_document(source, kind)
+            opened = convert_office(data, ext, target, timeout=CONVERT_TIMEOUT_S)
+            if kind == "pdf":
+                self.assertTrue(opened.startswith(b"\x89PNG"))
+                self.assertIn(b"Hello mesh", data)
+                continue
+            text = opened.decode("utf-8", errors="replace")
+            self.assertIn("item", text)
+            if kind == "docx":
+                self.assertIn("Hello mesh", text)
 
 
 class BrainRender(unittest.TestCase):
