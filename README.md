@@ -1,6 +1,6 @@
 # pi-pair
 
-Access and use the Platform: https://glenn-night-reasoning-subsection.trycloudflare.com
+Access and use the Platform: https://rpi-pi4.taild6c87d.ts.net/
 
 Chat for a three-board Raspberry Pi rack. Stdlib Python on the boards, no pip. The page is served on 18080.
 
