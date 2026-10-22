@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Sourced by deploy_pi3.sh and install.sh.
 
 stamp_write() {
   local dest_dir="$1"

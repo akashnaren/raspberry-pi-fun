@@ -1,5 +1,3 @@
-"""The commit this process started with. Stdlib only."""
-
 from __future__ import annotations
 
 import re
@@ -33,8 +31,8 @@ def read_commit(directory: Path) -> str:
     return parse_commit(text)
 
 
-_DEPLOYED = read_commit(ROOT)
+COMMIT_AT_IMPORT = read_commit(ROOT)
 
 
 def deployed_commit() -> str:
-    return _DEPLOYED
+    return COMMIT_AT_IMPORT

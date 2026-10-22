@@ -1,5 +1,3 @@
-"""DEPLOYED_SHA parses to 12 hex characters or the literal unknown."""
-
 from __future__ import annotations
 
 import tempfile

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Sourced by deploy_pi3.sh and restart_pi3.sh.
 
 pi3_require_target() {
   local prefix="$1"
@@ -76,8 +75,7 @@ pi3_open_ssh() {
     exit 1
   fi
 
-  # shellcheck disable=SC2034 # callers read SSH after this function returns
-  SSH=(
+  declare -gax SSH=(
     ssh
     -i "${tmp}/id"
     -p "${PORT}"

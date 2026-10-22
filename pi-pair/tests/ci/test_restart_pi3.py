@@ -1,5 +1,3 @@
-"""restart_pi3.sh prints a plan without SSH and still refuses pi4."""
-
 from __future__ import annotations
 
 import subprocess

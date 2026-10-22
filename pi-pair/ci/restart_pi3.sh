@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Restart the pi3 user unit after deploy_pi3.sh. Does not rsync.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,10 +94,9 @@ if not isinstance(doc, dict):
     raise SystemExit(1)
 
 def as_int(value):
-    # bool is a subclass of int. JSON false must not count as idle.
-    if type(value) is int:
-        return str(value)
-    return ""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return ""
+    return str(value)
 
 ok = "1" if doc.get("ok") is True else "0"
 commit = doc.get("commit")

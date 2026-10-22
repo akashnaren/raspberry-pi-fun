@@ -1,5 +1,3 @@
-"""/health commit is the DEPLOYED_SHA read when the server process starts."""
-
 from __future__ import annotations
 
 import importlib
@@ -50,7 +48,6 @@ def _serve(spec: str) -> None:
         STAMP.write_text(spec.removeprefix("text:"), encoding="utf-8")
     else:
         raise SystemExit(2)
-    # The stamp freezes at import, so the file has to be in place before this.
     server = importlib.import_module("pair.server")
     httpd = server.make_server("127.0.0.1", 0)
     print(httpd.server_address[1], flush=True)
