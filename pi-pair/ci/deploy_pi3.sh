@@ -28,6 +28,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAIR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DATA_DIR="${PAIR_DIR}/data"
 EXCLUDES="${SCRIPT_DIR}/rsync-excludes.txt"
+# shellcheck source=pi-pair/ci/stamp_file.sh
+source "${SCRIPT_DIR}/stamp_file.sh"
 
 DRY_RUN=0
 PLAN=0
@@ -70,6 +72,15 @@ python3 "${SCRIPT_DIR}/validate_data_stack.py" \
   --data "${DATA_DIR}" \
   --report "${SCRIPT_DIR}/out/data-stack-report.json"
 
+DEPLOY_SHA="${GITHUB_SHA:-}"
+if [[ -z "${DEPLOY_SHA}" ]]; then
+  DEPLOY_SHA="$(git -C "${PAIR_DIR}" rev-parse HEAD 2>/dev/null || true)"
+fi
+if [[ -z "${DEPLOY_SHA}" ]]; then
+  echo "deploy_pi3: empty commit. Example: GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 bash pi-pair/ci/deploy_pi3.sh" >&2
+  exit 1
+fi
+
 print_plan() {
   local mode dest_host dest_user dest_dir
   if [[ "${PLAN}" -eq 1 ]]; then
@@ -89,6 +100,7 @@ deploy_pi3 plan
   dest: ${dest_user}@${dest_host}:${dest_dir}/
   locks: generate=pi4 dataset_and_train=pi3 health=pi2 search=pi2 train_then_delete=yes weak_gen=no
   includes: router code, data/canned, data/seed, dataset_info.json
+  DEPLOYED_SHA: ${DEPLOY_SHA}
   not executed: install.sh (no model pull on pi3), systemctl
 EOF
   echo "  excludes:"
@@ -200,6 +212,7 @@ fi
 
 print_plan
 remote_shell="$(printf '%q ' "${SSH[@]}")"
+stamp_write "${PAIR_DIR}" "${DEPLOY_SHA}"
 rsync "${RSYNC_FLAGS[@]}" -e "${remote_shell}" \
   "${PAIR_DIR}/" \
   "${PI3_SSH_USER}@${PI3_SSH_HOST}:${DEST_DIR}/"

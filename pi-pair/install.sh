@@ -86,6 +86,15 @@ else
 fi
 cp -f "$ROOT/peers.example.json" "$INSTALL_DIR/peers.example.json"
 
+if command -v git >/dev/null 2>&1; then
+  git_tree="$(git -C "$ROOT" rev-parse --is-inside-work-tree 2>/dev/null || true)"
+  if [[ "$git_tree" == "true" ]]; then
+    # shellcheck source=pi-pair/ci/stamp_file.sh
+    source "$ROOT/ci/stamp_file.sh"
+    stamp_write "$INSTALL_DIR" "$(git -C "$ROOT" rev-parse HEAD)"
+  fi
+fi
+
 cp -f "$ROOT/data/dataset_info.json" "$INSTALL_DIR/data/dataset_info.json"
 cp -a "$ROOT/data/seed/." "$INSTALL_DIR/data/seed/"
 if [[ ! -f "$INSTALL_DIR/data/canned/canned_map.json" ]]; then

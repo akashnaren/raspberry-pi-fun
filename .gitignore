@@ -33,3 +33,8 @@ pi-pair/adapters/active/*
 !pi-pair/adapters/active/.gitkeep
 pi-pair/ci/out/
 pi-pair/data/shards/
+/peers.json
+/DEPLOYED_SHA
+pi-pair/DEPLOYED_SHA
+pi-pair/data/docs/
+pi-pair/data/memory/
