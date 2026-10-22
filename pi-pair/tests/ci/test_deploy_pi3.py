@@ -174,6 +174,46 @@ class DeployPi3(unittest.TestCase):
         self.assertIn("must be named pi-pair", result.stderr)
         self.assertNotIn("not-a-real-key-material", result.stderr)
 
+    def test_refuses_glob_characters_in_pair_dir(self):
+        for dangerous in ("*/pi-pair", "q?/pi-pair", "x[y]/pi-pair"):
+            with self.subTest(pair_dir=dangerous):
+                with tempfile.TemporaryDirectory() as raw:
+                    bindir = Path(raw)
+                    flag = bindir / "reached"
+                    reached = bindir / "ssh-keyscan"
+                    reached.write_text(
+                        '#!/bin/sh\ntouch "$REACHED"\nexit 0\n',
+                    )
+                    reached.chmod(0o755)
+                    rsync = bindir / "rsync"
+                    rsync.write_text('#!/bin/sh\ntouch "$REACHED"\nexit 0\n')
+                    rsync.chmod(0o755)
+                    env = _env(
+                        PI3_SSH_HOST="rpi-pi3",
+                        PI3_SSH_USER="pi",
+                        PI3_SSH_KEY=FAKE_KEY,
+                        PI3_PAIR_DIR=dangerous,
+                        REACHED=str(flag),
+                    )
+                    env["PATH"] = f"{bindir}:{env['PATH']}"
+                    result = subprocess.run(
+                        ["bash", str(DEPLOY), "--dry-run"],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn("must not contain", result.stderr)
+                self.assertIn(dangerous, result.stderr)
+                self.assertFalse(flag.exists(), result.stderr)
+                self.assertNotIn("not-a-real-key-material", result.stdout)
+                self.assertNotIn("not-a-real-key-material", result.stderr)
+
+    def test_ssh_array_assignment_avoids_declare_g(self):
+        text = (ROOT / "ci" / "pi3_ssh.sh").read_text()
+        self.assertNotIn("declare -g", text)
+
     def test_stamp_is_sent_only_after_tree_sync(self):
         before = _stamp_bytes()
         try:

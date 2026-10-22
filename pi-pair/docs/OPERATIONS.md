@@ -57,6 +57,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now pi-pair.service
 ```
 
+On a plain rsync tree, `install.sh` removes `DEPLOYED_SHA` and `/health` reads `unknown`. A later deploy writes the stamp. CD restarts the pi3 user unit after that deploy. It waits up to 60 seconds for an idle `/health`. When that wait ends, in-flight chats are dropped and the unit restarts anyway.
+
 Repeat the rsync for pi2 and pi4. The unit's role comes from the hostname: pi2 is health, pi3 is dataset, pi4 is brain. Only the brain unit pulls Flash, `qwen3:0.6b`. It does not pull Pro. On pi4 the same script removes `snowflake-arctic-embed:m` when that tag is still installed, and removes every other `snowflake-arctic-embed` tag. pi2 prints `Skipping model pull` and does not install a chat model. pi3 does not install a chat model. Details for the pi3 embed tag are in `pi-pair/docs/EMBED.md`. On pi4, `ollama-lan.service` should set `OLLAMA_MAX_LOADED_MODELS` to at least 2, `OLLAMA_KEEP_ALIVE=-1`, and `OLLAMA_NUM_PARALLEL` from `inference_pi4.json` (default 2); `install.sh` writes that user unit with `OLLAMA_MAX_LOADED_MODELS=2`, `OLLAMA_KEEP_ALIVE=-1`, and that parallel value. Pro (`qwen3:1.7b`) is not pulled by the installer. If it is missing, on pi4 only: `ollama pull qwen3:1.7b`. A request never runs that pull. An existing `canned_map.json` on the Pi is left in place so a folded map is not replaced by the seed.
 
 Attachment OCR uses apt packages, not pip. On each Pi that serves the page:

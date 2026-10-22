@@ -135,7 +135,7 @@ while [[ "${SECONDS}" -le "${deadline}" ]]; do
 done
 
 if [[ "${idle}" -ne 1 ]]; then
-  echo "restart_pi3: idle wait elapsed in_flight=${last_in} waiting=${last_wait} restarting anyway" >&2
+  echo "restart_pi3: idle wait elapsed in_flight=${last_in} waiting=${last_wait}; in-flight chats are dropped; restarting anyway" >&2
 fi
 
 # shellcheck disable=SC2016 # id -u has to expand on the Pi
