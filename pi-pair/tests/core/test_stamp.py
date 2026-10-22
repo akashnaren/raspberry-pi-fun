@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from pair.core.stamp import deployed_commit, parse_commit, read_commit
+from pair.routes.status import public_health
 
 
 class ParseCommit(unittest.TestCase):
@@ -68,6 +69,13 @@ class ReadCommit(unittest.TestCase):
         first = deployed_commit()
         self.assertIsInstance(first, str)
         self.assertEqual(deployed_commit(), first)
+
+    def test_public_health_uses_the_process_commit(self):
+        shown = public_health(
+            {"commit": "ffffffffffff", "services": {}, "peers": [], "ok": True}
+        )
+        self.assertEqual(shown["commit"], deployed_commit())
+        self.assertNotEqual(shown["commit"], "ffffffffffff")
 
 
 if __name__ == "__main__":
