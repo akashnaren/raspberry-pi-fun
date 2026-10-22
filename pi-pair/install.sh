@@ -386,3 +386,12 @@ if [[ "$ROLE" == "dataset" ]]; then
 fi
 echo
 echo "Done. Chat UI: http://<this-pi-ip>:${PAIR_PORT}/"
+
+if command -v git >/dev/null 2>&1; then
+  git_tree="$(git -C "$ROOT" rev-parse --is-inside-work-tree 2>/dev/null || true)"
+  if [[ "$git_tree" == "true" ]] && git -C "$ROOT" diff --quiet; then
+    # shellcheck source=pi-pair/ci/stamp_file.sh
+    source "$ROOT/ci/stamp_file.sh"
+    stamp_write "$INSTALL_DIR" "$(git -C "$ROOT" rev-parse HEAD)"
+  fi
+fi

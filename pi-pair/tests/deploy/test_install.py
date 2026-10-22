@@ -137,5 +137,82 @@ class InstallTree(unittest.TestCase):
                 proc.stderr.close()
 
 
+_GIT_FAKE = """#!/bin/sh
+unit="${INSTALL_UNIT:-}"
+present=no
+if [ -n "$unit" ] && [ -f "$unit" ]; then
+  present=yes
+fi
+printf '%s unit=%s\\n' "$*" "$present" >> "$GIT_LOG"
+case "$*" in
+  *diff\\ --quiet*)
+    exit "${GIT_DIFF_EXIT:-0}"
+    ;;
+  *--is-inside-work-tree*)
+    printf '%s\\n' true
+    exit 0
+    ;;
+  *rev-parse*)
+    printf '%s\\n' "$GIT_HEAD"
+    exit 0
+    ;;
+esac
+exit 0
+"""
+
+
+class InstallStamp(unittest.TestCase):
+    def test_clean_tree_writes_stamp_after_the_unit(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home, log = _run_install(Path(raw), diff_exit="0")
+            text = log.read_text()
+            stamp = home / "pi-pair" / "DEPLOYED_SHA"
+            self.assertIn("diff --quiet unit=yes", text)
+            self.assertEqual(
+                stamp.read_text(), "abcdef0123456789abcdef0123456789abcdef01\n"
+            )
+            self.assertFalse((ROOT / "DEPLOYED_SHA").exists())
+
+    def test_dirty_tree_skips_stamp(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home, log = _run_install(Path(raw), diff_exit="1")
+            self.assertIn("diff --quiet", log.read_text())
+            self.assertFalse((home / "pi-pair" / "DEPLOYED_SHA").exists())
+            unit = home / ".config" / "systemd" / "user" / "pi-pair.service"
+            self.assertTrue(unit.is_file())
+
+
+def _run_install(home: Path, diff_exit: str) -> tuple[Path, Path]:
+    bindir = home / "bin"
+    bindir.mkdir()
+    git = bindir / "git"
+    git.write_text(_GIT_FAKE)
+    git.chmod(0o755)
+    log = home / "git.log"
+    unit = home / ".config" / "systemd" / "user" / "pi-pair.service"
+    env = {
+        "PATH": f"{bindir}:/usr/bin:/bin",
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "PI_PAIR_NAME": "pi2",
+        "PI_PAIR_DIR": str(home / "pi-pair"),
+        "GIT_LOG": str(log),
+        "GIT_DIFF_EXIT": diff_exit,
+        "GIT_HEAD": "abcdef0123456789abcdef0123456789abcdef01",
+        "INSTALL_UNIT": str(unit),
+    }
+    done = subprocess.run(
+        ["bash", str(ROOT / "install.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if done.returncode != 0:
+        raise AssertionError(done.stdout[-2000:] + done.stderr[-2000:])
+    return home, log
+
+
 if __name__ == "__main__":
     unittest.main()

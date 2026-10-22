@@ -16,7 +16,7 @@ It runs on:
 
 | Job | What it does |
 | --- | --- |
-| lint | `ruff==0.13.2` check and `ruff format --check` on `pi-pair`, `npm run lint` and Biome (`npm run lint:js`) on `pi-pair/web`, then shellcheck on `install.sh`, `start.sh`, `mesh-hello.sh`, and `ci/deploy_pi3.sh` |
+| lint | `ruff==0.13.2` check and `ruff format --check` on `pi-pair`, `npm run lint` and Biome (`npm run lint:js`) on `pi-pair/web`, then shellcheck on `install.sh`, `start.sh`, `mesh-hello.sh`, `ci/deploy_pi3.sh`, `ci/restart_pi3.sh`, `ci/pi3_ssh.sh`, and `ci/stamp_file.sh` |
 | unit | `npm run build` and `npm test` in `pi-pair/web`, then `git diff --exit-code -- pi-pair/static`, then `python3 -m unittest discover -s pi-pair/tests -t pi-pair` |
 | data-stack | `pi-pair/ci/validate_data_stack.py` on `pi-pair/data`, then uploads the artifact `data-stack-validation-report` |
 
@@ -38,8 +38,9 @@ On main the job:
 1. Validates `pi-pair/data` again. A bad fixture never reaches the tailnet. The same validation report artifact is uploaded.
 2. Requires `TS_AUTHKEY`, `PI3_SSH_HOST`, `PI3_SSH_USER`, and `PI3_SSH_KEY`. An empty required secret fails the job before Tailscale starts. The workflow does not generate a key, and it does not fall back to a key on disk.
 3. Joins the tailnet with the official action `tailscale/github-action` at `v4.2.0` (`d1b6cd204f8dceda5b3eaad7f1f767be390056cd`), Tailscale client `1.94.2`, using production secret `TS_AUTHKEY`. The ephemeral node hostname is `gh-cd-<run id>`.
-4. `rsync`s `pi-pair/` to pi3 over that tailnet. A push to `main` is a real sync. The workflow_dispatch input **dry_run** adds `rsync -n` (no writes) and still requires the secrets. pi2 and pi4 hosts are still refused.
-5. When the job ends, the action's post step logs out of Tailscale and stops `tailscaled`. A logout failure is a warning, so the job result stays the deploy result. An ephemeral node is removed by Tailscale if that logout misses.
+4. `rsync`s `pi-pair/` to pi3 over that tailnet. A push to `main` is a real sync. The workflow_dispatch input **dry_run** adds `rsync -n` (no writes on pi3) and still requires the secrets. The tree rsync excludes `DEPLOYED_SHA`. A non-dry-run removes the remote `DEPLOYED_SHA` with `rm -f` before that rsync, so a partial tree reads `unknown`. After the tree rsync exits 0, the runner writes `DEPLOYED_SHA` in the checkout and rsyncs that file alone, without `--delete`, with `--checksum`. A failed tree rsync writes no local stamp. A dry run does not write `DEPLOYED_SHA` and does not remove the remote stamp. pi2 and pi4 hosts are still refused.
+5. Restarts the pi3 user unit `pi-pair.service` with no sudo. The same dry run does not SSH. The restart waits up to 60 seconds for an idle `/health`, then up to 120 seconds for the new `commit`.
+6. When the job ends, the action's post step logs out of Tailscale and stops `tailscaled`. A logout failure is a warning, so the job result stays the deploy result. An ephemeral node is removed by Tailscale if that logout misses.
 
 Required reviewers on production are optional. Add them in **Settings → Environments → production** if you want a person to approve each deploy. Leave them empty and a merge to main joins the tailnet and syncs once `TS_AUTHKEY` is set beside the SSH secrets.
 
@@ -52,12 +53,20 @@ pi3 is the dataset host: canned map, seed files, and (later, on the device) the 
 | Synced | Left alone |
 | --- | --- |
 | Router code, static UI, `data/canned`, `data/seed` (SFT, preference, held-out eval, schemas), the dataset registry | `peers.json` on the Pi |
-| | `data/shards/`, `data/train/`, `data/prepared/`, `adapters/` |
+| | `data/shards/`, `data/docs/`, `data/memory/`, `data/metrics.json`, `data/train/`, `data/prepared/`, `adapters/` |
 | | `*.gguf`, `*.ggml`, and `ci/fixtures/` (the broken negative fixture) |
 
-Remote directory defaults to `pi-pair` under the SSH user's home (`~/pi-pair`). The last path segment must be `pi-pair`, so `--delete` cannot wipe a home directory. `rsync --delete` applies only inside that directory, and excluded paths are not deleted, so a later train queue under `data/shards/` survives a deploy.
+Remote directory defaults to `pi-pair` under the SSH user's home (`~/pi-pair`). The last path segment must be `pi-pair`, so `--delete` cannot wipe a home directory. `rsync --delete` applies only inside that directory, and excluded paths are not deleted, so a later train queue under `data/shards/` survives a deploy. The same exclude keeps Pi-local `data/docs/`, `data/memory/`, and the miss-queue counters in `data/metrics.json`.
 
-CD does **not** run `install.sh` and does **not** restart systemd. `install.sh` pulls an Ollama model; running it from this job would put chat weights on pi3. First-time unit setup stays a manual step on the Pi. After a router change, restart the user service on the Pi yourself.
+CD does not run `install.sh`. `install.sh` pulls an Ollama model, and running it from this job would put chat weights on pi3. First-time unit setup stays a manual step on the Pi.
+
+`deploy_pi3.sh` excludes `DEPLOYED_SHA` from the tree rsync. On a non-dry-run it deletes the remote `DEPLOYED_SHA` before that rsync. It writes `DEPLOYED_SHA` in the checkout only after that rsync exits 0, then rsyncs that one file without `--delete` and with `--checksum`. The value is `GITHUB_SHA` when that variable is set, and `git rev-parse HEAD` otherwise. The file is the raw sha plus one newline. `--plan` prints `DEPLOYED_SHA`, the full sha, `tree sync excludes DEPLOYED_SHA`, `rm -f`, and `--checksum`, and it does not create the file. A dry run does not write the file and does not remove the remote stamp.
+
+`install.sh` writes that same file into the install directory at the end of a successful install, when `git` is on `PATH`, this checkout is a work tree, and `git diff --quiet` succeeds. A dirty work tree skips the stamp. If `git` is missing, or the checkout is not a work tree, install leaves any existing `DEPLOYED_SHA` alone and still exits 0. Install does not write a second copy into the checkout when the install directory is somewhere else.
+
+The process reads `DEPLOYED_SHA` once, when `pair.core.stamp` is imported. `GET /health` reports that value as `commit`. A valid file is 7 to 40 lowercase hex characters and may end with one newline. `commit` is the first 12 characters. A shorter valid stamp is reported in full. Anything else, including a missing file, is `unknown`. Rewriting the file does not change a process that has already started.
+
+After the sync, CD restarts the pi3 user unit `pi-pair.service`. It waits up to 60 seconds for `in_flight` and `waiting` to both be the integer 0. If that idle wait runs out, it restarts anyway. It then waits up to 120 seconds for `/health` to report `ok` as true and `commit` equal to the stamp parsed from `GITHUB_SHA`. A workflow dispatch dry run appends `--dry-run` and does not SSH.
 
 Generation stays on pi4. Health stays on pi2. The script refuses a host whose name contains `pi2` or `pi4`, and it refuses the documented LAN addresses `10.0.0.180` (pi2) and `10.0.0.166` (pi4).
 
@@ -91,7 +100,7 @@ Tailscale's action marks `authkey` as deprecated in favor of an OAuth client (`o
 
 The pinned action is `tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd` (tag `v4.2.0`). The client version in the workflow is `1.94.2`, that release's default. Its post step runs `sudo tailscale logout`, then stops `tailscaled` and runs `tailscaled --cleanup`. That is best-effort: a cleanup error is a warning and does not flip a green deploy to red.
 
-After the runner is on the tailnet, `deploy_pi3.sh` is unchanged: it still requires the SSH secrets, still refuses pi2 and pi4 (including `10.0.0.180` and `10.0.0.166`), and still keyscans with `StrictHostKeyChecking=yes`. Set `PI3_SSH_HOST` to `rpi-pi3`. A LAN address is not reachable from the runner.
+After the runner is on the tailnet, `deploy_pi3.sh` still requires the SSH secrets, still refuses pi2 and pi4 (including `10.0.0.180` and `10.0.0.166`), and still keyscans with `StrictHostKeyChecking=yes`. Set `PI3_SSH_HOST` to `rpi-pi3`. A LAN address is not reachable from the runner.
 
 Each deploy keyscans the host and then requires that scan's key. That rejects an empty scan. It does not remember a key from a previous run, because the runner disk is new each time.
 
@@ -147,4 +156,4 @@ Eval inputs are folded (case and whitespace) and compared to canned inputs. Over
 
 ## What a push to main does
 
-Pull requests into `main` use the GitHub Environment `development` (lint, unit tests, data-stack validation). A push to `main` uses the GitHub Environment `production`, joins Tailscale with `TS_AUTHKEY`, and syncs this tree plus `data/canned` to pi3. Names of the secrets, the dry-run input, and how to add a check are in the sections above.
+Pull requests into `main` use the GitHub Environment `development` (lint, unit tests, data-stack validation). A push to `main` uses the GitHub Environment `production`, joins Tailscale with `TS_AUTHKEY`, syncs this tree plus `data/canned` to pi3, and restarts the pi3 user unit. Names of the secrets, the dry-run input, and how to add a check are in the sections above.

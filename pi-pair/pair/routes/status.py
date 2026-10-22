@@ -4,6 +4,7 @@ import json
 import time
 
 from pair.core import runtime
+from pair.core.stamp import deployed_commit
 from pair.core.thermal import sample as thermal_sample
 from pair.flywheel.miss_queue import node_role
 from pair.mesh.health import board_thermal, snapshot_peers
@@ -80,6 +81,7 @@ def health_document() -> dict:
         "cache_ttl": runtime.HEALTH_CACHE_TTL,
         "uptime_s": max(0, int(time.monotonic() - _BOOTED)),
         "memory": _memory_stats(),
+        "commit": deployed_commit(),
         "services": {
             "brain": _service_row(peers, "brain", "pi4"),
             "search": _service_row(peers, "health", "pi2"),
@@ -133,6 +135,7 @@ def public_health(doc: dict) -> dict:
         "peers_up": doc.get("peers_up"),
         "services": services,
         "peers": peers,
+        "commit": deployed_commit(),
     }
     return shown
 

@@ -5,7 +5,7 @@ lint:
 	ruff check pi-pair
 	ruff format --check pi-pair
 	cd $(WEB) && npm run -s lint && npm run -s lint:js
-	shellcheck -x pi-pair/install.sh pi-pair/start.sh pi-pair/mesh-hello.sh pi-pair/ci/deploy_pi3.sh
+	shellcheck -x pi-pair/install.sh pi-pair/start.sh pi-pair/mesh-hello.sh pi-pair/ci/deploy_pi3.sh pi-pair/ci/restart_pi3.sh pi-pair/ci/pi3_ssh.sh pi-pair/ci/stamp_file.sh
 fmt:
 	ruff check --select I,RUF100 --fix pi-pair
 	ruff format pi-pair

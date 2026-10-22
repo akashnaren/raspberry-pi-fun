@@ -46,7 +46,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
-          shellcheck -x pi-pair/install.sh pi-pair/start.sh pi-pair/mesh-hello.sh pi-pair/ci/deploy_pi3.sh
+          shellcheck -x pi-pair/install.sh pi-pair/start.sh pi-pair/mesh-hello.sh pi-pair/ci/deploy_pi3.sh pi-pair/ci/restart_pi3.sh pi-pair/ci/pi3_ssh.sh pi-pair/ci/stamp_file.sh
 
   unit:
     name: unit
