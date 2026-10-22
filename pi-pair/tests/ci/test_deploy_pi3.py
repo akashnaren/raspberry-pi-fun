@@ -60,9 +60,20 @@ class DeployPi3(unittest.TestCase):
         self.assertIn("PI3_SSH_KEY", result.stderr)
 
     def test_plan_is_offline_and_lists_canned_sync(self):
+        env = _env(PI3_SSH_KEY=FAKE_KEY)
+        env.pop("GITHUB_SHA", None)
+        stamp = ROOT / "DEPLOYED_SHA"
+        before = stamp.read_bytes() if stamp.exists() else None
+        head = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout.strip()
         result = subprocess.run(
             ["bash", str(DEPLOY), "--plan"],
-            env=_env(PI3_SSH_KEY=FAKE_KEY),
+            env=env,
             capture_output=True,
             text=True,
             check=False,
@@ -72,8 +83,12 @@ class DeployPi3(unittest.TestCase):
         self.assertIn("ci/fixtures/", result.stdout)
         self.assertIn("train_then_delete=yes", result.stdout)
         self.assertIn("no ssh", result.stdout)
+        self.assertIn("DEPLOYED_SHA", result.stdout)
+        self.assertIn(head, result.stdout)
         self.assertNotIn("not-a-real-key-material", result.stdout)
         self.assertNotIn("not-a-real-key-material", result.stderr)
+        after = stamp.read_bytes() if stamp.exists() else None
+        self.assertEqual(after, before)
 
     def test_refuses_pi4_host_without_connecting(self):
         result = subprocess.run(
