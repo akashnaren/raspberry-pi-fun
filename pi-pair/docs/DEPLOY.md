@@ -38,7 +38,7 @@ On main the job:
 1. Validates `pi-pair/data` again. A bad fixture never reaches the tailnet. The same validation report artifact is uploaded.
 2. Requires `TS_AUTHKEY`, `PI3_SSH_HOST`, `PI3_SSH_USER`, and `PI3_SSH_KEY`. An empty required secret fails the job before Tailscale starts. The workflow does not generate a key, and it does not fall back to a key on disk.
 3. Joins the tailnet with the official action `tailscale/github-action` at `v4.2.0` (`d1b6cd204f8dceda5b3eaad7f1f767be390056cd`), Tailscale client `1.94.2`, using production secret `TS_AUTHKEY`. The ephemeral node hostname is `gh-cd-<run id>`.
-4. `rsync`s `pi-pair/` to pi3 over that tailnet. A push to `main` is a real sync. The workflow_dispatch input **dry_run** adds `rsync -n` (no writes on pi3) and still requires the secrets. The runner writes `DEPLOYED_SHA` in the checkout before that rsync, including on a dry run. pi2 and pi4 hosts are still refused.
+4. `rsync`s `pi-pair/` to pi3 over that tailnet. A push to `main` is a real sync. The workflow_dispatch input **dry_run** adds `rsync -n` (no writes on pi3) and still requires the secrets. The tree rsync excludes `DEPLOYED_SHA`. After that rsync exits 0, including a dry run, the runner writes `DEPLOYED_SHA` in the checkout and rsyncs that file alone, without `--delete`. A failed tree rsync writes no stamp. pi2 and pi4 hosts are still refused.
 5. Restarts the pi3 user unit `pi-pair.service` with no sudo. The same dry run does not SSH. The restart waits up to 60 seconds for an idle `/health`, then up to 120 seconds for the new `commit`.
 6. When the job ends, the action's post step logs out of Tailscale and stops `tailscaled`. A logout failure is a warning, so the job result stays the deploy result. An ephemeral node is removed by Tailscale if that logout misses.
 
@@ -53,14 +53,14 @@ pi3 is the dataset host: canned map, seed files, and (later, on the device) the 
 | Synced | Left alone |
 | --- | --- |
 | Router code, static UI, `data/canned`, `data/seed` (SFT, preference, held-out eval, schemas), the dataset registry | `peers.json` on the Pi |
-| | `data/shards/`, `data/train/`, `data/prepared/`, `adapters/` |
+| | `data/shards/`, `data/docs/`, `data/memory/`, `data/train/`, `data/prepared/`, `adapters/` |
 | | `*.gguf`, `*.ggml`, and `ci/fixtures/` (the broken negative fixture) |
 
-Remote directory defaults to `pi-pair` under the SSH user's home (`~/pi-pair`). The last path segment must be `pi-pair`, so `--delete` cannot wipe a home directory. `rsync --delete` applies only inside that directory, and excluded paths are not deleted, so a later train queue under `data/shards/` survives a deploy.
+Remote directory defaults to `pi-pair` under the SSH user's home (`~/pi-pair`). The last path segment must be `pi-pair`, so `--delete` cannot wipe a home directory. `rsync --delete` applies only inside that directory, and excluded paths are not deleted, so a later train queue under `data/shards/` survives a deploy. The same exclude keeps Pi-local `data/docs/` and `data/memory/`.
 
 CD does not run `install.sh`. `install.sh` pulls an Ollama model, and running it from this job would put chat weights on pi3. First-time unit setup stays a manual step on the Pi.
 
-`deploy_pi3.sh` writes `DEPLOYED_SHA` in the checkout just before the one rsync. The value is `GITHUB_SHA` when that variable is set, and `git rev-parse HEAD` otherwise. The file is the raw sha plus one newline. `--plan` prints `DEPLOYED_SHA` and the full sha, and it does not create the file.
+`deploy_pi3.sh` excludes `DEPLOYED_SHA` from the tree rsync. It writes `DEPLOYED_SHA` in the checkout only after that rsync exits 0, then rsyncs that one file without `--delete`. The value is `GITHUB_SHA` when that variable is set, and `git rev-parse HEAD` otherwise. The file is the raw sha plus one newline. `--plan` prints `DEPLOYED_SHA`, the full sha, `tree sync excludes DEPLOYED_SHA`, and `stamp after the tree sync exits 0`, and it does not create the file.
 
 `install.sh` writes that same file into the install directory when `git` is on `PATH` and this checkout is a work tree. If `git` is missing, or the checkout is not a work tree, install leaves any existing `DEPLOYED_SHA` alone and still exits 0. Install does not write a second copy into the checkout when the install directory is somewhere else.
 

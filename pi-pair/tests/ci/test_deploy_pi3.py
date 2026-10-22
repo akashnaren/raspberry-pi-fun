@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 from tests.support.paths import ROOT
 
 DEPLOY = ROOT / "ci" / "deploy_pi3.sh"
+STAMP = ROOT / "DEPLOYED_SHA"
+KNOWN_SHA = "0123456789abcdef0123456789abcdef01234567"
 FAKE_KEY = (
     "-----BEGIN OPENSSH PRIVATE KEY-----\n"
     "not-a-real-key-material\n"
@@ -21,6 +25,21 @@ SECRET_NAMES = (
     "PI3_SSH_PORT",
     "PI3_PAIR_DIR",
 )
+_SSH_KEYSCAN = """#!/bin/sh
+echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly'
+"""
+_RSYNC_LOG = """#!/bin/sh
+{
+  printf 'CALL\\n'
+  printf '%s\\n' "$*"
+  if [ -f "$STAMP_PATH" ]; then
+    printf 'STAMP:%s\\n' "$(cat "$STAMP_PATH")"
+  else
+    printf 'STAMP:ABSENT\\n'
+  fi
+} >> "$RSYNC_LOG"
+exit "$RSYNC_EXIT"
+"""
 
 
 def _env(**overrides: str) -> dict[str, str]:
@@ -85,6 +104,10 @@ class DeployPi3(unittest.TestCase):
         self.assertIn("no ssh", result.stdout)
         self.assertIn("DEPLOYED_SHA", result.stdout)
         self.assertIn(head, result.stdout)
+        self.assertIn("data/docs/", result.stdout)
+        self.assertIn("data/memory/", result.stdout)
+        self.assertIn("tree sync excludes DEPLOYED_SHA", result.stdout)
+        self.assertIn("stamp after the tree sync exits 0", result.stdout)
         self.assertNotIn("not-a-real-key-material", result.stdout)
         self.assertNotIn("not-a-real-key-material", result.stderr)
         after = stamp.read_bytes() if stamp.exists() else None
@@ -119,6 +142,112 @@ class DeployPi3(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must be named pi-pair", result.stderr)
         self.assertNotIn("not-a-real-key-material", result.stderr)
+
+    def test_stamp_is_sent_only_after_tree_sync(self):
+        before = _stamp_bytes()
+        try:
+            if STAMP.exists():
+                STAMP.unlink()
+            with tempfile.TemporaryDirectory() as raw:
+                bindir = Path(raw)
+                log = bindir / "rsync.log"
+                _install_fakes(bindir, "0")
+                result = subprocess.run(
+                    ["bash", str(DEPLOY)],
+                    env=_sync_env(bindir, log),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                log_text = log.read_text() if log.exists() else ""
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = _rsync_calls(log_text)
+            self.assertEqual(len(calls), 2, log_text)
+            tree, stamp = calls
+            self.assertIn("--delete", tree)
+            self.assertIn("--exclude DEPLOYED_SHA", tree)
+            self.assertIn(f"{ROOT}/", tree)
+            self.assertIn("STAMP:ABSENT", tree)
+            self.assertNotIn("--delete", stamp)
+            self.assertNotIn("--exclude", stamp)
+            self.assertIn(f"{ROOT}/DEPLOYED_SHA", stamp)
+            self.assertIn(f"STAMP:{KNOWN_SHA}", stamp)
+            self.assertEqual(STAMP.read_text(), f"{KNOWN_SHA}\n")
+            self.assertNotIn("not-a-real-key-material", result.stdout)
+            self.assertNotIn("not-a-real-key-material", result.stderr)
+        finally:
+            _restore_stamp(before)
+
+    def test_failed_tree_sync_writes_no_stamp(self):
+        before = _stamp_bytes()
+        try:
+            if STAMP.exists():
+                STAMP.unlink()
+            with tempfile.TemporaryDirectory() as raw:
+                bindir = Path(raw)
+                log = bindir / "rsync.log"
+                _install_fakes(bindir, "1")
+                result = subprocess.run(
+                    ["bash", str(DEPLOY)],
+                    env=_sync_env(bindir, log),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                log_text = log.read_text() if log.exists() else ""
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(STAMP.exists())
+            calls = _rsync_calls(log_text)
+            self.assertEqual(len(calls), 1, log_text)
+            self.assertIn("--delete", calls[0])
+            self.assertIn("STAMP:ABSENT", calls[0])
+            self.assertNotIn("not-a-real-key-material", result.stdout)
+            self.assertNotIn("not-a-real-key-material", result.stderr)
+        finally:
+            _restore_stamp(before)
+
+
+def _stamp_bytes() -> bytes | None:
+    if STAMP.exists():
+        return STAMP.read_bytes()
+    return None
+
+
+def _restore_stamp(before: bytes | None) -> None:
+    for leftover in ROOT.glob("DEPLOYED_SHA.tmp.*"):
+        leftover.unlink()
+    if before is None:
+        STAMP.unlink(missing_ok=True)
+        return
+    STAMP.write_bytes(before)
+
+
+def _install_fakes(bindir: Path, rsync_exit: str) -> None:
+    keyscan = bindir / "ssh-keyscan"
+    keyscan.write_text(_SSH_KEYSCAN)
+    keyscan.chmod(0o755)
+    rsync = bindir / "rsync"
+    rsync.write_text(_RSYNC_LOG)
+    rsync.chmod(0o755)
+    (bindir / "rsync.exit").write_text(rsync_exit)
+
+
+def _sync_env(bindir: Path, log: Path) -> dict[str, str]:
+    env = _env(
+        PI3_SSH_HOST="rpi-pi3",
+        PI3_SSH_USER="pi",
+        PI3_SSH_KEY=FAKE_KEY,
+        GITHUB_SHA=KNOWN_SHA,
+        RSYNC_LOG=str(log),
+        RSYNC_EXIT=(bindir / "rsync.exit").read_text(),
+        STAMP_PATH=str(STAMP),
+    )
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    return env
+
+
+def _rsync_calls(log: str) -> list[str]:
+    return [block for block in log.split("CALL\n") if block.strip()]
 
 
 if __name__ == "__main__":

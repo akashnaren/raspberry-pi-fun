@@ -4,7 +4,8 @@
 # This script still requires PI3_SSH_* and still refuses pi2 and pi4.
 #
 # Does not run install.sh, does not pull models, does not restart systemd,
-# and does not copy shards, prepared artifacts, adapters, or GGUF weights.
+# and does not copy shards, docs, memory, prepared artifacts, adapters,
+# or GGUF weights.
 # Generation stays on pi4. Health stays on pi2. A host that looks like pi2
 # or pi4 is refused.
 #
@@ -103,6 +104,8 @@ deploy_pi3 plan
   locks: generate=pi4 dataset_and_train=pi3 health=pi2 search=pi2 train_then_delete=yes weak_gen=no
   includes: router code, data/canned, data/seed, dataset_info.json
   DEPLOYED_SHA: ${DEPLOY_SHA}
+  tree sync excludes DEPLOYED_SHA
+  stamp after the tree sync exits 0: write DEPLOYED_SHA, then rsync that file only
   not executed: install.sh (no model pull on pi3), systemctl
 EOF
   echo "  excludes:"
@@ -131,16 +134,25 @@ fi
 
 pi3_open_ssh deploy_pi3
 
-RSYNC_FLAGS=(-a --delete --human-readable --exclude-from "${EXCLUDES}")
+RSYNC_FLAGS=(-a --delete --human-readable --exclude-from "${EXCLUDES}" --exclude DEPLOYED_SHA)
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   RSYNC_FLAGS+=(-n --itemize-changes)
 else
   RSYNC_FLAGS+=(-v)
 fi
+STAMP_FLAGS=(-a --human-readable)
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  STAMP_FLAGS+=(-n --itemize-changes)
+else
+  STAMP_FLAGS+=(-v)
+fi
 
 print_plan
 remote_shell="$(printf '%q ' "${SSH[@]}")"
-stamp_write "${PAIR_DIR}" "${DEPLOY_SHA}"
 rsync "${RSYNC_FLAGS[@]}" -e "${remote_shell}" \
   "${PAIR_DIR}/" \
   "${PI3_SSH_USER}@${PI3_SSH_HOST}:${DEST_DIR}/"
+stamp_write "${PAIR_DIR}" "${DEPLOY_SHA}"
+rsync "${STAMP_FLAGS[@]}" -e "${remote_shell}" \
+  "${PAIR_DIR}/DEPLOYED_SHA" \
+  "${PI3_SSH_USER}@${PI3_SSH_HOST}:${DEST_DIR}/DEPLOYED_SHA"
