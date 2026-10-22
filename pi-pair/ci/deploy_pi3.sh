@@ -105,7 +105,9 @@ deploy_pi3 plan
   includes: router code, data/canned, data/seed, dataset_info.json
   DEPLOYED_SHA: ${DEPLOY_SHA}
   tree sync excludes DEPLOYED_SHA
-  stamp after the tree sync exits 0: write DEPLOYED_SHA, then rsync that file only
+  remote stamp: non-dry-run rm -f -- ${dest_dir}/DEPLOYED_SHA before the tree sync
+  stamp after the tree sync exits 0: write DEPLOYED_SHA, then rsync that file only with --checksum
+  dry-run: does not write DEPLOYED_SHA
   not executed: install.sh (no model pull on pi3), systemctl
 EOF
   echo "  excludes:"
@@ -140,7 +142,7 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
 else
   RSYNC_FLAGS+=(-v)
 fi
-STAMP_FLAGS=(-a --human-readable)
+STAMP_FLAGS=(-a --human-readable --checksum)
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   STAMP_FLAGS+=(-n --itemize-changes)
 else
@@ -149,10 +151,15 @@ fi
 
 print_plan
 remote_shell="$(printf '%q ' "${SSH[@]}")"
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  "${SSH[@]}" "${PI3_SSH_USER}@${PI3_SSH_HOST}" "rm -f -- $(printf %q "${DEST_DIR}")/DEPLOYED_SHA"
+fi
 rsync "${RSYNC_FLAGS[@]}" -e "${remote_shell}" \
   "${PAIR_DIR}/" \
   "${PI3_SSH_USER}@${PI3_SSH_HOST}:${DEST_DIR}/"
-stamp_write "${PAIR_DIR}" "${DEPLOY_SHA}"
-rsync "${STAMP_FLAGS[@]}" -e "${remote_shell}" \
-  "${PAIR_DIR}/DEPLOYED_SHA" \
-  "${PI3_SSH_USER}@${PI3_SSH_HOST}:${DEST_DIR}/DEPLOYED_SHA"
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  stamp_write "${PAIR_DIR}" "${DEPLOY_SHA}"
+  rsync "${STAMP_FLAGS[@]}" -e "${remote_shell}" \
+    "${PAIR_DIR}/DEPLOYED_SHA" \
+    "${PI3_SSH_USER}@${PI3_SSH_HOST}:${DEST_DIR}/DEPLOYED_SHA"
+fi

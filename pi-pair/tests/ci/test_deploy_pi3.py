@@ -28,6 +28,21 @@ SECRET_NAMES = (
 _SSH_KEYSCAN = """#!/bin/sh
 echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly'
 """
+_SSH_FAKE = """#!/bin/sh
+{
+  printf 'SSH %s\\n' "$*"
+} >> "$TRACE_LOG"
+cmd=""
+for arg in "$@"; do
+  cmd=$arg
+done
+case "$cmd" in
+  *'rm -f --'*DEPLOYED_SHA*)
+    rm -f -- "$REMOTE_STAMP"
+    ;;
+esac
+exit 0
+"""
 _RSYNC_LOG = """#!/bin/sh
 {
   printf 'CALL\\n'
@@ -37,9 +52,19 @@ _RSYNC_LOG = """#!/bin/sh
   else
     printf 'STAMP:ABSENT\\n'
   fi
-} >> "$RSYNC_LOG"
+} >> "$TRACE_LOG"
+case "$*" in
+  *--delete*) ;;
+  *)
+    if [ -f "$STAMP_PATH" ]; then
+      mkdir -p "$(dirname "$REMOTE_STAMP")"
+      cp "$STAMP_PATH" "$REMOTE_STAMP"
+    fi
+    ;;
+esac
 exit "$RSYNC_EXIT"
 """
+OLD_REMOTE = "1111111111111111111111111111111111111111\n"
 
 
 def _env(**overrides: str) -> dict[str, str]:
@@ -108,6 +133,12 @@ class DeployPi3(unittest.TestCase):
         self.assertIn("data/memory/", result.stdout)
         self.assertIn("tree sync excludes DEPLOYED_SHA", result.stdout)
         self.assertIn("stamp after the tree sync exits 0", result.stdout)
+        missing = [
+            phrase
+            for phrase in ("data/metrics.json", "rm -f", "--checksum")
+            if phrase not in result.stdout
+        ]
+        self.assertEqual(missing, [], result.stdout)
         self.assertNotIn("not-a-real-key-material", result.stdout)
         self.assertNotIn("not-a-real-key-material", result.stderr)
         after = stamp.read_bytes() if stamp.exists() else None
@@ -170,8 +201,11 @@ class DeployPi3(unittest.TestCase):
             self.assertIn("STAMP:ABSENT", tree)
             self.assertNotIn("--delete", stamp)
             self.assertNotIn("--exclude", stamp)
+            self.assertIn("--checksum", stamp)
             self.assertIn(f"{ROOT}/DEPLOYED_SHA", stamp)
             self.assertIn(f"STAMP:{KNOWN_SHA}", stamp)
+            self.assertIn("rm -f --", log_text)
+            self.assertLess(log_text.index("rm -f --"), log_text.index("CALL\n"))
             self.assertEqual(STAMP.read_text(), f"{KNOWN_SHA}\n")
             self.assertNotIn("not-a-real-key-material", result.stdout)
             self.assertNotIn("not-a-real-key-material", result.stderr)
@@ -206,6 +240,71 @@ class DeployPi3(unittest.TestCase):
         finally:
             _restore_stamp(before)
 
+    def test_failed_tree_sync_leaves_no_remote_stamp(self):
+        before = _stamp_bytes()
+        try:
+            if STAMP.exists():
+                STAMP.unlink()
+            with tempfile.TemporaryDirectory() as raw:
+                bindir = Path(raw)
+                log = bindir / "trace.log"
+                remote = bindir / "remote" / "pi-pair" / "DEPLOYED_SHA"
+                remote.parent.mkdir(parents=True)
+                remote.write_text(OLD_REMOTE)
+                _install_fakes(bindir, "20")
+                result = subprocess.run(
+                    ["bash", str(DEPLOY)],
+                    env=_sync_env(bindir, log, remote),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                log_text = log.read_text() if log.exists() else ""
+                remote_left = remote.exists()
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(STAMP.exists())
+            self.assertFalse(remote_left, log_text)
+            self.assertIn("rm -f --", log_text)
+            self.assertIn("pi-pair/DEPLOYED_SHA", log_text)
+            self.assertLess(log_text.index("rm -f --"), log_text.index("CALL\n"))
+            self.assertNotIn("not-a-real-key-material", result.stdout)
+            self.assertNotIn("not-a-real-key-material", result.stderr)
+        finally:
+            _restore_stamp(before)
+
+    def test_dry_run_does_not_write_local_stamp(self):
+        before = _stamp_bytes()
+        try:
+            if STAMP.exists():
+                STAMP.unlink()
+            with tempfile.TemporaryDirectory() as raw:
+                bindir = Path(raw)
+                log = bindir / "trace.log"
+                remote = bindir / "remote" / "pi-pair" / "DEPLOYED_SHA"
+                remote.parent.mkdir(parents=True)
+                remote.write_text(OLD_REMOTE)
+                _install_fakes(bindir, "0")
+                result = subprocess.run(
+                    ["bash", str(DEPLOY), "--dry-run"],
+                    env=_sync_env(bindir, log, remote),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                log_text = log.read_text() if log.exists() else ""
+                remote_text = remote.read_text() if remote.exists() else None
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(STAMP.exists())
+            self.assertEqual(remote_text, OLD_REMOTE)
+            self.assertNotIn("rm -f --", log_text)
+            calls = _rsync_calls(log_text)
+            self.assertEqual(len(calls), 1, log_text)
+            self.assertIn("-n", calls[0])
+            self.assertNotIn("not-a-real-key-material", result.stdout)
+            self.assertNotIn("not-a-real-key-material", result.stderr)
+        finally:
+            _restore_stamp(before)
+
 
 def _stamp_bytes() -> bytes | None:
     if STAMP.exists():
@@ -223,31 +322,34 @@ def _restore_stamp(before: bytes | None) -> None:
 
 
 def _install_fakes(bindir: Path, rsync_exit: str) -> None:
-    keyscan = bindir / "ssh-keyscan"
-    keyscan.write_text(_SSH_KEYSCAN)
-    keyscan.chmod(0o755)
-    rsync = bindir / "rsync"
-    rsync.write_text(_RSYNC_LOG)
-    rsync.chmod(0o755)
+    for name, body in (
+        ("ssh-keyscan", _SSH_KEYSCAN),
+        ("ssh", _SSH_FAKE),
+        ("rsync", _RSYNC_LOG),
+    ):
+        path = bindir / name
+        path.write_text(body)
+        path.chmod(0o755)
     (bindir / "rsync.exit").write_text(rsync_exit)
 
 
-def _sync_env(bindir: Path, log: Path) -> dict[str, str]:
+def _sync_env(bindir: Path, log: Path, remote: Path | None = None) -> dict[str, str]:
     env = _env(
         PI3_SSH_HOST="rpi-pi3",
         PI3_SSH_USER="pi",
         PI3_SSH_KEY=FAKE_KEY,
         GITHUB_SHA=KNOWN_SHA,
-        RSYNC_LOG=str(log),
+        TRACE_LOG=str(log),
         RSYNC_EXIT=(bindir / "rsync.exit").read_text(),
         STAMP_PATH=str(STAMP),
+        REMOTE_STAMP=str(remote or (bindir / "remote-stamp")),
     )
     env["PATH"] = f"{bindir}:{env['PATH']}"
     return env
 
 
 def _rsync_calls(log: str) -> list[str]:
-    return [block for block in log.split("CALL\n") if block.strip()]
+    return [block for block in log.split("CALL\n") if "STAMP:" in block]
 
 
 if __name__ == "__main__":
