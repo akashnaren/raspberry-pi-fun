@@ -12,8 +12,14 @@ WORKFLOWS = (
     REPO / ".github" / "workflows" / "cd.yml",
     REPO / ".github" / "workflows" / "ci.yml",
 )
-PIN = re.compile(r"actions/(?:checkout|setup-python|upload-artifact)@[0-9a-f]{40}")
-FLOATING = re.compile(r"actions/(?:checkout|setup-python|upload-artifact)@v\d+")
+PIN = re.compile(
+    r"actions/(?:checkout|setup-python|upload-artifact|setup-node)@[0-9a-f]{40}"
+)
+FLOATING = re.compile(
+    r"actions/(?:checkout|setup-python|upload-artifact|setup-node)@v\d+"
+)
+# Current Node 24 major. v4 still declares node20. ci.yml only.
+SETUP_NODE = "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1"  # v7.1.0
 # Node 24 releases. checkout v4 and setup-python v5 still declare node20.
 NODE24 = (
     "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",  # v5.1.0
@@ -36,6 +42,14 @@ class ActionPins(unittest.TestCase):
             self.assertNotIn("actions/checkout@v", text)
             self.assertNotIn("actions/setup-python@v", text)
             self.assertNotIn("actions/upload-artifact@v", text)
+            self.assertNotIn("actions/setup-node@v", text)
+
+    def test_setup_node_is_pinned_to_node24(self):
+        ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        cd = (REPO / ".github" / "workflows" / "cd.yml").read_text(encoding="utf-8")
+        self.assertEqual(ci.count(SETUP_NODE), 2)
+        self.assertNotIn("actions/setup-node@v", ci)
+        self.assertNotIn("actions/setup-node@", cd)
 
     def test_node20_warning_actions_use_node24_releases(self):
         for path in WORKFLOWS:
