@@ -149,7 +149,7 @@ case "$*" in
     exit "${GIT_DIFF_EXIT:-0}"
     ;;
   *--is-inside-work-tree*)
-    printf '%s\\n' true
+    printf '%s\\n' "${GIT_WORK_TREE:-true}"
     exit 0
     ;;
   *rev-parse*)
@@ -167,37 +167,80 @@ class InstallStamp(unittest.TestCase):
             home, log = _run_install(Path(raw), diff_exit="0")
             text = log.read_text()
             stamp = home / "pi-pair" / "DEPLOYED_SHA"
-            self.assertIn("diff --quiet unit=yes", text)
+            self.assertIn("diff --quiet HEAD unit=yes", text)
             self.assertEqual(
                 stamp.read_text(), "abcdef0123456789abcdef0123456789abcdef01\n"
             )
             self.assertFalse((ROOT / "DEPLOYED_SHA").exists())
 
-    def test_dirty_tree_skips_stamp(self):
+    def test_dirty_tree_removes_old_stamp(self):
         with tempfile.TemporaryDirectory() as raw:
-            home, log = _run_install(Path(raw), diff_exit="1")
-            self.assertIn("diff --quiet", log.read_text())
-            self.assertFalse((home / "pi-pair" / "DEPLOYED_SHA").exists())
+            home = Path(raw)
+            stamp = _plant_stamp(home)
+            home, log = _run_install(home, diff_exit="1")
+            self.assertIn("diff --quiet HEAD", log.read_text())
+            self.assertFalse(stamp.exists())
             unit = home / ".config" / "systemd" / "user" / "pi-pair.service"
             self.assertTrue(unit.is_file())
 
+    def test_non_git_tree_removes_old_stamp(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            stamp = _plant_stamp(home)
+            home, _log = _run_install(home, work_tree="false")
+            self.assertFalse(stamp.exists())
+            unit = home / ".config" / "systemd" / "user" / "pi-pair.service"
+            self.assertTrue(unit.is_file())
 
-def _run_install(home: Path, diff_exit: str) -> tuple[Path, Path]:
+    def test_missing_git_removes_old_stamp(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            stamp = _plant_stamp(home)
+            home, _log = _run_install(home, include_git=False)
+            self.assertFalse(stamp.exists())
+
+    def test_operations_notes_unknown_after_plain_rsync_install(self):
+        text = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "On a plain rsync tree, `install.sh` removes `DEPLOYED_SHA` and `/health` reads `unknown`.",
+            text,
+        )
+
+
+def _plant_stamp(home: Path) -> Path:
+    stamp = home / "pi-pair" / "DEPLOYED_SHA"
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text("0123456789abcdef0123456789abcdef01234567\n", encoding="utf-8")
+    return stamp
+
+
+def _run_install(
+    home: Path,
+    diff_exit: str = "0",
+    work_tree: str = "true",
+    include_git: bool = True,
+) -> tuple[Path, Path]:
     bindir = home / "bin"
     bindir.mkdir()
-    git = bindir / "git"
-    git.write_text(_GIT_FAKE)
-    git.chmod(0o755)
+    if include_git:
+        git = bindir / "git"
+        git.write_text(_GIT_FAKE)
+        git.chmod(0o755)
+        path = f"{bindir}:/usr/bin:/bin"
+    else:
+        _link_tools_without_git(bindir)
+        path = str(bindir)
     log = home / "git.log"
     unit = home / ".config" / "systemd" / "user" / "pi-pair.service"
     env = {
-        "PATH": f"{bindir}:/usr/bin:/bin",
+        "PATH": path,
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(home / ".config"),
         "PI_PAIR_NAME": "pi2",
         "PI_PAIR_DIR": str(home / "pi-pair"),
         "GIT_LOG": str(log),
         "GIT_DIFF_EXIT": diff_exit,
+        "GIT_WORK_TREE": work_tree,
         "GIT_HEAD": "abcdef0123456789abcdef0123456789abcdef01",
         "INSTALL_UNIT": str(unit),
     }
@@ -212,6 +255,16 @@ def _run_install(home: Path, diff_exit: str) -> tuple[Path, Path]:
     if done.returncode != 0:
         raise AssertionError(done.stdout[-2000:] + done.stderr[-2000:])
     return home, log
+
+
+def _link_tools_without_git(bindir: Path) -> None:
+    for folder in (Path("/usr/bin"), Path("/bin")):
+        if not folder.is_dir():
+            continue
+        for item in folder.iterdir():
+            if item.name == "git" or (bindir / item.name).exists():
+                continue
+            (bindir / item.name).symlink_to(item)
 
 
 if __name__ == "__main__":

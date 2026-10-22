@@ -57,11 +57,7 @@ pi3_open_ssh() {
 
   umask 077
   tmp="$(mktemp -d)"
-  cleanup() {
-    # shellcheck disable=SC2317 # trap runs this on exit
-    rm -rf "${tmp}"
-  }
-  trap cleanup EXIT
+  trap 'rm -rf "${tmp}"' EXIT
 
   printf '%s\n' "${PI3_SSH_KEY}" > "${tmp}/id"
   chmod 600 "${tmp}/id"
@@ -75,7 +71,8 @@ pi3_open_ssh() {
     exit 1
   fi
 
-  declare -gax SSH=(
+  # shellcheck disable=SC2034 # deploy_pi3.sh and restart_pi3.sh read SSH
+  SSH=(
     ssh
     -i "${tmp}/id"
     -p "${PORT}"

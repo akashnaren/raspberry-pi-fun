@@ -122,6 +122,12 @@ fi
 pi3_require_target deploy_pi3
 
 DEST_DIR="${PI3_PAIR_DIR:-pi-pair}"
+case "${DEST_DIR}" in
+  *'*'*|*'?'*|*'['*)
+    echo "deploy_pi3: PI3_PAIR_DIR must not contain glob characters * ? or [ (got ${DEST_DIR}). Refusing --delete." >&2
+    exit 1
+    ;;
+esac
 dest_base="${DEST_DIR%/}"
 dest_base="${dest_base##*/}"
 if [[ "${dest_base}" != "pi-pair" || "${DEST_DIR}" == *..* ]]; then
