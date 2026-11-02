@@ -47,12 +47,13 @@ def hot(hot_c: float = 75.0, cool_c: float = 68.0) -> bool:
     """Hysteresis on the cached zone reading. A missing reading is not hot.
 
     The latch turns on at or above `hot_c` and off at or below `cool_c`.
-    This does not start the sampler thread.
+    A missing reading clears the latch. This does not start the sampler thread.
     """
     global _HOT
     temp = sample().get("temp_c")
     with _LOCK:
         if temp is None:
+            _HOT = False
             return False
         reading = float(temp)
         if reading >= float(hot_c):

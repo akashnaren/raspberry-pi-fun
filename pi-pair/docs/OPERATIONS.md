@@ -81,17 +81,19 @@ A pinned peer that is down returns `<name> offline`. A pinned weak peer returns 
 
 ## Rest
 
-Pi 4 rest holds non-urgent background work while the board is hot. A chat still answers on the resident model. Flash is re-warmed as soon as `/api/ps` drops it. Pro stays resident (`keep_alive` -1). The watchdog, which checks every 120 seconds, does not reload Pro while the latch is hot, and the next tick tries again. A Pro chat still warms Pro immediately. Idle compaction waits too. `num_ctx`, `num_thread`, `num_batch`, `keep_alive`, `/health`, and the page do not change.
+Pi 4 rest holds non-urgent background work while the brain is hot. It applies only on the pi4 brain. A dataset or health role, including pi3, does not defer compaction. A chat still answers on the resident model. Flash is re-warmed as soon as `/api/ps` drops it. Pro stays resident (`keep_alive` -1). The watchdog, which checks every 120 seconds, does not reload Pro while the latch is hot, and the next tick tries again. A Pro chat still warms Pro immediately. Idle compaction waits too. `num_ctx`, `num_thread`, `num_batch`, `keep_alive`, `/health`, and the page do not change.
+
+The block ships off for a 24-hour soak. Flip `enabled` to true in a follow-up after that soak.
 
 `configs/runtime/inference_pi4.json`:
 
 ```json
-"rest": { "enabled": true, "hot_c": 75, "cool_c": 68 }
+"rest": { "enabled": false, "hot_c": 75, "cool_c": 68 }
 ```
 
-The latch turns on at `hot_c` or above and off at `cool_c` or below. It reads the cached `thermal_zone0` sample and does not start another thread. A missing reading is not hot, so rest does not defer. A malformed `rest` block (missing fields, a non-boolean `enabled`, or `cool_c` not below `hot_c`) turns rest off.
+The latch turns on at `hot_c` or above and off at `cool_c` or below. It reads the cached `thermal_zone0` sample and does not start another thread. A missing reading clears the latch and is not hot, so a later reading between the two thresholds does not stay hot. A malformed `rest` block (missing fields, a non-boolean `enabled`, or `cool_c` not below `hot_c`) turns rest off.
 
-Kill switch: `PI_PAIR_REST=0` forces rest off without editing the file. Restart the pi-pair unit after the env change or a config edit. Rollback is that switch, or `"enabled": false` in the block. It is not the model `rollback` object in the same file.
+Kill switch: `PI_PAIR_REST` set to `0`, `false`, `off`, or `no` (any case, surrounding space ignored) forces rest off without editing the file. Restart the pi-pair unit after the env change or a config edit. Rollback is that switch, or leaving `"enabled": false`. It is not the model `rollback` object in the same file. The switch does not cover the startup warm order or the watchdog's wait for that warm. Those always apply.
 
 ## Failures
 

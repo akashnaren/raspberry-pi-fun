@@ -15,13 +15,13 @@ from unittest.mock import patch
 from pair.core import runtime, thermal
 from pair.memory.compact import schedule
 from pair.model.chat_once import ollama_payload, warm_in_flight
-from pair.model.knobs import runner_options
+from pair.model.knobs import inference_knobs, runner_options
 from pair.model.preload import (
     pro_preload_payload,
     rewarm_pro_if_evicted,
     start_pro_warm,
 )
-from pair.model.rest import defer_nonurgent
+from pair.model.rest import _limits, defer_nonurgent
 from pair.server import main as serve_main
 from pair.server import start_model_warm
 from pair.turn.shape import estimate_tokens, shape_messages
@@ -39,6 +39,12 @@ def _reset_latch() -> None:
         thermal._HOT = False
         thermal._SAMPLE["temp_c"] = None
         thermal._SAMPLE["read_at"] = 0.0
+
+
+def _rest_on() -> dict:
+    row = dict(inference_knobs())
+    row["rest"] = {"enabled": True, "hot_c": 75, "cool_c": 68}
+    return row
 
 
 class _Resp:
@@ -62,8 +68,11 @@ class RestRewarm(unittest.TestCase):
         os.environ["PI_PAIR_ROLE"] = "brain"
         os.environ.pop("PI_PAIR_REST", None)
         _reset_latch()
+        self._knobs = patch("pair.model.rest.inference_knobs", side_effect=_rest_on)
+        self._knobs.start()
 
     def tearDown(self) -> None:
+        self._knobs.stop()
         _reset_latch()
         if self._role is None:
             os.environ.pop("PI_PAIR_ROLE", None)
@@ -122,6 +131,8 @@ class UserProWarm(unittest.TestCase):
         case = test_modes.ModeHttp("test_cold_pro_answers_on_flash_and_warms")
         case.setUp()
         _reset_latch()
+        knobs = patch("pair.model.rest.inference_knobs", side_effect=_rest_on)
+        knobs.start()
         try:
             _cache(76)
             self.assertTrue(defer_nonurgent())
@@ -149,6 +160,7 @@ class UserProWarm(unittest.TestCase):
             self.assertEqual(warm[0]["options"]["num_batch"], 128)
             self.assertEqual(warm[0]["options"]["num_thread"], 4)
         finally:
+            knobs.stop()
             _reset_latch()
             case.tearDown()
 
@@ -156,16 +168,25 @@ class UserProWarm(unittest.TestCase):
 class RestCompaction(unittest.TestCase):
     def setUp(self) -> None:
         self._rest = os.environ.get("PI_PAIR_REST")
+        self._role = os.environ.get("PI_PAIR_ROLE")
         os.environ.pop("PI_PAIR_REST", None)
+        os.environ["PI_PAIR_ROLE"] = "brain"
         _reset_latch()
         self.turns = [{"role": "user", "content": "the locker code is 4182"}]
+        self._knobs = patch("pair.model.rest.inference_knobs", side_effect=_rest_on)
+        self._knobs.start()
 
     def tearDown(self) -> None:
+        self._knobs.stop()
         _reset_latch()
         if self._rest is None:
             os.environ.pop("PI_PAIR_REST", None)
         else:
             os.environ["PI_PAIR_REST"] = self._rest
+        if self._role is None:
+            os.environ.pop("PI_PAIR_ROLE", None)
+        else:
+            os.environ["PI_PAIR_ROLE"] = self._role
 
     def test_hot_compaction_does_not_enqueue_and_cool_does(self) -> None:
         queued: list = []
@@ -230,19 +251,48 @@ class RestCompaction(unittest.TestCase):
         self.assertLessEqual(used, 2048)
         self.assertEqual(shaped[-1]["role"], "user")
 
+    def test_dataset_role_at_80c_still_enqueues_compaction(self) -> None:
+        os.environ["PI_PAIR_ROLE"] = "dataset"
+        _cache(80)
+        self.assertIsNone(_limits())
+        self.assertFalse(defer_nonurgent())
+        queued: list = []
+
+        def capture(fn) -> bool:
+            queued.append(fn)
+            return True
+
+        buf = io.StringIO()
+        with patch.object(runtime.gate, "enqueue_background", capture):
+            with redirect_stdout(buf):
+                self.assertTrue(
+                    schedule(self.turns, 2048, idle=lambda: True, scope="rest-pi3")
+                )
+        self.assertEqual(len(queued), 1)
+        self.assertNotIn("rest: deferred compaction", buf.getvalue())
+
 
 class RestOptions(unittest.TestCase):
     def setUp(self) -> None:
         self._rest = os.environ.get("PI_PAIR_REST")
+        self._role = os.environ.get("PI_PAIR_ROLE")
         os.environ.pop("PI_PAIR_REST", None)
+        os.environ["PI_PAIR_ROLE"] = "brain"
         _reset_latch()
+        self._knobs = patch("pair.model.rest.inference_knobs", side_effect=_rest_on)
+        self._knobs.start()
 
     def tearDown(self) -> None:
+        self._knobs.stop()
         _reset_latch()
         if self._rest is None:
             os.environ.pop("PI_PAIR_REST", None)
         else:
             os.environ["PI_PAIR_REST"] = self._rest
+        if self._role is None:
+            os.environ.pop("PI_PAIR_ROLE", None)
+        else:
+            os.environ["PI_PAIR_ROLE"] = self._role
 
     def test_num_thread_batch_and_ctx_do_not_change_with_heat(self) -> None:
         _cache(67)

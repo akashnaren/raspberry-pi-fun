@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import os
 
+from pair.core.config import on_pi4
 from pair.core.thermal import hot
 from pair.model.knobs import inference_knobs
 
+_OFF = frozenset({"0", "false", "off", "no"})
+
 
 def _limits() -> tuple[float, float] | None:
-    if os.environ.get("PI_PAIR_REST", "").strip() == "0":
+    """Hot and cool thresholds, or None when rest is off.
+
+    Rest is the pi4 brain only. A dataset or health role always gets None.
+    """
+    if not on_pi4():
+        return None
+    if os.environ.get("PI_PAIR_REST", "").strip().lower() in _OFF:
         return None
     row = inference_knobs().get("rest")
     if not isinstance(row, dict) or row.get("enabled") is not True:
@@ -25,7 +34,7 @@ def _limits() -> tuple[float, float] | None:
 
 
 def enabled() -> bool:
-    """True when the rest block is valid and PI_PAIR_REST is not 0."""
+    """True on pi4 when the rest block is valid and the kill switch is unset."""
     return _limits() is not None
 
 
