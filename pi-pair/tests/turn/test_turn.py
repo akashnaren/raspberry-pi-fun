@@ -19,7 +19,8 @@ from unittest.mock import patch
 from pair import server as pair_server
 from pair.core import runtime
 from pair.core.errors import GENERIC, TIMEOUT, UNREACHABLE
-from pair.model.chat_once import start_model_warm, warm_residents
+from pair.model.chat_once import start_model_warm, warm_chat_model, warm_residents
+from pair.model.knobs import inference_knobs, mode_limits
 from pair.model.modes import FLASH_MODEL, PRO_MODEL
 from pair.routes import reply as reply_routes
 from pair.routes import search as search_routes
@@ -36,6 +37,7 @@ from pair.turn.shape import (
     public_failure,
     search_result_text,
     shape_messages,
+    warm_messages,
 )
 from tests.support.fakes import OllamaFake, ScriptOllama, _start
 from tests.support.paths import ROOT
@@ -122,6 +124,11 @@ class TurnShape(unittest.TestCase):
         self.assertLessEqual(
             sum(estimate_tokens(row["content"]) for row in shaped), 2048
         )
+        self.assertTrue(
+            shaped[0]["content"].startswith(PERSONA + "\n\nWeb search notes.")
+        )
+        self.assertNotIn("Web search notes.", shaped[-1]["content"])
+        self.assertIn("…", shaped[-1]["content"])
         blob = "\n".join(row["content"] for row in shaped)
         self.assertNotIn("```chart", blob)
         self.assertIn("plot the bars", blob)
@@ -173,7 +180,7 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(first[0]["content"], PERSONA)
         self.assertEqual(second[0]["content"], PERSONA)
         self.assertEqual(first[0]["content"], second[0]["content"])
-        self.assertIn(EFFORT_HINT["high"], second[-2]["content"])
+        self.assertIn(EFFORT_HINT["high"], second[-1]["content"])
         self.assertEqual(second[-1]["role"], "user")
 
     def test_prefix_stays_byte_identical_across_five_turns(self):
@@ -207,7 +214,7 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(rows[-1]["content"], "latest question")
         self.assertNotIn("old answer", " ".join(row["content"] for row in rows))
 
-    def test_notes_sit_just_before_the_last_user_message(self):
+    def test_notes_lead_the_last_user_message(self):
         prompt = "capital of australia"
         rows = shape_messages(
             [
@@ -219,9 +226,11 @@ class TurnShape(unittest.TestCase):
             notes="Web search notes.\n- Canberra",
         )
         self.assertEqual(rows[0]["content"], PERSONA)
-        self.assertEqual(rows[-1], {"role": "user", "content": prompt})
-        self.assertTrue(rows[-2]["content"].startswith("Notes:"))
-        self.assertIn("Canberra", rows[-2]["content"])
+        content = rows[-1]["content"]
+        self.assertEqual(rows[-1]["role"], "user")
+        self.assertTrue(content.startswith("Notes:"))
+        self.assertIn("Canberra", content)
+        self.assertTrue(content.endswith(prompt))
 
     def test_a_1200_token_input_is_kept_at_1536(self):
         body = "ab" * 1200
@@ -236,7 +245,8 @@ class TurnShape(unittest.TestCase):
                 [{"role": "user", "content": prompt}], prompt, effort=name
             )
             self.assertEqual(rows[0]["content"], PERSONA, name)
-            self.assertEqual(rows[-2]["content"], sentence, name)
+            self.assertTrue(rows[-1]["content"].startswith(sentence), name)
+            self.assertTrue(rows[-1]["content"].endswith(prompt), name)
             self.assertEqual(rows[-1]["role"], "user")
         chart = shape_messages(
             [{"role": "user", "content": "plot a bar chart of the picnic"}],
@@ -244,7 +254,8 @@ class TurnShape(unittest.TestCase):
             effort="high",
         )
         self.assertEqual(chart[0]["content"], PERSONA)
-        self.assertEqual(chart[-2]["content"], EFFORT_HINT["high"])
+        self.assertTrue(chart[-1]["content"].startswith(EFFORT_HINT["high"]))
+        self.assertTrue(chart[-1]["content"].endswith("plot a bar chart of the picnic"))
         self.assertIn("```plot", "\n".join(row["content"] for row in chart))
 
 
@@ -279,15 +290,16 @@ class ModelWarm(unittest.TestCase):
         self.assertEqual(flash["keep_alive"], -1)
         self.assertFalse(flash["stream"])
         self.assertEqual(flash["options"]["num_predict"], 1)
-        from pair.turn.shape import persona_text
-
         self.assertEqual(
-            flash["messages"],
-            [
-                {"role": "system", "content": persona_text()},
-                {"role": "user", "content": "ok"},
-            ],
+            inspect.signature(warm_chat_model).parameters["timeout"].default, 120
         )
+        self.assertEqual(
+            inspect.signature(warm_residents).parameters["timeout"].default, 120
+        )
+        row = inference_knobs()
+        knobs = dict(row)
+        knobs.update(mode_limits(FLASH_MODEL, row))
+        self.assertEqual(flash["messages"], warm_messages(knobs))
         self.assertEqual(loaded, [FLASH_MODEL])
         self.assertTrue(all("/api/pull" not in url for url, _payload in seen))
 

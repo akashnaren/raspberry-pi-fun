@@ -11,9 +11,10 @@ from pair.core.config import on_pi4
 from pair.core.timing import from_ollama
 from pair.mesh.guard import may_generate, require_generative
 from pair.model.http_pool import open_json_request
-from pair.model.knobs import inference_knobs, keep_alive, ollama_options
+from pair.model.knobs import inference_knobs, keep_alive, mode_limits, ollama_options
 from pair.model.modes import FLASH, PRO, mode_table
 from pair.model.think import sample_knobs, split_ollama_message
+from pair.turn.shape import warm_messages
 
 _WARM_THREAD: threading.Thread | None = None
 
@@ -178,23 +179,21 @@ def chat_llamacpp(
     return content, use
 
 
-def warm_chat_model(peer: dict, model: str, timeout: float = 45) -> bool:
+def _tuned_knobs(model: str) -> dict:
+    """File knobs with this tag's context, threads, and batch."""
+    row = inference_knobs()
+    tuned = dict(row)
+    tuned.update(mode_limits(str(model or ""), row))
+    return tuned
+
+
+def warm_chat_model(peer: dict, model: str, timeout: float = 120) -> bool:
     """Load one tag with keep_alive -1. A missing tag returns False and is not pulled."""
     if not may_generate(peer) or not model:
         return False
-    from pair.turn.shape import persona_text
-
+    knobs = _tuned_knobs(model)
     url = f"http://{peer['host']}:{peer['port']}/api/chat"
-    payload = ollama_payload(
-        model,
-        [
-            {"role": "system", "content": persona_text()},
-            {"role": "user", "content": "ok"},
-        ],
-        0.0,
-        1,
-        False,
-    )
+    payload = ollama_payload(model, warm_messages(knobs), 0.0, 1, False, knobs)
     try:
         with open_json(url, payload, timeout) as response:
             response.read()
@@ -203,7 +202,7 @@ def warm_chat_model(peer: dict, model: str, timeout: float = 45) -> bool:
         return False
 
 
-def warm_residents(peer: dict, timeout: float = 45) -> list[str]:
+def warm_residents(peer: dict, timeout: float = 120) -> list[str]:
     """Load Flash, then Pro if it is already on disk.
 
     Pro is not pulled. A 404 or a down socket is skipped. Off a generative

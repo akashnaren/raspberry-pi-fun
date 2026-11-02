@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 from pair.core import runtime
+from pair.model.knobs import inference_knobs, mode_limits
 from pair.model.modes import (
     FLASH_MODEL,
     PRO_MODEL,
@@ -27,7 +28,7 @@ from pair.model.modes import (
 )
 from pair.routes import search as search_routes
 from pair.server import make_server
-from pair.turn.shape import EFFORT_HINT
+from pair.turn.shape import EFFORT_HINT, warm_messages
 from tests.support.paths import ROOT
 
 _CAP = re.compile(r"OLLAMA_MAX_LOADED_MODELS=(\d+)")
@@ -77,17 +78,16 @@ class ModeOllama(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         type(self).calls.append(("POST", path, payload))
         if path == "/api/generate":
-            name = payload.get("model")
-            alive = payload.get("keep_alive")
-            if alive == 0 and not type(self).sticky:
-                type(self).loaded = [item for item in type(self).loaded if item != name]
-            elif name and name not in type(self).loaded and not type(self).hold_load:
-                type(self).loaded = [*type(self).loaded, name]
+            _remember_load(payload)
             self._json(b"{}")
             return
         if path != "/api/chat":
             self.send_response(404)
             self.end_headers()
+            return
+        if _is_warm(payload):
+            _remember_load(payload)
+            self._json(b"{}")
             return
         gate = type(self).block_chat
         if gate is not None:
@@ -144,6 +144,38 @@ def _posts(path: str) -> list[dict]:
         for method, seen, payload in ModeOllama.calls
         if method == "POST" and seen == path and payload
     ]
+
+
+def _remember_load(payload: dict) -> None:
+    name = payload.get("model")
+    alive = payload.get("keep_alive")
+    if alive == 0 and not ModeOllama.sticky:
+        ModeOllama.loaded = [item for item in ModeOllama.loaded if item != name]
+    elif name and name not in ModeOllama.loaded and not ModeOllama.hold_load:
+        ModeOllama.loaded = [*ModeOllama.loaded, name]
+
+
+def _tuned_knobs(model: str) -> dict:
+    row = inference_knobs()
+    tuned = dict(row)
+    tuned.update(mode_limits(str(model or ""), row))
+    return tuned
+
+
+def _is_warm(payload: dict) -> bool:
+    options = payload.get("options") or {}
+    if options.get("num_predict") != 1:
+        return False
+    model = str(payload.get("model") or "")
+    return payload.get("messages") == warm_messages(_tuned_knobs(model))
+
+
+def _warms() -> list[dict]:
+    return [payload for payload in _posts("/api/chat") if _is_warm(payload)]
+
+
+def _turns() -> list[dict]:
+    return [payload for payload in _posts("/api/chat") if not _is_warm(payload)]
 
 
 class ModeRules(unittest.TestCase):
@@ -289,12 +321,12 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(headers.get("X-Pi-Mode"), "flash")
         self.assertEqual(body["pi_mode"], "flash")
         self.assertEqual(body["pi_model"], "qwen3:0.6b")
-        chats = _posts("/api/chat")
+        chats = _turns()
         self.assertEqual(len(chats), 1)
         self.assertEqual(chats[0]["model"], "qwen3:0.6b")
         self.assertEqual(chats[0]["keep_alive"], -1)
         self.assertNotIn("mode", chats[0])
-        self.assertEqual(_posts("/api/generate"), [])
+        self.assertEqual(_warms(), [])
         self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])
 
     def test_pro_keeps_flash_and_applies_thinking(self):
@@ -331,8 +363,8 @@ class ModeHttp(unittest.TestCase):
             self.assertNotIn("loading", body["pi_stages"], level)
             self.assertIn("thinking", body["pi_stages"], level)
             self.assertNotIn("Loading Pro", json.dumps(body), level)
-            chats = _posts("/api/chat")
-            self.assertEqual(_posts("/api/generate"), [], level)
+            chats = _turns()
+            self.assertEqual(_warms(), [], level)
             self.assertEqual(len(chats), 1, level)
             self.assertEqual(chats[0]["model"], "qwen3:1.7b", level)
             self.assertEqual(chats[0]["keep_alive"], -1, level)
@@ -372,7 +404,7 @@ class ModeHttp(unittest.TestCase):
                 )
                 self.assertEqual(status, 200, label)
                 self.assertEqual(body["pi_think"], level, label)
-                chats = _posts("/api/chat")
+                chats = _turns()
                 self.assertEqual(len(chats), 1, label)
                 self.assertFalse(chats[0]["think"], label)
                 self.assertEqual(chats[0]["model"], model, label)
@@ -403,7 +435,7 @@ class ModeHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_model"], "qwen3:1.7b")
-        self.assertEqual(_posts("/api/generate"), [])
+        self.assertEqual(_warms(), [])
         for name in ("qwen3:0.6b", "qwen3:1.7b"):
             self.assertIn(name, ModeOllama.loaded)
         ModeOllama.calls = []
@@ -415,8 +447,8 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "flash")
         self.assertEqual(body["pi_model"], "qwen3:0.6b")
-        self.assertEqual(_posts("/api/generate"), [])
-        chats = _posts("/api/chat")
+        self.assertEqual(_warms(), [])
+        chats = _turns()
         self.assertEqual(chats[0]["model"], "qwen3:0.6b")
         self.assertNotIn("qwen3:1.7b", json.dumps(chats))
         for name in ("qwen3:0.6b", "qwen3:1.7b"):
@@ -448,8 +480,8 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "flash")
         self.assertEqual(body["pi_model"], "qwen3:0.6b")
-        self.assertEqual(_posts("/api/generate"), [])
-        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen3:0.6b")
+        self.assertEqual(_warms(), [])
+        self.assertEqual(_turns()[0]["model"], "qwen3:0.6b")
         self.assertIn("qwen3:1.7b", ModeOllama.loaded)
         ModeOllama.calls = []
         status, _headers, body = self._post(
@@ -459,9 +491,9 @@ class ModeHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "flash")
-        self.assertEqual(_posts("/api/generate"), [])
-        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen3:0.6b")
-        self.assertNotIn("qwen3:1.7b", json.dumps(_posts("/api/chat")))
+        self.assertEqual(_warms(), [])
+        self.assertEqual(_turns()[0]["model"], "qwen3:0.6b")
+        self.assertNotIn("qwen3:1.7b", json.dumps(_turns()))
 
     def test_header_pro_and_model_alias(self):
         port = self._boot()
@@ -489,7 +521,7 @@ class ModeHttp(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pi_mode"], "pro")
-        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen3:1.7b")
+        self.assertEqual(_turns()[0]["model"], "qwen3:1.7b")
 
     def test_a_greeting_calls_the_model_in_either_mode(self):
         port = self._boot()
@@ -509,7 +541,7 @@ class ModeHttp(unittest.TestCase):
                 body["choices"][0]["message"]["content"], "hello from peer", mode
             )
             self.assertEqual(body["pi_mode"], mode, mode)
-            self.assertTrue(_posts("/api/chat"), mode)
+            self.assertTrue(_turns(), mode)
             self.assertEqual(self.search_calls, [])
 
     def test_missing_pro_does_not_ask_ollama_to_pull(self):
@@ -528,8 +560,8 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(body["error"], "The larger model is not ready yet.")
         self.assertNotIn("ollama pull", body["error"])
         self.assertNotIn("pi4", body["error"])
-        self.assertEqual(_posts("/api/chat"), [])
-        self.assertEqual(_posts("/api/generate"), [])
+        self.assertEqual(_turns(), [])
+        self.assertEqual(_warms(), [])
         self.assertEqual(ModeOllama.loaded, ["qwen3:0.6b"])
 
     def test_pro_shares_the_inference_gate_with_flash(self):
@@ -551,8 +583,8 @@ class ModeHttp(unittest.TestCase):
         )
         self.assertEqual(status, 503)
         self.assertEqual(body["error"], BUSY)
-        self.assertEqual(_posts("/api/chat"), [])
-        self.assertEqual(_posts("/api/generate"), [])
+        self.assertEqual(_turns(), [])
+        self.assertEqual(_warms(), [])
         runtime.gate.release()
         self.assertTrue(runtime.gate.try_acquire())
         status, _headers, body = self._post(
@@ -565,7 +597,7 @@ class ModeHttp(unittest.TestCase):
         )
         self.assertEqual(status, 503)
         self.assertEqual(body["error"], BUSY)
-        self.assertEqual(_posts("/api/chat"), [])
+        self.assertEqual(_turns(), [])
         runtime.gate.release()
         release = threading.Event()
         entered = threading.Event()
@@ -602,8 +634,8 @@ class ModeHttp(unittest.TestCase):
         )
         self.assertEqual(status, 503)
         self.assertEqual(body["error"], BUSY)
-        self.assertEqual(len(_posts("/api/chat")), 1)
-        self.assertEqual(_posts("/api/chat")[0]["model"], "qwen3:1.7b")
+        self.assertEqual(len(_turns()), 1)
+        self.assertEqual(_turns()[0]["model"], "qwen3:1.7b")
         release.set()
         self.assertTrue(done.wait(4), holder)
         self.assertNotIn("error", holder, holder)
@@ -681,7 +713,7 @@ class ModeHttp(unittest.TestCase):
             holder["all"].index(b'"pi_status": "answering"'),
             holder["all"].index(b"hel"),
         )
-        chats = _posts("/api/chat")
+        chats = _turns()
         self.assertEqual(chats[0]["model"], "qwen3:0.6b")
         self.assertEqual(chats[0]["keep_alive"], -1)
         self.assertTrue(chats[0]["stream"])
@@ -760,9 +792,9 @@ class ModeHttp(unittest.TestCase):
         self.assertLess(
             holder["all"].index(b'"pi_status": "thinking"'), holder["all"].index(b"hel")
         )
-        chats = _posts("/api/chat")
+        chats = _turns()
         self.assertEqual(chats[0]["model"], "qwen3:1.7b")
-        self.assertEqual(_posts("/api/generate"), [])
+        self.assertEqual(_warms(), [])
         for name in ("qwen3:0.6b", "qwen3:1.7b"):
             self.assertIn(name, ModeOllama.loaded)
 
@@ -781,12 +813,12 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(headers.get("X-Pi-Route"), "flash")
         self.assertNotIn("loading", body.get("pi_stages") or [])
         self.assertNotIn("Loading Pro", json.dumps(body))
-        chats = _posts("/api/chat")
+        chats = _turns()
         self.assertEqual(chats[0]["model"], "qwen3:0.6b")
         deadline = time.time() + 2
-        while time.time() < deadline and not _posts("/api/generate"):
+        while time.time() < deadline and not _warms():
             time.sleep(0.02)
-        warm = _posts("/api/generate")
+        warm = _warms()
         self.assertEqual(len(warm), 1)
         self.assertEqual(warm[0]["model"], "qwen3:1.7b")
         self.assertEqual(warm[0]["keep_alive"], -1)
@@ -822,9 +854,12 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
         self.assertEqual(body["pi_model"], "qwen3:0.6b")
         self.assertNotIn("Loading Pro", json.dumps(body))
-        chats = _posts("/api/chat")
+        chats = _turns()
         self.assertEqual(chats[0]["model"], "qwen3:0.6b")
-        warm = _posts("/api/generate")
+        deadline = time.time() + 2
+        while time.time() < deadline and not _warms():
+            time.sleep(0.02)
+        warm = _warms()
         self.assertEqual(len(warm), 1)
         self.assertEqual(warm[0]["model"], "qwen3:0.6b")
         self.assertEqual(warm[0]["keep_alive"], -1)
@@ -853,7 +888,7 @@ class ModeHttp(unittest.TestCase):
         self.assertIn("warming up", text.lower())
         self.assertNotIn("larger model", text.lower())
         self.assertNotIn("larger model", json.dumps(body).lower())
-        self.assertEqual(_posts("/api/chat"), [])
+        self.assertEqual(_turns(), [])
 
     def test_unknown_residency_does_not_drop_pro(self):
         port = self._boot()
@@ -868,7 +903,7 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(status, 200, body)
         self.assertEqual(body["pi_model"], "qwen3:1.7b")
         self.assertEqual(body["pi_route"], "pro")
-        self.assertEqual(_posts("/api/generate"), [])
+        self.assertEqual(_warms(), [])
         self.assertNotIn("Loading Pro", json.dumps(body))
         self.assertNotIn("loading", body["pi_stages"])
 

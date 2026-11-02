@@ -16,11 +16,12 @@ import urllib.parse
 import urllib.request
 
 from pair.core.config import ollama_base, on_pi4
-from pair.model.chat_once import warm_in_flight
+from pair.model.chat_once import ollama_payload, warm_in_flight
 from pair.model.http_pool import open_json_request
-from pair.model.knobs import keep_alive, mode_limits
-from pair.model.modes import mode_table
+from pair.model.knobs import inference_knobs, mode_limits
+from pair.model.modes import PRO_MODEL, mode_table
 from pair.model.rest import defer_nonurgent
+from pair.turn.shape import warm_messages
 
 PRELOAD_TIMEOUT_S = 180.0
 COLD_WAIT_S = 60.0
@@ -37,35 +38,26 @@ def resident_tags() -> tuple[str, str]:
     return flash, pro
 
 
+def _tuned_knobs(tag: str) -> dict:
+    """File knobs with this tag's context, threads, and batch."""
+    row = inference_knobs()
+    tuned = dict(row)
+    tuned.update(mode_limits(str(tag or ""), row))
+    return tuned
+
+
 def pro_preload_payload(model: str | None = None) -> dict:
-    """A one-token generate that leaves this tag resident. keep_alive is never 0."""
+    """One-token /api/chat that leaves this tag resident. keep_alive is never 0."""
     tag = (model or "").strip()
     if not tag:
         _flash, tag = resident_tags()
     if not tag:
-        from pair.model.modes import PRO_MODEL
-
         tag = PRO_MODEL
-    alive = keep_alive()
-    if alive == 0:
-        alive = -1
-    from pair.turn.shape import persona_text
-
-    limits = mode_limits(tag)
-    return {
-        "model": tag,
-        "prompt": persona_text(),
-        "stream": False,
-        "keep_alive": alive,
-        "think": False,
-        "options": {
-            "num_predict": 1,
-            "temperature": 0,
-            "num_ctx": limits["num_ctx"],
-            "num_batch": limits["num_batch"],
-            "num_thread": limits["num_thread"],
-        },
-    }
+    knobs = _tuned_knobs(tag)
+    payload = ollama_payload(tag, warm_messages(knobs), 0.0, 1, False, knobs)
+    if payload.get("keep_alive") == 0:
+        payload["keep_alive"] = -1
+    return payload
 
 
 def resident_models(host: str, port: int) -> list[str] | None:
@@ -113,12 +105,12 @@ def wait_for_resident(
 
 
 def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
-    """Background /api/generate for a user chat. Not deferred when the board is hot."""
+    """Background /api/chat warm for a user chat. Not deferred when the board is hot."""
     payload = pro_preload_payload(model)
 
     def run() -> None:
         request = urllib.request.Request(
-            f"http://{host}:{int(port)}/api/generate",
+            f"http://{host}:{int(port)}/api/chat",
             data=json.dumps(payload).encode(),
             headers={"content-type": "application/json"},
         )
@@ -166,14 +158,14 @@ def rewarm_pro_if_evicted() -> None:
 
 
 def warm_model(model: str | None = None) -> None:
-    """POST /api/generate for one resident tag. No-op off the brain."""
+    """POST /api/chat for one resident tag. No-op off the brain."""
     if not on_pi4():
         return
     payload = pro_preload_payload(model)
     if not payload.get("model") or payload.get("keep_alive") == 0:
         return
     request = urllib.request.Request(
-        ollama_base().rstrip("/") + "/api/generate",
+        ollama_base().rstrip("/") + "/api/chat",
         data=json.dumps(payload).encode(),
         headers={"content-type": "application/json"},
     )
@@ -186,7 +178,7 @@ def warm_model(model: str | None = None) -> None:
 
 
 def warm_pro_model() -> None:
-    """POST /api/generate for Pro. No-op off the brain. Failures are logged."""
+    """POST /api/chat for Pro. No-op off the brain. Failures are logged."""
     _flash, pro = resident_tags()
     warm_model(pro)
 

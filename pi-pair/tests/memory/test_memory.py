@@ -16,7 +16,7 @@ from pair.memory.compact import plan, run_compact, schedule, should_compact
 from pair.memory.ledger import Ledger, ledger_for, reset, verbatim_budget
 from pair.memory.store import scope_key
 from pair.server import make_server
-from pair.turn.shape import estimate_tokens, shape_messages
+from pair.turn.shape import estimate_tokens, sample_turns, shape_messages
 
 
 class LedgerTests(unittest.TestCase):
@@ -47,8 +47,12 @@ class LedgerTests(unittest.TestCase):
         )
         self.assertEqual(first, second)
         self.assertEqual(first[0]["role"], "system")
-        self.assertEqual(first[1]["content"], facts)
-        self.assertTrue(str(first[2]["content"]).startswith("Summary:"))
+        self.assertEqual(first[1], sample_turns()[0])
+        content = first[-1]["content"]
+        self.assertTrue(content.startswith(facts))
+        self.assertIn("Summary:\nCanberra.", content)
+        self.assertLess(content.index(facts), content.index("Summary:"))
+        self.assertTrue(content.endswith(turns[-1]["content"]))
 
 
 class CompactTests(unittest.TestCase):

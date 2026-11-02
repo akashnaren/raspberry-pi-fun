@@ -570,8 +570,88 @@ def shape_messages(
     rows = [rows[0], *stable, *sample_turns(), *rows[1:]]
     calc = notes_for(user_question(prompt)) or ""
     combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
-    rows = add_notes(rows, tail_note(effort, combined, hints))
-    return fit_messages(rows, knobs)
+    tail = tail_note(effort, combined, hints)
+    rows = add_notes(rows, tail)
+    return fold_system_rows(
+        fit_messages(rows, knobs),
+        own_count=len(stable),
+        folded_tail=bool(tail),
+    )
+
+
+def fold_system_rows(
+    rows: list, *, own_count: int = 0, folded_tail: bool = False
+) -> list:
+    """Ollama merges every system row into one block at the top.
+
+    Extra rows there invalidate the cached sample turns.
+    """
+    if not rows:
+        return rows
+    last_user = -1
+    for index in range(len(rows) - 1, -1, -1):
+        row = rows[index]
+        if isinstance(row, dict) and row.get("role") == "user":
+            last_user = index
+            break
+    if last_user < 0:
+        return rows
+    own: set[int] = set()
+    limit = min(len(rows), 1 + max(0, own_count))
+    for index in range(1, limit):
+        row = rows[index]
+        if isinstance(row, dict) and row.get("role") == "system":
+            own.add(index)
+    if folded_tail and last_user > 0:
+        tail_at = last_user - 1
+        tail_row = rows[tail_at]
+        if (
+            tail_at not in own
+            and isinstance(tail_row, dict)
+            and tail_row.get("role") == "system"
+        ):
+            own.add(tail_at)
+    notes: list[str] = []
+    callers: list[str] = []
+    for index, row in enumerate(rows):
+        if index == 0 or not isinstance(row, dict) or row.get("role") != "system":
+            continue
+        text = str(row.get("content") or "")
+        if not text.strip():
+            continue
+        if index in own:
+            notes.append(text)
+        else:
+            callers.append(text)
+    if not notes and not callers:
+        return rows
+    folded: list = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            folded.append(row)
+            continue
+        if index != 0 and row.get("role") == "system":
+            continue
+        copied = dict(row)
+        if index == 0 and callers:
+            base = str(copied.get("content") or "")
+            copied["content"] = (
+                "\n\n".join([base, *callers]) if base else "\n\n".join(callers)
+            )
+        if index == last_user and notes:
+            question = str(copied.get("content") or "")
+            copied["content"] = "\n\n".join([*notes, question])
+        folded.append(copied)
+    return folded
+
+
+def warm_messages(knobs: dict | None = None) -> list:
+    """Persona, sample turns, and one user word, using the caller's knobs.
+
+    Ollama merges every system row into one block at the top; extra rows there
+    invalidate the cached sample turns.
+    """
+    return shape_messages([{"role": "user", "content": "ok"}], "ok", knobs)
 
 
 def _is_timeout(error: BaseException | None) -> bool:

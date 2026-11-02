@@ -1150,7 +1150,8 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(headers.get("X-Pi-Search"), "failed")
         self.assertEqual(body["pi_sources"], [])
         messages = OllamaFake.last_payload["messages"]
-        self.assertTrue(any(item.get("content") == prompt for item in messages))
+        self.assertEqual(messages[-1]["role"], "user")
+        self.assertTrue(messages[-1]["content"].endswith(prompt))
         self.assertNotIn("Web search notes", json.dumps(messages))
 
         def empty(query, opener=None):
@@ -1533,21 +1534,18 @@ class PairHttp(unittest.TestCase):
         messages = OllamaFake.last_payload["messages"]
         self.assertEqual(messages[0]["role"], "system")
         self.assertTrue(messages[0]["content"].startswith("You are OpenPi"))
-        notes = messages[-2]
         self.assertEqual(messages[-1]["role"], "user")
-        self.assertEqual(notes["role"], "system")
-        self.assertFalse(notes["content"].startswith("Notes:"))
-        self.assertNotIn("Web search notes", notes["content"])
-        self.assertNotIn("<search>", notes["content"])
+        self.assertTrue(messages[-1]["content"].endswith("\n\n" + prompt))
+        notes = messages[-1]["content"][: -(len(prompt) + 2)]
+        self.assertFalse(notes.startswith("Notes:"))
+        self.assertNotIn("Web search notes", notes)
+        self.assertNotIn("<search>", notes)
         from pair.turn.shape import GROUNDED_RULE
 
-        self.assertTrue(notes["content"].endswith(GROUNDED_RULE))
-        self.assertLessEqual(
-            len(notes["content"]) - len("\n" + GROUNDED_RULE),
-            limit,
-        )
-        self.assertIn("snippet", notes["content"])
-        self.assertLess(len(notes["content"]), len(page))
+        self.assertTrue(notes.endswith(GROUNDED_RULE))
+        self.assertLessEqual(len(notes) - len("\n" + GROUNDED_RULE), limit)
+        self.assertIn("snippet", notes)
+        self.assertLess(len(notes), len(page))
 
     def test_math_is_answered_by_the_model(self):
         prompt = (
