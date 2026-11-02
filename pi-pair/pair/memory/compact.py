@@ -10,6 +10,7 @@ import json
 import threading
 import time
 
+from pair.model.rest import defer_nonurgent
 from pair.turn.shape import estimate_tokens
 
 SUMMARY_CAP = 160
@@ -163,12 +164,16 @@ def schedule(
 
     The scheduler waits until the slot is free, holds it for this job, and
     cancels the job when an interactive request arrives. The extractive draft
-    is what gets stored if Flash is interrupted or absent.
+    is what gets stored if Flash is interrupted or absent. A hot board returns
+    without enqueuing.
     """
     if not idle():
         return False
     key = "default" if scope is None else str(scope or "")
     if not key:
+        return False
+    if defer_nonurgent():
+        print("rest: deferred compaction", flush=True)
         return False
     from pair.core import runtime
 

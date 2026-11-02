@@ -216,6 +216,7 @@ def main() -> None:
         flush=True,
     )
     servers = [make_server(host, runtime.PORT) for host in hosts]
-    start_pro_warm()
+    # The watchdog joins this warm thread before its first check. Accept does not.
     start_model_warm()
+    start_pro_warm()
     _serve_all(servers)

@@ -9,6 +9,7 @@ _ZONE = "/sys/class/thermal/thermal_zone0/temp"
 _INTERVAL_S = 5.0
 _LOCK = threading.Lock()
 _SAMPLE = {"temp_c": None, "read_at": 0.0}
+_HOT = False
 
 
 def read_temp_c(path: str = _ZONE) -> float | None:
@@ -40,6 +41,25 @@ def above(limit_c: float, now: float | None = None) -> bool:
     if temp is None:
         return False
     return float(temp) > float(limit_c)
+
+
+def hot(hot_c: float = 75.0, cool_c: float = 68.0) -> bool:
+    """Hysteresis on the cached zone reading. A missing reading is not hot.
+
+    The latch turns on at or above `hot_c` and off at or below `cool_c`.
+    This does not start the sampler thread.
+    """
+    global _HOT
+    temp = sample().get("temp_c")
+    with _LOCK:
+        if temp is None:
+            return False
+        reading = float(temp)
+        if reading >= float(hot_c):
+            _HOT = True
+        elif reading <= float(cool_c):
+            _HOT = False
+        return _HOT
 
 
 def start() -> threading.Thread:

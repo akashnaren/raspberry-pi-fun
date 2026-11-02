@@ -17,6 +17,11 @@
   "search_note_chars": 720,
   "safety_filter": false,
   "role": "pi4",
+  "rest": {
+    "enabled": true,
+    "hot_c": 75,
+    "cool_c": 68
+  },
   "rollback": {
     "model": "qwen2.5:0.5b",
     "pro_model": "qwen2.5:1.5b",

@@ -79,6 +79,20 @@ A pinned peer that is down returns `<name> offline`. A pinned weak peer returns 
 
 `OLLAMA_HOST` is one address. The Pro preload on pi4 dials `127.0.0.1:11434`. The pi4 row in `peers.json` dials `10.0.0.166` on port `11434`. `OLLAMA_HOST=0.0.0.0:11434` covers both. Port `11434` must never be published through Tailscale Funnel. Funnel for the chat port points only at `127.0.0.1:18080` and arrives with `Tailscale-Funnel-Request` and `X-Forwarded-For`. `install.sh` writes `PI_PAIR_HOST=0.0.0.0` and prints the same note.
 
+## Rest
+
+Pi 4 rest holds non-urgent background work while the board is hot. A chat still answers on the resident model. Flash is re-warmed as soon as `/api/ps` drops it. Pro stays resident (`keep_alive` -1). The watchdog, which checks every 120 seconds, does not reload Pro while the latch is hot, and the next tick tries again. A Pro chat still warms Pro immediately. Idle compaction waits too. `num_ctx`, `num_thread`, `num_batch`, `keep_alive`, `/health`, and the page do not change.
+
+`configs/runtime/inference_pi4.json`:
+
+```json
+"rest": { "enabled": true, "hot_c": 75, "cool_c": 68 }
+```
+
+The latch turns on at `hot_c` or above and off at `cool_c` or below. It reads the cached `thermal_zone0` sample and does not start another thread. A missing reading is not hot, so rest does not defer. A malformed `rest` block (missing fields, a non-boolean `enabled`, or `cool_c` not below `hot_c`) turns rest off.
+
+Kill switch: `PI_PAIR_REST=0` forces rest off without editing the file. Restart the pi-pair unit after the env change or a config edit. Rollback is that switch, or `"enabled": false` in the block. It is not the model `rollback` object in the same file.
+
 ## Failures
 
 | Situation | What the caller sees |

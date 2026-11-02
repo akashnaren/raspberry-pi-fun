@@ -1,8 +1,9 @@
 """Keep Flash and Pro resident. This does not pull either tag.
 
 Startup warms both. keep_alive stays the pi4 knob (-1 by default) on those
-warms. If Ollama drops a tag, the same warm runs again. A chat does not
-load a tag that /api/ps does not already list.
+warms. If Ollama drops a tag, the same warm runs again. Pro waits while the
+board is hot; Flash does not. A chat does not load a tag that /api/ps does
+not already list, and a user Pro warm is not deferred.
 """
 
 from __future__ import annotations
@@ -15,9 +16,11 @@ import urllib.parse
 import urllib.request
 
 from pair.core.config import ollama_base, on_pi4
+from pair.model.chat_once import warm_in_flight
 from pair.model.http_pool import open_json_request
 from pair.model.knobs import keep_alive, mode_limits
 from pair.model.modes import mode_table
+from pair.model.rest import defer_nonurgent
 
 PRELOAD_TIMEOUT_S = 180.0
 COLD_WAIT_S = 60.0
@@ -110,7 +113,7 @@ def wait_for_resident(
 
 
 def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
-    """Background /api/generate. The chat itself does not load the tag."""
+    """Background /api/generate for a user chat. Not deferred when the board is hot."""
     payload = pro_preload_payload(model)
 
     def run() -> None:
@@ -143,7 +146,7 @@ def _decode_idle() -> bool:
 
 
 def rewarm_pro_if_evicted() -> None:
-    """Reload Flash or Pro when /api/ps no longer lists that tag."""
+    """Reload a tag /api/ps dropped. Pro waits while rest says the board is hot."""
     if not on_pi4():
         return
     if not _decode_idle():
@@ -152,9 +155,14 @@ def rewarm_pro_if_evicted() -> None:
     resident = resident_models(host, port)
     if resident is None:
         return
-    for tag in resident_tags():
-        if tag and tag not in resident:
-            warm_model(tag)
+    flash, pro = resident_tags()
+    if flash and flash not in resident:
+        warm_model(flash)
+    if pro and pro not in resident:
+        if defer_nonurgent():
+            print("rest: deferred pro rewarm", flush=True)
+            return
+        warm_model(pro)
 
 
 def warm_model(model: str | None = None) -> None:
@@ -184,9 +192,16 @@ def warm_pro_model() -> None:
 
 
 def start_pro_warm() -> threading.Thread:
-    """Daemon preload so listen is not blocked on either tag."""
+    """Daemon preload so listen is not blocked on either tag.
+
+    The first eviction check waits until the startup warm finishes, so boot
+    does not load Flash or Pro a second time.
+    """
 
     def run() -> None:
+        pending = warm_in_flight()
+        if pending is not None:
+            pending.join()
         while True:
             try:
                 rewarm_pro_if_evicted()
