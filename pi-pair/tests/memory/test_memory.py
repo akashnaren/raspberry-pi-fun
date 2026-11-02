@@ -49,10 +49,12 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(first[0]["role"], "system")
         self.assertEqual(first[1], sample_turns()[0])
         content = first[-1]["content"]
-        self.assertTrue(content.startswith(facts))
+        self.assertTrue(content.startswith("Known facts about the user:\n- "))
+        self.assertIn(facts, content)
         self.assertIn("Summary:\nCanberra.", content)
         self.assertLess(content.index(facts), content.index("Summary:"))
-        self.assertTrue(content.endswith(turns[-1]["content"]))
+        self.assertLess(content.index("Summary:"), content.index("Question:"))
+        self.assertTrue(content.endswith("Question: " + turns[-1]["content"]))
 
 
 class CompactTests(unittest.TestCase):

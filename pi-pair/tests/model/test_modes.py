@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import tempfile
 import threading
 import time
@@ -16,7 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 from pair.core import runtime
-from pair.model.knobs import inference_knobs, mode_limits
+from pair.model.chat_once import warm_chat_model
+from pair.model.knobs import tuned_knobs
 from pair.model.modes import (
     FLASH_MODEL,
     PRO_MODEL,
@@ -26,6 +28,7 @@ from pair.model.modes import (
     resolve_mode,
     tag_ready,
 )
+from pair.model.preload import join_pro_warms
 from pair.routes import search as search_routes
 from pair.server import make_server
 from pair.turn.shape import EFFORT_HINT, warm_messages
@@ -48,6 +51,11 @@ class ModeOllama(BaseHTTPRequestHandler):
     block_chat = None
     ps_fail = False
     hold_load = False
+    warm_entered = threading.Event()
+    warm_done = threading.Event()
+    hold_release = threading.Event()
+    warm_aborted = False
+    slot = threading.Lock()
 
     def log_message(self, *args):
         pass
@@ -86,31 +94,39 @@ class ModeOllama(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if _is_warm(payload):
+            if type(self).hold_load:
+                _hold_warm(self, payload)
+                return
             _remember_load(payload)
             self._json(b"{}")
             return
-        gate = type(self).block_chat
-        if gate is not None:
-            gate["entered"].set()
-            gate["release"].wait(5)
-            gate["wrote"] = True
-        type(self).loaded = _after_chat(type(self).loaded, payload.get("model"))
-        if payload.get("stream"):
-            self.send_response(200)
-            self.send_header("content-type", "application/x-ndjson")
-            self.end_headers()
-            self.wfile.write(
-                json.dumps({"message": {"content": "hel"}, "done": False}).encode()
-                + b"\n"
-            )
-            self.wfile.write(
-                json.dumps(
-                    {"message": {"content": "lo from peer"}, "done": True}
-                ).encode()
-                + b"\n"
-            )
+        if not _acquire_chat(self):
             return
-        self._json(json.dumps({"message": {"content": "hello from peer"}}).encode())
+        try:
+            gate = type(self).block_chat
+            if gate is not None:
+                gate["entered"].set()
+                gate["release"].wait(5)
+                gate["wrote"] = True
+            type(self).loaded = _after_chat(type(self).loaded, payload.get("model"))
+            if payload.get("stream"):
+                self.send_response(200)
+                self.send_header("content-type", "application/x-ndjson")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"message": {"content": "hel"}, "done": False}).encode()
+                    + b"\n"
+                )
+                self.wfile.write(
+                    json.dumps(
+                        {"message": {"content": "lo from peer"}, "done": True}
+                    ).encode()
+                    + b"\n"
+                )
+                return
+            self._json(json.dumps({"message": {"content": "hello from peer"}}).encode())
+        finally:
+            type(self).slot.release()
 
     def _json(self, body: bytes) -> None:
         self.send_response(200)
@@ -128,7 +144,16 @@ def _after_chat(loaded, model):
     return kept
 
 
+def _release_held_warm() -> None:
+    """Unblock a warm that hold_load is still sitting on."""
+    if not ModeOllama.warm_entered.is_set():
+        return
+    ModeOllama.hold_release.set()
+    ModeOllama.warm_done.wait(1)
+
+
 def _reset_fake() -> None:
+    _release_held_warm()
     ModeOllama.tags = ["qwen3:0.6b", "qwen3:1.7b"]
     ModeOllama.loaded = ["qwen3:0.6b"]
     ModeOllama.calls = []
@@ -136,6 +161,10 @@ def _reset_fake() -> None:
     ModeOllama.block_chat = None
     ModeOllama.ps_fail = False
     ModeOllama.hold_load = False
+    ModeOllama.warm_aborted = False
+    ModeOllama.warm_entered.clear()
+    ModeOllama.warm_done.clear()
+    ModeOllama.hold_release.clear()
 
 
 def _posts(path: str) -> list[dict]:
@@ -155,19 +184,61 @@ def _remember_load(payload: dict) -> None:
         ModeOllama.loaded = [*ModeOllama.loaded, name]
 
 
-def _tuned_knobs(model: str) -> dict:
-    row = inference_knobs()
-    tuned = dict(row)
-    tuned.update(mode_limits(str(model or ""), row))
-    return tuned
-
-
 def _is_warm(payload: dict) -> bool:
     options = payload.get("options") or {}
     if options.get("num_predict") != 1:
         return False
     model = str(payload.get("model") or "")
-    return payload.get("messages") == warm_messages(_tuned_knobs(model))
+    return payload.get("messages") == warm_messages(tuned_knobs(model))
+
+
+def _acquire_chat(handler: ModeOllama) -> bool:
+    """One slot, like NUM_PARALLEL=1. A held warm has to let go first."""
+    if type(handler).slot.acquire(timeout=4):
+        return True
+    handler.send_response(503)
+    handler.end_headers()
+    return False
+
+
+def _hold_warm(handler: ModeOllama, payload: dict) -> None:
+    """Sit on the slot until the client closes or the test lets go."""
+    cls = type(handler)
+    slot = cls.slot
+    release = cls.hold_release
+    slot.acquire()
+    cls.warm_entered.set()
+    aborted = False
+    try:
+        sock = handler.connection
+        sock.settimeout(0.05)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not release.is_set():
+            try:
+                data = sock.recv(1, socket.MSG_PEEK)
+            except (BlockingIOError, TimeoutError, socket.timeout):
+                continue
+            except OSError:
+                aborted = True
+                break
+            if data == b"":
+                aborted = True
+                break
+    finally:
+        cls.warm_aborted = aborted
+        slot.release()
+        cls.warm_done.set()
+        try:
+            handler.connection.settimeout(None)
+        except OSError:
+            pass
+    if aborted:
+        return
+    _remember_load(payload)
+    try:
+        handler._json(b"{}")
+    except OSError:
+        pass
 
 
 def _warms() -> list[dict]:
@@ -247,6 +318,8 @@ class ModeHttp(unittest.TestCase):
         search_routes.lookup_web = _stub_search
 
     def tearDown(self):
+        join_pro_warms()
+        _release_held_warm()
         for httpd in self.servers:
             httpd.shutdown()
             httpd.server_close()
@@ -889,6 +962,41 @@ class ModeHttp(unittest.TestCase):
         self.assertNotIn("larger model", text.lower())
         self.assertNotIn("larger model", json.dumps(body).lower())
         self.assertEqual(_turns(), [])
+
+    def test_a_turn_does_not_wait_behind_a_held_warm(self):
+        port = self._boot()
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
+        ModeOllama.hold_load = True
+        ModeOllama.calls = []
+        peer = runtime.PEERS[0]
+        holder: dict = {}
+
+        def run() -> None:
+            holder["ok"] = warm_chat_model(peer, "qwen3:1.7b", timeout=30)
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        self.assertTrue(ModeOllama.warm_entered.wait(2))
+        started = time.perf_counter()
+        status, _headers, body = self._post(
+            port,
+            {
+                "mode": "pro",
+                "messages": [
+                    {"role": "user", "content": "novel pro during a held warm"}
+                ],
+            },
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        elapsed = time.perf_counter() - started
+        self.assertEqual(status, 200, body)
+        self.assertLess(elapsed, 2.0)
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertEqual(_turns()[0]["model"], "qwen3:1.7b")
+        self.assertTrue(ModeOllama.warm_aborted)
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(holder["ok"])
 
     def test_unknown_residency_does_not_drop_pro(self):
         port = self._boot()

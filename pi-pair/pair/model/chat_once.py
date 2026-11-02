@@ -7,16 +7,26 @@ import threading
 import urllib.request
 
 from pair.core import runtime
+from pair.core.cancel import Cancel
 from pair.core.config import on_pi4
 from pair.core.timing import from_ollama
 from pair.mesh.guard import may_generate, require_generative
 from pair.model.http_pool import open_json_request
-from pair.model.knobs import inference_knobs, keep_alive, mode_limits, ollama_options
+from pair.model.knobs import inference_knobs, keep_alive, ollama_options, tuned_knobs
 from pair.model.modes import FLASH, PRO, mode_table
 from pair.model.think import sample_knobs, split_ollama_message
 from pair.turn.shape import warm_messages
 
 _WARM_THREAD: threading.Thread | None = None
+_WARM_MU = threading.Lock()
+_WARM_CANCEL = Cancel()
+# A warm holds _WARM_HELD for its one POST. A turn never does: it only waits
+# until that warm drops, so two chats can overlap. Ollama still runs one
+# request when NUM_PARALLEL is 1; closing the warm is what frees it.
+_GUARD = threading.Condition()
+_TURNS = 0
+_WARM_HELD = False
+_TURN_DEPTH = threading.local()
 
 
 def open_json(url: str, payload: dict, timeout: float, cancel=None):
@@ -76,6 +86,96 @@ def llamacpp_model(peer, model: str) -> str:
     return model
 
 
+def close_warm() -> None:
+    """Close an in-flight warm so a user turn can use Ollama's one slot.
+
+    Shares _GUARD with hold_warm_slot so the token that function returns is
+    the one set here, not a fresh token installed in between.
+    """
+    global _WARM_CANCEL
+    with _GUARD:
+        with _WARM_MU:
+            current = _WARM_CANCEL
+            _WARM_CANCEL = Cancel()
+    current.set()
+
+
+def warm_token() -> Cancel:
+    """The cancel token the current warm is, or will be, attached to."""
+    with _WARM_MU:
+        return _WARM_CANCEL
+
+
+def turns_in_flight() -> int:
+    """User turns inside begin_turn, including ones still waiting on a warm."""
+    with _GUARD:
+        return _TURNS
+
+
+def warm_slot_busy() -> bool:
+    """True while a warm is inside its model POST."""
+    with _GUARD:
+        return _WARM_HELD
+
+
+def begin_turn() -> None:
+    """Close an in-flight warm and wait until it drops. Do not hold the slot.
+
+    Two chats both reach Ollama. A warm already in POST is best-effort: its
+    socket is closed and this returns after that warm's finally runs.
+    """
+    global _TURNS
+    depth = getattr(_TURN_DEPTH, "n", 0)
+    if depth == 0:
+        with _GUARD:
+            _TURNS += 1
+        try:
+            close_warm()
+            with _GUARD:
+                while _WARM_HELD:
+                    _GUARD.wait()
+        except BaseException:
+            with _GUARD:
+                _TURNS -= 1
+                _GUARD.notify_all()
+            raise
+    _TURN_DEPTH.n = depth + 1
+
+
+def end_turn() -> None:
+    global _TURNS
+    depth = getattr(_TURN_DEPTH, "n", 0)
+    if depth <= 0:
+        return
+    _TURN_DEPTH.n = depth - 1
+    if depth == 1:
+        with _GUARD:
+            _TURNS = max(0, _TURNS - 1)
+            _GUARD.notify_all()
+
+
+def hold_warm_slot() -> Cancel | None:
+    """Claim the slot and the token this warm must post with.
+
+    None when a user turn is in flight or another warm holds the slot.
+    The token is captured under the same lock as the claim, so a turn's
+    close_warm cannot swap in a fresh token this warm would miss.
+    """
+    global _WARM_HELD
+    with _GUARD:
+        if _TURNS or _WARM_HELD:
+            return None
+        _WARM_HELD = True
+        return warm_token()
+
+
+def drop_warm_slot() -> None:
+    global _WARM_HELD
+    with _GUARD:
+        _WARM_HELD = False
+        _GUARD.notify_all()
+
+
 def chat_ollama(
     peer,
     model,
@@ -114,29 +214,33 @@ def chat_ollama(
             meta["reasoning"] = "".join(thinking_parts).strip()
             meta["usage"] = taken
         return answer, model
-    knobs = inference_knobs()
-    url = f"http://{peer['host']}:{peer['port']}/api/chat"
-    top_p, top_k, penalty = sample_knobs(plan)
-    predict = int(plan.ollama_predict(max_tokens)) if plan else int(max_tokens)
-    payload = ollama_payload(
-        model,
-        messages,
-        temperature,
-        predict,
-        False,
-        knobs,
-        think=False,
-        top_p=top_p,
-        top_k=top_k,
-        presence_penalty=penalty,
-    )
-    out = _post_json(url, payload, timeout=180)
-    answer, thinking = split_ollama_message(out.get("message") or {})
-    if meta is not None:
-        meta["done_reason"] = str(out.get("done_reason") or "")
-        meta["reasoning"] = thinking
-        meta["usage"] = from_ollama(out)
-    return answer, model
+    begin_turn()
+    try:
+        knobs = inference_knobs()
+        url = f"http://{peer['host']}:{peer['port']}/api/chat"
+        top_p, top_k, penalty = sample_knobs(plan)
+        predict = int(plan.ollama_predict(max_tokens)) if plan else int(max_tokens)
+        payload = ollama_payload(
+            model,
+            messages,
+            temperature,
+            predict,
+            False,
+            knobs,
+            think=False,
+            top_p=top_p,
+            top_k=top_k,
+            presence_penalty=penalty,
+        )
+        out = _post_json(url, payload, timeout=180)
+        answer, thinking = split_ollama_message(out.get("message") or {})
+        if meta is not None:
+            meta["done_reason"] = str(out.get("done_reason") or "")
+            meta["reasoning"] = thinking
+            meta["usage"] = from_ollama(out)
+        return answer, model
+    finally:
+        end_turn()
 
 
 def chat_llamacpp(
@@ -179,42 +283,51 @@ def chat_llamacpp(
     return content, use
 
 
-def _tuned_knobs(model: str) -> dict:
-    """File knobs with this tag's context, threads, and batch."""
-    row = inference_knobs()
-    tuned = dict(row)
-    tuned.update(mode_limits(str(model or ""), row))
-    return tuned
-
-
-def warm_chat_model(peer: dict, model: str, timeout: float = 120) -> bool:
-    """Load one tag with keep_alive -1. A missing tag returns False and is not pulled."""
+def warm_chat_model(
+    peer: dict, model: str, timeout: float = 180, cancel: Cancel | None = None
+) -> bool:
+    """Load one tag with keep_alive -1. A user turn may close this request."""
     if not may_generate(peer) or not model:
         return False
-    knobs = _tuned_knobs(model)
-    url = f"http://{peer['host']}:{peer['port']}/api/chat"
-    payload = ollama_payload(model, warm_messages(knobs), 0.0, 1, False, knobs)
-    try:
-        with open_json(url, payload, timeout) as response:
-            response.read()
-        return True
-    except Exception:
+    token = warm_token() if cancel is None else cancel
+    if token.gone():
         return False
+    held = hold_warm_slot()
+    if held is None:
+        return False
+    try:
+        if token.gone() or held.gone():
+            return False
+        knobs = tuned_knobs(model)
+        url = f"http://{peer['host']}:{peer['port']}/api/chat"
+        payload = ollama_payload(model, warm_messages(knobs), 0.0, 1, False, knobs)
+        try:
+            with open_json(url, payload, timeout, cancel=token) as response:
+                response.read()
+            return not token.gone()
+        except Exception:
+            return False
+    finally:
+        drop_warm_slot()
 
 
-def warm_residents(peer: dict, timeout: float = 120) -> list[str]:
-    """Load Flash, then Pro if it is already on disk.
+def warm_residents(peer: dict, timeout: float = 180) -> list[str]:
+    """Load Flash, then Pro, when that tag is already on disk.
 
-    Pro is not pulled. A 404 or a down socket is skipped. Off a generative
-    peer this returns without a request.
+    A user turn closes the socket and the rest of this pass is skipped.
     """
     if not may_generate(peer):
         return []
     table = mode_table()
     loaded: list[str] = []
+    cancel = warm_token()
     for name in (table[FLASH], table[PRO]):
-        if name and warm_chat_model(peer, name, timeout=timeout):
+        if not name or cancel.gone() or warm_slot_busy() or turns_in_flight():
+            break
+        if warm_chat_model(peer, name, timeout=timeout, cancel=cancel):
             loaded.append(name)
+        if cancel.gone() or warm_slot_busy() or turns_in_flight():
+            break
     return loaded
 
 

@@ -1535,8 +1535,9 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(messages[0]["role"], "system")
         self.assertTrue(messages[0]["content"].startswith("You are OpenPi"))
         self.assertEqual(messages[-1]["role"], "user")
-        self.assertTrue(messages[-1]["content"].endswith("\n\n" + prompt))
-        notes = messages[-1]["content"][: -(len(prompt) + 2)]
+        suffix = "\n\nQuestion: " + prompt
+        self.assertTrue(messages[-1]["content"].endswith(suffix))
+        notes = messages[-1]["content"][: -len(suffix)]
         self.assertFalse(notes.startswith("Notes:"))
         self.assertNotIn("Web search notes", notes)
         self.assertNotIn("<search>", notes)

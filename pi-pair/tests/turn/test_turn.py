@@ -19,8 +19,15 @@ from unittest.mock import patch
 from pair import server as pair_server
 from pair.core import runtime
 from pair.core.errors import GENERIC, TIMEOUT, UNREACHABLE
-from pair.model.chat_once import start_model_warm, warm_chat_model, warm_residents
-from pair.model.knobs import inference_knobs, mode_limits
+from pair.model.chat_once import (
+    chat_ollama,
+    close_warm,
+    start_model_warm,
+    warm_chat_model,
+    warm_residents,
+    warm_token,
+)
+from pair.model.knobs import inference_knobs, mode_limits, tuned_knobs
 from pair.model.modes import FLASH_MODEL, PRO_MODEL
 from pair.routes import reply as reply_routes
 from pair.routes import search as search_routes
@@ -230,7 +237,8 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(rows[-1]["role"], "user")
         self.assertTrue(content.startswith("Notes:"))
         self.assertIn("Canberra", content)
-        self.assertTrue(content.endswith(prompt))
+        self.assertLess(content.index("Notes:"), content.index("Question:"))
+        self.assertTrue(content.endswith("Question: " + prompt))
 
     def test_a_1200_token_input_is_kept_at_1536(self):
         body = "ab" * 1200
@@ -245,8 +253,10 @@ class TurnShape(unittest.TestCase):
                 [{"role": "user", "content": prompt}], prompt, effort=name
             )
             self.assertEqual(rows[0]["content"], PERSONA, name)
-            self.assertTrue(rows[-1]["content"].startswith(sentence), name)
-            self.assertTrue(rows[-1]["content"].endswith(prompt), name)
+            text = rows[-1]["content"]
+            self.assertTrue(text.startswith("Notes:\n" + sentence), name)
+            self.assertLess(text.index(sentence), text.index("Question:"), name)
+            self.assertTrue(text.endswith("Question: " + prompt), name)
             self.assertEqual(rows[-1]["role"], "user")
         chart = shape_messages(
             [{"role": "user", "content": "plot a bar chart of the picnic"}],
@@ -254,8 +264,12 @@ class TurnShape(unittest.TestCase):
             effort="high",
         )
         self.assertEqual(chart[0]["content"], PERSONA)
-        self.assertTrue(chart[-1]["content"].startswith(EFFORT_HINT["high"]))
-        self.assertTrue(chart[-1]["content"].endswith("plot a bar chart of the picnic"))
+        self.assertTrue(
+            chart[-1]["content"].startswith("Notes:\n" + EFFORT_HINT["high"])
+        )
+        self.assertTrue(
+            chart[-1]["content"].endswith("Question: plot a bar chart of the picnic")
+        )
         self.assertIn("```plot", "\n".join(row["content"] for row in chart))
 
 
@@ -291,10 +305,10 @@ class ModelWarm(unittest.TestCase):
         self.assertFalse(flash["stream"])
         self.assertEqual(flash["options"]["num_predict"], 1)
         self.assertEqual(
-            inspect.signature(warm_chat_model).parameters["timeout"].default, 120
+            inspect.signature(warm_chat_model).parameters["timeout"].default, 180
         )
         self.assertEqual(
-            inspect.signature(warm_residents).parameters["timeout"].default, 120
+            inspect.signature(warm_residents).parameters["timeout"].default, 180
         )
         row = inference_knobs()
         knobs = dict(row)
@@ -322,6 +336,80 @@ class ModelWarm(unittest.TestCase):
         warm_src = inspect.getsource(start_model_warm)
         self.assertNotIn("after.join", warm_src)
         self.assertNotIn("embed", warm_src)
+
+    def test_a_turn_skips_the_rest_of_the_startup_warm(self):
+        seen = []
+
+        def urlopen(request, timeout=None):
+            del timeout
+            payload = json.loads(request.data.decode())
+            seen.append(payload.get("model"))
+            if payload.get("model") == FLASH_MODEL:
+                close_warm()
+                raise TimeoutError("closed")
+            return _Body(json.dumps({"message": {"content": "ok"}}).encode())
+
+        peer = {
+            "name": "pi4",
+            "host": "127.0.0.1",
+            "port": 9,
+            "kind": "ollama",
+            "generative": True,
+            "role": "brain",
+        }
+        token = warm_token()
+        with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
+            loaded = warm_residents(peer, timeout=1)
+        self.assertEqual(seen, [FLASH_MODEL])
+        self.assertEqual(loaded, [])
+        self.assertTrue(token.gone())
+        self.assertFalse(warm_token().gone())
+
+    def test_a_timed_out_warm_does_not_block_the_next_turn(self):
+        calls = []
+
+        def urlopen(request, timeout=None):
+            del timeout
+            payload = json.loads(request.data.decode())
+            calls.append(payload.get("model"))
+            if len(calls) == 1:
+                raise TimeoutError("timed out")
+            return _Body(json.dumps({"message": {"content": "ok"}}).encode())
+
+        peer = {
+            "name": "pi4",
+            "host": "127.0.0.1",
+            "port": 9,
+            "kind": "ollama",
+            "generative": True,
+            "role": "brain",
+        }
+        with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
+            self.assertFalse(warm_chat_model(peer, PRO_MODEL, timeout=180))
+            self.assertFalse(warm_token().gone())
+            answer, used = chat_ollama(
+                peer,
+                FLASH_MODEL,
+                [{"role": "user", "content": "after the warm"}],
+            )
+        self.assertEqual(answer, "ok")
+        self.assertEqual(used, FLASH_MODEL)
+        self.assertEqual(calls, [PRO_MODEL, FLASH_MODEL])
+
+    def test_routes_share_tuned_knobs(self):
+        from pair.model import chat_once, preload
+        from pair.routes import chat as chat_routes
+
+        self.assertIs(chat_routes._tuned_knobs, tuned_knobs)
+        self.assertFalse(hasattr(chat_once, "_tuned_knobs"))
+        self.assertFalse(hasattr(preload, "_tuned_knobs"))
+        self.assertEqual(tuned_knobs(FLASH_MODEL)["num_ctx"], 2048)
+        self.assertEqual(
+            tuned_knobs(PRO_MODEL)["num_batch"], tuned_knobs(FLASH_MODEL)["num_batch"]
+        )
+        self.assertEqual(
+            tuned_knobs(PRO_MODEL)["num_thread"], mode_limits(PRO_MODEL)["num_thread"]
+        )
 
 
 class _Body:

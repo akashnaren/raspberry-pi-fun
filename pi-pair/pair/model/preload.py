@@ -15,10 +15,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from pair.core.cancel import ClientGone
 from pair.core.config import ollama_base, on_pi4
-from pair.model.chat_once import ollama_payload, warm_in_flight
+from pair.model.chat_once import (
+    close_warm,
+    drop_warm_slot,
+    hold_warm_slot,
+    ollama_payload,
+    open_json,
+    turns_in_flight,
+    warm_in_flight,
+    warm_slot_busy,
+)
 from pair.model.http_pool import open_json_request
-from pair.model.knobs import inference_knobs, mode_limits
+from pair.model.knobs import tuned_knobs
 from pair.model.modes import PRO_MODEL, mode_table
 from pair.model.rest import defer_nonurgent
 from pair.turn.shape import warm_messages
@@ -28,6 +38,9 @@ COLD_WAIT_S = 60.0
 COLD_POLL_S = 0.05
 RESIDENT_TIMEOUT_S = 0.6
 REWARM_PAUSE_S = 120.0
+_SCHEDULED_MU = threading.Lock()
+_SCHEDULED: list[threading.Thread] = []
+_WARM_EPOCH = 0
 
 
 def resident_tags() -> tuple[str, str]:
@@ -38,14 +51,6 @@ def resident_tags() -> tuple[str, str]:
     return flash, pro
 
 
-def _tuned_knobs(tag: str) -> dict:
-    """File knobs with this tag's context, threads, and batch."""
-    row = inference_knobs()
-    tuned = dict(row)
-    tuned.update(mode_limits(str(tag or ""), row))
-    return tuned
-
-
 def pro_preload_payload(model: str | None = None) -> dict:
     """One-token /api/chat that leaves this tag resident. keep_alive is never 0."""
     tag = (model or "").strip()
@@ -53,7 +58,7 @@ def pro_preload_payload(model: str | None = None) -> dict:
         _flash, tag = resident_tags()
     if not tag:
         tag = PRO_MODEL
-    knobs = _tuned_knobs(tag)
+    knobs = tuned_knobs(tag)
     payload = ollama_payload(tag, warm_messages(knobs), 0.0, 1, False, knobs)
     if payload.get("keep_alive") == 0:
         payload["keep_alive"] = -1
@@ -104,23 +109,99 @@ def wait_for_resident(
     return False
 
 
+def _warm_epoch() -> int:
+    with _SCHEDULED_MU:
+        return _WARM_EPOCH
+
+
+def _turn_busy() -> bool:
+    return (not _decode_idle()) or warm_slot_busy() or turns_in_flight() > 0
+
+
+def _wait_out_the_turn(epoch: int) -> bool:
+    """True when this warm should still post.
+
+    Idle for the grace window means nobody took the model, so post. A chat
+    that arrives during the grace runs first. A newer epoch means the warm
+    was dropped and must not post.
+    """
+    grace = time.monotonic() + 0.5
+    overlapped = False
+    while time.monotonic() < grace:
+        if _warm_epoch() != epoch:
+            return False
+        if _turn_busy():
+            overlapped = True
+            break
+        time.sleep(0.01)
+    if not overlapped:
+        return _warm_epoch() == epoch
+    deadline = time.monotonic() + PRELOAD_TIMEOUT_S
+    while time.monotonic() < deadline and _turn_busy():
+        if _warm_epoch() != epoch:
+            return False
+        time.sleep(0.02)
+    return _warm_epoch() == epoch
+
+
+def join_pro_warms(timeout: float = 2.0) -> None:
+    """Stop scheduled Pro warms and wait until those threads leave."""
+    global _WARM_EPOCH
+    with _SCHEDULED_MU:
+        _WARM_EPOCH += 1
+        threads = [item for item in _SCHEDULED if item.is_alive()]
+    close_warm()
+    for thread in threads:
+        thread.join(timeout)
+    with _SCHEDULED_MU:
+        _SCHEDULED[:] = [item for item in _SCHEDULED if item.is_alive()]
+
+
 def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
-    """Background /api/chat warm for a user chat. Not deferred when the board is hot."""
+    """Background /api/chat warm for a user chat. Not deferred when the board is hot.
+
+    The chat that scheduled it runs first. A later turn may close this request.
+    """
     payload = pro_preload_payload(model)
+    url = f"http://{host}:{int(port)}/api/chat"
 
-    def run() -> None:
-        request = urllib.request.Request(
-            f"http://{host}:{int(port)}/api/chat",
-            data=json.dumps(payload).encode(),
-            headers={"content-type": "application/json"},
-        )
+    def run(epoch: int) -> None:
+        if not _wait_out_the_turn(epoch):
+            return
+        token = None
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if _warm_epoch() != epoch:
+                return
+            token = hold_warm_slot()
+            if token is not None:
+                break
+            time.sleep(0.02)
+        if token is None:
+            return
         try:
-            with urllib.request.urlopen(request, timeout=PRELOAD_TIMEOUT_S) as response:
-                response.read()
-        except Exception as exc:
-            print(f"pro preload skipped: {exc}", flush=True)
+            if token.gone() or _warm_epoch() != epoch:
+                return
+            try:
+                with open_json(
+                    url, payload, PRELOAD_TIMEOUT_S, cancel=token
+                ) as response:
+                    response.read()
+            except ClientGone:
+                return
+            except Exception as exc:
+                print(f"pro preload skipped: {exc}", flush=True)
+        finally:
+            drop_warm_slot()
 
-    threading.Thread(target=run, name="pro-rewarm", daemon=True).start()
+    with _SCHEDULED_MU:
+        epoch = _WARM_EPOCH
+        _SCHEDULED[:] = [item for item in _SCHEDULED if item.is_alive()]
+        thread = threading.Thread(
+            target=run, args=(epoch,), name="pro-rewarm", daemon=True
+        )
+        _SCHEDULED.append(thread)
+    thread.start()
 
 
 def _local_endpoint() -> tuple[str, int]:
@@ -164,17 +245,33 @@ def warm_model(model: str | None = None) -> None:
     payload = pro_preload_payload(model)
     if not payload.get("model") or payload.get("keep_alive") == 0:
         return
+    if warm_slot_busy():
+        return
+    token = hold_warm_slot()
+    if token is None:
+        return
     request = urllib.request.Request(
         ollama_base().rstrip("/") + "/api/chat",
         data=json.dumps(payload).encode(),
         headers={"content-type": "application/json"},
     )
     try:
-        with open_json_request(request, PRELOAD_TIMEOUT_S) as response:
-            response.read()
-        print(f"model preload: {payload['model']}", flush=True)
-    except Exception as exc:
-        print(f"model preload skipped: {exc}", flush=True)
+        if token.gone():
+            return
+        try:
+            with open_json_request(
+                request, PRELOAD_TIMEOUT_S, cancel=token
+            ) as response:
+                response.read()
+        except ClientGone:
+            return
+        except Exception as exc:
+            print(f"model preload skipped: {exc}", flush=True)
+            return
+        if not token.gone():
+            print(f"model preload: {payload['model']}", flush=True)
+    finally:
+        drop_warm_slot()
 
 
 def warm_pro_model() -> None:

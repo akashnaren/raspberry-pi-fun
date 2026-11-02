@@ -85,6 +85,8 @@ EFFORT_HINT = {
     "medium": "Give a moderate amount of detail.",
     "high": "Give a longer step-by-step answer. Thinking mode stays off.",
 }
+FACTS_LABEL = "Known facts about the user:"
+QUESTION_LABEL = "Question:"
 
 FLOW_HINT = (
     "The user wants a flowchart or diagram. Reply with one ```mermaid fence and at most one short sentence. "
@@ -579,29 +581,59 @@ def shape_messages(
     )
 
 
-def fold_system_rows(
-    rows: list, *, own_count: int = 0, folded_tail: bool = False
-) -> list:
-    """Ollama merges every system row into one block at the top.
+def _labeled_note(text: str, *, tail: bool) -> str:
+    """Facts, summary, and the tail note, each with a stable header."""
+    body = text.strip()
+    if not body:
+        return ""
+    if tail:
+        if (
+            body.startswith("Notes:")
+            or GROUNDED_RULE in body
+            or NO_RESULTS_RULE in body
+        ):
+            return body
+        return "Notes:\n" + body
+    if body.startswith("Summary:"):
+        return body
+    if body.startswith(FACTS_LABEL):
+        return body
+    lines = []
+    for line in body.splitlines():
+        item = line.strip()
+        if not item:
+            continue
+        lines.append(item if item.startswith("- ") else "- " + item)
+    if not lines:
+        return ""
+    return FACTS_LABEL + "\n" + "\n".join(lines)
 
-    Extra rows there invalidate the cached sample turns.
-    """
-    if not rows:
-        return rows
-    last_user = -1
+
+def _labeled_question(text: str) -> str:
+    if text.startswith(QUESTION_LABEL):
+        return text
+    return QUESTION_LABEL + " " + text
+
+
+def _last_user(rows: list) -> int:
     for index in range(len(rows) - 1, -1, -1):
         row = rows[index]
         if isinstance(row, dict) and row.get("role") == "user":
-            last_user = index
-            break
-    if last_user < 0:
-        return rows
+            return index
+    return -1
+
+
+def _own_rows(
+    rows: list, last_user: int, own_count: int, folded_tail: bool
+) -> tuple[set[int], int]:
+    """Facts and summary stay in front. The tail note sits before the question."""
     own: set[int] = set()
     limit = min(len(rows), 1 + max(0, own_count))
     for index in range(1, limit):
         row = rows[index]
         if isinstance(row, dict) and row.get("role") == "system":
             own.add(index)
+    tail_at = -1
     if folded_tail and last_user > 0:
         tail_at = last_user - 1
         tail_row = rows[tail_at]
@@ -611,7 +643,23 @@ def fold_system_rows(
             and tail_row.get("role") == "system"
         ):
             own.add(tail_at)
-    notes: list[str] = []
+    return own, tail_at
+
+
+def fold_system_rows(
+    rows: list, *, own_count: int = 0, folded_tail: bool = False
+) -> list:
+    """Ollama merges every system row into one block at the top.
+
+    Extra rows there invalidate the cached sample turns.
+    """
+    if not rows:
+        return rows
+    last_user = _last_user(rows)
+    if last_user < 0:
+        return rows
+    own, tail_at = _own_rows(rows, last_user, own_count, folded_tail)
+    notes: list[tuple[str, bool]] = []
     callers: list[str] = []
     for index, row in enumerate(rows):
         if index == 0 or not isinstance(row, dict) or row.get("role") != "system":
@@ -620,7 +668,7 @@ def fold_system_rows(
         if not text.strip():
             continue
         if index in own:
-            notes.append(text)
+            notes.append((text, index == tail_at))
         else:
             callers.append(text)
     if not notes and not callers:
@@ -639,8 +687,13 @@ def fold_system_rows(
                 "\n\n".join([base, *callers]) if base else "\n\n".join(callers)
             )
         if index == last_user and notes:
-            question = str(copied.get("content") or "")
-            copied["content"] = "\n\n".join([*notes, question])
+            blocks = []
+            for text, is_tail in notes:
+                block = _labeled_note(text, tail=is_tail)
+                if block:
+                    blocks.append(block)
+            question = _labeled_question(str(copied.get("content") or ""))
+            copied["content"] = "\n\n".join([*blocks, question])
         folded.append(copied)
     return folded
 

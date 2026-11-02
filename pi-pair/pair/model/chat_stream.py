@@ -8,7 +8,13 @@ import time
 from pair.core.cancel import ClientGone
 from pair.core.timing import from_ollama
 from pair.mesh.guard import require_generative
-from pair.model.chat_once import llamacpp_model, ollama_payload, open_json
+from pair.model.chat_once import (
+    begin_turn,
+    end_turn,
+    llamacpp_model,
+    ollama_payload,
+    open_json,
+)
 from pair.model.knobs import inference_knobs
 from pair.model.think import (
     clip_reasoning,
@@ -194,52 +200,60 @@ def iter_ollama_channels(
     # The thinking call itself is bounded. After the first answer token the
     # socket may stay open for the rest of that reply.
     first_timeout = seconds if think and seconds else 180
+    begin_turn()
     try:
-        with open_json(url, payload, timeout=first_timeout, cancel=cancel) as response:
-            for line in _read_ndjson(response, cancel):
-                content, thinking, done, skip, reason, frame_usage = ollama_parts(line)
-                if skip:
-                    continue
-                _keep_usage(usage, frame_usage)
-                if done and usage is not None:
-                    usage["done_reason"] = reason
-                now = time.monotonic()
-                if thinking and not capped:
-                    merged = accumulated + thinking
-                    if budget and stop_thinking(
-                        reasoning_tokens(merged), started, now, budget, seconds
-                    ):
-                        kept = clip_reasoning(merged, budget)
-                        piece = (
-                            kept[len(accumulated) :]
-                            if kept.startswith(accumulated)
-                            else ""
-                        )
-                        if piece:
-                            yield "thinking", piece
-                        accumulated = kept
-                        capped = True
-                    else:
-                        accumulated = merged
-                        yield "thinking", thinking
-                if (
-                    not capped
-                    and not saw_content
-                    and budget
-                    and stop_thinking(
-                        reasoning_tokens(accumulated), started, now, budget, seconds
+        try:
+            with open_json(
+                url, payload, timeout=first_timeout, cancel=cancel
+            ) as response:
+                for line in _read_ndjson(response, cancel):
+                    content, thinking, done, skip, reason, frame_usage = ollama_parts(
+                        line
                     )
-                ):
-                    capped = True
-                if content:
-                    content_parts.append(content)
-                    if peel_think("".join(content_parts))[0].strip():
-                        saw_content = True
-                    yield "content", content
-                if done or (capped and not saw_content):
-                    break
-    except TimeoutError:
-        return
+                    if skip:
+                        continue
+                    _keep_usage(usage, frame_usage)
+                    if done and usage is not None:
+                        usage["done_reason"] = reason
+                    now = time.monotonic()
+                    if thinking and not capped:
+                        merged = accumulated + thinking
+                        if budget and stop_thinking(
+                            reasoning_tokens(merged), started, now, budget, seconds
+                        ):
+                            kept = clip_reasoning(merged, budget)
+                            piece = (
+                                kept[len(accumulated) :]
+                                if kept.startswith(accumulated)
+                                else ""
+                            )
+                            if piece:
+                                yield "thinking", piece
+                            accumulated = kept
+                            capped = True
+                        else:
+                            accumulated = merged
+                            yield "thinking", thinking
+                    if (
+                        not capped
+                        and not saw_content
+                        and budget
+                        and stop_thinking(
+                            reasoning_tokens(accumulated), started, now, budget, seconds
+                        )
+                    ):
+                        capped = True
+                    if content:
+                        content_parts.append(content)
+                        if peel_think("".join(content_parts))[0].strip():
+                            saw_content = True
+                        yield "content", content
+                    if done or (capped and not saw_content):
+                        break
+        except TimeoutError:
+            return
+    finally:
+        end_turn()
 
 
 def stream_ollama(

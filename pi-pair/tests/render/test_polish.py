@@ -139,8 +139,8 @@ class Preload(unittest.TestCase):
             def __exit__(self, *args):
                 return False
 
-        def opener(request, timeout):
-            del timeout
+        def opener(request, timeout, cancel=None):
+            del timeout, cancel
             seen.append(json.loads(request.data.decode()))
             return _Resp()
 

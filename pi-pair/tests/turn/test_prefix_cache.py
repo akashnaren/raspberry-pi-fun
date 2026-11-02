@@ -9,9 +9,11 @@ from pair.model.modes import FLASH_MODEL, PRO_MODEL
 from pair.turn.calc import notes_for
 from pair.turn.shape import (
     EFFORT_HINT,
+    FACTS_LABEL,
     FLOW_HINT,
     GROUNDED_RULE,
     NO_RESULTS_RULE,
+    QUESTION_LABEL,
     fold_system_rows,
     persona_text,
     sample_turns,
@@ -135,11 +137,26 @@ class PrefixCache(unittest.TestCase):
                 if name == "search-empty":
                     self.assertIn(NO_RESULTS_RULE, rows[-1]["content"])
                     self.assertNotIn(NO_RESULTS_RULE, rows[0]["content"])
+                if name == "facts":
+                    self.assertTrue(
+                        rows[-1]["content"].startswith(FACTS_LABEL + "\n- "),
+                        f"{tag} {name}",
+                    )
+                    self.assertNotIn(FACTS_LABEL, rows[0]["content"])
                 if name == "calc":
                     self.assertIn("Calculator:", rows[-1]["content"])
                 if name.startswith("effort-"):
                     level = name.split("-", 1)[1]
-                    self.assertTrue(rows[-1]["content"].startswith(EFFORT_HINT[level]))
+                    text = rows[-1]["content"]
+                    self.assertLess(
+                        text.index(EFFORT_HINT[level]),
+                        text.index(QUESTION_LABEL),
+                        f"{tag} {name}",
+                    )
+                    self.assertTrue(
+                        text.endswith(QUESTION_LABEL + " Where is the hall bench?"),
+                        f"{tag} {name}",
+                    )
             warm = warm_messages(knobs)
             self.assertEqual(warm[1:-1], samples, tag)
             self.assertEqual(warm[-1], {"role": "user", "content": "ok"})
@@ -170,8 +187,12 @@ class PrefixCache(unittest.TestCase):
             self.assertEqual(len(systems), 1)
             self.assertEqual(shaped[0]["content"], persona_text(knobs) + "\n\n" + sys)
             self.assertNotIn(sys, shaped[-1]["content"])
-            self.assertTrue(shaped[-1]["content"].startswith(facts))
-            self.assertTrue(shaped[-1]["content"].endswith(question))
+            self.assertNotIn(FACTS_LABEL, shaped[0]["content"])
+            self.assertTrue(shaped[-1]["content"].startswith(FACTS_LABEL + "\n- "))
+            self.assertIn(facts, shaped[-1]["content"])
+            self.assertTrue(
+                shaped[-1]["content"].endswith(QUESTION_LABEL + " " + question)
+            )
             self.assertEqual(shaped[1 : 1 + len(sample_turns())], sample_turns())
 
     def test_no_user_row_keeps_the_notes(self) -> None:
@@ -208,13 +229,23 @@ class PrefixCache(unittest.TestCase):
             summary=summary,
         )
         content = rows[-1]["content"]
-        self.assertEqual(
-            content, "\n\n".join([facts, "Summary:\n" + summary, tail, question])
+        labeled = "\n\n".join(
+            [
+                FACTS_LABEL + "\n- " + facts,
+                "Summary:\n" + summary,
+                "Notes:\n" + tail,
+                QUESTION_LABEL + " " + question,
+            ]
         )
-        self.assertLess(content.index(facts), content.index("Summary:"))
-        self.assertLess(content.index("Summary:"), content.index(tail))
-        self.assertTrue(content.endswith(question))
+        self.assertEqual(FACTS_LABEL, "Known facts about the user:")
+        self.assertEqual(QUESTION_LABEL, "Question:")
+        self.assertEqual(content, labeled)
+        self.assertLess(content.index(FACTS_LABEL), content.index("Summary:"))
+        self.assertLess(content.index("Summary:"), content.index("Notes:"))
+        self.assertLess(content.index("Notes:"), content.index(QUESTION_LABEL))
+        self.assertTrue(content.endswith(QUESTION_LABEL + " " + question))
         self.assertEqual([row for row in rows if row["role"] == "system"], [rows[0]])
+        self.assertEqual(rows[1 : 1 + len(sample_turns())], sample_turns())
 
 
 if __name__ == "__main__":

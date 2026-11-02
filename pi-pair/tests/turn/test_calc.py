@@ -56,7 +56,8 @@ class CalculatorNotes(unittest.TestCase):
         self.assertEqual(rows[-1]["role"], "user")
         self.assertTrue(content.startswith("Notes:"))
         self.assertIn("Calculator: 847*23 = 19481", content)
-        self.assertTrue(content.endswith(prompt))
+        self.assertLess(content.index("Calculator:"), content.index("Question:"))
+        self.assertTrue(content.endswith("Question: " + prompt))
 
 
 if __name__ == "__main__":

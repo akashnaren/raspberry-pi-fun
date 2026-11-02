@@ -13,7 +13,8 @@ from pair.ingest.docfit import fit_outbound
 from pair.mesh.guard import may_generate, weak_brain_error
 from pair.mesh.peers import pick
 from pair.model.chat_once import llamacpp_model
-from pair.model.knobs import decode_effort, inference_knobs, mode_limits
+from pair.model.knobs import decode_effort
+from pair.model.knobs import tuned_knobs as _tuned_knobs
 from pair.model.modes import (
     mode_table,
     pull_needed,
@@ -73,14 +74,6 @@ def _block(text: str) -> str:
     """Replacement from `moderate`, or empty when that span is allowed."""
     verdict = moderate(text or "")
     return verdict.replacement if verdict.refused else ""
-
-
-def _tuned_knobs(model: str) -> dict:
-    """File knobs with this mode's context, threads, and batch."""
-    row = inference_knobs()
-    tuned = dict(row)
-    tuned.update(mode_limits(str(model or ""), row))
-    return tuned
 
 
 def _prompt_note(search_note) -> str:

@@ -87,8 +87,8 @@ class RestRewarm(unittest.TestCase):
         seen: list[dict] = []
         urls: list[str] = []
 
-        def opener(request, timeout):
-            del timeout
+        def opener(request, timeout, cancel=None):
+            del timeout, cancel
             urls.append(str(request.full_url))
             seen.append(json.loads(request.data.decode()))
             return _Resp()
