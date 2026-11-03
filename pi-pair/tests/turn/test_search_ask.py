@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from pair.turn.search_ask import CUES, explicit_search, search_query, web_search_request
-from pair.turn.shape import ATTACH_MARK, GROUNDED_RULE
+from pair.turn.search_ask import CUES, explicit_search, web_search_request
+from pair.turn.shape import ATTACH_MARK
 
 _MATCH = (
     "Who is Natan Weitzman from Tesla - use your tools web search",
@@ -90,57 +90,10 @@ class SearchAsk(unittest.TestCase):
         asked = f"look up this note{ATTACH_MARK}{'A' * 90}"
         self.assertTrue(explicit_search(asked))
 
-    def test_person_lookups_search_and_generic_who_questions_do_not(self):
-        bug = "Hello who is sid nair etched"
-        for prompt in (
-            bug,
-            "hello who is sid nair etched",
-            "HELLO WHO IS SID NAIR ETCHED",
-            "Hello, who is sid nair etched",
-            "Hi who is Sid Nair",
-            "hey who's Sid Nair",
-            "who’s Sid Nair",
-            "who is sid nair etched",
-            "who's Sid Nair",
-            "Who is Sid Nair at Etched?",
-            "who is Etched",
-            f"{bug}{ATTACH_MARK}{'A' * 90}",
-        ):
-            self.assertTrue(explicit_search(prompt), prompt)
-        for prompt in (
-            "who is better",
-            "Hello who is better",
-            "Hello who is the best",
-            "Who is better, Sid or Natan?",
-            "who's better",
-            "who is the best",
-            "who is the best engineer",
-            "who's the best",
-            "who are you",
-            "Who are you?",
-            "who am I",
-            "who is it",
-            "who is this",
-            "who is going to win",
-            "who is responsible for the launch",
-            "what is sid nair etched",
-            "tell me who is sid nair",
-            "Hello, how are you?",
-            "hi",
-            f"what does this say{ATTACH_MARK}who is sid nair etched " + ("A" * 80),
-        ):
-            self.assertFalse(explicit_search(prompt), prompt)
-
-    def test_person_query_keeps_every_name_and_org_token(self):
-        query = search_query("Hello who is sid nair etched")
-        self.assertEqual(query, "sid nair etched")
-        self.assertIn("etched", query)
-        self.assertEqual(search_query("Who is Sid Nair at Etched?"), "Sid Nair Etched")
-        full = "Who is Natan Weitzman from Tesla - use your tools web search"
-        self.assertEqual(search_query(full), full)
-        self.assertEqual(
-            search_query("who is better, cats or dogs"),
-            "who is better, cats or dogs",
-        )
-        self.assertIn("organization or context", GROUNDED_RULE)
-        self.assertIn("If no result matches it, say so.", GROUNDED_RULE)
+    def test_who_is_name_searches_unless_it_is_not_a_person(self):
+        self.assertTrue(explicit_search("who is Sid Nair"))
+        self.assertFalse(explicit_search("who is my mom"))
+        self.assertFalse(explicit_search("who is in the meeting"))
+        prior = "Priya is my sister and she lives in Austin."
+        self.assertFalse(explicit_search("who is Priya", prior))
+        self.assertTrue(explicit_search("who is Priya"))

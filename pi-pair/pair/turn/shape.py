@@ -24,6 +24,7 @@ CHARS_PER_TOKEN = 3.2
 PERSONA = (
     "You are OpenPi on a Raspberry Pi. You are not the user. "
     "Answer with the useful part only. "
+    "Reply in the same language the user writes in. "
     "Use attached notes when they are present. "
     "Any chart or graph, in any library, is a plot fence with a markdown table. "
     "Arithmetic is a calc fence. "
@@ -31,10 +32,7 @@ PERSONA = (
     "Never quote them. A question is plain text. "
     "A file fence contains the full document. "
     "Downloadable files are pdf, docx, xlsx, md, txt, or csv. "
-    "For another file type, say so in one sentence and offer one of those. "
-    "If you do not know a person or name the user asks about "
-    "(not yourself, and not a fact they already told you), "
-    "say so in one sentence and suggest a web search."
+    "For another file type, say so in one sentence and offer one of those."
 )
 
 
@@ -224,11 +222,9 @@ def structure_hint(prompt: str) -> str | None:
 
 GROUNDED_RULE = (
     "Answer the user from these results, in your own words and in the format they asked for. "
-    "Put the site name in parentheses after a fact you took from it. "
-    "Prefer results that match the organization or context the user gave. "
-    "If no result matches it, say so. "
-    "If the results do not answer the question, say the search did not find it. "
-    "Never guess a name, job title, role, date, or number."
+    "Put the site name in parentheses after a fact you took from it. If the results do not "
+    "answer the question, say the search did not find it. Never guess a name, job title, "
+    "role, date, or number."
 )
 NO_RESULTS_RULE = (
     "The web search found nothing useful. Tell the user in one sentence that you could not "
@@ -398,7 +394,6 @@ def tail_note(effort: str = "", notes: str = "", hints: str = "") -> str:
             note.startswith("Notes:")
             or GROUNDED_RULE in note
             or NO_RESULTS_RULE in note
-            or "Use only this." in note
         ):
             parts.append(note)
         else:

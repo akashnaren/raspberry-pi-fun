@@ -29,13 +29,14 @@ from pair.routes.public_api import stamp
 from pair.routes.status import _claim_wait, listed_chat_models, mode_fields
 from pair.turn.abilities import tail_hints
 from pair.turn.moderate import moderate
-from pair.turn.search_ask import explicit_search, search_query, web_search_request
+from pair.turn.search_ask import explicit_search, web_search_request
 from pair.turn.shape import (
     GROUNDED_RULE,
     NO_RESULTS_RULE,
     shape_messages,
     structure_hint,
     turns_for_memory,
+    user_question,
 )
 
 _CHAT_ROLES = {"system", "user", "assistant"}
@@ -58,6 +59,23 @@ def message_text(content) -> str:
 def _named_can_generate(target: str) -> bool:
     named = next((peer for peer in runtime.PEERS if peer["name"] == target), None)
     return named is not None and may_generate(named)
+
+
+def _earlier_text(handler, messages) -> str:
+    """Earlier turns plus stored facts. The question itself is not included."""
+    rows = [row for row in (messages or []) if isinstance(row, dict)]
+    last = next(
+        (i for i in range(len(rows) - 1, -1, -1) if rows[i].get("role") == "user"),
+        None,
+    )
+    kept = rows[:last] if last is not None else []
+    parts = [message_text(row.get("content")) for row in kept]
+    facts, summary = _memory_prompt(handler._memory_scope())
+    if facts:
+        parts.append(facts)
+    if summary:
+        parts.append(summary)
+    return "\n".join(part for part in parts if part)
 
 
 def last_user_text(messages) -> str:
@@ -89,10 +107,6 @@ def _prompt_note(search_note) -> str:
         return ""
     note = str(search_note.get("prompt_note") or "")
     if search_note.get("status") == "ok" and note:
-        # An automatic who-is already carries a one-line rule. The long rule
-        # is a prefill cost the small model reads before the first token.
-        if search_note.get("brief"):
-            return note
         return note + "\n" + GROUNDED_RULE
     return NO_RESULTS_RULE
 
@@ -179,19 +193,19 @@ class ChatRoutes:
         self._ttft_ms = 0
         self._queue_t0 = None
 
-    def _arm_search(self, prompt: str, force: bool, mesh: bool) -> bool:
+    def _arm_search(self, prompt: str, force: bool, mesh: bool, messages=None) -> bool:
         """Toggle on always searches. Otherwise only an explicit ask does."""
         if not mesh:
             return False
         if force:
             source = "user"
-        elif explicit_search(prompt):
+        elif explicit_search(prompt, _earlier_text(self, messages)):
             source = "keyword"
         else:
             return False
         self._decide_source = source
         self._decide_label = "search"
-        self._search_query = search_query(prompt) or (prompt or "").strip()
+        self._search_query = user_question(prompt).strip() or (prompt or "").strip()
         return True
 
     def _stamp_decide(self, payload: dict) -> None:
@@ -459,7 +473,7 @@ class ChatRoutes:
             self, model, temperature, max_tokens
         )
         self._answer_cap = int(max_tokens or 0)
-        do_search = self._arm_search(prompt, force_search, mesh)
+        do_search = self._arm_search(prompt, force_search, mesh, outbound)
         temperature = _cap_temperature(temperature, do_search)
         use_model = grounded is None
         slot = {"held": False, "waiting": False}

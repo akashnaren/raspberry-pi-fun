@@ -361,10 +361,7 @@ def main() -> int:
     report = {
         "persona_identical": same_persona,
         "persona_tokens_ok": 40 <= len(persona) / 3.2 <= 220,
-        "stock_absent": not any(
-            phrase in lowered.replace("if you do not know a person or name", "")
-            for phrase in STOCK
-        ),
+        "stock_absent": not any(phrase in lowered for phrase in STOCK),
         "no_example_fence": "```" not in persona,
         "no_persona_echo": echoed not in cleaned and question not in cleaned,
         "empty_fence_gone": "```" not in cleaned and "junk" not in cleaned,

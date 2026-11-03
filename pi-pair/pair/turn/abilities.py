@@ -22,11 +22,6 @@ _LANG_TOKEN = re.compile(r"^[A-Za-z0-9_+-]{1,32}$")
 _FILE_LANG = {"pdf", "docx", "xlsx", "md", "markdown", "txt", "csv"}
 _TASK = re.compile(r"^\s*(summarize|rewrite|translate)\b", re.I)
 _LANG = re.compile(r"^[A-Za-z0-9_+-]{1,16}$")
-# A pasted search row: "- sidnair.com: Gallery" or "- Title (site): snippet".
-_PASTED_NOTE = re.compile(
-    r"^\s*-\s+(?:[\w.-]+\.[a-z]{2,}\s*:|.+?\([^)]+\)\s*:)\s+\S",
-    re.I,
-)
 TOOL_LIMIT = 2
 JSON_RETRY = (
     "The JSON did not match the requested schema. "
@@ -555,10 +550,6 @@ def clean_reply(
         if flat in banned:
             continue
         lines.append(line)
-    if have_tools:
-        kept = [line for line in lines if _PASTED_NOTE.match(line) is None]
-        if any(line.strip() for line in kept):
-            lines = kept
     cleaned = "\n".join(lines)
     cleaned = ground_citations(cleaned, source_count)
     return "\n".join(line for line in cleaned.splitlines() if line.strip()).strip()
@@ -812,23 +803,18 @@ def eval_rows() -> list[dict]:
     return rows
 
 
-# The unknown-name sentence is allowed. A blanket "you do not know" is not.
-_NAMED_GAP = "if you do not know a person or name"
-
-
 def _passes(row: dict) -> bool:
     from pair.turn.shape import EFFORT_HINT, PERSONA, estimate_tokens
 
     category = row["category"]
     if category == "persona":
         tokens = estimate_tokens(PERSONA)
-        raw = PERSONA.lower()
-        lowered = raw.replace(_NAMED_GAP, "")
+        lowered = PERSONA.lower()
         stock = ("you do not know", "clarifying question", "calc plot doc")
         return (
             40 <= tokens <= 220
             and "```" not in PERSONA
-            and "you are not the user" in raw
+            and "you are not the user" in lowered
             and "calc" in lowered
             and "plot" in lowered
             and not any(phrase in lowered for phrase in stock)
@@ -865,8 +851,7 @@ def _passes(row: dict) -> bool:
         return "step-by-step" in hint and "Thinking mode stays off" in hint
     if category == "honest":
         lowered = PERSONA.lower()
-        gapless = lowered.replace(_NAMED_GAP, "")
-        return "do not know" not in gapless and "clarifying question" not in lowered
+        return "do not know" not in lowered and "clarifying question" not in lowered
     return False
 
 
