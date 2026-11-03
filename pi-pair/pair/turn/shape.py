@@ -377,7 +377,10 @@ def add_persona(
 
 
 def tail_note(effort: str = "", notes: str = "", hints: str = "") -> str:
-    """One per-turn note: effort, then hints, then tool results."""
+    """One per-turn note: effort, then hints, then tool results.
+
+    A Notes: header is not added. Pro copies that header into a fenced reply.
+    """
     parts: list[str] = []
     extra = EFFORT_HINT.get((effort or "").strip().lower(), "")
     if extra:
@@ -387,16 +390,7 @@ def tail_note(effort: str = "", notes: str = "", hints: str = "") -> str:
         parts.append(hint)
     note = (notes or "").strip()
     if note:
-        # A grounding rule is already the instruction. A "Notes:" header is
-        # what the small model copies into an empty fence.
-        if (
-            note.startswith("Notes:")
-            or GROUNDED_RULE in note
-            or NO_RESULTS_RULE in note
-        ):
-            parts.append(note)
-        else:
-            parts.append("Notes:\n" + note)
+        parts.append(note)
     return "\n\n".join(parts)
 
 
@@ -538,13 +532,50 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
         target = max(pool, key=lambda row: len(str(row.get("content") or "")))
         text = str(target.get("content") or "")
         overflow = _token_count(rows) - limit
-        clipped = _clip_text(
-            text, max(80, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
-        )
+        keep = max(80, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
+        clipped = _fit_clip(text, persona, keep)
         if len(clipped) >= len(text):
             break
         target["content"] = clipped
     return rows
+
+
+def _persona_extension(text: str, persona: str) -> str:
+    """`persona` plus the blank line, when `text` continues past it."""
+    if not persona:
+        return ""
+    head = persona + "\n\n"
+    if text.startswith(head):
+        return head
+    return ""
+
+
+def _fit_clip(text: str, persona: str, keep: int) -> str:
+    """Shorten `text` to `keep` characters. A persona prefix stays byte-exact."""
+    head = _persona_extension(text, persona)
+    if not head:
+        return _clip_text(text, keep)
+    room = keep - len(head)
+    if room < 1:
+        return persona
+    suffix = _clip_text(text[len(head) :], room)
+    if not suffix:
+        return persona
+    return head + suffix
+
+
+def _known_facts(facts: str) -> str:
+    """Bullet list appended after the persona. Fact wording is not rewritten."""
+    lines = []
+    for raw in (facts or "").splitlines():
+        line = " ".join(raw.split()).strip()
+        if line.startswith("- "):
+            line = line[2:].strip()
+        if line:
+            lines.append("- " + line)
+    if not lines:
+        return ""
+    return "Known facts about the user:\n" + "\n".join(lines)
 
 
 def shape_messages(
@@ -557,14 +588,19 @@ def shape_messages(
     facts: str = "",
     summary: str = "",
 ) -> list:
-    """Persona, facts, summary, verbatim turns, one tail note, then the last user."""
+    """Persona, known facts, sample turns, one tail note, then the last user.
+
+    Facts are appended to system row 0 after the persona. The qwen3 template
+    prints that system block first, so those persona bytes stay a prefix.
+    Summary and tail notes stay on the last user turn.
+    """
     rows = fence_messages(messages, knobs)
     rows = add_persona(rows, prompt, "", knobs)
+    known = _known_facts(facts or "")
+    if known:
+        rows[0]["content"] = str(rows[0].get("content") or "") + "\n\n" + known
     stable = []
-    fact_text = (facts or "").strip()
     summary_text = (summary or "").strip()
-    if fact_text:
-        stable.append({"role": "system", "content": fact_text})
     if summary_text:
         stable.append({"role": "system", "content": "Summary:\n" + summary_text})
     rows = [rows[0], *stable, *sample_turns(), *rows[1:]]
@@ -579,78 +615,58 @@ def shape_messages(
     )
 
 
-def _plain_bits(text: str, *, drop_notes: bool, drop_bullets: bool) -> list[str]:
-    """One clause per line. Fact wording is not rewritten."""
-    bits = []
+def _plain_line(line: str, *, tail: bool) -> str:
+    """Drop a bullet marker. A Notes header is dropped from the tail only."""
+    text = " ".join(line.split())
+    if text.startswith("- "):
+        text = text[2:].strip()
+    if not tail:
+        return text
+    if text == "Notes:":
+        return ""
+    if text.startswith("Notes:"):
+        return text[len("Notes:") :].strip()
+    return text
+
+
+def _flatten_clause(text: str, *, tail: bool) -> str:
+    """One clause. No bullet line and no Notes header for the model to copy."""
+    summary = False
+    parts: list[str] = []
     for raw in (text or "").splitlines():
         line = " ".join(raw.split())
         if not line:
             continue
-        if drop_bullets and line.startswith("- "):
-            line = line[2:].strip()
-        if drop_notes and line.startswith("Notes:"):
-            line = line[len("Notes:") :].strip()
-        if line:
-            bits.append(line)
-    return bits
-
-
-def _facts_line(chunks: list[str]) -> str:
-    bits: list[str] = []
-    for chunk in chunks:
-        bits.extend(_plain_bits(chunk, drop_notes=False, drop_bullets=False))
-    if not bits:
-        return ""
-    return "Facts about the user: " + "; ".join(bits)
-
-
-def _summary_line(text: str) -> str:
-    body = []
-    for bit in _plain_bits(text, drop_notes=False, drop_bullets=False):
-        if bit.startswith("Summary:"):
-            bit = bit[len("Summary:") :].strip()
-        if bit:
-            body.append(bit)
-    flat = " ".join(body)
-    if not flat:
-        return ""
-    return "Summary: " + flat
-
-
-def _tail_line(text: str) -> str:
-    flat = " ".join(_plain_bits(text, drop_notes=True, drop_bullets=True))
-    if not flat:
-        return ""
-    # A Notes: header on a grounding rule is what the small model copies.
-    if GROUNDED_RULE in text or NO_RESULTS_RULE in text:
-        return flat
-    return "Notes: " + flat
-
-
-def _context_block(notes: list[tuple[str, bool]]) -> str:
-    """Facts, summary, and the tail note as one plain line each.
-
-    A parenthetical glued to the question made Pro drop the blue-mug detail.
-    A line that is only a header, or a bullet, made it wrap the answer as markdown.
-    The user's own text is appended later, after a blank line.
-    """
-    facts: list[str] = []
-    lines: list[str] = []
-    for text, is_tail in notes:
-        if is_tail or (text or "").lstrip().startswith("Summary:"):
-            fact_line = _facts_line(facts)
-            facts = []
-            if fact_line:
-                lines.append(fact_line)
-            line = _tail_line(text) if is_tail else _summary_line(text)
-            if line:
-                lines.append(line)
+        if not tail and line.startswith("Summary:"):
+            summary = True
+            line = line[len("Summary:") :].strip()
+        if not line:
             continue
-        facts.append(text)
-    fact_line = _facts_line(facts)
-    if fact_line:
-        lines.append(fact_line)
-    return "\n".join(lines)
+        line = _plain_line(line, tail=tail)
+        if line:
+            parts.append(line)
+    flat = " ".join(parts)
+    if not flat:
+        return ""
+    if summary:
+        return f"earlier summary: {flat}"
+    return flat
+
+
+def _context_sentence(notes: list[tuple[str, bool]]) -> str:
+    """Summary and the tail note in one parenthetical.
+
+    A Notes: header on the user turn made Pro wrap a plain answer in a fence.
+    Facts stay on the system row, so they are not part of this line.
+    """
+    parts = []
+    for text, is_tail in notes:
+        clause = _flatten_clause(text, tail=is_tail)
+        if clause:
+            parts.append(clause)
+    if not parts:
+        return ""
+    return "(Context: " + "; ".join(parts) + ")"
 
 
 def _last_user(rows: list) -> int:
@@ -726,9 +742,9 @@ def fold_system_rows(
             )
         if index == last_user and notes:
             question = str(copied.get("content") or "")
-            context = _context_block(notes)
+            context = _context_sentence(notes)
             if context and question:
-                copied["content"] = context + "\n\n" + question
+                copied["content"] = context + "\n" + question
             elif context:
                 copied["content"] = context
         folded.append(copied)

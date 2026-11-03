@@ -16,7 +16,7 @@ from pair.memory.compact import plan, run_compact, schedule, should_compact
 from pair.memory.ledger import Ledger, ledger_for, reset, verbatim_budget
 from pair.memory.store import scope_key
 from pair.server import make_server
-from pair.turn.shape import estimate_tokens, sample_turns, shape_messages
+from pair.turn.shape import PERSONA, estimate_tokens, sample_turns, shape_messages
 
 
 class LedgerTests(unittest.TestCase):
@@ -48,16 +48,19 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first[0]["role"], "system")
         self.assertEqual(first[1], sample_turns()[0])
+        self.assertTrue(
+            first[0]["content"].startswith(
+                PERSONA + "\n\nKnown facts about the user:\n- " + facts
+            )
+        )
         content = first[-1]["content"]
         self.assertEqual(
             content,
-            "Facts about the user: "
-            + facts
-            + "\nSummary: Canberra.\n\n"
-            + turns[-1]["content"],
+            "(Context: earlier summary: Canberra.)\n" + turns[-1]["content"],
         )
-        self.assertLess(content.index(facts), content.index("Summary:"))
-        self.assertTrue(content.endswith("\n\n" + turns[-1]["content"]))
+        self.assertNotIn(facts, content)
+        self.assertNotIn("Notes:", content)
+        self.assertTrue(content.endswith("\n" + turns[-1]["content"]))
         for line in content.splitlines():
             self.assertFalse(line.startswith("- "))
             self.assertFalse(line.endswith(":"))

@@ -208,6 +208,27 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(len(set(prefixes)), 1)
         self.assertEqual(prefixes[0], PERSONA)
 
+    def test_facts_count_against_num_ctx_without_clipping_the_persona(self):
+        knobs = {"num_ctx": 400}
+        facts = "\n".join(
+            f"The user said: spare key spot {index} is the blue mug on the bookshelf."
+            for index in range(40)
+        )
+        question = "Where did I leave my spare house key?"
+        rows = shape_messages(
+            [{"role": "user", "content": question}],
+            question,
+            knobs,
+            facts=facts,
+        )
+        system = rows[0]["content"]
+        self.assertEqual(system[: len(PERSONA)], PERSONA)
+        self.assertIn("Known facts about the user:", system)
+        self.assertIn("spot 0", system)
+        self.assertNotIn("spot 39", system)
+        self.assertNotIn("blue mug", rows[-1]["content"])
+        self.assertLessEqual(sum(estimate_tokens(row["content"]) for row in rows), 400)
+
     def test_fit_never_drops_a_system_row(self):
         knobs = {"num_ctx": 256}
         rows = fit_messages(
@@ -237,7 +258,8 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(rows[0]["content"], PERSONA)
         content = rows[-1]["content"]
         self.assertEqual(rows[-1]["role"], "user")
-        self.assertEqual(content, "Notes: Web search notes. Canberra\n\n" + prompt)
+        self.assertEqual(content, "(Context: Web search notes. Canberra)\n" + prompt)
+        self.assertNotIn("Notes:", content)
         self.assertIn("Canberra", content)
         for line in content.splitlines():
             self.assertFalse(line.startswith("- "))
@@ -257,7 +279,8 @@ class TurnShape(unittest.TestCase):
             )
             self.assertEqual(rows[0]["content"], PERSONA, name)
             text = rows[-1]["content"]
-            self.assertEqual(text, f"Notes: {sentence}\n\n{prompt}", name)
+            self.assertEqual(text, f"(Context: {sentence})\n{prompt}", name)
+            self.assertNotIn("Notes:", text, name)
             self.assertEqual(rows[-1]["role"], "user")
         chart = shape_messages(
             [{"role": "user", "content": "plot a bar chart of the picnic"}],
@@ -267,7 +290,7 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(chart[0]["content"], PERSONA)
         self.assertEqual(
             chart[-1]["content"],
-            "Notes: " + EFFORT_HINT["high"] + "\n\nplot a bar chart of the picnic",
+            "(Context: " + EFFORT_HINT["high"] + ")\nplot a bar chart of the picnic",
         )
         self.assertIn("```plot", "\n".join(row["content"] for row in chart))
 
