@@ -221,7 +221,13 @@ def hold_warm_slot() -> Cancel | None:
         if _TURNS or _WARM_HELD:
             return None
         _WARM_HELD = True
-        return warm_token()
+        token = warm_token()
+    # The gate is not taken under _GUARD. A chat can acquire it after the
+    # idle check above and before this claim. Drop the slot if that happened.
+    if _decode_idle():
+        return token
+    drop_warm_slot()
+    return None
 
 
 def drop_warm_slot() -> None:
@@ -351,11 +357,13 @@ def warm_chat_model(
     if held is None:
         return False
     try:
-        if held.gone():
+        if held.gone() or not _decode_idle():
             return False
         knobs = tuned_knobs(model)
         url = f"http://{peer['host']}:{peer['port']}/api/chat"
         payload = ollama_payload(model, warm_messages(knobs), 0.0, 1, False, knobs)
+        if held.gone() or not _decode_idle():
+            return False
         try:
             with open_json(url, payload, timeout, cancel=held) as response:
                 response.read()

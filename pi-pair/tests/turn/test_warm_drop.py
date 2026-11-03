@@ -12,6 +12,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from pair.core import runtime
+from pair.core.cancel import ClientGone
 from pair.model import chat_once
 from pair.model.chat_once import (
     begin_turn,
@@ -113,6 +114,58 @@ class WarmDrop(unittest.TestCase):
             self.assertIn(FLASH_MODEL, seen)
             self.assertIn(PRO_MODEL, seen)
         finally:
+            _drain_gate()
+            drop_warm_slot()
+
+    def test_a_gate_taken_during_the_claim_does_not_post(self):
+        entered = threading.Event()
+        release = threading.Event()
+        real_idle = chat_once._decode_idle
+        state = {"stalled": False}
+        posts: list[str] = []
+        holder: dict = {}
+
+        def idle() -> bool:
+            ok = real_idle()
+            if ok and not state["stalled"]:
+                state["stalled"] = True
+                entered.set()
+                self.assertTrue(release.wait(2))
+                return True
+            return real_idle()
+
+        def open_json(url, payload, timeout, cancel=None):
+            del url, timeout, cancel
+            posts.append(str(payload.get("model")))
+            return _Body(json.dumps({"message": {"content": "ok"}}).encode())
+
+        real_hold = chat_once.hold_warm_slot
+
+        def spy_hold():
+            slot = real_hold()
+            holder["slot"] = slot
+            return slot
+
+        def run() -> None:
+            holder["ok"] = warm_chat_model(_peer(), PRO_MODEL, timeout=1)
+
+        try:
+            with patch("pair.model.chat_once._decode_idle", idle):
+                with patch("pair.model.chat_once.hold_warm_slot", spy_hold):
+                    with patch("pair.model.chat_once.open_json", open_json):
+                        thread = threading.Thread(target=run)
+                        thread.start()
+                        self.assertTrue(entered.wait(2))
+                        self.assertTrue(runtime.gate.try_acquire())
+                        release.set()
+                        thread.join(2)
+            self.assertFalse(thread.is_alive())
+            self.assertIsNone(holder.get("slot"))
+            self.assertFalse(holder.get("ok"))
+            self.assertEqual(posts, [])
+            self.assertFalse(chat_once.warm_slot_busy())
+        finally:
+            release.set()
             _drain_gate()
             drop_warm_slot()
 
@@ -262,6 +315,74 @@ class WarmDrop(unittest.TestCase):
         finally:
             if held is not None:
                 drop_warm_slot()
+
+    def test_a_cancelled_pro_warm_posts_once_after_the_turn(self):
+        posts: list[str] = []
+        entered = threading.Event()
+
+        def open_json(url, payload, timeout, cancel=None):
+            del url, timeout
+            posts.append(str(payload.get("model")))
+            if len(posts) == 1:
+                entered.set()
+                deadline = time.time() + 2
+                while time.time() < deadline:
+                    if cancel is not None and cancel.gone():
+                        raise ClientGone()
+                    time.sleep(0.01)
+                raise ClientGone()
+            return _Body(b"{}")
+
+        turn = None
+        try:
+            with patch("pair.model.preload.open_json", open_json):
+                schedule_pro_warm("127.0.0.1", 9, PRO_MODEL)
+                schedule_pro_warm("127.0.0.1", 9, PRO_MODEL)
+                self.assertTrue(entered.wait(2))
+                names = [
+                    thread.name
+                    for thread in threading.enumerate()
+                    if thread.name == "pro-rewarm"
+                ]
+                self.assertEqual(names, ["pro-rewarm"])
+                turn = begin_turn()
+                end_turn(turn)
+                turn = None
+                deadline = time.time() + 2
+                while time.time() < deadline and len(posts) < 2:
+                    time.sleep(0.02)
+                self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
+                time.sleep(0.3)
+                self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
+        finally:
+            end_turn(turn)
+
+    def test_a_cancelled_watchdog_warm_is_logged_and_retried(self):
+        posts: list[str] = []
+
+        def open_json_request(request, timeout, cancel=None):
+            del timeout, cancel
+            posts.append("watch")
+            raise ClientGone()
+
+        def open_json(url, payload, timeout, cancel=None):
+            del url, timeout, cancel
+            posts.append(str(payload.get("model")))
+            return _Body(b"{}")
+
+        buf = io.StringIO()
+        with patch.dict(os.environ, {"PI_PAIR_ROLE": "brain"}):
+            with patch("pair.model.preload.open_json_request", open_json_request):
+                with patch("pair.model.preload.open_json", open_json):
+                    with redirect_stdout(buf):
+                        warm_model(PRO_MODEL)
+                    deadline = time.time() + 2
+                    while time.time() < deadline and PRO_MODEL not in posts:
+                        time.sleep(0.02)
+        text = buf.getvalue()
+        self.assertIn(PRO_MODEL, text)
+        self.assertIn("cancelled", text.lower())
+        self.assertEqual(posts, ["watch", PRO_MODEL])
 
     def test_schedule_pro_warm_dedupes_one_tag(self):
         entered = threading.Event()

@@ -199,17 +199,22 @@ def _post_scheduled_warm(url: str, payload: dict, epoch: int) -> None:
             time.sleep(0.02)
             continue
         try:
-            if token.gone() or _warm_epoch() != epoch:
+            if _warm_epoch() != epoch:
                 return
+            # A chat closed this hold. The tag is still in flight, so wait
+            # for the lane and post again instead of ending the warm.
+            if token.gone() or not _decode_idle():
+                continue
             try:
                 with open_json(
                     url, payload, PRELOAD_TIMEOUT_S, cancel=token
                 ) as response:
                     response.read()
             except ClientGone:
-                return
+                continue
             except Exception as exc:
                 print(f"pro preload skipped: {exc}", flush=True)
+                return
             return
         finally:
             drop_warm_slot()
@@ -249,6 +254,13 @@ def rewarm_pro_if_evicted() -> None:
         warm_model(pro)
 
 
+def _retry_cancelled_warm(model: str) -> None:
+    """Log a warm a chat closed and post it again without the 120s pause."""
+    print(f"model preload skipped: {model} cancelled", flush=True)
+    host, port = _local_endpoint()
+    schedule_pro_warm(host, port, model)
+
+
 def warm_model(model: str | None = None) -> None:
     """POST /api/chat for one resident tag. No-op off the brain."""
     if not on_pi4():
@@ -270,7 +282,8 @@ def warm_model(model: str | None = None) -> None:
         headers={"content-type": "application/json"},
     )
     try:
-        if token.gone():
+        if token.gone() or not _decode_idle():
+            _retry_cancelled_warm(name)
             return
         try:
             with open_json_request(
@@ -278,6 +291,7 @@ def warm_model(model: str | None = None) -> None:
             ) as response:
                 response.read()
         except ClientGone:
+            _retry_cancelled_warm(name)
             return
         except Exception as exc:
             print(f"model preload skipped: {exc}", flush=True)

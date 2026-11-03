@@ -488,8 +488,48 @@ def turns_for_memory(request, shaped=None) -> list:
     return rows
 
 
+def _clip_rows(rows: list, limit: int, persona: str, *, systems_only: bool) -> None:
+    """Shorten long rows until `rows` fit or nothing eligible can shrink.
+
+    Caller system text is clipped before any sample turn is dropped. The
+    persona and the facts block are left alone until every other row is done.
+    """
+    guard = 0
+    while _token_count(rows) > limit and guard < 16:
+        guard += 1
+        pool = [
+            row
+            for row in rows
+            if not _persona_row(row, persona)
+            and len(str(row.get("content") or "")) > 80
+        ]
+        if systems_only:
+            pool = [
+                row
+                for row in pool
+                if row.get("role") == "system" and not _facts_extension(row, persona)
+            ]
+        else:
+            others = [row for row in pool if not _facts_extension(row, persona)]
+            pool = others or pool
+        if not pool:
+            break
+        target = max(pool, key=lambda row: len(str(row.get("content") or "")))
+        text = str(target.get("content") or "")
+        overflow = _token_count(rows) - limit
+        keep = max(80, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
+        clipped = _fit_clip(text, persona, keep)
+        if len(clipped) >= len(text):
+            break
+        target["content"] = clipped
+
+
 def fit_messages(messages, knobs: dict | None = None) -> list:
-    """Drop whole old turns when the prompt is over num_ctx. Never drop a system row."""
+    """Drop whole old turns when the prompt is over num_ctx. Never drop a system row.
+
+    A caller system row is shortened before a sample turn is deleted, so a
+    few tokens over budget do not move the persona-and-facts prefix.
+    """
     rows = []
     for item in messages or []:
         if isinstance(item, dict) and str(item.get("content") or "").strip():
@@ -500,6 +540,7 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
     if _token_count(rows) <= limit:
         return rows
     persona = persona_text(knobs)
+    _clip_rows(rows, limit, persona, systems_only=True)
     guard = 0
     while _token_count(rows) > limit and guard < 64:
         guard += 1
@@ -518,26 +559,7 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
         if drop_at is None:
             break
         rows.pop(drop_at)
-    guard = 0
-    while _token_count(rows) > limit and guard < 16:
-        guard += 1
-        pool = [
-            row
-            for row in rows
-            if not _persona_row(row, persona)
-            and len(str(row.get("content") or "")) > 80
-        ]
-        if not pool:
-            break
-        others = [row for row in pool if not _facts_extension(row, persona)]
-        target = max(others or pool, key=lambda row: len(str(row.get("content") or "")))
-        text = str(target.get("content") or "")
-        overflow = _token_count(rows) - limit
-        keep = max(80, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
-        clipped = _fit_clip(text, persona, keep)
-        if len(clipped) >= len(text):
-            break
-        target["content"] = clipped
+    _clip_rows(rows, limit, persona, systems_only=False)
     return rows
 
 
@@ -588,6 +610,33 @@ def _known_facts(facts: str) -> str:
     return "Known facts about the user:\n" + "\n".join(lines)
 
 
+def _prompt_budget(
+    rows: list, knobs: dict | None, own_count: int, folded_tail: bool
+) -> dict | None:
+    """num_ctx minus the blank lines fold_system_rows inserts around callers.
+
+    Each caller is joined on its own line. Those two extra characters are
+    missing from the separate-row token count, and they can cost one token.
+    """
+    last_user = _last_user(rows)
+    own, _tail = _own_rows(rows, last_user, own_count, folded_tail)
+    callers = 0
+    for index, row in enumerate(rows):
+        if index == 0 or index in own or not isinstance(row, dict):
+            continue
+        if row.get("role") == "system" and str(row.get("content") or "").strip():
+            callers += 1
+    if callers < 1:
+        return knobs
+    slack = math.ceil((2 * callers) / CHARS_PER_TOKEN)
+    limit = _num_ctx(knobs) - slack
+    if limit < 256:
+        return knobs
+    fitted = dict(knobs or {})
+    fitted["num_ctx"] = limit
+    return fitted
+
+
 def shape_messages(
     messages,
     prompt: str,
@@ -618,10 +667,12 @@ def shape_messages(
     combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
     tail = tail_note(effort, combined, hints)
     rows = add_notes(rows, tail)
+    own_count = len(stable)
+    folded_tail = bool(tail)
     return fold_system_rows(
-        fit_messages(rows, knobs),
-        own_count=len(stable),
-        folded_tail=bool(tail),
+        fit_messages(rows, _prompt_budget(rows, knobs, own_count, folded_tail)),
+        own_count=own_count,
+        folded_tail=folded_tail,
     )
 
 

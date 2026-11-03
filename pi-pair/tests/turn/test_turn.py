@@ -52,6 +52,7 @@ from pair.turn.shape import (
     fence_user_text,
     fit_messages,
     public_failure,
+    sample_turns,
     search_result_text,
     shape_messages,
     warm_messages,
@@ -259,6 +260,46 @@ class TurnShape(unittest.TestCase):
         self.assertLess(len(fitted[1]["content"]), len(other))
         self.assertLessEqual(
             sum(estimate_tokens(row["content"]) for row in fitted), total - 4
+        )
+
+    def test_four_tokens_over_clips_the_caller_before_a_sample(self):
+        persona = "Persona sentence stays exact."
+        caller = "Attached note " + ("detail " * 40)
+        question = "Where is the key?"
+        facts = "the spare key stays in the blue mug"
+        wide = shape_messages(
+            [
+                {"role": "system", "content": caller},
+                {"role": "user", "content": question},
+            ],
+            question,
+            {"num_ctx": 8192, "persona": persona},
+            facts=facts,
+        )
+        samples = sample_turns()
+        total = sum(estimate_tokens(row["content"]) for row in wide)
+        limit = total - 4
+        self.assertGreaterEqual(limit, 256)
+        self.assertEqual(wide[1 : 1 + len(samples)], samples)
+        fitted = shape_messages(
+            [
+                {"role": "system", "content": caller},
+                {"role": "user", "content": question},
+            ],
+            question,
+            {"num_ctx": limit, "persona": persona},
+            facts=facts,
+        )
+        system = fitted[0]["content"]
+        wide_system = wide[0]["content"]
+        facts_at = wide_system.index("Known facts about the user:")
+        self.assertEqual(system[: len(persona)], persona)
+        self.assertTrue(system.endswith(wide_system[facts_at:]))
+        self.assertLess(len(system), len(wide_system))
+        self.assertNotIn(caller, system)
+        self.assertEqual(fitted[1 : 1 + len(samples)], samples)
+        self.assertLessEqual(
+            sum(estimate_tokens(row["content"]) for row in fitted), limit
         )
 
     def test_fit_never_drops_a_system_row(self):
