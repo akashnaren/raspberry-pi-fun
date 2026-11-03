@@ -85,8 +85,6 @@ EFFORT_HINT = {
     "medium": "Give a moderate amount of detail.",
     "high": "Give a longer step-by-step answer. Thinking mode stays off.",
 }
-FACTS_LABEL = "Known facts about the user:"
-QUESTION_LABEL = "Question:"
 
 FLOW_HINT = (
     "The user wants a flowchart or diagram. Reply with one ```mermaid fence and at most one short sentence. "
@@ -581,38 +579,56 @@ def shape_messages(
     )
 
 
-def _labeled_note(text: str, *, tail: bool) -> str:
-    """Facts, summary, and the tail note, each with a stable header."""
-    body = text.strip()
-    if not body:
-        return ""
-    if tail:
-        if (
-            body.startswith("Notes:")
-            or GROUNDED_RULE in body
-            or NO_RESULTS_RULE in body
-        ):
-            return body
-        return "Notes:\n" + body
-    if body.startswith("Summary:"):
-        return body
-    if body.startswith(FACTS_LABEL):
-        return body
-    lines = []
-    for line in body.splitlines():
-        item = line.strip()
-        if not item:
-            continue
-        lines.append(item if item.startswith("- ") else "- " + item)
-    if not lines:
-        return ""
-    return FACTS_LABEL + "\n" + "\n".join(lines)
-
-
-def _labeled_question(text: str) -> str:
-    if text.startswith(QUESTION_LABEL):
+def _plain_line(line: str, *, tail: bool) -> str:
+    """Drop a bullet marker and a Notes header. The words stay."""
+    text = " ".join(line.split())
+    if text.startswith("- "):
+        text = text[2:].strip()
+    if not tail:
         return text
-    return QUESTION_LABEL + " " + text
+    if text == "Notes:":
+        return ""
+    if text.startswith("Notes:"):
+        return text[len("Notes:") :].strip()
+    return text
+
+
+def _flatten_clause(text: str, *, tail: bool) -> str:
+    """One clause. No bullet line and no header line for the model to copy."""
+    summary = False
+    parts: list[str] = []
+    for raw in (text or "").splitlines():
+        line = " ".join(raw.split())
+        if not line:
+            continue
+        if not tail and line.startswith("Summary:"):
+            summary = True
+            line = line[len("Summary:") :].strip()
+        line = _plain_line(line, tail=tail) if line else ""
+        if line:
+            parts.append(line)
+    flat = " ".join(parts)
+    if not flat:
+        return ""
+    if summary:
+        return f"earlier summary: {flat}"
+    return flat
+
+
+def _context_sentence(notes: list[tuple[str, bool]]) -> str:
+    """Facts, summary, and the tail note in one parenthetical.
+
+    Header lines and bullets made Pro wrap a plain answer in a markdown fence.
+    The facts wording stays exact. The user's own text is not rewritten.
+    """
+    parts = []
+    for text, is_tail in notes:
+        clause = _flatten_clause(text, tail=is_tail)
+        if clause:
+            parts.append(clause)
+    if not parts:
+        return ""
+    return "(Context: " + "; ".join(parts) + ")"
 
 
 def _last_user(rows: list) -> int:
@@ -687,13 +703,12 @@ def fold_system_rows(
                 "\n\n".join([base, *callers]) if base else "\n\n".join(callers)
             )
         if index == last_user and notes:
-            blocks = []
-            for text, is_tail in notes:
-                block = _labeled_note(text, tail=is_tail)
-                if block:
-                    blocks.append(block)
-            question = _labeled_question(str(copied.get("content") or ""))
-            copied["content"] = "\n\n".join([*blocks, question])
+            question = str(copied.get("content") or "")
+            context = _context_sentence(notes)
+            if context and question:
+                copied["content"] = context + "\n" + question
+            elif context:
+                copied["content"] = context
         folded.append(copied)
     return folded
 

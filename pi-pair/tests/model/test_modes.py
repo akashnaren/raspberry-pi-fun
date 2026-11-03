@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 from pair.core import runtime
-from pair.model.chat_once import warm_chat_model
+from pair.model.chat_once import join_startup_retry, warm_chat_model, warm_residents
 from pair.model.knobs import tuned_knobs
 from pair.model.modes import (
     FLASH_MODEL,
@@ -225,7 +225,8 @@ def _hold_warm(handler: ModeOllama, payload: dict) -> None:
                 aborted = True
                 break
     finally:
-        cls.warm_aborted = aborted
+        if aborted:
+            cls.warm_aborted = True
         slot.release()
         cls.warm_done.set()
         try:
@@ -318,6 +319,7 @@ class ModeHttp(unittest.TestCase):
         search_routes.lookup_web = _stub_search
 
     def tearDown(self):
+        join_startup_retry()
         join_pro_warms()
         _release_held_warm()
         for httpd in self.servers:
@@ -997,6 +999,54 @@ class ModeHttp(unittest.TestCase):
         thread.join(2)
         self.assertFalse(thread.is_alive())
         self.assertFalse(holder["ok"])
+
+    def test_an_interrupted_startup_warm_retries_after_the_turn(self):
+        port = self._boot()
+        ModeOllama.loaded = ["qwen3:0.6b", "qwen3:1.7b"]
+        ModeOllama.hold_load = True
+        ModeOllama.calls = []
+        peer = runtime.PEERS[0]
+        holder: dict = {}
+
+        def run() -> None:
+            holder["loaded"] = warm_residents(peer, timeout=30)
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        self.assertTrue(ModeOllama.warm_entered.wait(2))
+        started = time.perf_counter()
+        status, _headers, body = self._post(
+            port,
+            {
+                "mode": "pro",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "novel pro during startup warm",
+                    }
+                ],
+            },
+            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+        )
+        elapsed = time.perf_counter() - started
+        self.assertEqual(status, 200, body)
+        self.assertLess(elapsed, 2.0)
+        self.assertEqual(body["choices"][0]["message"]["content"], "hello from peer")
+        self.assertTrue(ModeOllama.warm_aborted)
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(holder["loaded"], [])
+        ModeOllama.hold_load = False
+        ModeOllama.hold_release.set()
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            models = [item["model"] for item in _warms()]
+            if models.count("qwen3:0.6b") >= 2 and "qwen3:1.7b" in models:
+                break
+            time.sleep(0.02)
+        models = [item["model"] for item in _warms()]
+        self.assertGreaterEqual(models.count("qwen3:0.6b"), 2)
+        self.assertIn("qwen3:1.7b", models)
 
     def test_unknown_residency_does_not_drop_pro(self):
         port = self._boot()

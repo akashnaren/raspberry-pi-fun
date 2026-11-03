@@ -9,11 +9,9 @@ from pair.model.modes import FLASH_MODEL, PRO_MODEL
 from pair.turn.calc import notes_for
 from pair.turn.shape import (
     EFFORT_HINT,
-    FACTS_LABEL,
     FLOW_HINT,
     GROUNDED_RULE,
     NO_RESULTS_RULE,
-    QUESTION_LABEL,
     fold_system_rows,
     persona_text,
     sample_turns,
@@ -62,6 +60,13 @@ def _tuned(tag: str) -> dict:
 
 def _user(text: str) -> dict:
     return {"role": "user", "content": text}
+
+
+def _assert_folded_prose(case: unittest.TestCase, content: str, label: str) -> None:
+    """The folded user turn is one prose sentence, not a markdown document."""
+    for line in content.splitlines():
+        case.assertFalse(line.startswith("- "), f"{label} {line!r}")
+        case.assertFalse(line.endswith(":"), f"{label} {line!r}")
 
 
 class PrefixCache(unittest.TestCase):
@@ -131,31 +136,28 @@ class PrefixCache(unittest.TestCase):
                 prefix = _prefix(rendered)
                 self.assertTrue(prefix.endswith(_USER_MARK), f"{tag} {name}")
                 prefixes.append(prefix)
+                text = rows[-1]["content"]
+                _assert_folded_prose(self, text, f"{tag} {name}")
                 if name == "search-ok":
-                    self.assertIn(GROUNDED_RULE, rows[-1]["content"])
+                    self.assertIn(GROUNDED_RULE, text)
                     self.assertNotIn(GROUNDED_RULE, rows[0]["content"])
                 if name == "search-empty":
-                    self.assertIn(NO_RESULTS_RULE, rows[-1]["content"])
+                    self.assertIn(NO_RESULTS_RULE, text)
                     self.assertNotIn(NO_RESULTS_RULE, rows[0]["content"])
                 if name == "facts":
-                    self.assertTrue(
-                        rows[-1]["content"].startswith(FACTS_LABEL + "\n- "),
-                        f"{tag} {name}",
+                    self.assertEqual(
+                        text,
+                        "(Context: The user said: the kettle is in the hall)\n"
+                        "Where is the hall bench?",
                     )
-                    self.assertNotIn(FACTS_LABEL, rows[0]["content"])
+                    self.assertNotIn("The user said:", rows[0]["content"])
                 if name == "calc":
-                    self.assertIn("Calculator:", rows[-1]["content"])
+                    self.assertIn("Calculator:", text)
                 if name.startswith("effort-"):
                     level = name.split("-", 1)[1]
-                    text = rows[-1]["content"]
-                    self.assertLess(
-                        text.index(EFFORT_HINT[level]),
-                        text.index(QUESTION_LABEL),
-                        f"{tag} {name}",
-                    )
-                    self.assertTrue(
-                        text.endswith(QUESTION_LABEL + " Where is the hall bench?"),
-                        f"{tag} {name}",
+                    self.assertEqual(
+                        text,
+                        f"(Context: {EFFORT_HINT[level]})\nWhere is the hall bench?",
                     )
             warm = warm_messages(knobs)
             self.assertEqual(warm[1:-1], samples, tag)
@@ -187,12 +189,9 @@ class PrefixCache(unittest.TestCase):
             self.assertEqual(len(systems), 1)
             self.assertEqual(shaped[0]["content"], persona_text(knobs) + "\n\n" + sys)
             self.assertNotIn(sys, shaped[-1]["content"])
-            self.assertNotIn(FACTS_LABEL, shaped[0]["content"])
-            self.assertTrue(shaped[-1]["content"].startswith(FACTS_LABEL + "\n- "))
-            self.assertIn(facts, shaped[-1]["content"])
-            self.assertTrue(
-                shaped[-1]["content"].endswith(QUESTION_LABEL + " " + question)
-            )
+            self.assertNotIn(facts, shaped[0]["content"])
+            self.assertEqual(shaped[-1]["content"], f"(Context: {facts})\n{question}")
+            _assert_folded_prose(self, shaped[-1]["content"], "caller")
             self.assertEqual(shaped[1 : 1 + len(sample_turns())], sample_turns())
 
     def test_no_user_row_keeps_the_notes(self) -> None:
@@ -229,22 +228,43 @@ class PrefixCache(unittest.TestCase):
             summary=summary,
         )
         content = rows[-1]["content"]
-        labeled = "\n\n".join(
+        self.assertIn("\nNotes:\n", tail)
+        expected = (
+            "(Context: "
+            + facts
+            + "; earlier summary: "
+            + summary
+            + "; Keep the answer short. Use one short sentence. "
+            "Web search notes. Canberra)\n" + question
+        )
+        self.assertEqual(content, expected)
+        self.assertLess(content.index(facts), content.index("earlier summary:"))
+        self.assertLess(content.index("earlier summary:"), content.index("Canberra"))
+        self.assertLess(content.index("Canberra"), content.index(question))
+        self.assertTrue(content.endswith("\n" + question))
+        _assert_folded_prose(self, content, "order")
+        self.assertEqual([row for row in rows if row["role"] == "system"], [rows[0]])
+        self.assertEqual(rows[1 : 1 + len(sample_turns())], sample_turns())
+
+    def test_two_facts_keep_their_wording_in_one_sentence(self) -> None:
+        facts = "\n".join(
             [
-                FACTS_LABEL + "\n- " + facts,
-                "Summary:\n" + summary,
-                "Notes:\n" + tail,
-                QUESTION_LABEL + " " + question,
+                "The user said: the spare key is in the blue mug.",
+                "The user said: the cat is named Pepper.",
             ]
         )
-        self.assertEqual(FACTS_LABEL, "Known facts about the user:")
-        self.assertEqual(QUESTION_LABEL, "Question:")
-        self.assertEqual(content, labeled)
-        self.assertLess(content.index(FACTS_LABEL), content.index("Summary:"))
-        self.assertLess(content.index("Summary:"), content.index("Notes:"))
-        self.assertLess(content.index("Notes:"), content.index(QUESTION_LABEL))
-        self.assertTrue(content.endswith(QUESTION_LABEL + " " + question))
-        self.assertEqual([row for row in rows if row["role"] == "system"], [rows[0]])
+        question = "Where did I leave my spare house key?"
+        rows = shape_messages(
+            [_user(question)], question, _tuned(PRO_MODEL), facts=facts
+        )
+        content = rows[-1]["content"]
+        self.assertEqual(
+            content,
+            "(Context: The user said: the spare key is in the blue mug. "
+            "The user said: the cat is named Pepper.)\n" + question,
+        )
+        _assert_folded_prose(self, content, "two facts")
+        self.assertEqual(len([row for row in rows if row["role"] == "system"]), 1)
         self.assertEqual(rows[1 : 1 + len(sample_turns())], sample_turns())
 
 

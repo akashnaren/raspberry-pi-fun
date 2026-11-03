@@ -54,10 +54,12 @@ class CalculatorNotes(unittest.TestCase):
         rows = shape_messages([{"role": "user", "content": prompt}], prompt)
         content = rows[-1]["content"]
         self.assertEqual(rows[-1]["role"], "user")
-        self.assertTrue(content.startswith("Notes:"))
         self.assertIn("Calculator: 847*23 = 19481", content)
-        self.assertLess(content.index("Calculator:"), content.index("Question:"))
-        self.assertTrue(content.endswith("Question: " + prompt))
+        self.assertTrue(content.startswith("(Context: Calculator: 847*23 = 19481"))
+        self.assertTrue(content.endswith("\n" + prompt))
+        for line in content.splitlines():
+            self.assertFalse(line.startswith("- "))
+            self.assertFalse(line.endswith(":"))
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -22,6 +23,7 @@ from pair.core.errors import GENERIC, TIMEOUT, UNREACHABLE
 from pair.model.chat_once import (
     chat_ollama,
     close_warm,
+    join_startup_retry,
     start_model_warm,
     warm_chat_model,
     warm_residents,
@@ -235,10 +237,11 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(rows[0]["content"], PERSONA)
         content = rows[-1]["content"]
         self.assertEqual(rows[-1]["role"], "user")
-        self.assertTrue(content.startswith("Notes:"))
+        self.assertEqual(content, "(Context: Web search notes. Canberra)\n" + prompt)
         self.assertIn("Canberra", content)
-        self.assertLess(content.index("Notes:"), content.index("Question:"))
-        self.assertTrue(content.endswith("Question: " + prompt))
+        for line in content.splitlines():
+            self.assertFalse(line.startswith("- "))
+            self.assertFalse(line.endswith(":"))
 
     def test_a_1200_token_input_is_kept_at_1536(self):
         body = "ab" * 1200
@@ -254,9 +257,7 @@ class TurnShape(unittest.TestCase):
             )
             self.assertEqual(rows[0]["content"], PERSONA, name)
             text = rows[-1]["content"]
-            self.assertTrue(text.startswith("Notes:\n" + sentence), name)
-            self.assertLess(text.index(sentence), text.index("Question:"), name)
-            self.assertTrue(text.endswith("Question: " + prompt), name)
+            self.assertEqual(text, f"(Context: {sentence})\n{prompt}", name)
             self.assertEqual(rows[-1]["role"], "user")
         chart = shape_messages(
             [{"role": "user", "content": "plot a bar chart of the picnic"}],
@@ -264,16 +265,17 @@ class TurnShape(unittest.TestCase):
             effort="high",
         )
         self.assertEqual(chart[0]["content"], PERSONA)
-        self.assertTrue(
-            chart[-1]["content"].startswith("Notes:\n" + EFFORT_HINT["high"])
-        )
-        self.assertTrue(
-            chart[-1]["content"].endswith("Question: plot a bar chart of the picnic")
+        self.assertEqual(
+            chart[-1]["content"],
+            "(Context: " + EFFORT_HINT["high"] + ")\nplot a bar chart of the picnic",
         )
         self.assertIn("```plot", "\n".join(row["content"] for row in chart))
 
 
 class ModelWarm(unittest.TestCase):
+    def tearDown(self):
+        join_startup_retry()
+
     def test_startup_warms_flash_then_pro_without_a_pull(self):
         seen = []
 
@@ -297,6 +299,7 @@ class ModelWarm(unittest.TestCase):
         }
         with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
             loaded = warm_residents(peer, timeout=1)
+            time.sleep(0.05)
         self.assertEqual(
             [item[1].get("model") for item in seen], [FLASH_MODEL, PRO_MODEL]
         )
@@ -360,6 +363,7 @@ class ModelWarm(unittest.TestCase):
         token = warm_token()
         with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
             loaded = warm_residents(peer, timeout=1)
+            time.sleep(0.05)
         self.assertEqual(seen, [FLASH_MODEL])
         self.assertEqual(loaded, [])
         self.assertTrue(token.gone())

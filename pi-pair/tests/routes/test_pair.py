@@ -26,6 +26,7 @@ from pair.routes import relay as relay_routes
 from pair.routes import search as search_routes
 from pair.routes import status as status_routes
 from pair.server import make_server
+from pair.turn.shape import GROUNDED_RULE
 from tests.support.fakes import LlamaFake, OllamaFake, _start
 from tests.support.paths import ROOT
 from tests.support.web import web_source
@@ -1535,18 +1536,19 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(messages[0]["role"], "system")
         self.assertTrue(messages[0]["content"].startswith("You are OpenPi"))
         self.assertEqual(messages[-1]["role"], "user")
-        suffix = "\n\nQuestion: " + prompt
-        self.assertTrue(messages[-1]["content"].endswith(suffix))
-        notes = messages[-1]["content"][: -len(suffix)]
-        self.assertFalse(notes.startswith("Notes:"))
-        self.assertNotIn("Web search notes", notes)
-        self.assertNotIn("<search>", notes)
-        from pair.turn.shape import GROUNDED_RULE
-
-        self.assertTrue(notes.endswith(GROUNDED_RULE))
-        self.assertLessEqual(len(notes) - len("\n" + GROUNDED_RULE), limit)
-        self.assertIn("snippet", notes)
-        self.assertLess(len(notes), len(page))
+        content = messages[-1]["content"]
+        self.assertTrue(content.endswith("\n" + prompt))
+        self.assertTrue(content.startswith("(Context: "))
+        self.assertNotIn("Web search notes", content)
+        self.assertNotIn("<search>", content)
+        self.assertIn(GROUNDED_RULE, content)
+        inner = content[len("(Context: ") : content.index(GROUNDED_RULE)].strip()
+        self.assertLessEqual(len(inner), limit)
+        self.assertIn("snippet", content)
+        self.assertLess(len(content), len(page))
+        for line in content.splitlines():
+            self.assertFalse(line.startswith("- "))
+            self.assertFalse(line.endswith(":"))
 
     def test_math_is_answered_by_the_model(self):
         prompt = (
@@ -1864,7 +1866,7 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(OllamaFake.posts, 1)
 
     def test_plain_greeting_does_not_search(self):
-        from pair.turn.shape import GROUNDED_RULE, NO_RESULTS_RULE
+        from pair.turn.shape import NO_RESULTS_RULE
 
         OllamaFake.posts = 0
         OllamaFake.decide_posts = 0
