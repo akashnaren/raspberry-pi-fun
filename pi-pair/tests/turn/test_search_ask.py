@@ -176,9 +176,19 @@ class SearchAsk(unittest.TestCase):
                 ("Result 3 (example.com):",),
                 "No result mentions Case Worker.",
             ),
+            (
+                "who is Sid Nair",
+                ("Result 1 (linkedin.com): Sid Nair: See (evil.example) for more.",),
+                "",
+                "Web search notes.\n"
+                "- Sid Nair (https://www.linkedin.com/in/sid): "
+                "See (https://evil.example/phish) for more.",
+            ),
         )
-        for prompt, labels, gap in notes:
-            note = who_note_text(prompt, full)
+        for item in notes:
+            prompt, labels, gap = item[0], item[1], item[2]
+            source = item[3] if len(item) > 3 else full
+            note = who_note_text(prompt, source)
             self.assertTrue(note.startswith("Web search:"), prompt)
             self.assertNotIn("[1]", note, prompt)
             self.assertNotIn("<|im_start|>", note, prompt)
@@ -188,7 +198,9 @@ class SearchAsk(unittest.TestCase):
             self.assertNotIn("Altman's", note, prompt)
             self.assertNotIn("No result mentions Dr.", note, prompt)
             self.assertEqual(note.count("(linkedin.com)"), 1, prompt)
-            self.assertEqual(note.count("(etched.com)"), 1, prompt)
+            self.assertNotIn("Result 1 (evil.example)", note, prompt)
+            if source is full:
+                self.assertEqual(note.count("(etched.com)"), 1, prompt)
             for line in note.splitlines():
                 self.assertFalse(line.startswith("- "), prompt)
             for label in labels:

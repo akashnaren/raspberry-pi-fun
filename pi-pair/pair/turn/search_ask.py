@@ -185,11 +185,11 @@ def _mentions(text: str, tokens: tuple[str, ...]) -> bool:
 
 
 def _domain(line: str) -> str:
-    """Host of the trailing ``(https://...)`` group, not a URL inside the title."""
-    found = re.findall(r"\((https?://[^)\s]+)\)", line or "", re.I)
-    if not found:
+    """Host of the ``(url):`` group that ends the title, not a URL in the snippet."""
+    match = re.search(r"\((https?://[^)\s]+)\)\s*:", line or "", re.I)
+    if match is None:
         return ""
-    host = urlparse(found[-1]).hostname or ""
+    host = urlparse(match.group(1)).hostname or ""
     if host.startswith("www."):
         host = host[4:]
     return host
