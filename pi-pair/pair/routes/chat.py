@@ -30,7 +30,12 @@ from pair.routes.public_api import stamp
 from pair.routes.status import _claim_wait, listed_chat_models, mode_fields
 from pair.turn.abilities import tail_hints
 from pair.turn.moderate import moderate
-from pair.turn.search_ask import _person_lookup, explicit_search, web_search_request
+from pair.turn.search_ask import (
+    _already_named,
+    _cue_search,
+    _person_lookup,
+    web_search_request,
+)
 from pair.turn.shape import (
     GROUNDED_RULE,
     NO_RESULTS_RULE,
@@ -202,6 +207,7 @@ class ChatRoutes:
         self._search_ms = 0
         self._decide_source = ""
         self._decide_label = ""
+        self._who_auto = False
         self._search_query = ""
         self._usage = {}
         self._ttft_ms = 0
@@ -209,15 +215,18 @@ class ChatRoutes:
 
     def _arm_search(self, prompt: str, force: bool, mesh: bool, messages=None) -> bool:
         """Toggle on always searches. Otherwise only an explicit ask does."""
+        self._who_auto = False
         if not mesh:
             return False
+        question = user_question(prompt or "")
         if force:
             source = "user"
-        elif _person_lookup(user_question(prompt or "")):
-            if not explicit_search(prompt, _earlier_text(self, messages)):
-                return False
+        elif _cue_search(prompt):
             source = "keyword"
-        elif explicit_search(prompt):
+        elif _person_lookup(question):
+            if _already_named(question, _earlier_text(self, messages)):
+                return False
+            self._who_auto = True
             source = "keyword"
         else:
             return False

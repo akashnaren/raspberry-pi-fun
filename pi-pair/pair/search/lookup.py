@@ -420,7 +420,7 @@ def _pack(results: list[dict], limit: int) -> dict:
         title = item["title"][:TITLE_CAP] or item["url"]
         url = item["url"]
         snippet = item["snippet"][:SNIPPET_CAP]
-        sources.append({"title": title, "url": url})
+        sources.append({"title": title, "url": url, "snippet": snippet})
         lines.append(f"- {title} ({url}): {snippet}")
     return {"status": "ok", "sources": sources, "context": "\n".join(lines)}
 

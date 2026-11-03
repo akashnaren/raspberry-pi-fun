@@ -12,8 +12,8 @@ from pair.model.knobs import search_note_limit
 from pair.model.modes import mode_table
 from pair.routes.base import safe_write
 from pair.search.lookup import lookup_web
-from pair.turn.search_ask import _person_lookup, who_note_text
-from pair.turn.shape import search_result_text, user_question
+from pair.turn.search_ask import who_note_text
+from pair.turn.shape import search_result_text
 
 FLASH_SOURCE_CAP = 3
 PRO_SOURCE_CAP = 8
@@ -21,9 +21,9 @@ SEARCH_BUDGET_S = 4.0
 SEARCH_BODY_CAP = 4096
 
 
-def _source_cap(model: str, prompt: str = "") -> int:
-    """Who-is reads three pages on Flash and on Pro. Other Pro searches stay wider."""
-    if _person_lookup(user_question(prompt or "")):
+def _source_cap(model: str, who: bool = False) -> int:
+    """Auto who-is reads three pages. A toggle or a normal search stays on main's cap."""
+    if who:
         return FLASH_SOURCE_CAP
     pro = str(mode_table().get("pro") or "")
     if pro and str(model or "") == pro:
@@ -46,9 +46,16 @@ def _join_cancel(thread, timeout: float | None, cancel=None) -> None:
         thread.join(0.25)
 
 
-def _begin_lookup(prompt: str, model: str) -> dict:
+def _prompt_body(who: bool, sources: list, context: str) -> str:
+    """Who-is auto-search labels sources. Every other search uses main's note."""
+    if who:
+        return who_note_text(sources)
+    return search_result_text(context, search_note_limit())
+
+
+def _begin_lookup(prompt: str, model: str, who: bool = False) -> dict:
     """Start the lookup before the decode slot, so it overlaps the queue wait."""
-    cap = _source_cap(model, prompt)
+    cap = _source_cap(model, who)
     holder: dict = {}
     started = time.perf_counter()
     deadline = time.monotonic() + SEARCH_BUDGET_S
@@ -78,6 +85,8 @@ def _with_search(
     model: str = "",
     cancel=None,
     job: dict | None = None,
+    *,
+    who: bool = False,
 ):
     """On pi4, attach public notes when a lookup already ran. Failures stay local.
 
@@ -89,7 +98,7 @@ def _with_search(
         _join_cancel(warm, 40, cancel)
         return messages, None
     if job is None:
-        job = _begin_lookup(prompt, model)
+        job = _begin_lookup(prompt, model, who)
     lookup = job["thread"]
     holder = job["holder"]
     cap = int(job["cap"])
@@ -102,6 +111,7 @@ def _with_search(
     if status not in ("ok", "failed"):
         status = "failed"
     sources = []
+    detailed: list[dict] = []
     for item in found.get("sources") or []:
         if len(sources) >= cap:
             break
@@ -112,12 +122,16 @@ def _with_search(
             continue
         title = str(item.get("title") or url).strip() or url
         sources.append({"title": title[:120], "url": url})
+        if who:
+            detailed.append(
+                {
+                    "title": str(item.get("title") or ""),
+                    "url": url,
+                    "snippet": str(item.get("snippet") or ""),
+                }
+            )
     full = str(found.get("context") or "").strip()
-    ranked = who_note_text(prompt, full)
-    if ranked is None:
-        shown = search_result_text(full, search_note_limit())
-    else:
-        shown = ranked
+    shown = _prompt_body(who, detailed if who else sources, full)
     note = {"status": status, "sources": sources, "context": full}
     if status == "ok" and shown:
         note["prompt_note"] = shown
@@ -153,8 +167,9 @@ def _source_url(url: str) -> str:
 class SearchRoutes:
     def _timed_search(self, *args, job=None, **kwargs):
         started = time.perf_counter()
+        who = bool(getattr(self, "_who_auto", False))
         try:
-            return _with_search(*args, job=job, **kwargs)
+            return _with_search(*args, job=job, who=who, **kwargs)
         finally:
             origin = job["started"] if isinstance(job, dict) else started
             self._search_ms = int((time.perf_counter() - origin) * 1000)
