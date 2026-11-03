@@ -503,9 +503,13 @@ def _sample_ids(rows: list) -> set[int]:
 
 
 def _drop_turns(rows: list, limit: int, keep_ids: set[int]) -> None:
-    """Drop non-system rows, oldest first, except the last user and `keep_ids`."""
+    """Drop non-system rows, oldest first, except the last user and `keep_ids`.
+
+    The cap is the row count, so a long history is removed before the samples.
+    """
     guard = 0
-    while _token_count(rows) > limit and guard < 64:
+    cap = len(rows)
+    while _token_count(rows) > limit and guard < cap:
         guard += 1
         last_user = _last_user(rows)
         drop_at = next(

@@ -26,7 +26,13 @@ from pair.model.chat_once import (
     warm_token,
 )
 from pair.model.modes import FLASH_MODEL, PRO_MODEL
-from pair.model.preload import join_pro_warms, schedule_pro_warm, warm_model
+from pair.model.preload import (
+    REWARM_PAUSE_S,
+    join_pro_warms,
+    rewarm_pro_if_evicted,
+    schedule_pro_warm,
+    warm_model,
+)
 
 
 class _Body:
@@ -400,6 +406,94 @@ class WarmDrop(unittest.TestCase):
             self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
             time.sleep(0.4)
             self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
+
+    def test_five_schedules_post_at_most_twice(self):
+        posts: list[str] = []
+
+        def open_json(url, payload, timeout, cancel=None):
+            del url, timeout, cancel
+            posts.append(str(payload.get("model")))
+            raise ClientGone()
+
+        def settled() -> bool:
+            return not any(
+                thread.name == "pro-rewarm" for thread in threading.enumerate()
+            )
+
+        with patch("pair.model.preload.open_json", open_json):
+            for _ in range(5):
+                before = len(posts)
+                schedule_pro_warm("127.0.0.1", 9, PRO_MODEL)
+                deadline = time.time() + 4
+                while time.time() < deadline:
+                    if settled() and (len(posts) > before or len(posts) >= 2):
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(settled())
+        self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
+
+    def test_watchdog_loads_pro_after_the_pause(self):
+        self.assertEqual(REWARM_PAUSE_S, 120.0)
+        posts: list[str] = []
+        clock = {"extra": 0.0}
+        real = time.monotonic
+
+        def monotonic() -> float:
+            return real() + clock["extra"]
+
+        def open_json(url, payload, timeout, cancel=None):
+            del url, timeout, cancel
+            posts.append(str(payload.get("model")))
+            raise ClientGone()
+
+        def open_json_request(request, timeout, cancel=None):
+            del timeout, cancel
+            payload = json.loads(request.data.decode())
+            posts.append("watch:" + str(payload.get("model")))
+            return _Body(b"{}")
+
+        def settled() -> bool:
+            return not any(
+                thread.name == "pro-rewarm" for thread in threading.enumerate()
+            )
+
+        with patch("pair.model.preload.time.monotonic", monotonic):
+            with patch("pair.model.preload.open_json", open_json):
+                schedule_pro_warm("127.0.0.1", 9, PRO_MODEL)
+                deadline = time.time() + 4
+                while time.time() < deadline and len(posts) < 2:
+                    time.sleep(0.02)
+                self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
+                deadline = time.time() + 2
+                while time.time() < deadline and not settled():
+                    time.sleep(0.02)
+                self.assertTrue(settled())
+                with patch.dict(os.environ, {"PI_PAIR_ROLE": "brain"}):
+                    with patch(
+                        "pair.model.preload.resident_models",
+                        return_value=[FLASH_MODEL],
+                    ):
+                        with patch(
+                            "pair.model.preload.open_json_request",
+                            open_json_request,
+                        ):
+                            with patch(
+                                "pair.model.preload._decode_idle",
+                                return_value=True,
+                            ):
+                                with patch(
+                                    "pair.model.preload.defer_nonurgent",
+                                    return_value=False,
+                                ):
+                                    rewarm_pro_if_evicted()
+                                    self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
+                                    clock["extra"] = REWARM_PAUSE_S + 1
+                                    schedule_pro_warm("127.0.0.1", 9, PRO_MODEL)
+                                    time.sleep(0.8)
+                                    self.assertTrue(settled())
+                                    self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
+                                    rewarm_pro_if_evicted()
+        self.assertEqual(posts, [PRO_MODEL, PRO_MODEL, "watch:" + PRO_MODEL])
 
     def test_a_hot_board_does_not_retry_a_cancelled_pro_warm(self):
         posts: list[str] = []

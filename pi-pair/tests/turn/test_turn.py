@@ -361,6 +361,7 @@ class TurnShape(unittest.TestCase):
             ("summary", pairs(30, 200), "", summary, 2048, "", ""),
             ("four-rows", long_history, long_note, "", 2467, "H03-", "H04-"),
             ("deeper", long_history, long_note, "", 1851, "H08-", "H09-"),
+            ("eighty", pairs(80, 200), short_note, "", 2048, "", ""),
         )
         for name, history, notes, summary_text, limit, gone, kept in cases:
             with self.subTest(name=name):
