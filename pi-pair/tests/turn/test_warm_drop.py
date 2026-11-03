@@ -432,6 +432,22 @@ class WarmDrop(unittest.TestCase):
                 self.assertTrue(settled())
         self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
 
+    def test_flash_cancels_do_not_cool_the_tag(self):
+        posts: list[str] = []
+
+        def open_json(url, payload, timeout, cancel=None):
+            del url, timeout, cancel
+            posts.append(str(payload.get("model")))
+            raise ClientGone()
+
+        with patch("pair.model.preload.open_json", open_json):
+            schedule_pro_warm("127.0.0.1", 9, FLASH_MODEL)
+            deadline = time.time() + 4
+            while time.time() < deadline and posts.count(FLASH_MODEL) < 3:
+                time.sleep(0.02)
+            join_pro_warms()
+        self.assertGreaterEqual(posts.count(FLASH_MODEL), 3)
+
     def test_watchdog_loads_pro_after_the_pause(self):
         self.assertEqual(REWARM_PAUSE_S, 120.0)
         posts: list[str] = []
@@ -489,11 +505,20 @@ class WarmDrop(unittest.TestCase):
                                     self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
                                     clock["extra"] = REWARM_PAUSE_S + 1
                                     schedule_pro_warm("127.0.0.1", 9, PRO_MODEL)
-                                    time.sleep(0.8)
-                                    self.assertTrue(settled())
-                                    self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
-                                    rewarm_pro_if_evicted()
-        self.assertEqual(posts, [PRO_MODEL, PRO_MODEL, "watch:" + PRO_MODEL])
+                                    deadline = time.time() + 4
+                                    while time.time() < deadline and not (
+                                        settled() and len(posts) >= 4
+                                    ):
+                                        time.sleep(0.02)
+                                    self.assertEqual(
+                                        posts,
+                                        [
+                                            PRO_MODEL,
+                                            PRO_MODEL,
+                                            PRO_MODEL,
+                                            PRO_MODEL,
+                                        ],
+                                    )
 
     def test_a_hot_board_does_not_retry_a_cancelled_pro_warm(self):
         posts: list[str] = []

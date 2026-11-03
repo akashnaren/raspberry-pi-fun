@@ -42,7 +42,7 @@ _SCHEDULED_MU = threading.Lock()
 _SCHEDULED: list[threading.Thread] = []
 _WARM_TAGS: set[str] = set()
 _WARM_EPOCH = 0
-# Cancelled POSTs per tag: (count, monotonic time the cooldown ends).
+# Cancelled Pro POSTs: (count, monotonic time the cooldown ends).
 _WARM_STRIKES: dict[str, tuple[int, float]] = {}
 
 
@@ -165,15 +165,15 @@ def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
 
     The chat that scheduled it runs first. A later turn may close this request.
     One tag has one in-flight warm. PRELOAD_TIMEOUT_S bounds the POST only.
-    Two cancelled POSTs cool the tag for REWARM_PAUSE_S. Later chats leave it
-    alone; the watchdog loads Pro after that pause.
+    Two cancelled Pro POSTs cool that tag for REWARM_PAUSE_S. Once the pause
+    has elapsed the next schedule starts again at zero.
     """
     payload = pro_preload_payload(model)
     tag = str(payload.get("model") or "")
     url = f"http://{host}:{int(port)}/api/chat"
 
-    count, _until = _strikes(tag)
-    if count >= 2:
+    _flash, pro = resident_tags()
+    if tag == pro and _still_cooling(tag):
         return
 
     def run(epoch: int) -> None:
@@ -196,17 +196,31 @@ def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
     thread.start()
 
 
-def _strikes(tag: str) -> tuple[int, float]:
+def _still_cooling(tag: str) -> bool:
+    """True while two Pro strikes are still inside REWARM_PAUSE_S.
+
+    An expired entry is reset to (0, 0.0), so the next schedule starts clean.
+    """
     with _SCHEDULED_MU:
-        return _WARM_STRIKES.get(tag, (0, 0.0))
+        count, until = _WARM_STRIKES.get(tag, (0, 0.0))
+        if count < 2:
+            return False
+        if time.monotonic() < until:
+            return True
+        _WARM_STRIKES[tag] = (0, 0.0)
+        return False
 
 
 def _record_cancel(tag: str) -> bool:
-    """Count a cancelled POST. True once the tag should cool down.
+    """Count a cancelled Pro POST. True once Pro should cool down.
 
-    The count lives on the tag, so the next chat does not start a fresh thread
-    at zero. Two strikes wait out REWARM_PAUSE_S, then the watchdog loads Pro.
+    Flash is not counted, so a chat waiting on it still has a warm in flight.
+    Two Pro strikes wait out REWARM_PAUSE_S. The next schedule after that
+    pause starts at zero.
     """
+    _flash, pro = resident_tags()
+    if tag != pro:
+        return False
     with _SCHEDULED_MU:
         count, _until = _WARM_STRIKES.get(tag, (0, 0.0))
         count += 1
@@ -223,8 +237,8 @@ def _clear_strikes(tag: str) -> None:
 def _post_scheduled_warm(url: str, payload: dict, epoch: int) -> None:
     """Wait until the lane is idle, then POST. A lost hold waits again.
 
-    Two cancelled POSTs cool the tag for REWARM_PAUSE_S. Later chats leave
-    the reload alone. The watchdog loads Pro after that pause.
+    Two cancelled Pro POSTs cool that tag for REWARM_PAUSE_S. Flash cancels
+    stay on this in-flight warm so the waiting chat still has one scheduled.
     """
     tag = str(payload.get("model") or "")
     while _warm_epoch() == epoch:
@@ -279,8 +293,9 @@ def _decode_idle() -> bool:
 def rewarm_pro_if_evicted() -> None:
     """Reload a tag /api/ps dropped. Pro waits while rest says the board is hot.
 
-    A tag cooled by two cancelled POSTs also waits out REWARM_PAUSE_S. When
-    that pause ends, this watchdog loads Pro. A chat schedule does not.
+    Pro cooled by two cancelled POSTs also waits out REWARM_PAUSE_S. After
+    that pause a chat may schedule it again, and this watchdog loads it when
+    it is still missing.
     """
     if not on_pi4():
         return
@@ -301,8 +316,7 @@ def rewarm_pro_if_evicted() -> None:
         if defer_nonurgent():
             print("rest: deferred pro rewarm", flush=True)
             return
-        count, until = _strikes(pro)
-        if count >= 2 and time.monotonic() < until:
+        if _still_cooling(pro):
             return
         warm_model(pro)
 
