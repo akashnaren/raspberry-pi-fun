@@ -13,6 +13,7 @@ from pair.turn.abilities import (
     clean_reply,
     mend_cut_tail,
     parse_fences,
+    settle_blocks,
     tool_notes,
 )
 from pair.turn.shape import PERSONA
@@ -155,6 +156,62 @@ class Abilities(unittest.TestCase):
         self.assertEqual(md_ext, "md")
         drawn = render_chart(table=chart[0]["body"])
         self.assertTrue(drawn["ok"], drawn)
+
+    def test_a_lone_markdown_fence_is_prose_unless_a_file_was_asked(self):
+        wrapped = "```markdown\nThe key is in the blue mug.\n```"
+        question = "Where did I leave my spare house key?"
+        self.assertEqual(
+            settle_blocks(wrapped, question), "The key is in the blue mug."
+        )
+        self.assertEqual(clean_reply(wrapped, question), "The key is in the blue mug.")
+        self.assertEqual(parse_fences(wrapped, prompt=question), [])
+        self.assertEqual(parse_fences(wrapped)[0]["name"], "doc")
+        self.assertEqual(
+            tool_notes(wrapped, search=lambda _query: {}, prompt=question), ""
+        )
+        asked = "Make a markdown file I can download with one step."
+        kept = settle_blocks(wrapped, asked)
+        self.assertIn("```markdown", kept)
+        self.assertEqual(parse_fences(kept)[0]["name"], "doc")
+        md = "```md\nThe key is in the blue mug.\n```"
+        self.assertEqual(settle_blocks(md, question), "The key is in the blue mug.")
+        longer = (
+            "```markdown\n" + ("The compressor raises the pressure. " * 12) + "\n```"
+        )
+        fridge = "Explain how a refrigerator keeps food cold."
+        self.assertNotIn("```", settle_blocks(longer, fridge))
+        self.assertEqual(parse_fences(longer, prompt=fridge), [])
+        mixed = "Note.\n```markdown\nThe key is in the blue mug.\n```"
+        self.assertIn("```markdown", settle_blocks(mixed, question))
+        pdf = "```pdf\nVisit the museum.\n```"
+        self.assertIn("```pdf", settle_blocks(pdf, question))
+
+    def test_save_readme_and_export_keep_a_markdown_document(self):
+        wrapped = "```markdown\nMix flour and milk.\n```"
+        asks = (
+            "Save this recipe as a .md file",
+            "Write a README.md for the picnic",
+            "Give me a markdown document with the steps",
+            "Export my notes as markdown",
+        )
+        for prompt in asks:
+            kept = settle_blocks(wrapped, prompt)
+            self.assertIn("```markdown", kept, prompt)
+            self.assertEqual(
+                parse_fences(kept, prompt=prompt)[0]["name"], "doc", prompt
+            )
+        plains = (
+            "Where did I leave my spare house key?",
+            "What is the difference between docx and pdf?",
+            "Summarize this PDF in two lines.",
+            "Explain how a refrigerator keeps food cold.",
+            "What is markdown?",
+        )
+        for prompt in plains:
+            self.assertEqual(
+                settle_blocks(wrapped, prompt), "Mix flour and milk.", prompt
+            )
+            self.assertEqual(parse_fences(wrapped, prompt=prompt), [], prompt)
 
     def test_plotly_json_becomes_a_plot_fence(self):
         figure = (

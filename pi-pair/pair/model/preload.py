@@ -15,18 +15,35 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from pair.core.cancel import ClientGone
 from pair.core.config import ollama_base, on_pi4
-from pair.model.chat_once import warm_in_flight
+from pair.model.chat_once import (
+    close_warm,
+    drop_warm_slot,
+    hold_warm_slot,
+    ollama_payload,
+    open_json,
+    turns_in_flight,
+    warm_in_flight,
+    warm_slot_busy,
+)
 from pair.model.http_pool import open_json_request
-from pair.model.knobs import keep_alive, mode_limits
-from pair.model.modes import mode_table
+from pair.model.knobs import tuned_knobs
+from pair.model.modes import PRO_MODEL, mode_table
 from pair.model.rest import defer_nonurgent
+from pair.turn.shape import warm_messages
 
 PRELOAD_TIMEOUT_S = 180.0
 COLD_WAIT_S = 60.0
 COLD_POLL_S = 0.05
 RESIDENT_TIMEOUT_S = 0.6
 REWARM_PAUSE_S = 120.0
+_SCHEDULED_MU = threading.Lock()
+_SCHEDULED: list[threading.Thread] = []
+_WARM_TAGS: set[str] = set()
+_WARM_EPOCH = 0
+# Cancelled Pro POSTs: (count, monotonic time the cooldown ends).
+_WARM_STRIKES: dict[str, tuple[int, float]] = {}
 
 
 def resident_tags() -> tuple[str, str]:
@@ -38,34 +55,17 @@ def resident_tags() -> tuple[str, str]:
 
 
 def pro_preload_payload(model: str | None = None) -> dict:
-    """A one-token generate that leaves this tag resident. keep_alive is never 0."""
+    """One-token /api/chat that leaves this tag resident. keep_alive is never 0."""
     tag = (model or "").strip()
     if not tag:
         _flash, tag = resident_tags()
     if not tag:
-        from pair.model.modes import PRO_MODEL
-
         tag = PRO_MODEL
-    alive = keep_alive()
-    if alive == 0:
-        alive = -1
-    from pair.turn.shape import persona_text
-
-    limits = mode_limits(tag)
-    return {
-        "model": tag,
-        "prompt": persona_text(),
-        "stream": False,
-        "keep_alive": alive,
-        "think": False,
-        "options": {
-            "num_predict": 1,
-            "temperature": 0,
-            "num_ctx": limits["num_ctx"],
-            "num_batch": limits["num_batch"],
-            "num_thread": limits["num_thread"],
-        },
-    }
+    knobs = tuned_knobs(tag)
+    payload = ollama_payload(tag, warm_messages(knobs), 0.0, 1, False, knobs)
+    if payload.get("keep_alive") == 0:
+        payload["keep_alive"] = -1
+    return payload
 
 
 def resident_models(host: str, port: int) -> list[str] | None:
@@ -112,23 +112,168 @@ def wait_for_resident(
     return False
 
 
+def _warm_epoch() -> int:
+    with _SCHEDULED_MU:
+        return _WARM_EPOCH
+
+
+def _turn_busy() -> bool:
+    return (not _decode_idle()) or warm_slot_busy() or turns_in_flight() > 0
+
+
+def _wait_out_the_turn(epoch: int) -> bool:
+    """True when this warm should still post.
+
+    Idle for the grace window means nobody took the model, so post. A chat
+    that arrives during the grace runs first. A newer epoch means the warm
+    was dropped and must not post.
+    """
+    grace = time.monotonic() + 0.5
+    overlapped = False
+    while time.monotonic() < grace:
+        if _warm_epoch() != epoch:
+            return False
+        if _turn_busy():
+            overlapped = True
+            break
+        time.sleep(0.01)
+    if not overlapped:
+        return _warm_epoch() == epoch
+    while _turn_busy():
+        if _warm_epoch() != epoch:
+            return False
+        time.sleep(0.02)
+    return _warm_epoch() == epoch
+
+
+def join_pro_warms(timeout: float = 2.0) -> None:
+    """Stop scheduled Pro warms and wait until those threads leave."""
+    global _WARM_EPOCH
+    with _SCHEDULED_MU:
+        _WARM_EPOCH += 1
+        threads = [item for item in _SCHEDULED if item.is_alive()]
+    close_warm()
+    for thread in threads:
+        thread.join(timeout)
+    with _SCHEDULED_MU:
+        _SCHEDULED[:] = [item for item in _SCHEDULED if item.is_alive()]
+        _WARM_STRIKES.clear()
+
+
 def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
-    """Background /api/generate for a user chat. Not deferred when the board is hot."""
+    """Background /api/chat warm for a user chat. Not deferred when the board is hot.
+
+    The chat that scheduled it runs first. A later turn may close this request.
+    One tag has one in-flight warm. PRELOAD_TIMEOUT_S bounds the POST only.
+    Two cancelled Pro POSTs cool that tag for REWARM_PAUSE_S. Once the pause
+    has elapsed the next schedule starts again at zero.
+    """
     payload = pro_preload_payload(model)
+    tag = str(payload.get("model") or "")
+    url = f"http://{host}:{int(port)}/api/chat"
 
-    def run() -> None:
-        request = urllib.request.Request(
-            f"http://{host}:{int(port)}/api/generate",
-            data=json.dumps(payload).encode(),
-            headers={"content-type": "application/json"},
-        )
+    _flash, pro = resident_tags()
+    if tag == pro and _still_cooling(tag):
+        return
+
+    def run(epoch: int) -> None:
         try:
-            with urllib.request.urlopen(request, timeout=PRELOAD_TIMEOUT_S) as response:
-                response.read()
-        except Exception as exc:
-            print(f"pro preload skipped: {exc}", flush=True)
+            _post_scheduled_warm(url, payload, epoch)
+        finally:
+            with _SCHEDULED_MU:
+                _WARM_TAGS.discard(tag)
 
-    threading.Thread(target=run, name="pro-rewarm", daemon=True).start()
+    with _SCHEDULED_MU:
+        if tag in _WARM_TAGS:
+            return
+        _WARM_TAGS.add(tag)
+        epoch = _WARM_EPOCH
+        _SCHEDULED[:] = [item for item in _SCHEDULED if item.is_alive()]
+        thread = threading.Thread(
+            target=run, args=(epoch,), name="pro-rewarm", daemon=True
+        )
+        _SCHEDULED.append(thread)
+    thread.start()
+
+
+def _still_cooling(tag: str) -> bool:
+    """True while two Pro strikes are still inside REWARM_PAUSE_S.
+
+    An expired entry is reset to (0, 0.0), so the next schedule starts clean.
+    """
+    with _SCHEDULED_MU:
+        count, until = _WARM_STRIKES.get(tag, (0, 0.0))
+        if count < 2:
+            return False
+        if time.monotonic() < until:
+            return True
+        _WARM_STRIKES[tag] = (0, 0.0)
+        return False
+
+
+def _record_cancel(tag: str) -> bool:
+    """Count a cancelled Pro POST. True once Pro should cool down.
+
+    Flash is not counted, so a chat waiting on it still has a warm in flight.
+    Two Pro strikes wait out REWARM_PAUSE_S. The next schedule after that
+    pause starts at zero.
+    """
+    _flash, pro = resident_tags()
+    if tag != pro:
+        return False
+    with _SCHEDULED_MU:
+        count, _until = _WARM_STRIKES.get(tag, (0, 0.0))
+        count += 1
+        until = time.monotonic() + REWARM_PAUSE_S if count >= 2 else 0.0
+        _WARM_STRIKES[tag] = (count, until)
+        return count >= 2
+
+
+def _clear_strikes(tag: str) -> None:
+    with _SCHEDULED_MU:
+        _WARM_STRIKES.pop(tag, None)
+
+
+def _post_scheduled_warm(url: str, payload: dict, epoch: int) -> None:
+    """Wait until the lane is idle, then POST. A lost hold waits again.
+
+    Two cancelled Pro POSTs cool that tag for REWARM_PAUSE_S. Flash cancels
+    stay on this in-flight warm so the waiting chat still has one scheduled.
+    """
+    tag = str(payload.get("model") or "")
+    while _warm_epoch() == epoch:
+        if not _wait_out_the_turn(epoch):
+            return
+        token = hold_warm_slot()
+        if token is None:
+            if _warm_epoch() != epoch:
+                return
+            time.sleep(0.02)
+            continue
+        try:
+            if _warm_epoch() != epoch:
+                return
+            # A chat closed this hold. The tag is still in flight, so wait
+            # for the lane and post again instead of ending the warm.
+            if token.gone() or not _decode_idle():
+                continue
+            try:
+                with open_json(
+                    url, payload, PRELOAD_TIMEOUT_S, cancel=token
+                ) as response:
+                    response.read()
+            except ClientGone:
+                if not _record_cancel(tag):
+                    continue
+                print(f"pro preload skipped: {tag} interrupted", flush=True)
+                return
+            except Exception as exc:
+                print(f"pro preload skipped: {exc}", flush=True)
+                return
+            _clear_strikes(tag)
+            return
+        finally:
+            drop_warm_slot()
 
 
 def _local_endpoint() -> tuple[str, int]:
@@ -146,7 +291,12 @@ def _decode_idle() -> bool:
 
 
 def rewarm_pro_if_evicted() -> None:
-    """Reload a tag /api/ps dropped. Pro waits while rest says the board is hot."""
+    """Reload a tag /api/ps dropped. Pro waits while rest says the board is hot.
+
+    Pro cooled by two cancelled POSTs also waits out REWARM_PAUSE_S. After
+    that pause a chat may schedule it again, and this watchdog loads it when
+    it is still missing.
+    """
     if not on_pi4():
         return
     if not _decode_idle():
@@ -156,37 +306,79 @@ def rewarm_pro_if_evicted() -> None:
     if resident is None:
         return
     flash, pro = resident_tags()
-    if flash and flash not in resident:
+    if flash and flash in resident:
+        _clear_strikes(flash)
+    elif flash and flash not in resident:
         warm_model(flash)
-    if pro and pro not in resident:
+    if pro and pro in resident:
+        _clear_strikes(pro)
+    elif pro and pro not in resident:
         if defer_nonurgent():
             print("rest: deferred pro rewarm", flush=True)
+            return
+        if _still_cooling(pro):
             return
         warm_model(pro)
 
 
+def _retry_cancelled_warm(model: str) -> None:
+    """Log a warm a chat closed and post it again without the 120s pause.
+
+    Pro waits while the board is hot, the same way the eviction watchdog does.
+    """
+    print(f"model preload skipped: {model} cancelled", flush=True)
+    _flash, pro = resident_tags()
+    if model == pro and defer_nonurgent():
+        print("rest: deferred pro rewarm", flush=True)
+        return
+    host, port = _local_endpoint()
+    schedule_pro_warm(host, port, model)
+
+
 def warm_model(model: str | None = None) -> None:
-    """POST /api/generate for one resident tag. No-op off the brain."""
+    """POST /api/chat for one resident tag. No-op off the brain."""
     if not on_pi4():
         return
     payload = pro_preload_payload(model)
     if not payload.get("model") or payload.get("keep_alive") == 0:
         return
+    name = str(payload.get("model") or "")
+    if warm_slot_busy():
+        print(f"model preload skipped: {name} busy", flush=True)
+        return
+    token = hold_warm_slot()
+    if token is None:
+        print(f"model preload skipped: {name} busy", flush=True)
+        return
     request = urllib.request.Request(
-        ollama_base().rstrip("/") + "/api/generate",
+        ollama_base().rstrip("/") + "/api/chat",
         data=json.dumps(payload).encode(),
         headers={"content-type": "application/json"},
     )
     try:
-        with open_json_request(request, PRELOAD_TIMEOUT_S) as response:
-            response.read()
-        print(f"model preload: {payload['model']}", flush=True)
-    except Exception as exc:
-        print(f"model preload skipped: {exc}", flush=True)
+        if token.gone() or not _decode_idle():
+            _retry_cancelled_warm(name)
+            return
+        try:
+            with open_json_request(
+                request, PRELOAD_TIMEOUT_S, cancel=token
+            ) as response:
+                response.read()
+        except ClientGone:
+            _retry_cancelled_warm(name)
+            return
+        except Exception as exc:
+            print(f"model preload skipped: {exc}", flush=True)
+            return
+        if not token.gone():
+            print(f"model preload: {payload['model']}", flush=True)
+            _clear_strikes(name)
+    finally:
+        drop_warm_slot()
 
 
 def warm_pro_model() -> None:
-    """POST /api/generate for Pro. No-op off the brain. Failures are logged."""
+    """POST /api/chat for Pro. No-op off the brain. Failures are logged."""
     _flash, pro = resident_tags()
     warm_model(pro)
 

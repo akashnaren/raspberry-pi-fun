@@ -378,7 +378,10 @@ def add_persona(
 
 
 def tail_note(effort: str = "", notes: str = "", hints: str = "") -> str:
-    """One per-turn note: effort, then hints, then tool results."""
+    """One per-turn note: effort, then hints, then tool results.
+
+    A Notes: header is not added. Pro copies that header into a fenced reply.
+    """
     parts: list[str] = []
     extra = EFFORT_HINT.get((effort or "").strip().lower(), "")
     if extra:
@@ -388,16 +391,7 @@ def tail_note(effort: str = "", notes: str = "", hints: str = "") -> str:
         parts.append(hint)
     note = (notes or "").strip()
     if note:
-        # A grounding rule is already the instruction. A "Notes:" header is
-        # what the small model copies into an empty fence.
-        if (
-            note.startswith("Notes:")
-            or GROUNDED_RULE in note
-            or NO_RESULTS_RULE in note
-        ):
-            parts.append(note)
-        else:
-            parts.append("Notes:\n" + note)
+        parts.append(note)
     return "\n\n".join(parts)
 
 
@@ -495,8 +489,114 @@ def turns_for_memory(request, shaped=None) -> list:
     return rows
 
 
-def fit_messages(messages, knobs: dict | None = None) -> list:
-    """Drop whole old turns when the prompt is over num_ctx. Never drop a system row."""
+def _sample_ids(rows: list) -> set[int]:
+    """Ids of the inserted sample block. History after it is droppable."""
+    samples = sample_turns()
+    width = len(samples)
+    for start in range(max(0, len(rows) - width + 1)):
+        if all(
+            rows[start + offset].get("role") == sample.get("role")
+            and rows[start + offset].get("content") == sample.get("content")
+            for offset, sample in enumerate(samples)
+        ):
+            return {id(rows[start + offset]) for offset in range(width)}
+    return set()
+
+
+def _drop_turns(rows: list, limit: int, keep_ids: set[int]) -> None:
+    """Drop non-system rows, oldest first, except the last user and `keep_ids`.
+
+    The cap is the row count, so a long history is removed before the samples.
+    """
+    guard = 0
+    cap = len(rows)
+    while _token_count(rows) > limit and guard < cap:
+        guard += 1
+        last_user = _last_user(rows)
+        drop_at = next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if row.get("role") != "system"
+                and index != last_user
+                and id(row) not in keep_ids
+            ),
+            None,
+        )
+        if drop_at is None:
+            break
+        rows.pop(drop_at)
+
+
+def _note_ids(rows: list, own_count: int, folded_tail: bool) -> set[int]:
+    """Summary rows and the tail note. Those are not caller text."""
+    last_user = _last_user(rows)
+    own, tail_at = _own_rows(rows, last_user, own_count, folded_tail)
+    held = {id(rows[index]) for index in own}
+    if 0 <= tail_at < len(rows):
+        held.add(id(rows[tail_at]))
+    return held
+
+
+def _clip_rows(
+    rows: list,
+    limit: int,
+    persona: str,
+    *,
+    systems_only: bool,
+    protected: set[int] | None = None,
+) -> None:
+    """Shorten long rows until `rows` fit or nothing eligible can shrink.
+
+    The systems-only pass clips caller rows. Summary, the tail note, the
+    persona, and the facts block stay whole until the general pass.
+    """
+    held = protected or set()
+    guard = 0
+    while _token_count(rows) > limit and guard < 16:
+        guard += 1
+        pool = [
+            row
+            for row in rows
+            if not _persona_row(row, persona)
+            and len(str(row.get("content") or "")) > 80
+        ]
+        if systems_only:
+            pool = [
+                row
+                for row in pool
+                if row.get("role") == "system"
+                and not _facts_extension(row, persona)
+                and id(row) not in held
+            ]
+        else:
+            others = [row for row in pool if not _facts_extension(row, persona)]
+            pool = others or pool
+        if not pool:
+            break
+        target = max(pool, key=lambda row: len(str(row.get("content") or "")))
+        text = str(target.get("content") or "")
+        overflow = _token_count(rows) - limit
+        keep = max(80, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
+        clipped = _fit_clip(text, persona, keep)
+        if len(clipped) >= len(text):
+            break
+        target["content"] = clipped
+
+
+def fit_messages(
+    messages,
+    knobs: dict | None = None,
+    *,
+    own_count: int = 0,
+    folded_tail: bool = False,
+) -> list:
+    """Drop whole old turns when the prompt is over num_ctx. Never drop a system row.
+
+    Non-sample history goes first. Caller system rows are clipped next.
+    The summary and the tail note are shortened only after that history is gone,
+    and the sample turns stay while any droppable history remains.
+    """
     rows = []
     for item in messages or []:
         if isinstance(item, dict) and str(item.get("content") or "").strip():
@@ -507,45 +607,91 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
     if _token_count(rows) <= limit:
         return rows
     persona = persona_text(knobs)
-    guard = 0
-    while _token_count(rows) > limit and guard < 64:
-        guard += 1
-        last_user = -1
-        for index, row in enumerate(rows):
-            if row.get("role") == "user":
-                last_user = index
-        drop_at = next(
-            (
-                index
-                for index, row in enumerate(rows)
-                if row.get("role") != "system" and index != last_user
-            ),
-            None,
-        )
-        if drop_at is None:
-            break
-        rows.pop(drop_at)
-    guard = 0
-    while _token_count(rows) > limit and guard < 16:
-        guard += 1
-        pool = [
-            row
-            for row in rows
-            if not _persona_row(row, persona)
-            and len(str(row.get("content") or "")) > 80
-        ]
-        if not pool:
-            break
-        target = max(pool, key=lambda row: len(str(row.get("content") or "")))
-        text = str(target.get("content") or "")
-        overflow = _token_count(rows) - limit
-        clipped = _clip_text(
-            text, max(80, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
-        )
-        if len(clipped) >= len(text):
-            break
-        target["content"] = clipped
+    _drop_turns(rows, limit, _sample_ids(rows))
+    _clip_rows(
+        rows,
+        limit,
+        persona,
+        systems_only=True,
+        protected=_note_ids(rows, own_count, folded_tail),
+    )
+    _drop_turns(rows, limit, set())
+    _clip_rows(rows, limit, persona, systems_only=False)
     return rows
+
+
+def _facts_extension(row: dict, persona: str) -> bool:
+    """True when this row is the persona plus the known-facts block."""
+    text = str(row.get("content") or "")
+    head = _persona_extension(text, persona)
+    if not head:
+        return False
+    return text[len(head) :].startswith("Known facts about the user:")
+
+
+def _persona_extension(text: str, persona: str) -> str:
+    """`persona` plus the blank line, when `text` continues past it."""
+    if not persona:
+        return ""
+    head = persona + "\n\n"
+    if text.startswith(head):
+        return head
+    return ""
+
+
+def _fit_clip(text: str, persona: str, keep: int) -> str:
+    """Shorten `text` to `keep` characters. A persona prefix stays byte-exact."""
+    head = _persona_extension(text, persona)
+    if not head:
+        return _clip_text(text, keep)
+    room = keep - len(head)
+    if room < 1:
+        return persona
+    suffix = _clip_text(text[len(head) :], room)
+    if not suffix:
+        return persona
+    return head + suffix
+
+
+def _known_facts(facts: str) -> str:
+    """Bullet list appended after the persona. Fact wording is not rewritten."""
+    lines = []
+    for raw in (facts or "").splitlines():
+        line = " ".join(raw.split()).strip()
+        if line.startswith("- "):
+            line = line[2:].strip()
+        if line:
+            lines.append("- " + line)
+    if not lines:
+        return ""
+    return "Known facts about the user:\n" + "\n".join(lines)
+
+
+def _prompt_budget(
+    rows: list, knobs: dict | None, own_count: int, folded_tail: bool
+) -> dict | None:
+    """num_ctx minus the blank lines fold_system_rows inserts around callers.
+
+    Each caller is joined on its own line. Those two extra characters are
+    missing from the separate-row token count, and they can cost one token.
+    """
+    last_user = _last_user(rows)
+    own, _tail = _own_rows(rows, last_user, own_count, folded_tail)
+    callers = 0
+    for index, row in enumerate(rows):
+        if index == 0 or index in own or not isinstance(row, dict):
+            continue
+        if row.get("role") == "system" and str(row.get("content") or "").strip():
+            callers += 1
+    if callers < 1:
+        return knobs
+    slack = math.ceil((2 * callers) / CHARS_PER_TOKEN)
+    limit = _num_ctx(knobs) - slack
+    if limit < 256:
+        return knobs
+    fitted = dict(knobs or {})
+    fitted["num_ctx"] = limit
+    return fitted
 
 
 def shape_messages(
@@ -558,21 +704,197 @@ def shape_messages(
     facts: str = "",
     summary: str = "",
 ) -> list:
-    """Persona, facts, summary, verbatim turns, one tail note, then the last user."""
+    """Persona, known facts, sample turns, one tail note, then the last user.
+
+    Facts are appended to system row 0 after the persona. The qwen3 template
+    prints that system block first, so those persona bytes stay a prefix.
+    Summary and tail notes stay on the last user turn.
+    """
     rows = fence_messages(messages, knobs)
     rows = add_persona(rows, prompt, "", knobs)
+    known = _known_facts(facts or "")
+    if known:
+        rows[0]["content"] = str(rows[0].get("content") or "") + "\n\n" + known
     stable = []
-    fact_text = (facts or "").strip()
     summary_text = (summary or "").strip()
-    if fact_text:
-        stable.append({"role": "system", "content": fact_text})
     if summary_text:
         stable.append({"role": "system", "content": "Summary:\n" + summary_text})
     rows = [rows[0], *stable, *sample_turns(), *rows[1:]]
     calc = notes_for(user_question(prompt)) or ""
     combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
-    rows = add_notes(rows, tail_note(effort, combined, hints))
-    return fit_messages(rows, knobs)
+    tail = tail_note(effort, combined, hints)
+    rows = add_notes(rows, tail)
+    own_count = len(stable)
+    folded_tail = bool(tail)
+    return fold_system_rows(
+        fit_messages(
+            rows,
+            _prompt_budget(rows, knobs, own_count, folded_tail),
+            own_count=own_count,
+            folded_tail=folded_tail,
+        ),
+        own_count=own_count,
+        folded_tail=folded_tail,
+    )
+
+
+def _plain_line(line: str, *, tail: bool) -> str:
+    """Drop a bullet marker. A Notes header is dropped from the tail only."""
+    text = " ".join(line.split())
+    if text.startswith("- "):
+        text = text[2:].strip()
+    if not tail:
+        return text
+    if text == "Notes:":
+        return ""
+    if text.startswith("Notes:"):
+        return text[len("Notes:") :].strip()
+    return text
+
+
+def _flatten_clause(text: str, *, tail: bool) -> str:
+    """One clause. No bullet line and no Notes header for the model to copy."""
+    summary = False
+    parts: list[str] = []
+    for raw in (text or "").splitlines():
+        line = " ".join(raw.split())
+        if not line:
+            continue
+        if not tail and line.startswith("Summary:"):
+            summary = True
+            line = line[len("Summary:") :].strip()
+        if not line:
+            continue
+        line = _plain_line(line, tail=tail)
+        if line:
+            parts.append(line)
+    flat = " ".join(parts)
+    if not flat:
+        return ""
+    if summary:
+        return f"earlier summary: {flat}"
+    return flat
+
+
+def _context_sentence(notes: list[tuple[str, bool]]) -> str:
+    """Summary and the tail note in one parenthetical.
+
+    A Notes: header on the user turn made Pro wrap a plain answer in a fence.
+    Facts stay on the system row, so they are not part of this line.
+    """
+    parts = []
+    for text, is_tail in notes:
+        clause = _flatten_clause(text, tail=is_tail)
+        if clause:
+            parts.append(clause)
+    if not parts:
+        return ""
+    return "(Context: " + "; ".join(parts) + ")"
+
+
+def _last_user(rows: list) -> int:
+    for index in range(len(rows) - 1, -1, -1):
+        row = rows[index]
+        if isinstance(row, dict) and row.get("role") == "user":
+            return index
+    return -1
+
+
+def _own_rows(
+    rows: list, last_user: int, own_count: int, folded_tail: bool
+) -> tuple[set[int], int]:
+    """Facts and summary stay in front. The tail note sits before the question."""
+    own: set[int] = set()
+    limit = min(len(rows), 1 + max(0, own_count))
+    for index in range(1, limit):
+        row = rows[index]
+        if isinstance(row, dict) and row.get("role") == "system":
+            own.add(index)
+    tail_at = -1
+    if folded_tail and last_user > 0:
+        tail_at = last_user - 1
+        tail_row = rows[tail_at]
+        if (
+            tail_at not in own
+            and isinstance(tail_row, dict)
+            and tail_row.get("role") == "system"
+        ):
+            own.add(tail_at)
+    return own, tail_at
+
+
+def _fold_callers(base: str, callers: list[str]) -> str:
+    """Put caller system rows between the persona and the facts.
+
+    Facts stay the tail of the one system block. With no facts marker the
+    callers still follow the persona, which is the whole of `base`.
+    """
+    mark = "\n\nKnown facts about the user:\n"
+    index = base.find(mark)
+    if index < 0:
+        parts = [base, *callers] if base else list(callers)
+        return "\n\n".join(parts)
+    persona = base[:index]
+    facts = base[index + 2 :]
+    parts = [part for part in (persona, *callers, facts) if part]
+    return "\n\n".join(parts)
+
+
+def fold_system_rows(
+    rows: list, *, own_count: int = 0, folded_tail: bool = False
+) -> list:
+    """Ollama merges every system row into one block at the top.
+
+    Extra rows there invalidate the cached sample turns.
+    """
+    if not rows:
+        return rows
+    last_user = _last_user(rows)
+    if last_user < 0:
+        return rows
+    own, tail_at = _own_rows(rows, last_user, own_count, folded_tail)
+    notes: list[tuple[str, bool]] = []
+    callers: list[str] = []
+    for index, row in enumerate(rows):
+        if index == 0 or not isinstance(row, dict) or row.get("role") != "system":
+            continue
+        text = str(row.get("content") or "")
+        if not text.strip():
+            continue
+        if index in own:
+            notes.append((text, index == tail_at))
+        else:
+            callers.append(text)
+    if not notes and not callers:
+        return rows
+    folded: list = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            folded.append(row)
+            continue
+        if index != 0 and row.get("role") == "system":
+            continue
+        copied = dict(row)
+        if index == 0 and callers:
+            copied["content"] = _fold_callers(str(copied.get("content") or ""), callers)
+        if index == last_user and notes:
+            question = str(copied.get("content") or "")
+            context = _context_sentence(notes)
+            if context and question:
+                copied["content"] = context + "\n" + question
+            elif context:
+                copied["content"] = context
+        folded.append(copied)
+    return folded
+
+
+def warm_messages(knobs: dict | None = None) -> list:
+    """Persona, sample turns, and one user word, using the caller's knobs.
+
+    Ollama merges every system row into one block at the top; extra rows there
+    invalidate the cached sample turns.
+    """
+    return shape_messages([{"role": "user", "content": "ok"}], "ok", knobs)
 
 
 def _is_timeout(error: BaseException | None) -> bool:

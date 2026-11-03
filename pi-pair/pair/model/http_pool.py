@@ -14,6 +14,8 @@ import threading
 import urllib.request
 from urllib.parse import urlparse
 
+from pair.core.cancel import ClientGone
+
 _STDLIB_URLOPEN = urllib.request.urlopen
 _MAX_IDLE = 4
 
@@ -177,8 +179,6 @@ def _pool_post(url: str, body: bytes, timeout: float, cancel=None):
                 response = conn.getresponse()
             except Exception:
                 if cancel is not None and cancel.gone():
-                    from pair.core.cancel import ClientGone
-
                     raise ClientGone() from None
                 raise
             finally:
@@ -191,10 +191,11 @@ def _pool_post(url: str, body: bytes, timeout: float, cancel=None):
             body_out = _Body(response, release, connection=conn)
             if cancel is not None and cancel.gone():
                 body_out.abort()
-                from pair.core.cancel import ClientGone
-
                 raise ClientGone()
             return body_out
+        except ClientGone:
+            _POOL.discard(conn)
+            raise
         except Exception as exc:
             _POOL.discard(conn)
             caught = exc
@@ -211,8 +212,6 @@ def open_json_request(request, timeout: float, cancel=None):
             abort = getattr(opened, "abort", None)
             if abort is not None:
                 abort()
-            from pair.core.cancel import ClientGone
-
             raise ClientGone()
         return opened
     url = getattr(request, "full_url", None) or request.get_full_url()

@@ -83,11 +83,13 @@ class RestRewarm(unittest.TestCase):
         else:
             os.environ["PI_PAIR_REST"] = self._rest
 
-    def _rewarm(self, resident: list[str]) -> tuple[list[dict], str]:
+    def _rewarm(self, resident: list[str]) -> tuple[list[dict], list[str], str]:
         seen: list[dict] = []
+        urls: list[str] = []
 
-        def opener(request, timeout):
-            del timeout
+        def opener(request, timeout, cancel=None):
+            del timeout, cancel
+            urls.append(str(request.full_url))
             seen.append(json.loads(request.data.decode()))
             return _Resp()
 
@@ -97,13 +99,15 @@ class RestRewarm(unittest.TestCase):
                 with patch("pair.model.preload._decode_idle", return_value=True):
                     with redirect_stdout(buf):
                         rewarm_pro_if_evicted()
-        return seen, buf.getvalue()
+        return seen, urls, buf.getvalue()
 
     def test_hot_flash_missing_warms_flash(self) -> None:
         _cache(76)
         self.assertTrue(defer_nonurgent())
-        seen, log = self._rewarm([])
+        seen, urls, log = self._rewarm([])
         self.assertEqual([item["model"] for item in seen], ["qwen3:0.6b"])
+        self.assertTrue(all(url.endswith("/api/chat") for url in urls))
+        self.assertTrue(all("/api/generate" not in url for url in urls))
         self.assertIn("rest: deferred pro rewarm", log)
         self.assertEqual(seen[0]["options"]["num_ctx"], 2048)
         self.assertEqual(seen[0]["options"]["num_batch"], 128)
@@ -113,15 +117,19 @@ class RestRewarm(unittest.TestCase):
     def test_hot_pro_missing_does_not_warm(self) -> None:
         _cache(76)
         self.assertTrue(defer_nonurgent())
-        seen, log = self._rewarm(["qwen3:0.6b"])
+        seen, urls, log = self._rewarm(["qwen3:0.6b"])
         self.assertEqual(seen, [])
+        self.assertEqual(urls, [])
         self.assertIn("rest: deferred pro rewarm", log)
 
     def test_cool_pro_missing_warms_pro(self) -> None:
         _cache(67)
         self.assertFalse(defer_nonurgent())
-        seen, log = self._rewarm(["qwen3:0.6b"])
+        seen, urls, log = self._rewarm(["qwen3:0.6b"])
         self.assertEqual([item["model"] for item in seen], ["qwen3:1.7b"])
+        self.assertEqual(len(urls), 1)
+        self.assertTrue(urls[0].endswith("/api/chat"))
+        self.assertNotIn("/api/generate", urls[0])
         self.assertNotIn("rest: deferred pro rewarm", log)
         self.assertEqual(seen[0]["keep_alive"], -1)
 
@@ -150,9 +158,10 @@ class UserProWarm(unittest.TestCase):
             self.assertEqual(status, 200, body)
             self.assertTrue(defer_nonurgent())
             deadline = time.time() + 2
-            while time.time() < deadline and not test_modes._posts("/api/generate"):
+            while time.time() < deadline and not test_modes._warms():
                 time.sleep(0.02)
-            warm = test_modes._posts("/api/generate")
+            warm = test_modes._warms()
+            self.assertEqual(test_modes._posts("/api/generate"), [])
             self.assertEqual(len(warm), 1)
             self.assertEqual(warm[0]["model"], "qwen3:1.7b")
             self.assertEqual(warm[0]["keep_alive"], -1)

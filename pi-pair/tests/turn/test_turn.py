@@ -8,6 +8,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -19,7 +20,24 @@ from unittest.mock import patch
 from pair import server as pair_server
 from pair.core import runtime
 from pair.core.errors import GENERIC, TIMEOUT, UNREACHABLE
-from pair.model.chat_once import start_model_warm, warm_residents
+from pair.model import chat_once
+from pair.model.chat_once import (
+    begin_turn,
+    chat_ollama,
+    close_warm,
+    drop_warm_slot,
+    end_turn,
+    hold_warm_slot,
+    join_startup_retry,
+    start_model_warm,
+    turns_in_flight,
+    warm_chat_model,
+    warm_residents,
+    warm_slot_busy,
+    warm_token,
+)
+from pair.model.chat_stream import stream_ollama
+from pair.model.knobs import inference_knobs, mode_limits, tuned_knobs
 from pair.model.modes import FLASH_MODEL, PRO_MODEL
 from pair.routes import reply as reply_routes
 from pair.routes import search as search_routes
@@ -34,8 +52,10 @@ from pair.turn.shape import (
     fence_user_text,
     fit_messages,
     public_failure,
+    sample_turns,
     search_result_text,
     shape_messages,
+    warm_messages,
 )
 from tests.support.fakes import OllamaFake, ScriptOllama, _start
 from tests.support.paths import ROOT
@@ -135,6 +155,11 @@ class TurnShape(unittest.TestCase):
         self.assertLessEqual(
             sum(estimate_tokens(row["content"]) for row in shaped), 2048
         )
+        self.assertTrue(
+            shaped[0]["content"].startswith(PERSONA + "\n\nWeb search notes.")
+        )
+        self.assertNotIn("Web search notes.", shaped[-1]["content"])
+        self.assertIn("…", shaped[-1]["content"])
         blob = "\n".join(row["content"] for row in shaped)
         self.assertNotIn("```chart", blob)
         self.assertIn("plot the bars", blob)
@@ -186,7 +211,7 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(first[0]["content"], PERSONA)
         self.assertEqual(second[0]["content"], PERSONA)
         self.assertEqual(first[0]["content"], second[0]["content"])
-        self.assertIn(EFFORT_HINT["high"], second[-2]["content"])
+        self.assertIn(EFFORT_HINT["high"], second[-1]["content"])
         self.assertEqual(second[-1]["role"], "user")
 
     def test_prefix_stays_byte_identical_across_five_turns(self):
@@ -205,6 +230,175 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(len(set(prefixes)), 1)
         self.assertEqual(prefixes[0], PERSONA)
 
+    def test_facts_count_against_num_ctx_without_clipping_the_persona(self):
+        knobs = {"num_ctx": 400}
+        facts = "\n".join(
+            f"The user said: spare key spot {index} is the blue mug on the bookshelf."
+            for index in range(40)
+        )
+        question = "Where did I leave my spare house key?"
+        rows = shape_messages(
+            [{"role": "user", "content": question}],
+            question,
+            knobs,
+            facts=facts,
+        )
+        system = rows[0]["content"]
+        self.assertEqual(system[: len(PERSONA)], PERSONA)
+        self.assertIn("Known facts about the user:", system)
+        self.assertIn("spot 0", system)
+        self.assertNotIn("spot 39", system)
+        self.assertNotIn("blue mug", rows[-1]["content"])
+        self.assertLessEqual(sum(estimate_tokens(row["content"]) for row in rows), 400)
+
+    def test_fit_clips_other_rows_before_the_facts(self):
+        persona = "Persona sentence stays exact."
+        fact = "the spare key stays in the blue mug " + ("k" * 800)
+        facts = "Known facts about the user:\n- " + fact
+        system = persona + "\n\n" + facts
+        other = "Caller note " + ("detail " * 20)
+        question = "Where is the key?"
+        rows = [
+            {"role": "system", "content": system},
+            {"role": "system", "content": other},
+            {"role": "user", "content": question},
+        ]
+        self.assertGreater(len(system), len(other))
+        self.assertGreater(len(other), 80)
+        total = sum(estimate_tokens(row["content"]) for row in rows)
+        fitted = fit_messages(rows, {"num_ctx": total - 4, "persona": persona})
+        self.assertEqual(fitted[0]["content"], system)
+        self.assertTrue(fitted[0]["content"].startswith(persona + "\n\n"))
+        self.assertIn(fact, fitted[0]["content"])
+        self.assertLess(len(fitted[1]["content"]), len(other))
+        self.assertLessEqual(
+            sum(estimate_tokens(row["content"]) for row in fitted), total - 4
+        )
+
+    def test_four_tokens_over_clips_the_caller_before_a_sample(self):
+        persona = "Persona sentence stays exact."
+        caller = "Attached note " + ("detail " * 40)
+        question = "Where is the key?"
+        facts = "the spare key stays in the blue mug"
+        wide = shape_messages(
+            [
+                {"role": "system", "content": caller},
+                {"role": "user", "content": question},
+            ],
+            question,
+            {"num_ctx": 8192, "persona": persona},
+            facts=facts,
+        )
+        samples = sample_turns()
+        total = sum(estimate_tokens(row["content"]) for row in wide)
+        limit = total - 4
+        self.assertGreaterEqual(limit, 256)
+        self.assertEqual(wide[1 : 1 + len(samples)], samples)
+        fitted = shape_messages(
+            [
+                {"role": "system", "content": caller},
+                {"role": "user", "content": question},
+            ],
+            question,
+            {"num_ctx": limit, "persona": persona},
+            facts=facts,
+        )
+        system = fitted[0]["content"]
+        wide_system = wide[0]["content"]
+        facts_at = wide_system.index("Known facts about the user:")
+        self.assertEqual(system[: len(persona)], persona)
+        self.assertTrue(system.endswith(wide_system[facts_at:]))
+        self.assertLess(len(system), len(wide_system))
+        self.assertNotIn(caller, system)
+        self.assertEqual(fitted[1 : 1 + len(samples)], samples)
+        self.assertLessEqual(
+            sum(estimate_tokens(row["content"]) for row in fitted), limit
+        )
+
+    def test_history_drops_before_notes_and_samples(self):
+        """Tail notes and the summary wait until non-sample history is gone."""
+        samples = sample_turns()
+        question = "Where is the capital?"
+        summary = "Earlier talk kept the spare key in the blue mug. " * 4
+        sources = "\n".join(
+            f"- src{index:02d} (example.com): result {index} about the topic"
+            for index in range(12)
+        )
+        short_note = "Web search notes.\n" + sources
+        mark = "ENDMARK"
+        filler = "Web search notes.\n"
+        body = "S" * (1859 - len(filler) - len(mark))
+        long_note = filler + body + mark
+        self.assertEqual(len(long_note), 1859)
+        self.assertGreater(len(summary), 80)
+
+        def pairs(count: int, width: int) -> list[dict]:
+            rows = []
+            for index in range(count * 2):
+                tag = f"H{index:02d}-"
+                text = tag + ("w" * (width - len(tag)))
+                role = "user" if index % 2 == 0 else "assistant"
+                rows.append({"role": role, "content": text})
+            return rows
+
+        def shaped(history, notes, summary_text, limit):
+            return shape_messages(
+                [*history, {"role": "user", "content": question}],
+                question,
+                {"num_ctx": limit},
+                notes=notes,
+                summary=summary_text,
+            )
+
+        long_history = pairs(8, 416)
+        row_tokens = estimate_tokens(long_history[0]["content"])
+        seen: dict = {}
+
+        def spy(messages, knobs=None, **kwargs):
+            rows = [row for row in messages if isinstance(row, dict)]
+            seen["pre"] = sum(
+                estimate_tokens(str(row.get("content") or "")) for row in rows
+            )
+            return fit_messages(messages, knobs, **kwargs)
+
+        with patch("pair.turn.shape.fit_messages", spy):
+            shaped(long_history, long_note, "", 8192)
+        pre = seen["pre"]
+        # 8 pairs of 130-token rows plus the 1859-character note. Four of
+        # those rows are 520 tokens, so the budget sits that far under.
+        self.assertEqual(row_tokens, 130)
+        self.assertEqual(pre, 2987)
+        self.assertEqual(pre - 4 * row_tokens, 2467)
+        cases = (
+            ("sources", pairs(30, 200), short_note, "", 2048, "", ""),
+            ("summary", pairs(30, 200), "", summary, 2048, "", ""),
+            ("four-rows", long_history, long_note, "", 2467, "H03-", "H04-"),
+            ("deeper", long_history, long_note, "", 1851, "H08-", "H09-"),
+            ("eighty", pairs(80, 200), short_note, "", 2048, "", ""),
+        )
+        for name, history, notes, summary_text, limit, gone, kept in cases:
+            with self.subTest(name=name):
+                rows = shaped(history, notes, summary_text, limit)
+                blob = "\n".join(row["content"] for row in rows)
+                self.assertEqual(rows[1 : 1 + len(samples)], samples)
+                self.assertTrue(rows[0]["content"].startswith(PERSONA))
+                self.assertNotIn("H00-", blob)
+                if notes == long_note:
+                    self.assertIn(body + mark, blob)
+                if notes == short_note:
+                    for index in range(12):
+                        self.assertIn(f"src{index:02d}", blob)
+                if summary_text:
+                    self.assertEqual(blob.count("spare key in the blue mug"), 4)
+                if gone:
+                    self.assertNotIn(gone, blob)
+                if kept:
+                    self.assertIn(kept, blob)
+                    self.assertIn("H15-", blob)
+                self.assertLessEqual(
+                    sum(estimate_tokens(row["content"]) for row in rows), limit + 4
+                )
+
     def test_fit_never_drops_a_system_row(self):
         knobs = {"num_ctx": 256}
         rows = fit_messages(
@@ -220,7 +414,7 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(rows[-1]["content"], "latest question")
         self.assertNotIn("old answer", " ".join(row["content"] for row in rows))
 
-    def test_notes_sit_just_before_the_last_user_message(self):
+    def test_notes_lead_the_last_user_message(self):
         prompt = "capital of australia"
         rows = shape_messages(
             [
@@ -232,9 +426,14 @@ class TurnShape(unittest.TestCase):
             notes="Web search notes.\n- Canberra",
         )
         self.assertEqual(rows[0]["content"], PERSONA)
-        self.assertEqual(rows[-1], {"role": "user", "content": prompt})
-        self.assertTrue(rows[-2]["content"].startswith("Notes:"))
-        self.assertIn("Canberra", rows[-2]["content"])
+        content = rows[-1]["content"]
+        self.assertEqual(rows[-1]["role"], "user")
+        self.assertEqual(content, "(Context: Web search notes. Canberra)\n" + prompt)
+        self.assertNotIn("Notes:", content)
+        self.assertIn("Canberra", content)
+        for line in content.splitlines():
+            self.assertFalse(line.startswith("- "))
+            self.assertFalse(line.endswith(":"))
 
     def test_a_1200_token_input_is_kept_at_1536(self):
         body = "ab" * 1200
@@ -249,7 +448,9 @@ class TurnShape(unittest.TestCase):
                 [{"role": "user", "content": prompt}], prompt, effort=name
             )
             self.assertEqual(rows[0]["content"], PERSONA, name)
-            self.assertEqual(rows[-2]["content"], sentence, name)
+            text = rows[-1]["content"]
+            self.assertEqual(text, f"(Context: {sentence})\n{prompt}", name)
+            self.assertNotIn("Notes:", text, name)
             self.assertEqual(rows[-1]["role"], "user")
         chart = shape_messages(
             [{"role": "user", "content": "plot a bar chart of the picnic"}],
@@ -257,11 +458,17 @@ class TurnShape(unittest.TestCase):
             effort="high",
         )
         self.assertEqual(chart[0]["content"], PERSONA)
-        self.assertEqual(chart[-2]["content"], EFFORT_HINT["high"])
+        self.assertEqual(
+            chart[-1]["content"],
+            "(Context: " + EFFORT_HINT["high"] + ")\nplot a bar chart of the picnic",
+        )
         self.assertIn("```plot", "\n".join(row["content"] for row in chart))
 
 
 class ModelWarm(unittest.TestCase):
+    def tearDown(self):
+        join_startup_retry()
+
     def test_startup_warms_flash_then_pro_without_a_pull(self):
         seen = []
 
@@ -285,6 +492,7 @@ class ModelWarm(unittest.TestCase):
         }
         with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
             loaded = warm_residents(peer, timeout=1)
+            time.sleep(0.05)
         self.assertEqual(
             [item[1].get("model") for item in seen], [FLASH_MODEL, PRO_MODEL]
         )
@@ -292,15 +500,16 @@ class ModelWarm(unittest.TestCase):
         self.assertEqual(flash["keep_alive"], -1)
         self.assertFalse(flash["stream"])
         self.assertEqual(flash["options"]["num_predict"], 1)
-        from pair.turn.shape import persona_text
-
         self.assertEqual(
-            flash["messages"],
-            [
-                {"role": "system", "content": persona_text()},
-                {"role": "user", "content": "ok"},
-            ],
+            inspect.signature(warm_chat_model).parameters["timeout"].default, 180
         )
+        self.assertEqual(
+            inspect.signature(warm_residents).parameters["timeout"].default, 180
+        )
+        row = inference_knobs()
+        knobs = dict(row)
+        knobs.update(mode_limits(FLASH_MODEL, row))
+        self.assertEqual(flash["messages"], warm_messages(knobs))
         self.assertEqual(loaded, [FLASH_MODEL])
         self.assertTrue(all("/api/pull" not in url for url, _payload in seen))
 
@@ -324,6 +533,189 @@ class ModelWarm(unittest.TestCase):
         self.assertNotIn("after.join", warm_src)
         self.assertNotIn("embed", warm_src)
 
+    def test_a_turn_skips_the_rest_of_the_startup_warm(self):
+        seen = []
+
+        def urlopen(request, timeout=None):
+            del timeout
+            payload = json.loads(request.data.decode())
+            seen.append(payload.get("model"))
+            if payload.get("model") == FLASH_MODEL:
+                close_warm()
+                raise TimeoutError("closed")
+            return _Body(json.dumps({"message": {"content": "ok"}}).encode())
+
+        peer = {
+            "name": "pi4",
+            "host": "127.0.0.1",
+            "port": 9,
+            "kind": "ollama",
+            "generative": True,
+            "role": "brain",
+        }
+        token = warm_token()
+        with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
+            loaded = warm_residents(peer, timeout=1)
+            time.sleep(0.05)
+        self.assertEqual(seen, [FLASH_MODEL])
+        self.assertEqual(loaded, [])
+        self.assertTrue(token.gone())
+        self.assertFalse(warm_token().gone())
+
+    def test_a_timed_out_warm_does_not_block_the_next_turn(self):
+        calls = []
+
+        def urlopen(request, timeout=None):
+            del timeout
+            payload = json.loads(request.data.decode())
+            calls.append(payload.get("model"))
+            if len(calls) == 1:
+                raise TimeoutError("timed out")
+            return _Body(json.dumps({"message": {"content": "ok"}}).encode())
+
+        peer = {
+            "name": "pi4",
+            "host": "127.0.0.1",
+            "port": 9,
+            "kind": "ollama",
+            "generative": True,
+            "role": "brain",
+        }
+        with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
+            self.assertFalse(warm_chat_model(peer, PRO_MODEL, timeout=180))
+            self.assertFalse(warm_token().gone())
+            answer, used = chat_ollama(
+                peer,
+                FLASH_MODEL,
+                [{"role": "user", "content": "after the warm"}],
+            )
+        self.assertEqual(answer, "ok")
+        self.assertEqual(used, FLASH_MODEL)
+        self.assertEqual(calls, [PRO_MODEL, FLASH_MODEL])
+
+    def test_end_turn_releases_only_that_token(self):
+        first = None
+        second = None
+        try:
+            first = begin_turn()
+            second = begin_turn()
+            self.assertEqual(turns_in_flight(), 2)
+            end_turn(first)
+            end_turn(first)
+            self.assertEqual(turns_in_flight(), 1)
+            end_turn(second)
+            second = None
+            self.assertEqual(turns_in_flight(), 0)
+        finally:
+            end_turn(first)
+            end_turn(second)
+
+    def test_a_stream_closed_on_another_thread_lets_the_next_warm_run(self):
+        seen: list[dict] = []
+        body = (
+            json.dumps({"message": {"content": "hel"}, "done": False}).encode()
+            + b"\n"
+            + json.dumps({"message": {"content": "lo"}, "done": True}).encode()
+            + b"\n"
+        )
+
+        def urlopen(request, timeout=None):
+            del timeout
+            seen.append(json.loads(request.data.decode()))
+            return _Lines(body)
+
+        peer = {
+            "name": "pi4",
+            "host": "127.0.0.1",
+            "port": 9,
+            "kind": "ollama",
+            "generative": True,
+            "role": "brain",
+        }
+        opened = threading.Event()
+        holder: dict = {}
+
+        def reader() -> None:
+            stream = stream_ollama(
+                peer, FLASH_MODEL, [{"role": "user", "content": "hi"}]
+            )
+            iterator = iter(stream)
+            holder["iterator"] = iterator
+            holder["first"] = next(iterator)
+            opened.set()
+
+        with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
+            thread = threading.Thread(target=reader)
+            thread.start()
+            self.assertTrue(opened.wait(2), holder)
+            self.assertEqual(holder.get("first"), "hel")
+            self.assertEqual(turns_in_flight(), 1)
+            holder["iterator"].close()
+            holder["iterator"].close()
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(turns_in_flight(), 0)
+            self.assertTrue(warm_chat_model(peer, PRO_MODEL, timeout=5))
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[1]["model"], PRO_MODEL)
+        self.assertEqual(seen[1]["options"]["num_predict"], 1)
+        self.assertEqual(turns_in_flight(), 0)
+        self.assertFalse(warm_slot_busy())
+
+    def test_a_chat_posts_when_the_warm_slot_stays_held(self):
+        self.assertGreater(chat_once.WARM_CLOSE_WAIT_S, 0)
+        self.assertLessEqual(chat_once.WARM_CLOSE_WAIT_S, 5)
+        held = hold_warm_slot()
+        self.assertIsNotNone(held)
+        calls: list[str] = []
+
+        def urlopen(request, timeout=None):
+            del timeout
+            calls.append(json.loads(request.data.decode()).get("model"))
+            return _Body(json.dumps({"message": {"content": "ok"}}).encode())
+
+        peer = {
+            "name": "pi4",
+            "host": "127.0.0.1",
+            "port": 9,
+            "kind": "ollama",
+            "generative": True,
+            "role": "brain",
+        }
+        try:
+            with patch("pair.model.chat_once.WARM_CLOSE_WAIT_S", 0.05):
+                with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
+                    started = time.perf_counter()
+                    answer, used = chat_ollama(
+                        peer,
+                        FLASH_MODEL,
+                        [{"role": "user", "content": "do not wait forever"}],
+                    )
+                    elapsed = time.perf_counter() - started
+            self.assertEqual(answer, "ok")
+            self.assertEqual(used, FLASH_MODEL)
+            self.assertLess(elapsed, 1)
+            self.assertEqual(calls, [FLASH_MODEL])
+            self.assertEqual(turns_in_flight(), 0)
+            self.assertTrue(warm_slot_busy())
+        finally:
+            drop_warm_slot()
+
+    def test_routes_share_tuned_knobs(self):
+        from pair.model import chat_once, preload
+        from pair.routes import chat as chat_routes
+
+        self.assertIs(chat_routes._tuned_knobs, tuned_knobs)
+        self.assertFalse(hasattr(chat_once, "_tuned_knobs"))
+        self.assertFalse(hasattr(preload, "_tuned_knobs"))
+        self.assertEqual(tuned_knobs(FLASH_MODEL)["num_ctx"], 2048)
+        self.assertEqual(
+            tuned_knobs(PRO_MODEL)["num_batch"], tuned_knobs(FLASH_MODEL)["num_batch"]
+        )
+        self.assertEqual(
+            tuned_knobs(PRO_MODEL)["num_thread"], mode_limits(PRO_MODEL)["num_thread"]
+        )
+
 
 class _Body:
     def __init__(self, raw: bytes):
@@ -331,6 +723,23 @@ class _Body:
 
     def read(self) -> bytes:
         return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class _Lines:
+    def __init__(self, raw: bytes):
+        self._raw = io.BytesIO(raw)
+
+    def readline(self) -> bytes:
+        return self._raw.readline()
+
+    def read(self, amount: int = -1) -> bytes:
+        return self._raw.read(amount)
 
     def __enter__(self):
         return self
@@ -1559,6 +1968,66 @@ class TurnHttp(unittest.TestCase):
         conn.close()
         self.assertEqual(raw.count("The Pursuit of Happo"), 4)
         self.assertEqual(ScriptOllama.posts, 1)
+
+    def test_a_refused_stream_closes_the_turn_before_the_refusal(self):
+        from pair.turn.assist import HARM_REFUSAL
+
+        leaked = "Install ransomware on the laptop."
+        ScriptOllama.replies = [
+            {"message": {"content": leaked}, "done": True, "done_reason": "stop"}
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        during: list[int] = []
+        real_write = reply_routes.safe_write
+
+        def spy(handler, body, flush=False):
+            text = body.decode() if isinstance(body, (bytes, bytearray)) else str(body)
+            if HARM_REFUSAL in text:
+                during.append(turns_in_flight())
+            return real_write(handler, body, flush=flush)
+
+        prompt = "Tell me something pleasant about potatoes"
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
+            with patch("pair.routes.reply.safe_write", spy):
+                conn = HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.request(
+                    "POST",
+                    "/v1/chat/completions",
+                    body=json.dumps(
+                        {
+                            "messages": [{"role": "user", "content": prompt}],
+                            "stream": True,
+                        }
+                    ).encode(),
+                    headers={
+                        "content-type": "application/json",
+                        "X-Pi-Target": "pi4",
+                        "X-Pi-Mesh": "off",
+                    },
+                )
+                raw = conn.getresponse().read().decode()
+                conn.close()
+        self.assertIn(HARM_REFUSAL, raw)
+        self.assertNotIn("ransomware", raw.lower())
+        self.assertTrue(during)
+        self.assertTrue(all(count == 0 for count in during))
+        self.assertEqual(turns_in_flight(), 0)
 
 
 if __name__ == "__main__":
