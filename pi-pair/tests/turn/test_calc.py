@@ -55,8 +55,8 @@ class CalculatorNotes(unittest.TestCase):
         content = rows[-1]["content"]
         self.assertEqual(rows[-1]["role"], "user")
         self.assertIn("Calculator: 847*23 = 19481", content)
-        self.assertTrue(content.startswith("(Context: Calculator: 847*23 = 19481"))
-        self.assertTrue(content.endswith("\n" + prompt))
+        self.assertTrue(content.startswith("Notes: Calculator: 847*23 = 19481"))
+        self.assertTrue(content.endswith("\n\n" + prompt))
         for line in content.splitlines():
             self.assertFalse(line.startswith("- "))
             self.assertFalse(line.endswith(":"))

@@ -186,6 +186,33 @@ class Abilities(unittest.TestCase):
         pdf = "```pdf\nVisit the museum.\n```"
         self.assertIn("```pdf", settle_blocks(pdf, question))
 
+    def test_save_readme_and_export_keep_a_markdown_document(self):
+        wrapped = "```markdown\nMix flour and milk.\n```"
+        asks = (
+            "Save this recipe as a .md file",
+            "Write a README.md for the picnic",
+            "Give me a markdown document with the steps",
+            "Export my notes as markdown",
+        )
+        for prompt in asks:
+            kept = settle_blocks(wrapped, prompt)
+            self.assertIn("```markdown", kept, prompt)
+            self.assertEqual(
+                parse_fences(kept, prompt=prompt)[0]["name"], "doc", prompt
+            )
+        plains = (
+            "Where did I leave my spare house key?",
+            "What is the difference between docx and pdf?",
+            "Summarize this PDF in two lines.",
+            "Explain how a refrigerator keeps food cold.",
+            "What is markdown?",
+        )
+        for prompt in plains:
+            self.assertEqual(
+                settle_blocks(wrapped, prompt), "Mix flour and milk.", prompt
+            )
+            self.assertEqual(parse_fences(wrapped, prompt=prompt), [], prompt)
+
     def test_plotly_json_becomes_a_plot_fence(self):
         figure = (
             '{"data":[{"type":"bar","x":["1","2"],"y":[1,2],"name":"Sample Data"}],'

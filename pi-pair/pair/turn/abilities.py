@@ -59,9 +59,14 @@ _LONE_MARKDOWN = re.compile(
     re.S | re.I,
 )
 _FILE_REQUEST = re.compile(
-    r"\b(?:download|file\s+i\s+can\s+download)\b|"
-    r"\b(?:markdown|\.md|pdf|docx|xlsx|csv|txt)\s+file\b|"
-    r"\b(?:make|write|create|save|export)\b[^.\n]{0,80}\bfile\b",
+    r"\b(?:download|export)\b|"
+    r"\breadme\.md\b|"
+    r"\.md\b|"
+    r"\bmarkdown\s+doc(?:ument)?\b|"
+    r"\bas\s+markdown\b|"
+    r"\b(?:markdown|md|pdf|docx|xlsx|csv|txt)\s+file\b|"
+    r"\b(?:make|write|create|save)\b[^.\n]{0,80}\b(?:file|document)\b|"
+    r"\bfile\s+i\s+can\s+download\b",
     re.I,
 )
 

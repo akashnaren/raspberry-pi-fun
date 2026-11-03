@@ -579,56 +579,78 @@ def shape_messages(
     )
 
 
-def _plain_line(line: str, *, tail: bool) -> str:
-    """Drop a bullet marker and a Notes header. The words stay."""
-    text = " ".join(line.split())
-    if text.startswith("- "):
-        text = text[2:].strip()
-    if not tail:
-        return text
-    if text == "Notes:":
-        return ""
-    if text.startswith("Notes:"):
-        return text[len("Notes:") :].strip()
-    return text
-
-
-def _flatten_clause(text: str, *, tail: bool) -> str:
-    """One clause. No bullet line and no header line for the model to copy."""
-    summary = False
-    parts: list[str] = []
+def _plain_bits(text: str, *, drop_notes: bool, drop_bullets: bool) -> list[str]:
+    """One clause per line. Fact wording is not rewritten."""
+    bits = []
     for raw in (text or "").splitlines():
         line = " ".join(raw.split())
         if not line:
             continue
-        if not tail and line.startswith("Summary:"):
-            summary = True
-            line = line[len("Summary:") :].strip()
-        line = _plain_line(line, tail=tail) if line else ""
+        if drop_bullets and line.startswith("- "):
+            line = line[2:].strip()
+        if drop_notes and line.startswith("Notes:"):
+            line = line[len("Notes:") :].strip()
         if line:
-            parts.append(line)
-    flat = " ".join(parts)
+            bits.append(line)
+    return bits
+
+
+def _facts_line(chunks: list[str]) -> str:
+    bits: list[str] = []
+    for chunk in chunks:
+        bits.extend(_plain_bits(chunk, drop_notes=False, drop_bullets=False))
+    if not bits:
+        return ""
+    return "Facts about the user: " + "; ".join(bits)
+
+
+def _summary_line(text: str) -> str:
+    body = []
+    for bit in _plain_bits(text, drop_notes=False, drop_bullets=False):
+        if bit.startswith("Summary:"):
+            bit = bit[len("Summary:") :].strip()
+        if bit:
+            body.append(bit)
+    flat = " ".join(body)
     if not flat:
         return ""
-    if summary:
-        return f"earlier summary: {flat}"
-    return flat
+    return "Summary: " + flat
 
 
-def _context_sentence(notes: list[tuple[str, bool]]) -> str:
-    """Facts, summary, and the tail note in one parenthetical.
-
-    Header lines and bullets made Pro wrap a plain answer in a markdown fence.
-    The facts wording stays exact. The user's own text is not rewritten.
-    """
-    parts = []
-    for text, is_tail in notes:
-        clause = _flatten_clause(text, tail=is_tail)
-        if clause:
-            parts.append(clause)
-    if not parts:
+def _tail_line(text: str) -> str:
+    flat = " ".join(_plain_bits(text, drop_notes=True, drop_bullets=True))
+    if not flat:
         return ""
-    return "(Context: " + "; ".join(parts) + ")"
+    # A Notes: header on a grounding rule is what the small model copies.
+    if GROUNDED_RULE in text or NO_RESULTS_RULE in text:
+        return flat
+    return "Notes: " + flat
+
+
+def _context_block(notes: list[tuple[str, bool]]) -> str:
+    """Facts, summary, and the tail note as one plain line each.
+
+    A parenthetical glued to the question made Pro drop the blue-mug detail.
+    A line that is only a header, or a bullet, made it wrap the answer as markdown.
+    The user's own text is appended later, after a blank line.
+    """
+    facts: list[str] = []
+    lines: list[str] = []
+    for text, is_tail in notes:
+        if is_tail or (text or "").lstrip().startswith("Summary:"):
+            fact_line = _facts_line(facts)
+            facts = []
+            if fact_line:
+                lines.append(fact_line)
+            line = _tail_line(text) if is_tail else _summary_line(text)
+            if line:
+                lines.append(line)
+            continue
+        facts.append(text)
+    fact_line = _facts_line(facts)
+    if fact_line:
+        lines.append(fact_line)
+    return "\n".join(lines)
 
 
 def _last_user(rows: list) -> int:
@@ -704,9 +726,9 @@ def fold_system_rows(
             )
         if index == last_user and notes:
             question = str(copied.get("content") or "")
-            context = _context_sentence(notes)
+            context = _context_block(notes)
             if context and question:
-                copied["content"] = context + "\n" + question
+                copied["content"] = context + "\n\n" + question
             elif context:
                 copied["content"] = context
         folded.append(copied)

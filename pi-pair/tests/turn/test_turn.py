@@ -237,7 +237,7 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(rows[0]["content"], PERSONA)
         content = rows[-1]["content"]
         self.assertEqual(rows[-1]["role"], "user")
-        self.assertEqual(content, "(Context: Web search notes. Canberra)\n" + prompt)
+        self.assertEqual(content, "Notes: Web search notes. Canberra\n\n" + prompt)
         self.assertIn("Canberra", content)
         for line in content.splitlines():
             self.assertFalse(line.startswith("- "))
@@ -257,7 +257,7 @@ class TurnShape(unittest.TestCase):
             )
             self.assertEqual(rows[0]["content"], PERSONA, name)
             text = rows[-1]["content"]
-            self.assertEqual(text, f"(Context: {sentence})\n{prompt}", name)
+            self.assertEqual(text, f"Notes: {sentence}\n\n{prompt}", name)
             self.assertEqual(rows[-1]["role"], "user")
         chart = shape_messages(
             [{"role": "user", "content": "plot a bar chart of the picnic"}],
@@ -267,7 +267,7 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(chart[0]["content"], PERSONA)
         self.assertEqual(
             chart[-1]["content"],
-            "(Context: " + EFFORT_HINT["high"] + ")\nplot a bar chart of the picnic",
+            "Notes: " + EFFORT_HINT["high"] + "\n\nplot a bar chart of the picnic",
         )
         self.assertIn("```plot", "\n".join(row["content"] for row in chart))
 

@@ -51,13 +51,13 @@ class LedgerTests(unittest.TestCase):
         content = first[-1]["content"]
         self.assertEqual(
             content,
-            "(Context: "
+            "Facts about the user: "
             + facts
-            + "; earlier summary: Canberra.)\n"
+            + "\nSummary: Canberra.\n\n"
             + turns[-1]["content"],
         )
-        self.assertLess(content.index(facts), content.index("earlier summary:"))
-        self.assertTrue(content.endswith("\n" + turns[-1]["content"]))
+        self.assertLess(content.index(facts), content.index("Summary:"))
+        self.assertTrue(content.endswith("\n\n" + turns[-1]["content"]))
         for line in content.splitlines():
             self.assertFalse(line.startswith("- "))
             self.assertFalse(line.endswith(":"))
