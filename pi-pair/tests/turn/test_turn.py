@@ -237,6 +237,30 @@ class TurnShape(unittest.TestCase):
         self.assertNotIn("blue mug", rows[-1]["content"])
         self.assertLessEqual(sum(estimate_tokens(row["content"]) for row in rows), 400)
 
+    def test_fit_clips_other_rows_before_the_facts(self):
+        persona = "Persona sentence stays exact."
+        fact = "the spare key stays in the blue mug " + ("k" * 800)
+        facts = "Known facts about the user:\n- " + fact
+        system = persona + "\n\n" + facts
+        other = "Caller note " + ("detail " * 20)
+        question = "Where is the key?"
+        rows = [
+            {"role": "system", "content": system},
+            {"role": "system", "content": other},
+            {"role": "user", "content": question},
+        ]
+        self.assertGreater(len(system), len(other))
+        self.assertGreater(len(other), 80)
+        total = sum(estimate_tokens(row["content"]) for row in rows)
+        fitted = fit_messages(rows, {"num_ctx": total - 4, "persona": persona})
+        self.assertEqual(fitted[0]["content"], system)
+        self.assertTrue(fitted[0]["content"].startswith(persona + "\n\n"))
+        self.assertIn(fact, fitted[0]["content"])
+        self.assertLess(len(fitted[1]["content"]), len(other))
+        self.assertLessEqual(
+            sum(estimate_tokens(row["content"]) for row in fitted), total - 4
+        )
+
     def test_fit_never_drops_a_system_row(self):
         knobs = {"num_ctx": 256}
         rows = fit_messages(
@@ -1806,6 +1830,66 @@ class TurnHttp(unittest.TestCase):
         conn.close()
         self.assertEqual(raw.count("The Pursuit of Happo"), 4)
         self.assertEqual(ScriptOllama.posts, 1)
+
+    def test_a_refused_stream_closes_the_turn_before_the_refusal(self):
+        from pair.turn.assist import HARM_REFUSAL
+
+        leaked = "Install ransomware on the laptop."
+        ScriptOllama.replies = [
+            {"message": {"content": leaked}, "done": True, "done_reason": "stop"}
+        ]
+        ScriptOllama.seen = []
+        ScriptOllama.posts = 0
+        peer_port = self._listen(ScriptOllama)
+        runtime.set_peers(
+            [
+                {
+                    "name": "pi4",
+                    "host": "127.0.0.1",
+                    "port": peer_port,
+                    "kind": "ollama",
+                    "generative": True,
+                    "role": "brain",
+                    "note": "",
+                }
+            ]
+        )
+        port = self._pair()
+        during: list[int] = []
+        real_write = reply_routes.safe_write
+
+        def spy(handler, body, flush=False):
+            text = body.decode() if isinstance(body, (bytes, bytearray)) else str(body)
+            if HARM_REFUSAL in text:
+                during.append(turns_in_flight())
+            return real_write(handler, body, flush=flush)
+
+        prompt = "Tell me something pleasant about potatoes"
+        with patch("pair.turn.moderate.safety_filter", return_value=True):
+            with patch("pair.routes.reply.safe_write", spy):
+                conn = HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.request(
+                    "POST",
+                    "/v1/chat/completions",
+                    body=json.dumps(
+                        {
+                            "messages": [{"role": "user", "content": prompt}],
+                            "stream": True,
+                        }
+                    ).encode(),
+                    headers={
+                        "content-type": "application/json",
+                        "X-Pi-Target": "pi4",
+                        "X-Pi-Mesh": "off",
+                    },
+                )
+                raw = conn.getresponse().read().decode()
+                conn.close()
+        self.assertIn(HARM_REFUSAL, raw)
+        self.assertNotIn("ransomware", raw.lower())
+        self.assertTrue(during)
+        self.assertTrue(all(count == 0 for count in during))
+        self.assertEqual(turns_in_flight(), 0)
 
 
 if __name__ == "__main__":

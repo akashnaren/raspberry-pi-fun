@@ -40,6 +40,7 @@ RESIDENT_TIMEOUT_S = 0.6
 REWARM_PAUSE_S = 120.0
 _SCHEDULED_MU = threading.Lock()
 _SCHEDULED: list[threading.Thread] = []
+_WARM_TAGS: set[str] = set()
 _WARM_EPOCH = 0
 
 
@@ -136,8 +137,7 @@ def _wait_out_the_turn(epoch: int) -> bool:
         time.sleep(0.01)
     if not overlapped:
         return _warm_epoch() == epoch
-    deadline = time.monotonic() + PRELOAD_TIMEOUT_S
-    while time.monotonic() < deadline and _turn_busy():
+    while _turn_busy():
         if _warm_epoch() != epoch:
             return False
         time.sleep(0.02)
@@ -161,24 +161,43 @@ def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
     """Background /api/chat warm for a user chat. Not deferred when the board is hot.
 
     The chat that scheduled it runs first. A later turn may close this request.
+    One tag has one in-flight warm. PRELOAD_TIMEOUT_S bounds the POST only.
     """
     payload = pro_preload_payload(model)
+    tag = str(payload.get("model") or "")
     url = f"http://{host}:{int(port)}/api/chat"
 
     def run(epoch: int) -> None:
+        try:
+            _post_scheduled_warm(url, payload, epoch)
+        finally:
+            with _SCHEDULED_MU:
+                _WARM_TAGS.discard(tag)
+
+    with _SCHEDULED_MU:
+        if tag in _WARM_TAGS:
+            return
+        _WARM_TAGS.add(tag)
+        epoch = _WARM_EPOCH
+        _SCHEDULED[:] = [item for item in _SCHEDULED if item.is_alive()]
+        thread = threading.Thread(
+            target=run, args=(epoch,), name="pro-rewarm", daemon=True
+        )
+        _SCHEDULED.append(thread)
+    thread.start()
+
+
+def _post_scheduled_warm(url: str, payload: dict, epoch: int) -> None:
+    """Wait until the lane is idle, then POST. A lost hold waits again."""
+    while _warm_epoch() == epoch:
         if not _wait_out_the_turn(epoch):
             return
-        token = None
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
+        token = hold_warm_slot()
+        if token is None:
             if _warm_epoch() != epoch:
                 return
-            token = hold_warm_slot()
-            if token is not None:
-                break
             time.sleep(0.02)
-        if token is None:
-            return
+            continue
         try:
             if token.gone() or _warm_epoch() != epoch:
                 return
@@ -191,17 +210,9 @@ def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
                 return
             except Exception as exc:
                 print(f"pro preload skipped: {exc}", flush=True)
+            return
         finally:
             drop_warm_slot()
-
-    with _SCHEDULED_MU:
-        epoch = _WARM_EPOCH
-        _SCHEDULED[:] = [item for item in _SCHEDULED if item.is_alive()]
-        thread = threading.Thread(
-            target=run, args=(epoch,), name="pro-rewarm", daemon=True
-        )
-        _SCHEDULED.append(thread)
-    thread.start()
 
 
 def _local_endpoint() -> tuple[str, int]:
@@ -245,10 +256,13 @@ def warm_model(model: str | None = None) -> None:
     payload = pro_preload_payload(model)
     if not payload.get("model") or payload.get("keep_alive") == 0:
         return
+    name = str(payload.get("model") or "")
     if warm_slot_busy():
+        print(f"model preload skipped: {name} busy", flush=True)
         return
     token = hold_warm_slot()
     if token is None:
+        print(f"model preload skipped: {name} busy", flush=True)
         return
     request = urllib.request.Request(
         ollama_base().rstrip("/") + "/api/chat",

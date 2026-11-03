@@ -27,6 +27,12 @@ _WARM_CANCEL = Cancel()
 _GUARD = threading.Condition()
 _TURNS = 0
 _WARM_HELD = False
+# Bumped once per begin_turn. A warm snapshots it around its POST so a turn
+# that starts and ends during that POST still queues the tag again.
+_TURN_EPOCH = 0
+# Set when a chat gives up waiting for one stuck warm. Later turns skip the
+# wait until that warm drops the slot.
+_WARM_CLOSE_TIMED_OUT = False
 # A chat waits this long for close_warm to drop the slot, then posts anyway.
 WARM_CLOSE_WAIT_S = 2.0
 
@@ -127,6 +133,12 @@ def warm_slot_busy() -> bool:
         return _WARM_HELD
 
 
+def turn_epoch() -> int:
+    """How many turns have begun. close_warm alone does not move this."""
+    with _GUARD:
+        return _TURN_EPOCH
+
+
 def begin_turn() -> _Turn:
     """Close an in-flight warm and wait until it drops. Do not hold the slot.
 
@@ -135,11 +147,14 @@ def begin_turn() -> _Turn:
     thread. Two chats both reach Ollama. A warm already in POST is
     best-effort: its socket is closed and this returns after that warm's
     finally runs, or after WARM_CLOSE_WAIT_S if the warm never drops.
+    A warm that already timed out this wait does not cost the next turn
+    another WARM_CLOSE_WAIT_S.
     """
-    global _TURNS
+    global _TURNS, _TURN_EPOCH
     token = _Turn()
     with _GUARD:
         _TURNS += 1
+        _TURN_EPOCH += 1
         token.live = True
     try:
         close_warm()
@@ -164,24 +179,44 @@ def end_turn(token: _Turn | None) -> None:
 
 
 def _wait_for_warm_close() -> None:
-    """Return when the warm drops the slot, or when the wait bound passes."""
-    deadline = time.monotonic() + WARM_CLOSE_WAIT_S
+    """Return when the warm drops the slot, or when the wait bound passes.
+
+    The first turn to hit the bound remembers it. Further turns do not wait
+    again while that same warm still holds the slot.
+    """
+    global _WARM_CLOSE_TIMED_OUT
     with _GUARD:
+        if not _WARM_HELD or _WARM_CLOSE_TIMED_OUT:
+            return
+        deadline = time.monotonic() + WARM_CLOSE_WAIT_S
         while _WARM_HELD:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                _WARM_CLOSE_TIMED_OUT = True
                 return
             _GUARD.wait(remaining)
+
+
+def _decode_idle() -> bool:
+    """True when no chat holds the decode slot or is waiting for it.
+
+    Checked before _GUARD. The chat path takes the gate lock and later
+    _GUARD; taking them in the other order can deadlock.
+    """
+    return runtime.gate.in_flight() == 0 and runtime.gate.waiting() == 0
 
 
 def hold_warm_slot() -> Cancel | None:
     """Claim the slot and the token this warm must post with.
 
-    None when a user turn is in flight or another warm holds the slot.
+    None when a user turn is in flight, another warm holds the slot, or a
+    chat holds the decode gate (including the wait before begin_turn).
     The token is captured under the same lock as the claim, so a turn's
     close_warm cannot swap in a fresh token this warm would miss.
     """
     global _WARM_HELD
+    if not _decode_idle():
+        return None
     with _GUARD:
         if _TURNS or _WARM_HELD:
             return None
@@ -190,9 +225,10 @@ def hold_warm_slot() -> Cancel | None:
 
 
 def drop_warm_slot() -> None:
-    global _WARM_HELD
+    global _WARM_HELD, _WARM_CLOSE_TIMED_OUT
     with _GUARD:
         _WARM_HELD = False
+        _WARM_CLOSE_TIMED_OUT = False
         _GUARD.notify_all()
 
 
@@ -309,22 +345,21 @@ def warm_chat_model(
     """Load one tag with keep_alive -1. A user turn may close this request."""
     if not may_generate(peer) or not model:
         return False
-    token = warm_token() if cancel is None else cancel
-    if token.gone():
+    if cancel is not None and cancel.gone():
         return False
     held = hold_warm_slot()
     if held is None:
         return False
     try:
-        if token.gone() or held.gone():
+        if held.gone():
             return False
         knobs = tuned_knobs(model)
         url = f"http://{peer['host']}:{peer['port']}/api/chat"
         payload = ollama_payload(model, warm_messages(knobs), 0.0, 1, False, knobs)
         try:
-            with open_json(url, payload, timeout, cancel=token) as response:
+            with open_json(url, payload, timeout, cancel=held) as response:
                 response.read()
-            return not token.gone()
+            return not held.gone()
         except Exception:
             return False
     finally:
@@ -383,13 +418,32 @@ def _queue_warm_retry(peer: dict, models: list[str], timeout: float) -> None:
         thread.start()
 
 
+def _warm_lane_free() -> bool:
+    """True when a warm may take the slot: no turn, no warm, idle gate."""
+    return not turns_in_flight() and not warm_slot_busy() and _decode_idle()
+
+
+def _warm_interrupted(epoch: int) -> bool:
+    """True when this POST was cut off by a turn or lost the lane.
+
+    A 404 or a timeout leaves the epoch alone and the lane free, so it is
+    not queued again. close_warm with no begin_turn does not move the epoch.
+    """
+    return (
+        turns_in_flight() > 0
+        or warm_slot_busy()
+        or turn_epoch() != epoch
+        or not _decode_idle()
+    )
+
+
 def _wait_for_warm_lane(timeout: float) -> bool:
     """True when a warm may post. False when this retry was stopped or timed out."""
     deadline = time.monotonic() + max(0.0, timeout)
     while time.monotonic() < deadline:
         if _RETRY_STOP.is_set():
             return False
-        if not turns_in_flight() and not warm_slot_busy():
+        if _warm_lane_free():
             return True
         time.sleep(0.02)
     return False
@@ -428,11 +482,12 @@ def _warm_retry_models(peer: dict, models: list[str], timeout: float) -> list[st
     A 404 or a timeout is skipped. Those are not queued again.
     """
     for index, name in enumerate(models):
-        if _RETRY_STOP.is_set() or turns_in_flight() or warm_slot_busy():
+        if _RETRY_STOP.is_set() or not _warm_lane_free():
             return models[index:]
+        epoch = turn_epoch()
         if warm_chat_model(peer, name, timeout=timeout):
             continue
-        if turns_in_flight() or warm_token().gone() or warm_slot_busy():
+        if _RETRY_STOP.is_set() or _warm_interrupted(epoch):
             return models[index:]
     return []
 
@@ -450,10 +505,12 @@ def _retry_startup_warm() -> None:
                 return
             continue
         if not _wait_for_warm_lane(timeout):
-            if not _retry_should_continue():
+            if _RETRY_STOP.is_set():
+                _retry_should_continue()
                 return
+            _queue_warm_retry(peer, models, timeout)
             continue
-        if turns_in_flight() or warm_slot_busy():
+        if not _warm_lane_free():
             _queue_warm_retry(peer, models, timeout)
             continue
         rest = _warm_retry_models(peer, models, timeout)
@@ -465,7 +522,7 @@ def _retry_startup_warm() -> None:
 
 
 def _warm_pass_blocked(cancel: Cancel) -> bool:
-    return bool(cancel.gone() or warm_slot_busy() or turns_in_flight())
+    return bool(cancel.gone() or not _warm_lane_free())
 
 
 def warm_residents(peer: dict, timeout: float = 180) -> list[str]:
@@ -480,16 +537,18 @@ def warm_residents(peer: dict, timeout: float = 180) -> list[str]:
     table = mode_table()
     names = [name for name in (table[FLASH], table[PRO]) if name]
     loaded: list[str] = []
+    started = turn_epoch()
     cancel = warm_token()
     for index, name in enumerate(names):
         if _warm_pass_blocked(cancel):
-            if turns_in_flight():
+            if _warm_interrupted(started):
                 _queue_warm_retry(peer, names[index:], timeout)
             break
+        epoch = turn_epoch()
         if warm_chat_model(peer, name, timeout=timeout, cancel=cancel):
             loaded.append(name)
             continue
-        if turns_in_flight():
+        if _warm_interrupted(epoch):
             _queue_warm_retry(peer, names[index:], timeout)
         if _warm_pass_blocked(cancel):
             break

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from pair.ingest.docfit import DOC_HINT
 from pair.model.knobs import inference_knobs, mode_limits
 from pair.model.modes import FLASH_MODEL, PRO_MODEL
 from pair.turn.calc import notes_for
@@ -211,10 +212,10 @@ class PrefixCache(unittest.TestCase):
             self.assertEqual(
                 shaped[0]["content"],
                 persona_text(knobs)
-                + "\n\nKnown facts about the user:\n- "
-                + facts
                 + "\n\n"
-                + sys,
+                + sys
+                + "\n\nKnown facts about the user:\n- "
+                + facts,
             )
             self.assertTrue(shaped[0]["content"].startswith(persona_text(knobs)))
             self.assertNotIn(sys, shaped[-1]["content"])
@@ -357,6 +358,34 @@ class PrefixCache(unittest.TestCase):
                     self.assertTrue(user.startswith("(Context: "), f"{tag} {name}")
             self.assertEqual(len(set(prefixes)), 1, tag)
             self.assertEqual(prefixes[0], "<|im_start|>system\n\n" + persona)
+
+    def test_caller_rows_sit_between_the_persona_and_the_facts(self) -> None:
+        facts = "My spare house key is in the blue mug on the bookshelf."
+        question = "Where did I leave my spare house key?"
+        knobs = _tuned(PRO_MODEL)
+        persona = persona_text(knobs)
+        rows = shape_messages(
+            [
+                {"role": "system", "content": DOC_HINT},
+                _user(question),
+            ],
+            question,
+            knobs,
+            facts=facts,
+        )
+        system = rows[0]["content"]
+        self.assertEqual(system[: len(persona)], persona)
+        self.assertLess(
+            system.index(DOC_HINT), system.index("Known facts about the user:")
+        )
+        self.assertTrue(system.endswith(facts))
+        self.assertLess(system.index(persona), system.index(DOC_HINT))
+        rendered = render_like_ollama_qwen3(rows)
+        self.assertTrue(rendered.startswith("<|im_start|>system\n\n" + persona))
+        self.assertLess(
+            rendered.index(DOC_HINT),
+            rendered.index("Known facts about the user:"),
+        )
 
     def test_persona_and_samples_do_not_name_a_spare_key(self) -> None:
         blob = "\n".join(

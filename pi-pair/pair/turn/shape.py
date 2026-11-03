@@ -529,7 +529,8 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
         ]
         if not pool:
             break
-        target = max(pool, key=lambda row: len(str(row.get("content") or "")))
+        others = [row for row in pool if not _facts_extension(row, persona)]
+        target = max(others or pool, key=lambda row: len(str(row.get("content") or "")))
         text = str(target.get("content") or "")
         overflow = _token_count(rows) - limit
         keep = max(80, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
@@ -538,6 +539,15 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
             break
         target["content"] = clipped
     return rows
+
+
+def _facts_extension(row: dict, persona: str) -> bool:
+    """True when this row is the persona plus the known-facts block."""
+    text = str(row.get("content") or "")
+    head = _persona_extension(text, persona)
+    if not head:
+        return False
+    return text[len(head) :].startswith("Known facts about the user:")
 
 
 def _persona_extension(text: str, persona: str) -> str:
@@ -700,6 +710,23 @@ def _own_rows(
     return own, tail_at
 
 
+def _fold_callers(base: str, callers: list[str]) -> str:
+    """Put caller system rows between the persona and the facts.
+
+    Facts stay the tail of the one system block. With no facts marker the
+    callers still follow the persona, which is the whole of `base`.
+    """
+    mark = "\n\nKnown facts about the user:\n"
+    index = base.find(mark)
+    if index < 0:
+        parts = [base, *callers] if base else list(callers)
+        return "\n\n".join(parts)
+    persona = base[:index]
+    facts = base[index + 2 :]
+    parts = [part for part in (persona, *callers, facts) if part]
+    return "\n\n".join(parts)
+
+
 def fold_system_rows(
     rows: list, *, own_count: int = 0, folded_tail: bool = False
 ) -> list:
@@ -736,10 +763,7 @@ def fold_system_rows(
             continue
         copied = dict(row)
         if index == 0 and callers:
-            base = str(copied.get("content") or "")
-            copied["content"] = (
-                "\n\n".join([base, *callers]) if base else "\n\n".join(callers)
-            )
+            copied["content"] = _fold_callers(str(copied.get("content") or ""), callers)
         if index == last_user and notes:
             question = str(copied.get("content") or "")
             context = _context_sentence(notes)
