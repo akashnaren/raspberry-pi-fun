@@ -89,3 +89,44 @@ class SearchAsk(unittest.TestCase):
         self.assertFalse(explicit_search(attached))
         asked = f"look up this note{ATTACH_MARK}{'A' * 90}"
         self.assertTrue(explicit_search(asked))
+
+    def test_person_lookups_search_and_generic_who_questions_do_not(self):
+        bug = "Hello who is sid nair etched"
+        for prompt in (
+            bug,
+            "hello who is sid nair etched",
+            "HELLO WHO IS SID NAIR ETCHED",
+            "Hello, who is sid nair etched",
+            "Hi who is Sid Nair",
+            "hey who's Sid Nair",
+            "who’s Sid Nair",
+            "who is sid nair etched",
+            "who's Sid Nair",
+            "Who is Sid Nair at Etched?",
+            "who is Etched",
+            f"{bug}{ATTACH_MARK}{'A' * 90}",
+        ):
+            self.assertTrue(explicit_search(prompt), prompt)
+        for prompt in (
+            "who is better",
+            "Hello who is better",
+            "Hello who is the best",
+            "Who is better, Sid or Natan?",
+            "who's better",
+            "who is the best",
+            "who is the best engineer",
+            "who's the best",
+            "who are you",
+            "Who are you?",
+            "who am I",
+            "who is it",
+            "who is this",
+            "who is going to win",
+            "who is responsible for the launch",
+            "what is sid nair etched",
+            "tell me who is sid nair",
+            "Hello, how are you?",
+            "hi",
+            f"what does this say{ATTACH_MARK}who is sid nair etched " + ("A" * 80),
+        ):
+            self.assertFalse(explicit_search(prompt), prompt)

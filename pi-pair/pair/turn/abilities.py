@@ -803,18 +803,23 @@ def eval_rows() -> list[dict]:
     return rows
 
 
+# The unknown-name sentence is allowed. A blanket "you do not know" is not.
+_NAMED_GAP = "if you do not know a person or name"
+
+
 def _passes(row: dict) -> bool:
     from pair.turn.shape import EFFORT_HINT, PERSONA, estimate_tokens
 
     category = row["category"]
     if category == "persona":
         tokens = estimate_tokens(PERSONA)
-        lowered = PERSONA.lower()
+        raw = PERSONA.lower()
+        lowered = raw.replace(_NAMED_GAP, "")
         stock = ("you do not know", "clarifying question", "calc plot doc")
         return (
             40 <= tokens <= 220
             and "```" not in PERSONA
-            and "you are not the user" in lowered
+            and "you are not the user" in raw
             and "calc" in lowered
             and "plot" in lowered
             and not any(phrase in lowered for phrase in stock)
@@ -851,7 +856,8 @@ def _passes(row: dict) -> bool:
         return "step-by-step" in hint and "Thinking mode stays off" in hint
     if category == "honest":
         lowered = PERSONA.lower()
-        return "do not know" not in lowered and "clarifying question" not in lowered
+        gapless = lowered.replace(_NAMED_GAP, "")
+        return "do not know" not in gapless and "clarifying question" not in lowered
     return False
 
 

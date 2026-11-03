@@ -188,6 +188,14 @@ class Abilities(unittest.TestCase):
         self.assertIn("plot fence", PERSONA)
         self.assertNotIn("pptx", PERSONA.lower())
 
+    def test_persona_does_not_offer_a_language_excuse(self):
+        self.assertIn(
+            "Answer with the useful part only. If you do not know a person or name, "
+            "say so in one sentence and suggest a web search.",
+            PERSONA,
+        )
+        self.assertNotIn("Answer in the user's language", PERSONA)
+
 
 if __name__ == "__main__":
     unittest.main()

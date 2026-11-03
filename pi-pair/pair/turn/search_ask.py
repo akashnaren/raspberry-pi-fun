@@ -1,10 +1,13 @@
 """Search when the button is on, or when the line asks for it.
 
 The composer control is the primary path. The list below is the backup for
-someone who forgot the button. It is an explicit ask to search, or a news
-shape: latest news, news about, news on, latest on, in the news, what's the
-latest, or latest <word> news. A bare news, latest, current, or today is not
-a cue. A pasted URL is not a cue.
+someone who forgot the button. It is an explicit ask to search, a news
+shape, or a person lookup. News shapes are latest news, news about, news on,
+latest on, in the news, what's the latest, or latest <word> news. A person
+lookup is who is <name>, who's <name>, or who is <name> <org>, with an
+optional leading hello, hi, or hey. A bare news, latest, current, or today
+is not a cue. A pasted URL is not a cue. "who is better", "who is the best",
+and "who are you" are not cues.
 """
 
 from __future__ import annotations
@@ -45,11 +48,69 @@ _CUE = re.compile(
 )
 _URL = re.compile(r"https?://\S+", re.I)
 
+# The first word after "who is" or "who's" is a name. These words are not.
+_GENERIC_WHO = frozenset(
+    {
+        "a",
+        "an",
+        "anybody",
+        "anyone",
+        "best",
+        "better",
+        "going",
+        "he",
+        "her",
+        "here",
+        "hers",
+        "him",
+        "his",
+        "i",
+        "it",
+        "its",
+        "me",
+        "mine",
+        "my",
+        "not",
+        "our",
+        "ours",
+        "responsible",
+        "she",
+        "that",
+        "the",
+        "their",
+        "them",
+        "there",
+        "they",
+        "this",
+        "us",
+        "we",
+        "worse",
+        "worst",
+        "you",
+        "your",
+        "yours",
+    }
+)
+_WHO_NAME = re.compile(
+    r"^(?:(?:hello|hi|hey)\b[\s,!.?]*)?"
+    r"who(?:'s|’s|\s+is)\s+"
+    r"([a-z][\w'.-]*)",
+    re.I,
+)
+
+
+def _person_lookup(question: str) -> bool:
+    """True for "who is <name>" after an optional hello, hi, or hey."""
+    match = _WHO_NAME.match(question)
+    if match is None:
+        return False
+    return match.group(1).lower() not in _GENERIC_WHO
+
 
 def explicit_search(prompt: str) -> bool:
-    """True when the line asks to search or asks for the news."""
-    question = _URL.sub(" ", user_question(prompt or ""))
-    return _CUE.search(question) is not None
+    """True when the line asks to search, asks for the news, or names a person."""
+    question = _URL.sub(" ", user_question(prompt or "")).strip()
+    return _CUE.search(question) is not None or _person_lookup(question)
 
 
 def web_search_request(data: dict) -> bool:
