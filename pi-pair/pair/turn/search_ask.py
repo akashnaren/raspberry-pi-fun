@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from pair.turn.shape import _clean_untrusted, clip_words, user_question
+from pair.turn.shape import _clean_untrusted, _result_line, clip_words, user_question
 
 # One list. Whole words, case insensitive. A multi-word cue allows any space.
 # "latest <word> news" and "what's the latest" are the two shapes below, not
@@ -73,16 +73,24 @@ def _capitalised(word: str) -> bool:
     return bool(core) and core[0].isupper()
 
 
+def _all_caps(text: str) -> bool:
+    letters = [ch for ch in text if ch.isalpha()]
+    return bool(letters) and all(ch.isupper() for ch in letters)
+
+
 def _name_words(question: str) -> list[str]:
-    """The first run of two or more capitalised words, as typed."""
+    """Capitalised words immediately after "who is", or after a leading "the"."""
+    text = user_question(question or "").strip()
+    if not text or _all_caps(text):
+        return []
+    words = _who_words(text)
+    if words and _EDGE.sub("", words[0]) == "the":
+        words = words[1:]
     parts: list[str] = []
-    for word in _who_words(question):
-        if _capitalised(word):
-            parts.append(_EDGE.sub("", word))
-            continue
-        if len(parts) >= 2:
-            return parts
-        parts = []
+    for word in words:
+        if not _capitalised(word):
+            break
+        parts.append(_EDGE.sub("", word))
     return parts if len(parts) >= 2 else []
 
 
@@ -92,12 +100,20 @@ def _person_lookup(question: str) -> bool:
 
 
 def _already_named(question: str, prior: str) -> bool:
-    """True when the exact name phrase is already in the prior text."""
+    """True when the exact name phrase is already in the prior text.
+
+    An earlier who-is question is not that evidence, so asking again still searches.
+    """
     phrase = " ".join(_name_words(question))
     if not phrase or not (prior or "").strip():
         return False
+    kept = [
+        line
+        for line in prior.splitlines()
+        if line.strip() and not _person_lookup(line.strip())
+    ]
     pattern = r"(?<!\w)" + re.escape(phrase) + r"(?!\w)"
-    return re.search(pattern, prior) is not None
+    return re.search(pattern, "\n".join(kept)) is not None
 
 
 def _host(url: str) -> str:
@@ -108,7 +124,10 @@ def _host(url: str) -> str:
 
 
 def _plain(text: str) -> str:
-    return " ".join(_clean_untrusted(text or "").split())
+    """Clean a title or snippet the way a search-result line is cleaned."""
+    shown = _result_line(_clean_untrusted(text or ""))
+    body = shown[2:] if shown.startswith("- ") else shown
+    return " ".join(body.split())
 
 
 def who_note_text(sources: list) -> str:
