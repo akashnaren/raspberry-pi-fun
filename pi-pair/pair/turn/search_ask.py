@@ -193,29 +193,49 @@ def _domain(line: str) -> str:
     return host
 
 
+def _title_snippet(line: str) -> str:
+    """``title: snippet`` after cleanup, without the URL's ``(domain)``."""
+    host = _domain(line)
+    shown = search_result_text(line, max(len(line or "") + 32, WHO_SNIPPET_CHARS))
+    if not shown:
+        return ""
+    body = shown[2:].strip() if shown.startswith("- ") else shown.strip()
+    if host:
+        body = re.sub(r"\s*\(" + re.escape(host) + r"\)(?=\s*:)", "", body, count=1)
+        body = " ".join(body.split())
+    if len(body) > WHO_SNIPPET_CHARS:
+        return clip_words(body, WHO_SNIPPET_CHARS)
+    return body
+
+
 def _snippet_body(lines: list[str]) -> str:
     """Top snippets, each labelled, then the whole note held to its budget.
 
     The label is plain text. A leading dash is stripped when the note is
     folded into the user turn, and a [n] marker is stripped from the reply.
+    The domain is only in the label: ``Result N (domain): title: snippet``.
     """
     parts = []
     for line in lines[:WHO_NOTE_LINES]:
-        shown = search_result_text(line, WHO_SNIPPET_CHARS)
-        if not shown:
-            continue
-        body = shown[2:].strip() if shown.startswith("- ") else shown.strip()
-        if not body:
+        text = _title_snippet(line)
+        if not text:
             continue
         host = _domain(line)
-        label = (
-            f"Result {len(parts) + 1} ({host})" if host else f"Result {len(parts) + 1}"
-        )
-        parts.append(f"{label}: {body}")
+        number = len(parts) + 1
+        label = f"Result {number} ({host})" if host else f"Result {number}"
+        parts.append(f"{label}: {text}")
     body = "\n".join(parts)
     if len(body) <= WHO_NOTE_CHARS:
         return body
     return clip_words(body, WHO_NOTE_CHARS)
+
+
+def _seen_text(body: str) -> str:
+    """Title and snippet text left after the note is clipped.
+
+    Result labels are dropped so a domain cannot stand in for the name.
+    """
+    return re.sub(r"Result \d+(?: \([^)]*\))?:\s*", "", body or "")
 
 
 def who_note_text(prompt: str, full: str) -> str | None:
@@ -232,7 +252,7 @@ def who_note_text(prompt: str, full: str) -> str | None:
         return ""
     body = _snippet_body(lines)
     gap = ""
-    if not any(_mentions(line, names) for line in lines):
+    if not _mentions(_seen_text(body), names):
         label = _asked_name(prompt, names)
         if label:
             gap = f"No result mentions {label}."

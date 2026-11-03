@@ -107,14 +107,19 @@ class SearchAsk(unittest.TestCase):
         hits = [
             "- Sid Nair - Engineering Manager (https://www.linkedin.com/in/sid): Engineering Manager.",
             "- Siddhartha N. at Etched (https://www.etched.com/s): Member of Technical Staff at Etched.",
-            "- Sam page (https://example.com/a): a short bio.",
+            "- Profile (https://example.com/ada-lovelace): "
+            + ("word " * 50)
+            + "Sam Iyer is here.",
             "- Fourth hit (https://example.com/z): unrelated person elsewhere.",
         ]
         full = "Web search notes.\n" + "\n".join(hits)
         notes = (
             (
                 "who is Sid Nair",
-                ("Result 1 (linkedin.com):", "Result 2 (etched.com):"),
+                (
+                    "Result 1 (linkedin.com): Sid Nair - Engineering Manager: Engineering Manager.",
+                    "Result 2 (etched.com): Siddhartha N. at Etched: Member of Technical Staff at Etched.",
+                ),
                 "",
             ),
             (
@@ -127,14 +132,33 @@ class SearchAsk(unittest.TestCase):
                 ("Result 1 (linkedin.com):",),
                 "No result mentions Dr Sid.",
             ),
+            (
+                "who is Ada Lovelace",
+                ("Result 1 (linkedin.com):",),
+                "No result mentions Ada Lovelace.",
+            ),
+            (
+                "who is Sam Iyer",
+                ("Result 1 (linkedin.com):",),
+                "No result mentions Sam Iyer.",
+            ),
+            (
+                "who is Unrelated Person",
+                ("Result 1 (linkedin.com):",),
+                "No result mentions Unrelated Person.",
+            ),
         )
         for prompt, labels, gap in notes:
             note = who_note_text(prompt, full)
             self.assertTrue(note.startswith("Web search:"), prompt)
             self.assertNotIn("[1]", note, prompt)
             self.assertNotIn("unrelated", note, prompt)
+            self.assertNotIn("ada-lovelace", note, prompt)
+            self.assertNotIn("is here", note, prompt)
             self.assertNotIn("Altman's", note, prompt)
             self.assertNotIn("No result mentions Dr.", note, prompt)
+            self.assertEqual(note.count("(linkedin.com)"), 1, prompt)
+            self.assertEqual(note.count("(etched.com)"), 1, prompt)
             for line in note.splitlines():
                 self.assertFalse(line.startswith("- "), prompt)
             for label in labels:
@@ -156,6 +180,10 @@ class SearchAsk(unittest.TestCase):
         self.assertLess(
             folded.index("Result 1 (linkedin.com):"),
             folded.index("Result 2 (etched.com):"),
+        )
+        self.assertIn(
+            "Result 1 (linkedin.com): Sid Nair - Engineering Manager: Engineering Manager.",
+            folded,
         )
         skips = (
             ("who is Will Smith", "I will call you later.", True),
