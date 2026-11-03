@@ -30,7 +30,7 @@ from pair.routes.public_api import stamp
 from pair.routes.status import _claim_wait, listed_chat_models, mode_fields
 from pair.turn.abilities import tail_hints
 from pair.turn.moderate import moderate
-from pair.turn.search_ask import explicit_search, web_search_request
+from pair.turn.search_ask import _person_lookup, explicit_search, web_search_request
 from pair.turn.shape import (
     GROUNDED_RULE,
     NO_RESULTS_RULE,
@@ -209,7 +209,11 @@ class ChatRoutes:
             return False
         if force:
             source = "user"
-        elif explicit_search(prompt, _earlier_text(self, messages)):
+        elif _person_lookup(user_question(prompt or "")):
+            if not explicit_search(prompt, _earlier_text(self, messages)):
+                return False
+            source = "keyword"
+        elif explicit_search(prompt):
             source = "keyword"
         else:
             return False

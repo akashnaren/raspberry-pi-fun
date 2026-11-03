@@ -103,11 +103,19 @@ def _person_lookup(question: str) -> bool:
 
 
 def _already_named(question: str, prior: str) -> bool:
-    """True when that name is already in the thread or in stored facts."""
-    match = _WHO.match((question or "").strip())
-    if match is None or not (prior or "").strip():
+    """True when every name word is already in the thread or in stored facts.
+
+    An earlier who-is question is not that evidence.
+    """
+    names, _ctx = _name_and_context(question)
+    if not names or not (prior or "").strip():
         return False
-    return re.search(r"\b" + re.escape(match.group(1)) + r"\b", prior, re.I) is not None
+    kept = [
+        line
+        for line in prior.splitlines()
+        if line.strip() and not _person_lookup(line.strip())
+    ]
+    return _mentions("\n".join(kept), names)
 
 
 def _who_tail(question: str) -> str:
@@ -123,10 +131,28 @@ def _who_tail(question: str) -> str:
     return tail
 
 
+def _clean_name_word(word: str) -> str:
+    """Drop a trailing possessive and a trailing period from one name token."""
+    text = word.strip().rstrip(".")
+    for suffix in ("'s", "’s"):
+        if text.lower().endswith(suffix) and len(text) > len(suffix):
+            text = text[: -len(suffix)]
+            break
+    return text.rstrip(".")
+
+
+def _name_words(question: str) -> list[str]:
+    words = []
+    for word in _TOKEN.findall(_who_tail(question)):
+        cleaned = _clean_name_word(word)
+        if cleaned:
+            words.append(cleaned)
+    return words
+
+
 def _name_and_context(question: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Name words, then a company or context when the question names one."""
-    raw = _TOKEN.findall(_who_tail(question))
-    words = [word.lower() for word in raw]
+    words = [word.lower() for word in _name_words(question)]
     if not words:
         return (), ()
     for index, word in enumerate(words):
@@ -145,8 +171,7 @@ def _name_and_context(question: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
 
 def _asked_name(question: str, names: tuple[str, ...]) -> str:
     """The name as written, without the company or context that follows it."""
-    raw = _TOKEN.findall(_who_tail(question))
-    return " ".join(raw[: len(names)])
+    return " ".join(_name_words(question)[: len(names)])
 
 
 def _mentions(text: str, tokens: tuple[str, ...]) -> bool:
@@ -158,13 +183,35 @@ def _mentions(text: str, tokens: tuple[str, ...]) -> bool:
     )
 
 
+def _domain(line: str) -> str:
+    match = re.search(r"https?://([^/\s)]+)", line or "", re.I)
+    if match is None:
+        return ""
+    host = match.group(1).lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
 def _snippet_body(lines: list[str]) -> str:
-    """Top snippets, each trimmed, then the whole note held to its budget."""
+    """Top snippets, each labelled, then the whole note held to its budget.
+
+    The label is plain text. A leading dash is stripped when the note is
+    folded into the user turn, and a [n] marker is stripped from the reply.
+    """
     parts = []
     for line in lines[:WHO_NOTE_LINES]:
         shown = search_result_text(line, WHO_SNIPPET_CHARS)
-        if shown:
-            parts.append(shown)
+        if not shown:
+            continue
+        body = shown[2:].strip() if shown.startswith("- ") else shown.strip()
+        if not body:
+            continue
+        host = _domain(line)
+        label = (
+            f"Result {len(parts) + 1} ({host})" if host else f"Result {len(parts) + 1}"
+        )
+        parts.append(f"{label}: {body}")
     body = "\n".join(parts)
     if len(body) <= WHO_NOTE_CHARS:
         return body

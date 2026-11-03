@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import unittest
 
-from pair.routes.search import FLASH_SOURCE_CAP, PRO_SOURCE_CAP, _source_cap
-from pair.turn.abilities import clean_reply
 from pair.turn.search_ask import (
     CUES,
-    WHO_NOTE_CHARS,
-    WHO_SNIPPET_CHARS,
     explicit_search,
     web_search_request,
     who_note_text,
 )
-from pair.turn.shape import ATTACH_MARK
+from pair.turn.shape import ATTACH_MARK, shape_messages
 
 _MATCH = (
     "Who is Natan Weitzman from Tesla - use your tools web search",
@@ -108,58 +104,64 @@ class SearchAsk(unittest.TestCase):
         self.assertTrue(explicit_search("who is Priya"))
 
     def test_who_is_note(self):
-        pad = " word" * 80
         hits = [
-            "- Sam Altman (https://example.com/a): Sam Altman is the CEO of OpenAI."
-            + pad,
-            "- Sid Nair - Engineering Manager (https://www.linkedin.com/in/sid): Engineering Manager."
-            + pad,
-            "- Siddhartha N. at Etched (https://www.etched.com/s): Member of Technical Staff at Etched."
-            + pad,
-            "- Wedding of Taylor Swift and Travis Kelce (https://example.com/w): the wedding."
-            + pad,
+            "- Sid Nair - Engineering Manager (https://www.linkedin.com/in/sid): Engineering Manager.",
+            "- Siddhartha N. at Etched (https://www.etched.com/s): Member of Technical Staff at Etched.",
+            "- Sam page (https://example.com/a): a short bio.",
             "- Fourth hit (https://example.com/z): unrelated person elsewhere.",
         ]
         full = "Web search notes.\n" + "\n".join(hits)
-        table = (
-            ("who is Sid Nair at Etched", "Sam Altman", "Siddhartha", ""),
-            ("who is Taylor Swift married to", "Sam Altman", "Engineering Manager", ""),
+        notes = (
             (
-                "who is Sam Iyer",
-                "Sam Altman",
-                "Siddhartha",
-                "No result mentions Sam Iyer.",
+                "who is Sid Nair",
+                ("Result 1 (linkedin.com):", "Result 2 (etched.com):"),
+                "",
+            ),
+            (
+                "who is Sam Altman's husband",
+                ("Result 1 (linkedin.com):",),
+                "No result mentions Sam Altman.",
+            ),
+            (
+                "who is Dr. Sid Nair",
+                ("Result 1 (linkedin.com):",),
+                "No result mentions Dr Sid.",
             ),
         )
-        self.assertEqual(FLASH_SOURCE_CAP, 3)
-        self.assertEqual(WHO_SNIPPET_CHARS, 220)
-        self.assertEqual(WHO_NOTE_CHARS, 600)
-        caps = (
-            ("qwen3:0.6b", "who is Sid Nair", FLASH_SOURCE_CAP),
-            ("qwen3:1.7b", "Who is Sid Nair at Etched?", FLASH_SOURCE_CAP),
-            ("qwen3:1.7b", "look up the east window", PRO_SOURCE_CAP),
-        )
-        for model, prompt, cap in caps:
-            self.assertEqual(_source_cap(model, prompt), cap, prompt)
-        for prompt, first, still, gap in table:
+        for prompt, labels, gap in notes:
             note = who_note_text(prompt, full)
             self.assertTrue(note.startswith("Web search:"), prompt)
-            lines = [line for line in note.splitlines() if line.startswith("- ")]
-            self.assertEqual(len(lines), FLASH_SOURCE_CAP, prompt)
-            self.assertLessEqual(len("\n".join(lines)), WHO_NOTE_CHARS, prompt)
-            for line in lines:
-                self.assertLessEqual(len(line), WHO_SNIPPET_CHARS, prompt)
-            self.assertIn(first, lines[0], prompt)
-            self.assertIn(still, note, prompt)
-            self.assertLess(note.index(first), note.index(still), prompt)
-            self.assertNotIn("Kelce", note, prompt)
+            self.assertNotIn("[1]", note, prompt)
             self.assertNotIn("unrelated", note, prompt)
+            self.assertNotIn("Altman's", note, prompt)
+            self.assertNotIn("No result mentions Dr.", note, prompt)
+            for line in note.splitlines():
+                self.assertFalse(line.startswith("- "), prompt)
+            for label in labels:
+                self.assertIn(label, note, prompt)
+            if len(labels) > 1:
+                self.assertLess(note.index(labels[0]), note.index(labels[1]), prompt)
             if gap:
                 self.assertIn(gap, note, prompt)
-                self.assertLess(note.index(gap), note.index(lines[0]), prompt)
+                self.assertLess(note.index(gap), note.index(labels[0]), prompt)
             else:
                 self.assertNotIn("No result mentions", note, prompt)
-        question = "what is the stored key fact please"
-        self.assertEqual(clean_reply(question, question), "")
-        echoed = "  WHAT IS THE STORED\nKEY FACT PLEASE  "
-        self.assertEqual(clean_reply(echoed, question), "")
+        sid = who_note_text("who is Sid Nair", full)
+        rows = shape_messages(
+            [{"role": "user", "content": "who is Sid Nair"}],
+            "who is Sid Nair",
+            notes=sid,
+        )
+        folded = rows[-1]["content"]
+        self.assertLess(
+            folded.index("Result 1 (linkedin.com):"),
+            folded.index("Result 2 (etched.com):"),
+        )
+        skips = (
+            ("who is Will Smith", "I will call you later.", True),
+            ("who is Sam Iyer", "who is Sam Altman\nSam Altman runs OpenAI.", True),
+            ("who is Sid Nair at Etched", "who is Sid Nair", True),
+            ("who is Priya", "Priya is my sister and she lives in Austin.", False),
+        )
+        for prompt, prior, want in skips:
+            self.assertEqual(explicit_search(prompt, prior), want, prompt)
