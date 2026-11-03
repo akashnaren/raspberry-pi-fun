@@ -27,7 +27,15 @@ _WARM_CANCEL = Cancel()
 _GUARD = threading.Condition()
 _TURNS = 0
 _WARM_HELD = False
-_TURN_DEPTH = threading.local()
+# A chat waits this long for close_warm to drop the slot, then posts anyway.
+WARM_CLOSE_WAIT_S = 2.0
+
+
+class _Turn:
+    """One begin_turn. end_turn clears it once, from any thread."""
+
+    def __init__(self) -> None:
+        self.live = False
 
 
 def open_json(url: str, payload: dict, timeout: float, cancel=None):
@@ -119,40 +127,51 @@ def warm_slot_busy() -> bool:
         return _WARM_HELD
 
 
-def begin_turn() -> None:
+def begin_turn() -> _Turn:
     """Close an in-flight warm and wait until it drops. Do not hold the slot.
 
-    Two chats both reach Ollama. A warm already in POST is best-effort: its
-    socket is closed and this returns after that warm's finally runs.
+    The returned token is what end_turn releases. A second end_turn on that
+    same token does nothing, including when the stream is closed on another
+    thread. Two chats both reach Ollama. A warm already in POST is
+    best-effort: its socket is closed and this returns after that warm's
+    finally runs, or after WARM_CLOSE_WAIT_S if the warm never drops.
     """
     global _TURNS
-    depth = getattr(_TURN_DEPTH, "n", 0)
-    if depth == 0:
-        with _GUARD:
-            _TURNS += 1
-        try:
-            close_warm()
-            with _GUARD:
-                while _WARM_HELD:
-                    _GUARD.wait()
-        except BaseException:
-            with _GUARD:
-                _TURNS -= 1
-                _GUARD.notify_all()
-            raise
-    _TURN_DEPTH.n = depth + 1
+    token = _Turn()
+    with _GUARD:
+        _TURNS += 1
+        token.live = True
+    try:
+        close_warm()
+        _wait_for_warm_close()
+    except BaseException:
+        end_turn(token)
+        raise
+    return token
 
 
-def end_turn() -> None:
+def end_turn(token: _Turn | None) -> None:
+    """Release `token`. A second call does not release some other turn."""
     global _TURNS
-    depth = getattr(_TURN_DEPTH, "n", 0)
-    if depth <= 0:
+    if token is None:
         return
-    _TURN_DEPTH.n = depth - 1
-    if depth == 1:
-        with _GUARD:
-            _TURNS = max(0, _TURNS - 1)
-            _GUARD.notify_all()
+    with _GUARD:
+        if not token.live:
+            return
+        token.live = False
+        _TURNS -= 1
+        _GUARD.notify_all()
+
+
+def _wait_for_warm_close() -> None:
+    """Return when the warm drops the slot, or when the wait bound passes."""
+    deadline = time.monotonic() + WARM_CLOSE_WAIT_S
+    with _GUARD:
+        while _WARM_HELD:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            _GUARD.wait(remaining)
 
 
 def hold_warm_slot() -> Cancel | None:
@@ -215,7 +234,7 @@ def chat_ollama(
             meta["reasoning"] = "".join(thinking_parts).strip()
             meta["usage"] = taken
         return answer, model
-    begin_turn()
+    turn = begin_turn()
     try:
         knobs = inference_knobs()
         url = f"http://{peer['host']}:{peer['port']}/api/chat"
@@ -241,7 +260,7 @@ def chat_ollama(
             meta["usage"] = from_ollama(out)
         return answer, model
     finally:
-        end_turn()
+        end_turn(turn)
 
 
 def chat_llamacpp(

@@ -20,15 +20,23 @@ from unittest.mock import patch
 from pair import server as pair_server
 from pair.core import runtime
 from pair.core.errors import GENERIC, TIMEOUT, UNREACHABLE
+from pair.model import chat_once
 from pair.model.chat_once import (
+    begin_turn,
     chat_ollama,
     close_warm,
+    drop_warm_slot,
+    end_turn,
+    hold_warm_slot,
     join_startup_retry,
     start_model_warm,
+    turns_in_flight,
     warm_chat_model,
     warm_residents,
+    warm_slot_busy,
     warm_token,
 )
+from pair.model.chat_stream import stream_ollama
 from pair.model.knobs import inference_knobs, mode_limits, tuned_knobs
 from pair.model.modes import FLASH_MODEL, PRO_MODEL
 from pair.routes import reply as reply_routes
@@ -423,6 +431,114 @@ class ModelWarm(unittest.TestCase):
         self.assertEqual(used, FLASH_MODEL)
         self.assertEqual(calls, [PRO_MODEL, FLASH_MODEL])
 
+    def test_end_turn_releases_only_that_token(self):
+        first = None
+        second = None
+        try:
+            first = begin_turn()
+            second = begin_turn()
+            self.assertEqual(turns_in_flight(), 2)
+            end_turn(first)
+            end_turn(first)
+            self.assertEqual(turns_in_flight(), 1)
+            end_turn(second)
+            second = None
+            self.assertEqual(turns_in_flight(), 0)
+        finally:
+            end_turn(first)
+            end_turn(second)
+
+    def test_a_stream_closed_on_another_thread_lets_the_next_warm_run(self):
+        seen: list[dict] = []
+        body = (
+            json.dumps({"message": {"content": "hel"}, "done": False}).encode()
+            + b"\n"
+            + json.dumps({"message": {"content": "lo"}, "done": True}).encode()
+            + b"\n"
+        )
+
+        def urlopen(request, timeout=None):
+            del timeout
+            seen.append(json.loads(request.data.decode()))
+            return _Lines(body)
+
+        peer = {
+            "name": "pi4",
+            "host": "127.0.0.1",
+            "port": 9,
+            "kind": "ollama",
+            "generative": True,
+            "role": "brain",
+        }
+        opened = threading.Event()
+        holder: dict = {}
+
+        def reader() -> None:
+            stream = stream_ollama(
+                peer, FLASH_MODEL, [{"role": "user", "content": "hi"}]
+            )
+            iterator = iter(stream)
+            holder["iterator"] = iterator
+            holder["first"] = next(iterator)
+            opened.set()
+
+        with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
+            thread = threading.Thread(target=reader)
+            thread.start()
+            self.assertTrue(opened.wait(2), holder)
+            self.assertEqual(holder.get("first"), "hel")
+            self.assertEqual(turns_in_flight(), 1)
+            holder["iterator"].close()
+            holder["iterator"].close()
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(turns_in_flight(), 0)
+            self.assertTrue(warm_chat_model(peer, PRO_MODEL, timeout=5))
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[1]["model"], PRO_MODEL)
+        self.assertEqual(seen[1]["options"]["num_predict"], 1)
+        self.assertEqual(turns_in_flight(), 0)
+        self.assertFalse(warm_slot_busy())
+
+    def test_a_chat_posts_when_the_warm_slot_stays_held(self):
+        self.assertGreater(chat_once.WARM_CLOSE_WAIT_S, 0)
+        self.assertLessEqual(chat_once.WARM_CLOSE_WAIT_S, 5)
+        held = hold_warm_slot()
+        self.assertIsNotNone(held)
+        calls: list[str] = []
+
+        def urlopen(request, timeout=None):
+            del timeout
+            calls.append(json.loads(request.data.decode()).get("model"))
+            return _Body(json.dumps({"message": {"content": "ok"}}).encode())
+
+        peer = {
+            "name": "pi4",
+            "host": "127.0.0.1",
+            "port": 9,
+            "kind": "ollama",
+            "generative": True,
+            "role": "brain",
+        }
+        try:
+            with patch("pair.model.chat_once.WARM_CLOSE_WAIT_S", 0.05):
+                with patch("pair.model.chat_once.urllib.request.urlopen", urlopen):
+                    started = time.perf_counter()
+                    answer, used = chat_ollama(
+                        peer,
+                        FLASH_MODEL,
+                        [{"role": "user", "content": "do not wait forever"}],
+                    )
+                    elapsed = time.perf_counter() - started
+            self.assertEqual(answer, "ok")
+            self.assertEqual(used, FLASH_MODEL)
+            self.assertLess(elapsed, 1)
+            self.assertEqual(calls, [FLASH_MODEL])
+            self.assertEqual(turns_in_flight(), 0)
+            self.assertTrue(warm_slot_busy())
+        finally:
+            drop_warm_slot()
+
     def test_routes_share_tuned_knobs(self):
         from pair.model import chat_once, preload
         from pair.routes import chat as chat_routes
@@ -445,6 +561,23 @@ class _Body:
 
     def read(self) -> bytes:
         return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class _Lines:
+    def __init__(self, raw: bytes):
+        self._raw = io.BytesIO(raw)
+
+    def readline(self) -> bytes:
+        return self._raw.readline()
+
+    def read(self, amount: int = -1) -> bytes:
+        return self._raw.read(amount)
 
     def __enter__(self):
         return self

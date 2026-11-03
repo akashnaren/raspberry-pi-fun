@@ -106,7 +106,7 @@ class ModeOllama(BaseHTTPRequestHandler):
             gate = type(self).block_chat
             if gate is not None:
                 gate["entered"].set()
-                gate["release"].wait(5)
+                gate["release"].wait()
                 gate["wrote"] = True
             type(self).loaded = _after_chat(type(self).loaded, payload.get("model"))
             if payload.get("stream"):
@@ -351,14 +351,14 @@ class ModeHttp(unittest.TestCase):
         ).start()
         return httpd.server_address[1]
 
-    def _post(self, port, payload, headers=None):
+    def _post(self, port, payload, headers=None, timeout=5):
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}/v1/chat/completions",
             data=json.dumps(payload).encode(),
             headers={"content-type": "application/json", **(headers or {})},
         )
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 return (
                     response.status,
                     response.headers,
@@ -677,7 +677,6 @@ class ModeHttp(unittest.TestCase):
         release = threading.Event()
         entered = threading.Event()
         ModeOllama.block_chat = {"release": release, "entered": entered, "wrote": False}
-        self.addCleanup(release.set)
         holder: dict = {}
         done = threading.Event()
 
@@ -693,13 +692,17 @@ class ModeHttp(unittest.TestCase):
                         "stream": False,
                     },
                     headers,
+                    timeout=30,
                 )
             except Exception as exc:
                 holder["error"] = repr(exc)
             finally:
                 done.set()
 
-        threading.Thread(target=held, daemon=True).start()
+        thread = threading.Thread(target=held, daemon=True)
+        self.addCleanup(lambda: thread.join(2))
+        self.addCleanup(release.set)
+        thread.start()
         self.assertTrue(entered.wait(4), holder)
         self.assertEqual(runtime.gate.in_flight(), 1)
         status, _headers, body = self._post(
@@ -715,6 +718,8 @@ class ModeHttp(unittest.TestCase):
         self.assertTrue(done.wait(4), holder)
         self.assertNotIn("error", holder, holder)
         self.assertEqual(runtime.gate.in_flight(), 0)
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
 
     def test_stream_sends_thinking_before_model_tokens(self):
         release = threading.Event()

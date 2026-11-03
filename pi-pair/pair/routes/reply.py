@@ -17,6 +17,7 @@ from pair.routes.chat import (
     _prompt_note,
     _tuned_knobs,
     apply_tier,
+    release_decode_slot,
 )
 from pair.routes.memory import _memory_prompt
 from pair.routes.search import _searched, _source_count
@@ -855,6 +856,7 @@ class ReplyRoutes:
         resident_name: str = "",
         ready_answer: str | None = None,
         memory_turns=None,
+        slot: dict | None = None,
     ) -> None:
         grounded = ready_answer
         train = True
@@ -874,6 +876,7 @@ class ReplyRoutes:
                     search_note,
                 )
             except DecodeFailed as error:
+                release_decode_slot(slot)
                 self._error(str(error))
                 return
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
@@ -881,6 +884,7 @@ class ReplyRoutes:
             note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
         remember_completion(prompt, content, chip, peer["name"])
         self._touch_memory(messages if memory_turns is None else memory_turns)
+        release_decode_slot(slot)
         elapsed = int((time.time() - started) * 1000)
         message = {"role": "assistant", "content": content}
         reasoning = getattr(self, "_last_reasoning", "") or ""

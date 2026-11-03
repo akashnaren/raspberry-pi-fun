@@ -200,7 +200,7 @@ def iter_ollama_channels(
     # The thinking call itself is bounded. After the first answer token the
     # socket may stay open for the rest of that reply.
     first_timeout = seconds if think and seconds else 180
-    begin_turn()
+    turn = begin_turn()
     try:
         try:
             with open_json(
@@ -253,7 +253,7 @@ def iter_ollama_channels(
         except TimeoutError:
             return
     finally:
-        end_turn()
+        end_turn(turn)
 
 
 def stream_ollama(
