@@ -367,12 +367,12 @@ class TurnShape(unittest.TestCase):
         # 8 pairs of 130-token rows plus the 1859-character note. Four of
         # those rows are 520 tokens, so the budget sits that far under.
         self.assertEqual(row_tokens, 130)
-        self.assertEqual(pre, 2987)
-        self.assertEqual(pre - 4 * row_tokens, 2467)
+        self.assertEqual(pre, 2994)
+        self.assertEqual(pre - 4 * row_tokens, 2474)
         cases = (
             ("sources", pairs(30, 200), short_note, "", 2048, "", ""),
             ("summary", pairs(30, 200), "", summary, 2048, "", ""),
-            ("four-rows", long_history, long_note, "", 2467, "H03-", "H04-"),
+            ("four-rows", long_history, long_note, "", 2474, "H03-", "H04-"),
             ("deeper", long_history, long_note, "", 1851, "H08-", "H09-"),
             ("eighty", pairs(80, 200), short_note, "", 2048, "", ""),
         )

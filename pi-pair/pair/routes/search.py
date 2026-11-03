@@ -12,8 +12,8 @@ from pair.model.knobs import search_note_limit
 from pair.model.modes import mode_table
 from pair.routes.base import safe_write
 from pair.search.lookup import lookup_web
-from pair.turn.search_ask import who_note_text
-from pair.turn.shape import search_result_text
+from pair.turn.search_ask import _person_lookup, who_note_text
+from pair.turn.shape import search_result_text, user_question
 
 FLASH_SOURCE_CAP = 3
 PRO_SOURCE_CAP = 8
@@ -21,8 +21,10 @@ SEARCH_BUDGET_S = 4.0
 SEARCH_BODY_CAP = 4096
 
 
-def _source_cap(model: str) -> int:
-    """Flash reads fewer pages. Pro keeps the wider set."""
+def _source_cap(model: str, prompt: str = "") -> int:
+    """Who-is reads three pages on Flash and on Pro. Other Pro searches stay wider."""
+    if _person_lookup(user_question(prompt or "")):
+        return FLASH_SOURCE_CAP
     pro = str(mode_table().get("pro") or "")
     if pro and str(model or "") == pro:
         return PRO_SOURCE_CAP
@@ -46,7 +48,7 @@ def _join_cancel(thread, timeout: float | None, cancel=None) -> None:
 
 def _begin_lookup(prompt: str, model: str) -> dict:
     """Start the lookup before the decode slot, so it overlaps the queue wait."""
-    cap = _source_cap(model)
+    cap = _source_cap(model, prompt)
     holder: dict = {}
     started = time.perf_counter()
     deadline = time.monotonic() + SEARCH_BUDGET_S

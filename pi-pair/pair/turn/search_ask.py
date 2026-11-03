@@ -84,10 +84,9 @@ _WHO = re.compile(
     r"([a-z][\w'.-]*)",
     re.I,
 )
-# Name split for the no-mention line. Ranking ignores this and counts words.
+# Name split for the no-mention line. Snippet order stays the search engine's.
 _CONTEXT_AT = frozenset({"at", "from", "with", "of"})
 _CONTEXT_WORD = frozenset({"dating", "married"})
-_STOP = _NOT_A_NAME | frozenset({"and", "for", "from", "is", "of", "to", "who", "with"})
 _CLAUSE = re.compile(r"[,;:]|\s+[-–—]\s+|\band\b", re.I)
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9'.-]*", re.I)
 WHO_NOTE_LINES = 3
@@ -159,33 +158,6 @@ def _mentions(text: str, tokens: tuple[str, ...]) -> bool:
     )
 
 
-def _content_words(question: str) -> tuple[str, ...]:
-    """Query words that count toward a snippet score. Stopwords are out."""
-    seen = set()
-    words = []
-    for word in _TOKEN.findall(_who_tail(question)):
-        token = word.lower()
-        if token in _STOP or token in seen:
-            continue
-        seen.add(token)
-        words.append(token)
-    return tuple(words)
-
-
-def _overlap(text: str, words: tuple[str, ...]) -> int:
-    """How many distinct content words appear in the snippet."""
-    return sum(
-        1
-        for word in words
-        if re.search(r"\b" + re.escape(word) + r"\b", text, re.I) is not None
-    )
-
-
-def _rank_lines(lines: list[str], words: tuple[str, ...]) -> list[str]:
-    """Higher overlap first. Equal scores keep the search engine's order."""
-    return sorted(lines, key=lambda line: _overlap(line, words), reverse=True)
-
-
 def _snippet_body(lines: list[str]) -> str:
     """Top snippets, each trimmed, then the whole note held to its budget."""
     parts = []
@@ -200,7 +172,7 @@ def _snippet_body(lines: list[str]) -> str:
 
 
 def who_note_text(prompt: str, full: str) -> str | None:
-    """Labelled who-is note: three trimmed snippets. None otherwise."""
+    """Labelled who-is note: three trimmed snippets, in search order."""
     names, _ctx = _name_and_context(prompt)
     if not names:
         return None
@@ -211,7 +183,7 @@ def who_note_text(prompt: str, full: str) -> str | None:
             lines.append(text)
     if not lines:
         return ""
-    body = _snippet_body(_rank_lines(lines, _content_words(prompt)))
+    body = _snippet_body(lines)
     gap = ""
     if not any(_mentions(line, names) for line in lines):
         label = _asked_name(prompt, names)
