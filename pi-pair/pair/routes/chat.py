@@ -13,7 +13,8 @@ from pair.ingest.docfit import fit_outbound
 from pair.mesh.guard import may_generate, weak_brain_error
 from pair.mesh.peers import pick
 from pair.model.chat_once import llamacpp_model
-from pair.model.knobs import decode_effort, inference_knobs, mode_limits
+from pair.model.knobs import decode_effort
+from pair.model.knobs import tuned_knobs as _tuned_knobs
 from pair.model.modes import (
     mode_table,
     pull_needed,
@@ -75,12 +76,21 @@ def _block(text: str) -> str:
     return verdict.replacement if verdict.refused else ""
 
 
-def _tuned_knobs(model: str) -> dict:
-    """File knobs with this mode's context, threads, and batch."""
-    row = inference_knobs()
-    tuned = dict(row)
-    tuned.update(mode_limits(str(model or ""), row))
-    return tuned
+def release_decode_slot(slot: dict | None) -> None:
+    """Free the gate before the response bytes are written.
+
+    The handler finally runs after that write, and the client can finish
+    reading in between. Clearing the flag here keeps a later release from
+    dropping a slot the next chat has already taken.
+    """
+    if not slot:
+        return
+    if slot.get("held"):
+        runtime.gate.release()
+        slot["held"] = False
+    elif slot.get("waiting"):
+        runtime.gate.cancel_wait()
+        slot["waiting"] = False
 
 
 def _prompt_note(search_note) -> str:
@@ -558,17 +568,16 @@ class ChatRoutes:
                     resident_name,
                     ready_answer=grounded,
                     memory_turns=memory_rows,
+                    slot=slot,
                 )
         except ClientGone:
             raise
         except Exception as error:
+            release_decode_slot(slot)
             self._error(str(error))
         finally:
             self._observe_rates()
-            if slot["held"]:
-                runtime.gate.release()
-            elif slot["waiting"]:
-                runtime.gate.cancel_wait()
+            release_decode_slot(slot)
 
     def _cached(
         self,

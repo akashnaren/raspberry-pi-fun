@@ -98,6 +98,14 @@ def mode_limits(model: str, knobs: dict | None = None) -> dict:
     return runner_options(model, knobs)
 
 
+def tuned_knobs(model: str, knobs: dict | None = None) -> dict:
+    """File knobs plus this tag's num_ctx, num_thread, and num_batch."""
+    row = inference_knobs() if knobs is None else knobs
+    tuned = dict(row)
+    tuned.update(mode_limits(str(model or ""), row))
+    return tuned
+
+
 def ollama_options(
     temperature: float,
     max_tokens: int,

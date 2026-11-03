@@ -54,6 +54,50 @@ def tail_hints(prompt: str, hint: str = "") -> str:
     return "\n\n".join(parts)
 
 
+_LONE_MARKDOWN = re.compile(
+    r"\s*```(?:markdown|md)[ \t]*\n(.*?)```\s*",
+    re.S | re.I,
+)
+_FILE_REQUEST = re.compile(
+    r"\b(?:download|export)\b|"
+    r"\breadme\.md\b|"
+    r"\.md\b|"
+    r"\bmarkdown\s+doc(?:ument)?\b|"
+    r"\bas\s+markdown\b|"
+    r"\b(?:markdown|md|pdf|docx|xlsx|csv|txt)\s+file\b|"
+    r"\b(?:make|write|create|save)\b[^.\n]{0,80}\b(?:file|document)\b|"
+    r"\bfile\s+i\s+can\s+download\b",
+    re.I,
+)
+
+
+def _explicit_file_request(prompt: str) -> bool:
+    """True when the user asked for a downloadable file, not a prose answer."""
+    return bool(_FILE_REQUEST.search(prompt or ""))
+
+
+def _lone_markdown(text: str) -> str | None:
+    """The inner text when the whole reply is one markdown or md fence."""
+    match = _LONE_MARKDOWN.fullmatch(text or "")
+    if match is None:
+        return None
+    return (match.group(1) or "").strip()
+
+
+def unwrap_lone_markdown(text: str, prompt: str = "") -> str:
+    """A whole-reply markdown fence is prose unless a file was requested.
+
+    Pro copies a markdown document shape from labeled context. That fence
+    would otherwise become a .md download.
+    """
+    if _explicit_file_request(prompt):
+        return text or ""
+    inner = _lone_markdown(text or "")
+    if inner is None:
+        return text or ""
+    return inner
+
+
 def _as_tool(name: str, body: str) -> tuple[str, str]:
     """Fence language to a tool name. pdf/docx/xlsx/md are documents."""
     label = (name or "").strip().lower()
@@ -68,10 +112,22 @@ def _as_tool(name: str, body: str) -> tuple[str, str]:
     return label, text
 
 
-def parse_fences(text: str, limit: int = TOOL_LIMIT) -> list[dict]:
-    """The first `limit` tool fences, in order. Other fences are left alone."""
+def parse_fences(
+    text: str, limit: int = TOOL_LIMIT, prompt: str | None = None
+) -> list[dict]:
+    """The first `limit` tool fences, in order. Other fences are left alone.
+
+    A prompt that did not ask for a file drops a reply that is only a
+    markdown or md fence. Callers that parse a file body omit the prompt.
+    """
+    source = text or ""
+    closed = _close_trailing_fence(source)
+    if prompt is not None and _lone_markdown(closed) is not None:
+        if not _explicit_file_request(prompt):
+            return []
+        source = closed
     found = []
-    for match in _FENCE.finditer(text or ""):
+    for match in _FENCE.finditer(source):
         name, body = _as_tool(match.group(1), match.group(2))
         if not body:
             continue
@@ -350,7 +406,7 @@ def settle_blocks(
     question = user_question(prompt or "")
     samples = "\n".join(row["content"] for row in sample_turns())
     source_persona = "\n".join(part for part in ((persona or PERSONA), samples) if part)
-    source = _close_trailing_fence(text or "")
+    source = unwrap_lone_markdown(_close_trailing_fence(text or ""), question)
     found = []
     for match in _FENCE.finditer(source):
         raw = match.group(2)
@@ -668,7 +724,7 @@ def tool_notes(
 ) -> str:
     """Run at most two fences. A rejected block is not a tool call."""
     text = settle_blocks(text, prompt=prompt, context=context, have_tools=have_tools)
-    fences = parse_fences(text)
+    fences = parse_fences(text, prompt=prompt)
     if not fences:
         return ""
     if search is None:

@@ -17,6 +17,7 @@ from pair.routes.chat import (
     _prompt_note,
     _tuned_knobs,
     apply_tier,
+    release_decode_slot,
 )
 from pair.routes.memory import _memory_prompt
 from pair.routes.search import _searched, _source_count
@@ -59,6 +60,22 @@ def remember_completion(prompt: str, answer: str, chip: str, peer: str) -> None:
         _LAST["answer"] = reply
         _LAST["chip"] = chip
         _LAST["peer"] = peer
+
+
+def _content_channels(stream):
+    """Yield ('content', text). Closing this closes the model stream.
+
+    A generator expression over the stream does not close that iterator when
+    it is closed, so the turn inside it would stay open until a later GC.
+    """
+    iterator = iter(stream)
+    try:
+        for delta in iterator:
+            yield "content", delta
+    finally:
+        close = getattr(iterator, "close", None)
+        if close is not None:
+            close()
 
 
 def last_completion() -> dict:
@@ -462,9 +479,8 @@ class ReplyRoutes:
         try:
             plan = getattr(self, "_decode_plan", None)
             if kind == "llamacpp":
-                channels = (
-                    ("content", delta)
-                    for delta in stream_llamacpp(
+                channels = _content_channels(
+                    stream_llamacpp(
                         peer,
                         model,
                         messages,
@@ -485,9 +501,8 @@ class ReplyRoutes:
                     usage=self._usage,
                 )
             else:
-                channels = (
-                    ("content", delta)
-                    for delta in stream_ollama(
+                channels = _content_channels(
+                    stream_ollama(
                         peer,
                         model,
                         messages,
@@ -546,76 +561,81 @@ class ReplyRoutes:
                     reasoning_sent = True
                 return ok
 
-            for channel, delta in channels:
-                if not delta:
-                    continue
-                if channel == "thinking":
-                    nxt = "".join(thinking_parts) + delta
-                    release = stream_release(nxt)
-                    if release == "refuse":
-                        # The span that completes the match is not written.
-                        # A thought prefix that already went out is cleared.
-                        policy = _block(nxt)
-                        thinking_parts.clear()
-                        if not clear_reasoning():
+            try:
+                for channel, delta in channels:
+                    if not delta:
+                        continue
+                    if channel == "thinking":
+                        nxt = "".join(thinking_parts) + delta
+                        release = stream_release(nxt)
+                        if release == "refuse":
+                            # The span that completes the match is not written.
+                            # A thought prefix that already went out is cleared.
+                            policy = _block(nxt)
+                            thinking_parts.clear()
+                            if not clear_reasoning():
+                                closed = True
+                            break
+                        thinking_parts.append(delta)
+                        joined_thought = "".join(thinking_parts)
+                        piece = joined_thought[thinking_flushed:]
+                        thinking_flushed = len(joined_thought)
+                        if piece and not emit_reasoning(piece):
                             closed = True
-                        break
-                    thinking_parts.append(delta)
-                    joined_thought = "".join(thinking_parts)
-                    piece = joined_thought[thinking_flushed:]
-                    thinking_flushed = len(joined_thought)
-                    if piece and not emit_reasoning(piece):
-                        closed = True
-                        break
-                    continue
-                parts.append(delta)
-                joined = "".join(parts)
-                release = stream_release(joined)
-                if release == "refuse":
-                    policy = _block(joined)
-                    parts.clear()
-                    thinking_parts.clear()
-                    if not clear_reasoning():
-                        closed = True
-                    break
-                old = flushed
-                if "<" in joined and "think" in joined.lower():
-                    visible, leaked = peel_think(joined)
-                    if leaked and stream_release(leaked) == "refuse":
-                        policy = _block(leaked)
+                            break
+                        continue
+                    parts.append(delta)
+                    joined = "".join(parts)
+                    release = stream_release(joined)
+                    if release == "refuse":
+                        policy = _block(joined)
                         parts.clear()
                         thinking_parts.clear()
-                        flushed = len(joined) if old else 0
                         if not clear_reasoning():
                             closed = True
                         break
-                    prior, _prior_leak = peel_think(joined[:old])
-                    piece = visible[len(prior) :] if visible.startswith(prior) else ""
-                    flushed = len(joined)
-                    if piece:
+                    old = flushed
+                    if "<" in joined and "think" in joined.lower():
+                        visible, leaked = peel_think(joined)
+                        if leaked and stream_release(leaked) == "refuse":
+                            policy = _block(leaked)
+                            parts.clear()
+                            thinking_parts.clear()
+                            flushed = len(joined) if old else 0
+                            if not clear_reasoning():
+                                closed = True
+                            break
+                        prior, _prior_leak = peel_think(joined[:old])
+                        piece = (
+                            visible[len(prior) :] if visible.startswith(prior) else ""
+                        )
+                        flushed = len(joined)
+                        if piece:
+                            held = False
+                    else:
+                        piece = joined[old:]
+                        flushed = len(joined)
                         held = False
-                else:
-                    piece = joined[old:]
-                    flushed = len(joined)
-                    held = False
-                if not piece:
-                    continue
-                if not getattr(self, "_ttft_ms", 0):
-                    self._ttft_ms = max(0, int((time.time() - started) * 1000))
-                chunk = {
-                    "id": "pi-pair",
-                    "object": "chat.completion.chunk",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": piece},
-                            "finish_reason": None,
-                        }
-                    ],
-                }
-                if not write_json(chunk):
-                    closed = True
-                    break
+                    if not piece:
+                        continue
+                    if not getattr(self, "_ttft_ms", 0):
+                        self._ttft_ms = max(0, int((time.time() - started) * 1000))
+                    chunk = {
+                        "id": "pi-pair",
+                        "object": "chat.completion.chunk",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": piece},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    if not write_json(chunk):
+                        closed = True
+                        break
+            finally:
+                channels.close()
             if not closed and not policy:
                 raw_answer = "".join(parts)
                 if "<" in raw_answer and "think" in raw_answer.lower():
@@ -855,6 +875,7 @@ class ReplyRoutes:
         resident_name: str = "",
         ready_answer: str | None = None,
         memory_turns=None,
+        slot: dict | None = None,
     ) -> None:
         grounded = ready_answer
         train = True
@@ -874,6 +895,7 @@ class ReplyRoutes:
                     search_note,
                 )
             except DecodeFailed as error:
+                release_decode_slot(slot)
                 self._error(str(error))
                 return
         chip = "brain: pi4" if peer["name"] == "pi4" else peer["name"]
@@ -881,6 +903,7 @@ class ReplyRoutes:
             note_exchange(prompt, content, chip=chip, peer=peer["name"], train=True)
         remember_completion(prompt, content, chip, peer["name"])
         self._touch_memory(messages if memory_turns is None else memory_turns)
+        release_decode_slot(slot)
         elapsed = int((time.time() - started) * 1000)
         message = {"role": "assistant", "content": content}
         reasoning = getattr(self, "_last_reasoning", "") or ""

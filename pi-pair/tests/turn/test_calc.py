@@ -52,9 +52,15 @@ class CalculatorNotes(unittest.TestCase):
     def test_the_note_is_placed_before_the_question(self):
         prompt = "what is 847*23?"
         rows = shape_messages([{"role": "user", "content": prompt}], prompt)
-        self.assertEqual(rows[-1]["content"], prompt)
-        self.assertIn("Calculator: 847*23 = 19481", rows[-2]["content"])
-        self.assertTrue(rows[-2]["content"].startswith("Notes:"))
+        content = rows[-1]["content"]
+        self.assertEqual(rows[-1]["role"], "user")
+        self.assertIn("Calculator: 847*23 = 19481", content)
+        self.assertTrue(content.startswith("(Context: Calculator: 847*23 = 19481"))
+        self.assertNotIn("Notes:", content)
+        self.assertTrue(content.endswith("\n" + prompt))
+        for line in content.splitlines():
+            self.assertFalse(line.startswith("- "))
+            self.assertFalse(line.endswith(":"))
 
 
 if __name__ == "__main__":

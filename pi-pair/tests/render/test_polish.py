@@ -13,12 +13,13 @@ from pair.ingest.docfit import (
     fit_document,
     fit_outbound,
 )
+from pair.model.knobs import inference_knobs, mode_limits
 from pair.model.preload import (
     PRELOAD_TIMEOUT_S,
     pro_preload_payload,
     rewarm_pro_if_evicted,
 )
-from pair.turn.shape import is_structured_request, structure_hint
+from pair.turn.shape import is_structured_request, structure_hint, warm_messages
 from tests.support.paths import ROOT
 
 
@@ -87,10 +88,19 @@ class Documents(unittest.TestCase):
         self.assertNotIn(body, sent)
 
 
+def _tuned(tag: str) -> dict:
+    row = inference_knobs()
+    tuned = dict(row)
+    tuned.update(mode_limits(tag, row))
+    return tuned
+
+
 class Preload(unittest.TestCase):
     def test_pro_payload_keeps_the_model_resident(self):
         payload = pro_preload_payload()
         self.assertEqual(payload["model"], "qwen3:1.7b")
+        self.assertEqual(payload["messages"], warm_messages(_tuned(payload["model"])))
+        self.assertNotIn("prompt", payload)
         self.assertEqual(payload["keep_alive"], -1)
         self.assertNotEqual(payload["keep_alive"], 0)
         self.assertEqual(payload["options"]["num_predict"], 1)
@@ -98,6 +108,8 @@ class Preload(unittest.TestCase):
         self.assertEqual(payload["options"]["num_batch"], 128)
         self.assertEqual(payload["options"]["num_thread"], 4)
         flash = pro_preload_payload("qwen3:0.6b")
+        self.assertEqual(flash["messages"], warm_messages(_tuned(flash["model"])))
+        self.assertNotIn("prompt", flash)
         self.assertEqual(flash["options"]["num_ctx"], 2048)
         self.assertEqual(flash["options"]["num_batch"], 128)
         self.assertEqual(flash["options"]["num_thread"], 4)
@@ -127,8 +139,8 @@ class Preload(unittest.TestCase):
             def __exit__(self, *args):
                 return False
 
-        def opener(request, timeout):
-            del timeout
+        def opener(request, timeout, cancel=None):
+            del timeout, cancel
             seen.append(json.loads(request.data.decode()))
             return _Resp()
 
