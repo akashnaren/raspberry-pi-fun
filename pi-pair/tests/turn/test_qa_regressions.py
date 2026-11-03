@@ -263,7 +263,7 @@ class FileAndChart(unittest.TestCase):
             for row in sample_turns()
             if row["content"].startswith("```plot")
         )
-        self.assertNotIn("north", clean_reply(copied, CHART))
+        self.assertEqual(clean_reply(copied, CHART), copied.strip())
         open_md = "```md\n# Pancakes\nMix flour and milk.\n"
         closed = settle_blocks(open_md, MD)
         self.assertEqual(parse_fences(closed)[0]["name"], "doc")

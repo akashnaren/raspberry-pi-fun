@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import unittest
 
-from pair.turn.search_ask import CUES, explicit_search, web_search_request
-from pair.turn.shape import ATTACH_MARK
+from pair.turn.abilities import clean_reply
+from pair.turn.search_ask import (
+    CUES,
+    WHO_NOTE_CHARS,
+    explicit_search,
+    web_search_request,
+    who_note_text,
+)
+from pair.turn.shape import ATTACH_MARK, GROUNDED_RULE, shape_messages
 
 _MATCH = (
     "Who is Natan Weitzman from Tesla - use your tools web search",
@@ -97,3 +104,48 @@ class SearchAsk(unittest.TestCase):
         prior = "Priya is my sister and she lives in Austin."
         self.assertFalse(explicit_search("who is Priya", prior))
         self.assertTrue(explicit_search("who is Priya"))
+
+    def test_who_is_note(self):
+        hits = [
+            "- Sid Nair - Engineering Manager (https://www.linkedin.com/in/sid): Engineering Manager",
+            "- Siddhartha N. at Etched (https://www.etched.com/s): Member of Technical Staff at Etched",
+            "- Sid Nair gallery (https://sidnair.com/): " + ("ceramic " * 80),
+            "- Fourth hit (https://example.com/d): unrelated person elsewhere",
+        ]
+        full = "Web search notes.\n" + "\n".join(hits)
+        table = (
+            ("who is sid nair etched", "Etched", "Engineering Manager"),
+            ("Who is Sid Nair at Etched?", "Etched", "Engineering Manager"),
+            ("who is Sid Nair", "Engineering Manager", "Etched"),
+        )
+        self.assertEqual(WHO_NOTE_CHARS, 240)
+        note = ""
+        for prompt, first, still in table:
+            note = who_note_text(prompt, full)
+            self.assertTrue(note.startswith("Web search:"), prompt)
+            body = note.split("Web search:\n", 1)[1]
+            lines = [line for line in body.splitlines() if line.startswith("- ")]
+            self.assertLessEqual(len(lines), 3, prompt)
+            self.assertLessEqual(len(body), 240, prompt)
+            self.assertIn(first, lines[0], prompt)
+            self.assertIn(still, note, prompt)
+            self.assertNotIn("unrelated", note, prompt)
+        question = "what is the stored key fact please"
+        self.assertEqual(clean_reply(question, question), question)
+        rows = shape_messages(
+            [{"role": "user", "content": "who is Sid Nair"}],
+            "who is Sid Nair",
+            notes=note + "\n" + GROUNDED_RULE,
+            facts="User fact: the dog is named Pip.",
+        )
+        fact_at = next(
+            i for i, row in enumerate(rows) if "Pip" in str(row.get("content"))
+        )
+        note_at = next(
+            i
+            for i, row in enumerate(rows)
+            if str(row.get("content") or "").startswith("Web search:")
+        )
+        self.assertLess(fact_at, note_at)
+        self.assertEqual(rows[note_at]["role"], "system")
+        self.assertEqual(rows[-1]["role"], "user")

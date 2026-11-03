@@ -552,7 +552,10 @@ def clean_reply(
         lines.append(line)
     cleaned = "\n".join(lines)
     cleaned = ground_citations(cleaned, source_count)
-    return "\n".join(line for line in cleaned.splitlines() if line.strip()).strip()
+    reply = "\n".join(line for line in cleaned.splitlines() if line.strip()).strip()
+    if reply:
+        return reply
+    return (text or "").strip()
 
 
 def user_schema(prompt: str) -> dict | None:

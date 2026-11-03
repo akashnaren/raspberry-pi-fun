@@ -12,6 +12,7 @@ from pair.model.knobs import search_note_limit
 from pair.model.modes import mode_table
 from pair.routes.base import safe_write
 from pair.search.lookup import lookup_web
+from pair.turn.search_ask import who_note_text
 from pair.turn.shape import search_result_text
 
 FLASH_SOURCE_CAP = 3
@@ -110,7 +111,11 @@ def _with_search(
         title = str(item.get("title") or url).strip() or url
         sources.append({"title": title[:120], "url": url})
     full = str(found.get("context") or "").strip()
-    shown = search_result_text(full, search_note_limit())
+    ranked = who_note_text(prompt, full)
+    if ranked is None:
+        shown = search_result_text(full, search_note_limit())
+    else:
+        shown = ranked
     note = {"status": status, "sources": sources, "context": full}
     if status == "ok" and shown:
         note["prompt_note"] = shown
