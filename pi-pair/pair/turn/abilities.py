@@ -526,6 +526,15 @@ def mend_cut_tail(text: str, cut: bool) -> str:
     return source.rstrip() + "…"
 
 
+def _repeats_question(reply: str, question: str) -> bool:
+    """True when the reply is only the question, ignoring case and spacing."""
+    asked = " ".join((question or "").split())
+    if len(asked) < 8:
+        return False
+    said = " ".join((reply or "").split())
+    return said.casefold() == asked.casefold()
+
+
 def clean_reply(
     text: str,
     prompt: str = "",
@@ -553,9 +562,11 @@ def clean_reply(
     cleaned = "\n".join(lines)
     cleaned = ground_citations(cleaned, source_count)
     reply = "\n".join(line for line in cleaned.splitlines() if line.strip()).strip()
-    if reply:
-        return reply
-    return (text or "").strip()
+    if not reply:
+        reply = (text or "").strip()
+    if _repeats_question(reply, question):
+        return ""
+    return reply
 
 
 def user_schema(prompt: str) -> dict | None:

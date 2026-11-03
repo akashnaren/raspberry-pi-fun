@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from pair.turn.shape import search_result_text, user_question
+from pair.turn.shape import clip_words, search_result_text, user_question
 
 # One list. Whole words, case insensitive. A multi-word cue allows any space.
 # "latest <word> news" and "what's the latest" are the two shapes below, not
@@ -85,12 +85,14 @@ _WHO = re.compile(
     re.I,
 )
 # A company or place after at/from/with/of, or the last word of a longer
-# "who is <name> <context>", is used only to order snippets.
+# "who is <name> <context>", breaks ties. It does not outrank the full name.
 _CONTEXT_AT = frozenset({"at", "from", "with", "of"})
+_CONTEXT_WORD = frozenset({"dating", "married"})
 _CLAUSE = re.compile(r"[,;:]|\s+[-–—]\s+|\band\b", re.I)
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9'.-]*", re.I)
 WHO_NOTE_LINES = 3
-WHO_NOTE_CHARS = 240
+WHO_SNIPPET_CHARS = 160
+WHO_NOTE_CHARS = 500
 
 
 def _person_lookup(question: str) -> bool:
@@ -124,17 +126,28 @@ def _who_tail(question: str) -> str:
 
 def _name_and_context(question: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Name words, then a company or context when the question names one."""
-    words = [word.lower() for word in _TOKEN.findall(_who_tail(question))]
+    raw = _TOKEN.findall(_who_tail(question))
+    words = [word.lower() for word in raw]
     if not words:
         return (), ()
     for index, word in enumerate(words):
-        if index > 0 and word in _CONTEXT_AT:
+        if index == 0:
+            continue
+        if word in _CONTEXT_AT:
             names = tuple(item for item in words[:index] if item not in _CONTEXT_AT)
             ctx = tuple(item for item in words[index + 1 :] if item not in _CONTEXT_AT)
             return names, ctx
+        if word in _CONTEXT_WORD:
+            return tuple(words[:index]), tuple(words[index:])
     if len(words) >= 3:
         return tuple(words[:-1]), (words[-1],)
     return tuple(words), ()
+
+
+def _asked_name(question: str, names: tuple[str, ...]) -> str:
+    """The name as written, without the company or context that follows it."""
+    raw = _TOKEN.findall(_who_tail(question))
+    return " ".join(raw[: len(names)])
 
 
 def _mentions(text: str, tokens: tuple[str, ...]) -> bool:
@@ -149,20 +162,31 @@ def _mentions(text: str, tokens: tuple[str, ...]) -> bool:
 def _rank_lines(
     lines: list[str], names: tuple[str, ...], ctx: tuple[str, ...]
 ) -> list[str]:
-    """Both name and context first, then context, then the name. None dropped."""
+    """Full name first. A context word only breaks ties. Nothing is dropped."""
     if not ctx:
         return lines
 
-    def key(line: str) -> tuple[bool, bool, bool]:
-        named = _mentions(line, names)
-        about = _mentions(line, ctx)
-        return (named and about, about, named)
+    def key(line: str) -> tuple[bool, bool]:
+        return (_mentions(line, names), _mentions(line, ctx))
 
     return sorted(lines, key=key, reverse=True)
 
 
+def _snippet_body(lines: list[str]) -> str:
+    """Top snippets, each trimmed, then the whole note held to its budget."""
+    parts = []
+    for line in lines[:WHO_NOTE_LINES]:
+        shown = search_result_text(line, WHO_SNIPPET_CHARS)
+        if shown:
+            parts.append(shown)
+    body = "\n".join(parts)
+    if len(body) <= WHO_NOTE_CHARS:
+        return body
+    return clip_words(body, WHO_NOTE_CHARS)
+
+
 def who_note_text(prompt: str, full: str) -> str | None:
-    """Labelled who-is note: top three snippets, tight budget. None otherwise."""
+    """Labelled who-is note: three trimmed snippets. None otherwise."""
     names, ctx = _name_and_context(prompt)
     if not names:
         return None
@@ -173,11 +197,20 @@ def who_note_text(prompt: str, full: str) -> str | None:
             lines.append(text)
     if not lines:
         return ""
-    ranked = _rank_lines(lines, names, ctx)[:WHO_NOTE_LINES]
-    shown = search_result_text("\n".join(ranked), WHO_NOTE_CHARS)
-    if not shown:
+    body = _snippet_body(_rank_lines(lines, names, ctx))
+    gap = ""
+    if not any(_mentions(line, names) for line in lines):
+        label = _asked_name(prompt, names)
+        if label:
+            gap = f"No result mentions {label}."
+    if not body and not gap:
         return ""
-    return "Web search:\n" + shown
+    head = "Web search:"
+    if gap:
+        head = head + "\n" + gap
+    if not body:
+        return head
+    return head + "\n" + body
 
 
 def explicit_search(prompt: str, prior: str = "") -> bool:
