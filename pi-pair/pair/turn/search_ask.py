@@ -129,17 +129,53 @@ _NOT_NAME = frozenset(
 _NAME_WORD = re.compile(r"[A-Za-z0-9]+(?:[-'’][A-Za-z0-9]+)*")
 
 
-def _name_query(question: str) -> str:
-    """Name and org tokens after who-is. Function words drop out."""
+# The first of these starts the organization or other context, when one is named.
+_CONTEXT_PREP = frozenset({"about", "at", "for", "from", "in", "of", "on", "with"})
+
+
+def _who_tail(question: str) -> str:
+    """Words after who-is, stopping at a spaced dash."""
     match = _WHO_NAME.match(question)
     if match is None:
         return ""
     tail = question[match.start(1) :]
-    tail = re.split(r"\s+[-–—]\s+", tail, maxsplit=1)[0]
+    return re.split(r"\s+[-–—]\s+", tail, maxsplit=1)[0]
+
+
+def _name_query(question: str) -> str:
+    """Name and org tokens after who-is. Function words drop out."""
     tokens = [
-        word for word in _NAME_WORD.findall(tail) if word.lower() not in _NOT_NAME
+        word
+        for word in _NAME_WORD.findall(_who_tail(question))
+        if word.lower() not in _NOT_NAME
     ]
     return " ".join(tokens)
+
+
+def name_context(prompt: str) -> tuple[list[str], list[str]]:
+    """Name tokens and org tokens for an automatic who-is. Empty when it is not one.
+
+    A preposition such as "at" or "from" starts the context. With no preposition,
+    three or more tokens treat the last one as context ("sid nair etched").
+    An explicit search cue is not this path.
+    """
+    question = user_question(prompt or "").strip()
+    cleaned = _URL.sub(" ", question).strip()
+    if not _person_lookup(cleaned) or _CUE.search(cleaned) is not None:
+        return [], []
+    words = _NAME_WORD.findall(_who_tail(cleaned))
+    prep_at = next(
+        (index for index, word in enumerate(words) if word.lower() in _CONTEXT_PREP),
+        None,
+    )
+    if prep_at is None:
+        kept = [word for word in words if word.lower() not in _NOT_NAME]
+        if len(kept) >= 3:
+            return kept[:-1], kept[-1:]
+        return kept, []
+    names = [word for word in words[:prep_at] if word.lower() not in _NOT_NAME]
+    context = [word for word in words[prep_at + 1 :] if word.lower() not in _NOT_NAME]
+    return names, context
 
 
 def search_query(prompt: str) -> str:

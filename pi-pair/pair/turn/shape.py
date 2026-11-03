@@ -32,9 +32,9 @@ PERSONA = (
     "A file fence contains the full document. "
     "Downloadable files are pdf, docx, xlsx, md, txt, or csv. "
     "For another file type, say so in one sentence and offer one of those. "
-    "If you do not know a person or name the user asks about (not yourself), "
-    "say so in one sentence and suggest a web search. "
-    "Not for an opinion or a comparison."
+    "If you do not know a person or name the user asks about "
+    "(not yourself, and not a fact they already told you), "
+    "say so in one sentence and suggest a web search."
 )
 
 
@@ -398,6 +398,7 @@ def tail_note(effort: str = "", notes: str = "", hints: str = "") -> str:
             note.startswith("Notes:")
             or GROUNDED_RULE in note
             or NO_RESULTS_RULE in note
+            or "Use only this." in note
         ):
             parts.append(note)
         else:

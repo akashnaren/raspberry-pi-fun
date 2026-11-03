@@ -22,6 +22,11 @@ _LANG_TOKEN = re.compile(r"^[A-Za-z0-9_+-]{1,32}$")
 _FILE_LANG = {"pdf", "docx", "xlsx", "md", "markdown", "txt", "csv"}
 _TASK = re.compile(r"^\s*(summarize|rewrite|translate)\b", re.I)
 _LANG = re.compile(r"^[A-Za-z0-9_+-]{1,16}$")
+# A pasted search row: "- sidnair.com: Gallery" or "- Title (site): snippet".
+_PASTED_NOTE = re.compile(
+    r"^\s*-\s+(?:[\w.-]+\.[a-z]{2,}\s*:|.+?\([^)]+\)\s*:)\s+\S",
+    re.I,
+)
 TOOL_LIMIT = 2
 JSON_RETRY = (
     "The JSON did not match the requested schema. "
@@ -550,6 +555,10 @@ def clean_reply(
         if flat in banned:
             continue
         lines.append(line)
+    if have_tools:
+        kept = [line for line in lines if _PASTED_NOTE.match(line) is None]
+        if any(line.strip() for line in kept):
+            lines = kept
     cleaned = "\n".join(lines)
     cleaned = ground_citations(cleaned, source_count)
     return "\n".join(line for line in cleaned.splitlines() if line.strip()).strip()

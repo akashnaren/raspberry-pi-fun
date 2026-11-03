@@ -12,6 +12,7 @@ from pair.model.knobs import search_note_limit
 from pair.model.modes import mode_table
 from pair.routes.base import safe_write
 from pair.search.lookup import lookup_web
+from pair.turn.people import hits_from_note, person_note
 from pair.turn.search_ask import search_query
 from pair.turn.shape import search_result_text
 
@@ -114,7 +115,13 @@ def _with_search(
     full = str(found.get("context") or "").strip()
     shown = search_result_text(full, search_note_limit())
     note = {"status": status, "sources": sources, "context": full}
-    if status == "ok" and shown:
+    focused = person_note(prompt, hits_from_note(full)) if status == "ok" else None
+    if focused is not None:
+        # One matching person, in prose. The dash rows are what Flash pastes.
+        note["brief"] = True
+        note["prompt_note"] = str(focused.get("prompt_note") or "")
+        note["sources"] = _kept_sources(focused.get("hits") or [])
+    elif status == "ok" and shown:
         note["prompt_note"] = shown
     _join_cancel(warm, 40, cancel)
     return messages, note
@@ -130,6 +137,20 @@ def _source_count(search_note) -> int:
         return 0
     sources = search_note.get("sources")
     return len(sources) if isinstance(sources, list) else 0
+
+
+def _kept_sources(hits: list) -> list[dict]:
+    """Sources for the one person the note describes."""
+    sources = []
+    for item in hits:
+        if not isinstance(item, dict):
+            continue
+        url = _source_url(str(item.get("url") or ""))
+        if not url:
+            continue
+        title = str(item.get("title") or url).strip() or url
+        sources.append({"title": title[:120], "url": url})
+    return sources
 
 
 def _source_url(url: str) -> str:

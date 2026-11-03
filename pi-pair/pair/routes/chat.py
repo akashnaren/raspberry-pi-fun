@@ -89,6 +89,10 @@ def _prompt_note(search_note) -> str:
         return ""
     note = str(search_note.get("prompt_note") or "")
     if search_note.get("status") == "ok" and note:
+        # An automatic who-is already carries a one-line rule. The long rule
+        # is a prefill cost the small model reads before the first token.
+        if search_note.get("brief"):
+            return note
         return note + "\n" + GROUNDED_RULE
     return NO_RESULTS_RULE
 
