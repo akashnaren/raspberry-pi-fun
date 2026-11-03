@@ -189,12 +189,21 @@ class Abilities(unittest.TestCase):
         self.assertNotIn("pptx", PERSONA.lower())
 
     def test_persona_does_not_offer_a_language_excuse(self):
-        self.assertIn(
-            "Answer with the useful part only. If you do not know a person or name, "
-            "say so in one sentence and suggest a web search.",
-            PERSONA,
+        self.assertTrue(
+            PERSONA.startswith(
+                "You are OpenPi on a Raspberry Pi. You are not the user. "
+            )
         )
+        self.assertIn("Answer with the useful part only.", PERSONA)
         self.assertNotIn("Answer in the user's language", PERSONA)
+        unknown = (
+            "If you do not know a person or name the user asks about (not yourself), "
+            "say so in one sentence and suggest a web search. "
+            "Not for an opinion or a comparison."
+        )
+        self.assertIn(unknown, PERSONA)
+        self.assertGreater(PERSONA.index(unknown), PERSONA.index("Downloadable files"))
+        self.assertLess(PERSONA.index("You are not the user."), PERSONA.index(unknown))
 
 
 if __name__ == "__main__":

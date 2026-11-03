@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from pair.turn.search_ask import CUES, explicit_search, web_search_request
-from pair.turn.shape import ATTACH_MARK
+from pair.turn.search_ask import CUES, explicit_search, search_query, web_search_request
+from pair.turn.shape import ATTACH_MARK, GROUNDED_RULE
 
 _MATCH = (
     "Who is Natan Weitzman from Tesla - use your tools web search",
@@ -130,3 +130,17 @@ class SearchAsk(unittest.TestCase):
             f"what does this say{ATTACH_MARK}who is sid nair etched " + ("A" * 80),
         ):
             self.assertFalse(explicit_search(prompt), prompt)
+
+    def test_person_query_keeps_every_name_and_org_token(self):
+        query = search_query("Hello who is sid nair etched")
+        self.assertEqual(query, "sid nair etched")
+        self.assertIn("etched", query)
+        self.assertEqual(search_query("Who is Sid Nair at Etched?"), "Sid Nair Etched")
+        full = "Who is Natan Weitzman from Tesla - use your tools web search"
+        self.assertEqual(search_query(full), full)
+        self.assertEqual(
+            search_query("who is better, cats or dogs"),
+            "who is better, cats or dogs",
+        )
+        self.assertIn("organization or context", GROUNDED_RULE)
+        self.assertIn("If no result matches it, say so.", GROUNDED_RULE)

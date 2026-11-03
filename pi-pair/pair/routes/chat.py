@@ -29,7 +29,7 @@ from pair.routes.public_api import stamp
 from pair.routes.status import _claim_wait, listed_chat_models, mode_fields
 from pair.turn.abilities import tail_hints
 from pair.turn.moderate import moderate
-from pair.turn.search_ask import explicit_search, web_search_request
+from pair.turn.search_ask import explicit_search, search_query, web_search_request
 from pair.turn.shape import (
     GROUNDED_RULE,
     NO_RESULTS_RULE,
@@ -177,8 +177,6 @@ class ChatRoutes:
 
     def _arm_search(self, prompt: str, force: bool, mesh: bool) -> bool:
         """Toggle on always searches. Otherwise only an explicit ask does."""
-        from pair.turn.shape import user_question
-
         if not mesh:
             return False
         if force:
@@ -189,7 +187,7 @@ class ChatRoutes:
             return False
         self._decide_source = source
         self._decide_label = "search"
-        self._search_query = user_question(prompt).strip() or (prompt or "").strip()
+        self._search_query = search_query(prompt) or (prompt or "").strip()
         return True
 
     def _stamp_decide(self, payload: dict) -> None:

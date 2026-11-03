@@ -12,6 +12,7 @@ from pair.model.knobs import search_note_limit
 from pair.model.modes import mode_table
 from pair.routes.base import safe_write
 from pair.search.lookup import lookup_web
+from pair.turn.search_ask import search_query
 from pair.turn.shape import search_result_text
 
 FLASH_SOURCE_CAP = 3
@@ -46,6 +47,7 @@ def _join_cancel(thread, timeout: float | None, cancel=None) -> None:
 def _begin_lookup(prompt: str, model: str) -> dict:
     """Start the lookup before the decode slot, so it overlaps the queue wait."""
     cap = _source_cap(model)
+    query = search_query(prompt) or (prompt or "").strip()
     holder: dict = {}
     started = time.perf_counter()
     deadline = time.monotonic() + SEARCH_BUDGET_S
@@ -53,7 +55,7 @@ def _begin_lookup(prompt: str, model: str) -> dict:
     def _lookup() -> None:
         try:
             holder["found"] = lookup_for_brain(
-                prompt, local=lookup_web, limit=cap, deadline=deadline
+                query, local=lookup_web, limit=cap, deadline=deadline
             )
         except Exception:
             holder["found"] = None

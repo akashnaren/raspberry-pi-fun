@@ -107,6 +107,52 @@ def _person_lookup(question: str) -> bool:
     return match.group(1).lower() not in _GENERIC_WHO
 
 
+# Words that sit between a name and an organization. They are not tokens.
+_NOT_NAME = frozenset(
+    {
+        "a",
+        "about",
+        "an",
+        "and",
+        "at",
+        "for",
+        "from",
+        "in",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+    }
+)
+_NAME_WORD = re.compile(r"[A-Za-z0-9]+(?:[-'’][A-Za-z0-9]+)*")
+
+
+def _name_query(question: str) -> str:
+    """Name and org tokens after who-is. Function words drop out."""
+    match = _WHO_NAME.match(question)
+    if match is None:
+        return ""
+    tail = question[match.start(1) :]
+    tail = re.split(r"\s+[-–—]\s+", tail, maxsplit=1)[0]
+    tokens = [
+        word for word in _NAME_WORD.findall(tail) if word.lower() not in _NOT_NAME
+    ]
+    return " ".join(tokens)
+
+
+def search_query(prompt: str) -> str:
+    """Text sent to the web. A who-is name keeps every name and org token."""
+    question = user_question(prompt or "").strip()
+    cleaned = _URL.sub(" ", question).strip()
+    if _person_lookup(cleaned) and _CUE.search(cleaned) is None:
+        built = _name_query(cleaned)
+        if built:
+            return built
+    return question
+
+
 def explicit_search(prompt: str) -> bool:
     """True when the line asks to search, asks for the news, or names a person."""
     question = _URL.sub(" ", user_question(prompt or "")).strip()
