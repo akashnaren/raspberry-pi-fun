@@ -302,6 +302,89 @@ class TurnShape(unittest.TestCase):
             sum(estimate_tokens(row["content"]) for row in fitted), limit
         )
 
+    def test_history_drops_before_notes_and_samples(self):
+        """Tail notes and the summary wait until non-sample history is gone."""
+        samples = sample_turns()
+        question = "Where is the capital?"
+        summary = "Earlier talk kept the spare key in the blue mug. " * 4
+        sources = "\n".join(
+            f"- src{index:02d} (example.com): result {index} about the topic"
+            for index in range(12)
+        )
+        short_note = "Web search notes.\n" + sources
+        mark = "ENDMARK"
+        filler = "Web search notes.\n"
+        body = "S" * (1859 - len(filler) - len(mark))
+        long_note = filler + body + mark
+        self.assertEqual(len(long_note), 1859)
+        self.assertGreater(len(summary), 80)
+
+        def pairs(count: int, width: int) -> list[dict]:
+            rows = []
+            for index in range(count * 2):
+                tag = f"H{index:02d}-"
+                text = tag + ("w" * (width - len(tag)))
+                role = "user" if index % 2 == 0 else "assistant"
+                rows.append({"role": role, "content": text})
+            return rows
+
+        def shaped(history, notes, summary_text, limit):
+            return shape_messages(
+                [*history, {"role": "user", "content": question}],
+                question,
+                {"num_ctx": limit},
+                notes=notes,
+                summary=summary_text,
+            )
+
+        long_history = pairs(8, 416)
+        row_tokens = estimate_tokens(long_history[0]["content"])
+        seen: dict = {}
+
+        def spy(messages, knobs=None, **kwargs):
+            rows = [row for row in messages if isinstance(row, dict)]
+            seen["pre"] = sum(
+                estimate_tokens(str(row.get("content") or "")) for row in rows
+            )
+            return fit_messages(messages, knobs, **kwargs)
+
+        with patch("pair.turn.shape.fit_messages", spy):
+            shaped(long_history, long_note, "", 8192)
+        pre = seen["pre"]
+        # 8 pairs of 130-token rows plus the 1859-character note. Four of
+        # those rows are 520 tokens, so the budget sits that far under.
+        self.assertEqual(row_tokens, 130)
+        self.assertEqual(pre, 2987)
+        self.assertEqual(pre - 4 * row_tokens, 2467)
+        cases = (
+            ("sources", pairs(30, 200), short_note, "", 2048, "", ""),
+            ("summary", pairs(30, 200), "", summary, 2048, "", ""),
+            ("four-rows", long_history, long_note, "", 2467, "H03-", "H04-"),
+            ("deeper", long_history, long_note, "", 1851, "H08-", "H09-"),
+        )
+        for name, history, notes, summary_text, limit, gone, kept in cases:
+            with self.subTest(name=name):
+                rows = shaped(history, notes, summary_text, limit)
+                blob = "\n".join(row["content"] for row in rows)
+                self.assertEqual(rows[1 : 1 + len(samples)], samples)
+                self.assertTrue(rows[0]["content"].startswith(PERSONA))
+                self.assertNotIn("H00-", blob)
+                if notes == long_note:
+                    self.assertIn(body + mark, blob)
+                if notes == short_note:
+                    for index in range(12):
+                        self.assertIn(f"src{index:02d}", blob)
+                if summary_text:
+                    self.assertEqual(blob.count("spare key in the blue mug"), 4)
+                if gone:
+                    self.assertNotIn(gone, blob)
+                if kept:
+                    self.assertIn(kept, blob)
+                    self.assertIn("H15-", blob)
+                self.assertLessEqual(
+                    sum(estimate_tokens(row["content"]) for row in rows), limit + 4
+                )
+
     def test_fit_never_drops_a_system_row(self):
         knobs = {"num_ctx": 256}
         rows = fit_messages(

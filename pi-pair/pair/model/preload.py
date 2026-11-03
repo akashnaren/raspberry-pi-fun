@@ -188,7 +188,12 @@ def schedule_pro_warm(host: str, port: int, model: str | None = None) -> None:
 
 
 def _post_scheduled_warm(url: str, payload: dict, epoch: int) -> None:
-    """Wait until the lane is idle, then POST. A lost hold waits again."""
+    """Wait until the lane is idle, then POST. A lost hold waits again.
+
+    Two chats that cancel the POST leave the reload to the watchdog. A third
+    attempt would restart Pro's cold load on every turn.
+    """
+    interruptions = 0
     while _warm_epoch() == epoch:
         if not _wait_out_the_turn(epoch):
             return
@@ -211,7 +216,14 @@ def _post_scheduled_warm(url: str, payload: dict, epoch: int) -> None:
                 ) as response:
                     response.read()
             except ClientGone:
-                continue
+                interruptions += 1
+                if interruptions < 2:
+                    continue
+                print(
+                    f"pro preload skipped: {payload.get('model')} interrupted",
+                    flush=True,
+                )
+                return
             except Exception as exc:
                 print(f"pro preload skipped: {exc}", flush=True)
                 return
@@ -255,8 +267,15 @@ def rewarm_pro_if_evicted() -> None:
 
 
 def _retry_cancelled_warm(model: str) -> None:
-    """Log a warm a chat closed and post it again without the 120s pause."""
+    """Log a warm a chat closed and post it again without the 120s pause.
+
+    Pro waits while the board is hot, the same way the eviction watchdog does.
+    """
     print(f"model preload skipped: {model} cancelled", flush=True)
+    _flash, pro = resident_tags()
+    if model == pro and defer_nonurgent():
+        print("rest: deferred pro rewarm", flush=True)
+        return
     host, port = _local_endpoint()
     schedule_pro_warm(host, port, model)
 

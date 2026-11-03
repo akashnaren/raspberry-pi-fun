@@ -488,12 +488,65 @@ def turns_for_memory(request, shaped=None) -> list:
     return rows
 
 
-def _clip_rows(rows: list, limit: int, persona: str, *, systems_only: bool) -> None:
+def _sample_ids(rows: list) -> set[int]:
+    """Ids of the inserted sample block. History after it is droppable."""
+    samples = sample_turns()
+    width = len(samples)
+    for start in range(max(0, len(rows) - width + 1)):
+        if all(
+            rows[start + offset].get("role") == sample.get("role")
+            and rows[start + offset].get("content") == sample.get("content")
+            for offset, sample in enumerate(samples)
+        ):
+            return {id(rows[start + offset]) for offset in range(width)}
+    return set()
+
+
+def _drop_turns(rows: list, limit: int, keep_ids: set[int]) -> None:
+    """Drop non-system rows, oldest first, except the last user and `keep_ids`."""
+    guard = 0
+    while _token_count(rows) > limit and guard < 64:
+        guard += 1
+        last_user = _last_user(rows)
+        drop_at = next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if row.get("role") != "system"
+                and index != last_user
+                and id(row) not in keep_ids
+            ),
+            None,
+        )
+        if drop_at is None:
+            break
+        rows.pop(drop_at)
+
+
+def _note_ids(rows: list, own_count: int, folded_tail: bool) -> set[int]:
+    """Summary rows and the tail note. Those are not caller text."""
+    last_user = _last_user(rows)
+    own, tail_at = _own_rows(rows, last_user, own_count, folded_tail)
+    held = {id(rows[index]) for index in own}
+    if 0 <= tail_at < len(rows):
+        held.add(id(rows[tail_at]))
+    return held
+
+
+def _clip_rows(
+    rows: list,
+    limit: int,
+    persona: str,
+    *,
+    systems_only: bool,
+    protected: set[int] | None = None,
+) -> None:
     """Shorten long rows until `rows` fit or nothing eligible can shrink.
 
-    Caller system text is clipped before any sample turn is dropped. The
-    persona and the facts block are left alone until every other row is done.
+    The systems-only pass clips caller rows. Summary, the tail note, the
+    persona, and the facts block stay whole until the general pass.
     """
+    held = protected or set()
     guard = 0
     while _token_count(rows) > limit and guard < 16:
         guard += 1
@@ -507,7 +560,9 @@ def _clip_rows(rows: list, limit: int, persona: str, *, systems_only: bool) -> N
             pool = [
                 row
                 for row in pool
-                if row.get("role") == "system" and not _facts_extension(row, persona)
+                if row.get("role") == "system"
+                and not _facts_extension(row, persona)
+                and id(row) not in held
             ]
         else:
             others = [row for row in pool if not _facts_extension(row, persona)]
@@ -524,11 +579,18 @@ def _clip_rows(rows: list, limit: int, persona: str, *, systems_only: bool) -> N
         target["content"] = clipped
 
 
-def fit_messages(messages, knobs: dict | None = None) -> list:
+def fit_messages(
+    messages,
+    knobs: dict | None = None,
+    *,
+    own_count: int = 0,
+    folded_tail: bool = False,
+) -> list:
     """Drop whole old turns when the prompt is over num_ctx. Never drop a system row.
 
-    A caller system row is shortened before a sample turn is deleted, so a
-    few tokens over budget do not move the persona-and-facts prefix.
+    Non-sample history goes first. Caller system rows are clipped next.
+    The summary and the tail note are shortened only after that history is gone,
+    and the sample turns stay while any droppable history remains.
     """
     rows = []
     for item in messages or []:
@@ -540,25 +602,15 @@ def fit_messages(messages, knobs: dict | None = None) -> list:
     if _token_count(rows) <= limit:
         return rows
     persona = persona_text(knobs)
-    _clip_rows(rows, limit, persona, systems_only=True)
-    guard = 0
-    while _token_count(rows) > limit and guard < 64:
-        guard += 1
-        last_user = -1
-        for index, row in enumerate(rows):
-            if row.get("role") == "user":
-                last_user = index
-        drop_at = next(
-            (
-                index
-                for index, row in enumerate(rows)
-                if row.get("role") != "system" and index != last_user
-            ),
-            None,
-        )
-        if drop_at is None:
-            break
-        rows.pop(drop_at)
+    _drop_turns(rows, limit, _sample_ids(rows))
+    _clip_rows(
+        rows,
+        limit,
+        persona,
+        systems_only=True,
+        protected=_note_ids(rows, own_count, folded_tail),
+    )
+    _drop_turns(rows, limit, set())
     _clip_rows(rows, limit, persona, systems_only=False)
     return rows
 
@@ -670,7 +722,12 @@ def shape_messages(
     own_count = len(stable)
     folded_tail = bool(tail)
     return fold_system_rows(
-        fit_messages(rows, _prompt_budget(rows, knobs, own_count, folded_tail)),
+        fit_messages(
+            rows,
+            _prompt_budget(rows, knobs, own_count, folded_tail),
+            own_count=own_count,
+            folded_tail=folded_tail,
+        ),
         own_count=own_count,
         folded_tail=folded_tail,
     )

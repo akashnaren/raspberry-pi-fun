@@ -384,6 +384,50 @@ class WarmDrop(unittest.TestCase):
         self.assertIn("cancelled", text.lower())
         self.assertEqual(posts, ["watch", PRO_MODEL])
 
+    def test_two_interruptions_leave_the_reload_to_the_watchdog(self):
+        posts: list[str] = []
+
+        def open_json(url, payload, timeout, cancel=None):
+            del url, timeout, cancel
+            posts.append(str(payload.get("model")))
+            raise ClientGone()
+
+        with patch("pair.model.preload.open_json", open_json):
+            schedule_pro_warm("127.0.0.1", 9, PRO_MODEL)
+            deadline = time.time() + 3
+            while time.time() < deadline and len(posts) < 2:
+                time.sleep(0.02)
+            self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
+            time.sleep(0.4)
+            self.assertEqual(posts, [PRO_MODEL, PRO_MODEL])
+
+    def test_a_hot_board_does_not_retry_a_cancelled_pro_warm(self):
+        posts: list[str] = []
+
+        def open_json_request(request, timeout, cancel=None):
+            del request, timeout, cancel
+            posts.append("watch")
+            raise ClientGone()
+
+        def open_json(url, payload, timeout, cancel=None):
+            del url, payload, timeout, cancel
+            posts.append("retry")
+            return _Body(b"{}")
+
+        buf = io.StringIO()
+        with patch.dict(os.environ, {"PI_PAIR_ROLE": "brain"}):
+            with patch("pair.model.preload.open_json_request", open_json_request):
+                with patch("pair.model.preload.open_json", open_json):
+                    with patch("pair.model.preload.defer_nonurgent", return_value=True):
+                        with redirect_stdout(buf):
+                            warm_model(PRO_MODEL)
+                        deadline = time.time() + 1.2
+                        while time.time() < deadline:
+                            self.assertNotIn("retry", posts)
+                            time.sleep(0.05)
+        self.assertEqual(posts, ["watch"])
+        self.assertIn("deferred", buf.getvalue().lower())
+
     def test_schedule_pro_warm_dedupes_one_tag(self):
         entered = threading.Event()
         release = threading.Event()
