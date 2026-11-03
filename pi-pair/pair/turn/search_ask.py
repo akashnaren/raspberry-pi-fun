@@ -10,6 +10,7 @@ A bare news, latest, current, or today is not a cue. A pasted URL is not a cue.
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
 from pair.turn.shape import clip_words, search_result_text, user_question
 
@@ -184,10 +185,11 @@ def _mentions(text: str, tokens: tuple[str, ...]) -> bool:
 
 
 def _domain(line: str) -> str:
-    match = re.search(r"https?://([^/\s)]+)", line or "", re.I)
-    if match is None:
+    """Host of the trailing ``(https://...)`` group, not a URL inside the title."""
+    found = re.findall(r"\((https?://[^)\s]+)\)", line or "", re.I)
+    if not found:
         return ""
-    host = match.group(1).lower()
+    host = urlparse(found[-1]).hostname or ""
     if host.startswith("www."):
         host = host[4:]
     return host

@@ -63,14 +63,18 @@ def _named_can_generate(target: str) -> bool:
 
 
 def _earlier_text(handler, messages) -> str:
-    """Earlier turns plus stored facts. The question itself is not included."""
+    """Earlier user turns plus stored facts. The question itself is not included."""
     rows = [row for row in (messages or []) if isinstance(row, dict)]
     last = next(
         (i for i in range(len(rows) - 1, -1, -1) if rows[i].get("role") == "user"),
         None,
     )
     kept = rows[:last] if last is not None else []
-    parts = [message_text(row.get("content")) for row in kept]
+    parts = [
+        message_text(row.get("content"))
+        for row in kept
+        if row.get("role", "user") == "user"
+    ]
     facts, summary = _memory_prompt(handler._memory_scope())
     if facts:
         parts.append(facts)
