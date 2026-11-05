@@ -728,7 +728,7 @@ def shape_messages(
     bullet block to the finished last user turn when that full text is first
     person. Facts lead the row, ahead of the context line. Pro holds back a
     fixed reserve only when that final user row is first person, then clips
-    the tail of the block to the reserve.
+    the tail of the block to the tokens still free after the fold.
     Summary and tail notes stay on the last user turn.
     """
     rows = fence_messages(messages, knobs)
@@ -763,8 +763,9 @@ def shape_messages(
         own_count=own_count,
         folded_tail=folded_tail,
     )
-    if pro_tail:
-        room = reserve or max(0, _num_ctx(knobs) - _token_count(shaped))
+    if reserve:
+        room = max(0, _num_ctx(knobs) - _token_count(shaped))
+        room = min(reserve, room)
         block = _clip_facts_block(known, room)
         if block:
             _prepend_pro_facts(shaped, block, last_user)

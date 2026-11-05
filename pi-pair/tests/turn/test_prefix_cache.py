@@ -91,10 +91,42 @@ def _tail_case(prompt, messages, last, edited_last, common=None, **extra):
         "limit": 0,
         "kept": "",
         "stable": True,
+        "summary": "",
+        "samples": True,
     }
     row.update(common or {})
     row.update(extra)
     return row
+
+
+def _check_tail(test, case, samples):
+    prompt = case["prompt"]
+    knobs = case["knobs"]
+
+    def turn(fact):
+        return shape_messages(
+            case["messages"],
+            prompt,
+            knobs,
+            facts=fact,
+            effort=case["effort"],
+            summary=case["summary"],
+        )
+
+    before, after = turn(case["facts"]), turn(case["edited"])
+    text, edit = before[-1]["content"], after[-1]["content"]
+    head = before[0]["content"]
+    counted = sum(estimate_tokens(row["content"]) for row in before)
+    limit = case["limit"] or knobs["num_ctx"]
+    kept = case["kept"]
+    width = len(samples)
+    test.assertEqual(text, case["last"] or text, prompt)
+    test.assertEqual(edit, case["edited_last"] or edit, prompt)
+    test.assertEqual(head == after[0]["content"], case["stable"], prompt)
+    test.assertEqual(head, case["system"] or head, prompt)
+    test.assertLessEqual(counted, limit, prompt)
+    test.assertTrue(not kept or {"role": "user", "content": kept} in before, prompt)
+    test.assertEqual(before[1 : 1 + width] == samples, case["samples"], prompt)
 
 
 def _assert_folded_prose(case: unittest.TestCase, content: str, label: str) -> None:
@@ -343,130 +375,98 @@ class PrefixCache(unittest.TestCase):
         context = "(Context: Give a moderate amount of detail.)"
         sample = sample_turns()[2]["content"]
         one = "Known facts about the user:\n- The kettle is in the hall."
-        fitted = "Where did I put my key?"
-        history = []
-        for index in range(30):
-            history.append(_user(f"u{index} " + ("alpha " * 30)))
-            history.append(
-                {"role": "assistant", "content": f"a{index} " + ("beta " * 30)}
-            )
-        history.append(_user(fitted))
-        lines = [
-            f"The user said: fact {index} is stored in the blue mug."
-            for index in range(12)
-        ]
-        long_facts = "\n".join(lines)
-        long_block = "Known facts about the user:\n" + "\n".join(
-            "- " + line for line in lines
-        )
-        caller = {
-            "role": "system",
-            "content": "Caller system note. " + ("detail " * 800),
-        }
+        caller = {"role": "system", "content": "Note " + ("detail " * 800)}
         shared = dict(_tuned(FLASH_MODEL))
         shared["pro_model"] = shared["model"]
         bench = "Where is the hall bench?"
+        key = "Where did I leave my spare house key?"
+        spots = "\n".join(
+            "The user said: spare key spot %s is the blue mug on the bookshelf." % index
+            for index in range(40)
+        )
+        notes = [
+            {"role": "system", "content": "Caller note %s " % index + ("detail " * 40)}
+            for index in range(3)
+        ]
         common = {"knobs": knobs, "facts": facts, "edited": edited, "system": persona}
-        cases = (
-            _tail_case(
+        hall = {"role": "assistant", "content": "In the hall."}
+        lead, edit = block + "\n\n" + kettle, edited_block + "\n\n" + kettle
+        ctx = block + "\n\n" + context + "\n" + kettle
+        ctx_edit = edited_block + "\n\n" + context + "\n" + kettle
+        cap = knobs["num_ctx"]
+        specs = (
+            (kettle, [_user(kettle)], lead, edit, {}),
+            (story, [_user(story)], story, story, {}),
+            (
                 kettle,
-                [_user(kettle)],
-                block + "\n\n" + kettle,
-                edited_block + "\n\n" + kettle,
-                common,
-            ),
-            _tail_case(story, [_user(story)], story, story, common),
-            _tail_case(
-                fitted,
-                history,
-                long_block + "\n\n" + fitted,
-                edited_block + "\n\n" + fitted,
-                common,
-                facts=long_facts,
-                limit=knobs["num_ctx"],
-            ),
-            _tail_case(
-                kettle,
-                [_user(kettle), {"role": "assistant", "content": "In the hall."}],
+                [_user(kettle), hall],
                 "In the hall.",
                 "In the hall.",
-                common,
-                kept=kettle,
+                {"kept": kettle},
             ),
-            _tail_case(
+            (
                 bench,
                 [_user(bench)],
                 bench,
                 bench,
-                knobs=shared,
-                facts=facts,
-                edited=edited,
-                system=persona_text(shared) + "\n\n" + block,
-                stable=False,
+                {
+                    "knobs": shared,
+                    "system": persona_text(shared) + "\n\n" + block,
+                    "stable": False,
+                },
             ),
-            _tail_case(
-                kettle,
-                [_user(kettle)],
-                block + "\n\n" + context + "\n" + kettle,
-                edited_block + "\n\n" + context + "\n" + kettle,
-                common,
-                effort="medium",
-            ),
-            _tail_case(
+            (kettle, [_user(kettle)], ctx, ctx_edit, {"effort": "medium"}),
+            (
                 sample,
-                [
-                    _user(kettle),
-                    {"role": "assistant", "content": "In the hall."},
-                    _user(sample),
-                ],
+                [_user(kettle), hall, _user(sample)],
                 one + "\n\n" + sample,
                 edited_block + "\n\n" + sample,
-                common,
-                facts="The kettle is in the hall.",
-                kept=kettle,
+                {"facts": "The kettle is in the hall.", "kept": kettle},
             ),
-            _tail_case(
+            (kettle, [caller, _user(kettle)], lead, edit, {"system": "", "limit": cap}),
+            (
+                story,
+                [caller, _user(story)],
+                story,
+                story,
+                {"edited": "", "system": "", "limit": cap},
+            ),
+            (
+                key,
+                [{"role": "system", "content": DOC_HINT}, _user(key)],
+                "",
+                "",
+                {
+                    "knobs": dict(knobs, num_ctx=400),
+                    "facts": spots,
+                    "edited": spots,
+                    "system": "",
+                    "summary": "They asked about the spare key.",
+                    "limit": 400,
+                    "samples": False,
+                },
+            ),
+            (
                 kettle,
-                [caller, _user(kettle)],
-                block + "\n\n" + kettle,
-                long_block + "\n\n" + kettle,
-                common,
-                facts=facts,
-                edited=long_facts,
-                system="",
-                limit=knobs["num_ctx"],
+                notes + [_user(kettle)],
+                "",
+                "",
+                {
+                    "knobs": dict(knobs, num_ctx=544),
+                    "edited": facts,
+                    "system": "",
+                    "limit": 544,
+                    "samples": False,
+                },
             ),
         )
         samples = sample_turns()
-        for case in cases:
-            prompt = case["prompt"]
-            before = shape_messages(
-                case["messages"],
-                prompt,
-                case["knobs"],
-                facts=case["facts"],
-                effort=case["effort"],
+        for prompt, messages, last, edited_last, extra in specs:
+            _check_tail(
+                self,
+                _tail_case(prompt, messages, last, edited_last, common, **extra),
+                samples,
             )
-            after = shape_messages(
-                case["messages"],
-                prompt,
-                case["knobs"],
-                facts=case["edited"],
-                effort=case["effort"],
-            )
-            self.assertEqual(before[-1]["content"], case["last"], prompt)
-            self.assertEqual(after[-1]["content"], case["edited_last"], prompt)
-            self.assertEqual(
-                before[0]["content"] == after[0]["content"], case["stable"], prompt
-            )
-            if case["system"]:
-                self.assertEqual(before[0]["content"], case["system"], prompt)
-            if case["limit"]:
-                counted = sum(estimate_tokens(row["content"]) for row in before)
-                self.assertLessEqual(counted, case["limit"], prompt)
-            if case["kept"]:
-                self.assertIn({"role": "user", "content": case["kept"]}, before, prompt)
-            self.assertEqual(before[1 : 1 + len(samples)], samples, prompt)
 
     def test_persona_prefix_is_byte_identical_across_turn_types(self) -> None:
         facts = "\n".join(
