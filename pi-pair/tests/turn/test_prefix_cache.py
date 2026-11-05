@@ -347,6 +347,23 @@ class PrefixCache(unittest.TestCase):
         self.assertEqual(
             medium[-1]["content"], block + "\n\n" + context + "\n" + question
         )
+        earlier = "Where did I leave my kettle?"
+        question = sample_turns()[2]["content"]
+        known = "Known facts about the user:\n- The kettle is in the hall."
+        placed = shape_messages(
+            [
+                _user(earlier),
+                {"role": "assistant", "content": "In the hall."},
+                _user(question),
+            ],
+            question,
+            knobs,
+            facts="The kettle is in the hall.",
+        )
+        self.assertEqual(
+            (placed[-1]["content"], placed[-3]["content"]),
+            (known + "\n\n" + question, earlier),
+        )
 
     def test_persona_prefix_is_byte_identical_across_turn_types(self) -> None:
         facts = "\n".join(

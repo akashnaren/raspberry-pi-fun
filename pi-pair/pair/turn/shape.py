@@ -739,7 +739,7 @@ def shape_messages(
     rows = add_notes(rows, tail)
     own_count = len(stable)
     folded_tail = bool(tail)
-    shaped = fold_system_rows(
+    shaped, last_user = _fold_system_rows(
         fit_messages(
             rows,
             _prompt_budget(rows, knobs, own_count, folded_tail),
@@ -750,7 +750,7 @@ def shape_messages(
         folded_tail=folded_tail,
     )
     if known and _pro_facts_tail(knobs):
-        _prepend_pro_facts(shaped, known)
+        _prepend_pro_facts(shaped, known, last_user)
     return shaped
 
 
@@ -816,31 +816,17 @@ def _last_user(rows: list) -> int:
     return -1
 
 
-def _last_caller_user(rows: list) -> int:
-    """Last user turn outside the sample block.
-
-    A sample says "I can download". Matching that row would rewrite the prefix.
-    """
-    samples = {(sample.get("role"), sample.get("content")) for sample in sample_turns()}
-    for index in range(len(rows) - 1, -1, -1):
-        row = rows[index]
-        if not isinstance(row, dict) or row.get("role") != "user":
-            continue
-        if (row.get("role"), row.get("content")) in samples:
-            continue
-        return index
-    return -1
-
-
-def _prepend_pro_facts(rows: list, known: str) -> None:
-    """Facts lead the finished user row, ahead of any context line."""
-    index = _last_caller_user(rows)
-    if index < 0:
+def _prepend_pro_facts(rows: list, known: str, index: int) -> None:
+    """Facts lead the finished last user row, ahead of any context line."""
+    if index < 0 or index >= len(rows):
         return
-    text = str(rows[index].get("content") or "")
+    row = rows[index]
+    if not isinstance(row, dict):
+        return
+    text = str(row.get("content") or "")
     if not _FIRST_PERSON.search(text):
         return
-    rows[index]["content"] = f"{known}\n\n{text}" if text else known
+    row["content"] = f"{known}\n\n{text}" if text else known
 
 
 def _own_rows(
@@ -890,11 +876,21 @@ def fold_system_rows(
 
     Extra rows there invalidate the cached sample turns.
     """
+    folded, _last_user = _fold_system_rows(
+        rows, own_count=own_count, folded_tail=folded_tail
+    )
+    return folded
+
+
+def _fold_system_rows(
+    rows: list, *, own_count: int = 0, folded_tail: bool = False
+) -> tuple[list, int]:
+    """Fold system rows and return the index of the finished last user row."""
     if not rows:
-        return rows
+        return rows, -1
     last_user = _last_user(rows)
     if last_user < 0:
-        return rows
+        return rows, -1
     own, tail_at = _own_rows(rows, last_user, own_count, folded_tail)
     notes: list[tuple[str, bool]] = []
     callers: list[str] = []
@@ -909,8 +905,9 @@ def fold_system_rows(
         else:
             callers.append(text)
     if not notes and not callers:
-        return rows
+        return rows, last_user
     folded: list = []
+    folded_user = -1
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             folded.append(row)
@@ -920,15 +917,16 @@ def fold_system_rows(
         copied = dict(row)
         if index == 0 and callers:
             copied["content"] = _fold_callers(str(copied.get("content") or ""), callers)
-        if index == last_user and notes:
+        if index == last_user:
+            folded_user = len(folded)
             question = str(copied.get("content") or "")
-            context = _context_sentence(notes)
+            context = _context_sentence(notes) if notes else ""
             if context and question:
                 copied["content"] = context + "\n" + question
             elif context:
                 copied["content"] = context
         folded.append(copied)
-    return folded
+    return folded, folded_user
 
 
 def warm_messages(knobs: dict | None = None) -> list:
