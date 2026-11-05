@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from pair.core.errors import friendly_error
 from pair.model.knobs import attachment_limit, inference_knobs
+from pair.model.modes import PRO, resolve_mode
 from pair.turn.calc import notes_for
 
 ATTACH_MARK = "\n\n---\n"
@@ -120,6 +121,7 @@ _ROLE_LINE = re.compile(
     r"(?m)^\s*(?:#{1,6}\s*)?(?:system|assistant|user|developer|tool)\s*:",
     re.I,
 )
+_FIRST_PERSON = re.compile(r"\b(i|me|my|mine|myself)\b", re.I)
 
 
 def neutralize(text: str) -> str:
@@ -653,7 +655,7 @@ def _fit_clip(text: str, persona: str, keep: int) -> str:
 
 
 def _known_facts(facts: str) -> str:
-    """Bullet list appended after the persona. Fact wording is not rewritten."""
+    """Bullet list. Fact wording is not rewritten and lines are not joined."""
     lines = []
     for raw in (facts or "").splitlines():
         line = " ".join(raw.split()).strip()
@@ -693,6 +695,16 @@ def _prompt_budget(
     return fitted
 
 
+def _pro_facts_tail(knobs: dict | None) -> bool:
+    """True when this turn is Pro. Facts then stay off the cached prefix."""
+    if not isinstance(knobs, dict):
+        return False
+    tag = str(knobs.get("active_model") or "").strip()
+    if not tag:
+        return False
+    return resolve_mode(None, tag, knobs)[0] == PRO
+
+
 def shape_messages(
     messages,
     prompt: str,
@@ -703,16 +715,23 @@ def shape_messages(
     facts: str = "",
     summary: str = "",
 ) -> list:
-    """Persona, known facts, sample turns, one tail note, then the last user.
+    """Persona, sample turns, one tail note, then the last user.
 
-    Facts are appended to system row 0 after the persona. The qwen3 template
-    prints that system block first, so those persona bytes stay a prefix.
+    Flash appends known facts to system row 0. Pro leaves that row untouched
+    so the persona and samples stay a cached prefix, and prepends the same
+    bullet block to the last user turn when that turn is first person.
     Summary and tail notes stay on the last user turn.
     """
     rows = fence_messages(messages, knobs)
     rows = add_persona(rows, prompt, "", knobs)
     known = _known_facts(facts or "")
-    if known:
+    # Caller row only. A sample turn says "I can download" and must stay byte-exact.
+    tail_row = None
+    if _pro_facts_tail(knobs):
+        index = _last_user(rows)
+        if index >= 0:
+            tail_row = rows[index]
+    elif known:
         rows[0]["content"] = str(rows[0].get("content") or "") + "\n\n" + known
     stable = []
     summary_text = (summary or "").strip()
@@ -723,6 +742,10 @@ def shape_messages(
     combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
     tail = tail_note(effort, combined, hints)
     rows = add_notes(rows, tail)
+    if known and tail_row is not None:
+        question = str(tail_row.get("content") or "")
+        if _FIRST_PERSON.search(question):
+            tail_row["content"] = f"{known}\n\n{question}" if question else known
     own_count = len(stable)
     folded_tail = bool(tail)
     return fold_system_rows(

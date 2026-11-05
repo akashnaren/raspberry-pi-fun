@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from pair.ingest.docfit import DOC_HINT
-from pair.model.knobs import inference_knobs, mode_limits
+from pair.model.knobs import tuned_knobs
 from pair.model.modes import FLASH_MODEL, PRO_MODEL
 from pair.turn.calc import notes_for
 from pair.turn.shape import (
@@ -68,10 +68,7 @@ def _prefix(rendered: str) -> str:
 
 
 def _tuned(tag: str) -> dict:
-    row = inference_knobs()
-    tuned = dict(row)
-    tuned.update(mode_limits(tag, row))
-    return tuned
+    return tuned_knobs(tag)
 
 
 def _user(text: str) -> dict:
@@ -162,14 +159,20 @@ class PrefixCache(unittest.TestCase):
                     self.assertIn(NO_RESULTS_RULE, text)
                     self.assertNotIn(NO_RESULTS_RULE, rows[0]["content"])
                 if name == "facts":
-                    self.assertIn(
+                    bullet = (
                         "Known facts about the user:\n"
-                        "- The user said: the kettle is in the hall",
-                        rows[0]["content"],
+                        "- The user said: the kettle is in the hall"
                     )
+                    self.assertEqual(text, "Where is the hall bench?")
                     self.assertNotIn("The user said:", text)
                     self.assertNotIn("kettle", text)
-                    self.assertEqual(text, "Where is the hall bench?")
+                    if tag == PRO_MODEL:
+                        self.assertNotIn(
+                            "Known facts about the user:", rows[0]["content"]
+                        )
+                        self.assertNotIn("kettle", rows[0]["content"])
+                    else:
+                        self.assertIn(bullet, rows[0]["content"])
                 if name == "calc":
                     self.assertIn("Calculator:", text)
                     self.assertNotIn("Notes:", text)
@@ -211,12 +214,10 @@ class PrefixCache(unittest.TestCase):
             self.assertEqual(len(systems), 1)
             self.assertEqual(
                 shaped[0]["content"],
-                persona_text(knobs)
-                + "\n\n"
-                + sys
-                + "\n\nKnown facts about the user:\n- "
-                + facts,
+                persona_text(knobs) + "\n\n" + sys,
             )
+            self.assertNotIn("Known facts about the user:", shaped[0]["content"])
+            self.assertNotIn(facts, shaped[0]["content"])
             self.assertTrue(shaped[0]["content"].startswith(persona_text(knobs)))
             self.assertNotIn(sys, shaped[-1]["content"])
             self.assertNotIn(facts, shaped[-1]["content"])
@@ -288,21 +289,56 @@ class PrefixCache(unittest.TestCase):
             [_user(question)], question, _tuned(PRO_MODEL), facts=facts
         )
         content = rows[-1]["content"]
-        self.assertEqual(content, question)
-        system = rows[0]["content"]
-        self.assertEqual(
-            system,
-            persona_text(_tuned(PRO_MODEL)) + "\n\nKnown facts about the user:\n"
+        block = (
+            "Known facts about the user:\n"
             "- My spare house key is in the blue mug on the bookshelf.\n"
-            "- My cat is named Pepper.",
+            "- My cat is named Pepper."
         )
-        self.assertLess(system.index("blue mug"), system.index("bookshelf"))
-        self.assertNotIn("blue mug", content)
-        self.assertNotIn("Pepper", content)
+        self.assertEqual(content, block + "\n\n" + question)
+        system = rows[0]["content"]
+        self.assertEqual(system, persona_text(_tuned(PRO_MODEL)))
+        self.assertLess(content.index("blue mug"), content.index("bookshelf"))
+        self.assertNotIn("blue mug", system)
+        self.assertNotIn("Pepper", system)
         self.assertNotIn("Notes:", content)
-        _assert_folded_prose(self, content, "two facts")
+        self.assertIn("\n- My cat is named Pepper.", content)
         self.assertEqual(len([row for row in rows if row["role"] == "system"]), 1)
         self.assertEqual(rows[1 : 1 + len(sample_turns())], sample_turns())
+
+    def test_pro_facts_tail_before_a_first_person_turn(self) -> None:
+        """Facts leave system row 0 and lead only a first-person last turn."""
+        knobs = _tuned(PRO_MODEL)
+        persona = persona_text(knobs)
+        facts = "The kettle is in the hall.\nThe cat is named Pepper."
+        edited = "The spare key is in the blue mug."
+        block = (
+            "Known facts about the user:\n"
+            "- The kettle is in the hall.\n"
+            "- The cat is named Pepper."
+        )
+        cases = (
+            (
+                "Where did I leave my kettle?",
+                block + "\n\nWhere did I leave my kettle?",
+                "Known facts about the user:\n- "
+                + edited
+                + "\n\nWhere did I leave my kettle?",
+            ),
+            (
+                "write a story about a hero",
+                "write a story about a hero",
+                "write a story about a hero",
+            ),
+        )
+        for question, with_facts, with_edit in cases:
+            before = shape_messages([_user(question)], question, knobs, facts=facts)
+            after = shape_messages([_user(question)], question, knobs, facts=edited)
+            self.assertEqual(before[0]["content"], persona, question)
+            self.assertEqual(before[0]["content"], after[0]["content"], question)
+            self.assertNotIn("Known facts about the user:", before[0]["content"])
+            self.assertEqual(before[-1]["content"], with_facts, question)
+            self.assertEqual(after[-1]["content"], with_edit, question)
+            self.assertEqual(before[1 : 1 + len(sample_turns())], sample_turns())
 
     def test_persona_prefix_is_byte_identical_across_turn_types(self) -> None:
         facts = "\n".join(
@@ -346,14 +382,27 @@ class PrefixCache(unittest.TestCase):
                 self.assertNotIn("Notes:", user, f"{tag} {name}")
                 self.assertTrue(rows[0]["content"].startswith(persona), f"{tag} {name}")
                 if name in ("facts", "multi-facts"):
-                    self.assertIn("Known facts about the user:", rows[0]["content"])
-                    self.assertIn("blue mug", rows[0]["content"])
-                    self.assertNotIn("blue mug", user)
-                    self.assertNotIn("Pepper", user)
-                    self.assertLess(
-                        rows[0]["content"].index(persona),
-                        rows[0]["content"].index("Known facts about the user:"),
-                    )
+                    if tag == PRO_MODEL:
+                        self.assertEqual(rows[0]["content"], persona)
+                        self.assertNotIn(
+                            "Known facts about the user:", rows[0]["content"]
+                        )
+                        self.assertIn("Known facts about the user:", user)
+                        self.assertIn("blue mug", user)
+                        self.assertIn("Pepper", user)
+                        self.assertLess(
+                            user.index("Known facts about the user:"),
+                            user.index(question),
+                        )
+                    else:
+                        self.assertIn("Known facts about the user:", rows[0]["content"])
+                        self.assertIn("blue mug", rows[0]["content"])
+                        self.assertNotIn("blue mug", user)
+                        self.assertNotIn("Pepper", user)
+                        self.assertLess(
+                            rows[0]["content"].index(persona),
+                            rows[0]["content"].index("Known facts about the user:"),
+                        )
                 if name in ("effort", "search", "multi-facts"):
                     self.assertTrue(user.startswith("(Context: "), f"{tag} {name}")
             self.assertEqual(len(set(prefixes)), 1, tag)
@@ -374,18 +423,15 @@ class PrefixCache(unittest.TestCase):
             facts=facts,
         )
         system = rows[0]["content"]
-        self.assertEqual(system[: len(persona)], persona)
-        self.assertLess(
-            system.index(DOC_HINT), system.index("Known facts about the user:")
-        )
-        self.assertTrue(system.endswith(facts))
-        self.assertLess(system.index(persona), system.index(DOC_HINT))
+        user = rows[-1]["content"]
+        self.assertEqual(system, persona + "\n\n" + DOC_HINT)
+        self.assertNotIn("Known facts about the user:", system)
+        self.assertTrue(user.startswith("Known facts about the user:\n- " + facts))
+        self.assertTrue(user.endswith("\n\n" + question))
         rendered = render_like_ollama_qwen3(rows)
         self.assertTrue(rendered.startswith("<|im_start|>system\n\n" + persona))
-        self.assertLess(
-            rendered.index(DOC_HINT),
-            rendered.index("Known facts about the user:"),
-        )
+        self.assertLess(rendered.index(DOC_HINT), rendered.index("Known facts"))
+        self.assertLess(rendered.index("Known facts"), rendered.index(question))
 
     def test_persona_and_samples_do_not_name_a_spare_key(self) -> None:
         blob = "\n".join(

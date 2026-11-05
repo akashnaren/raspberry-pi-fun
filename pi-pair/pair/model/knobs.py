@@ -99,10 +99,15 @@ def mode_limits(model: str, knobs: dict | None = None) -> dict:
 
 
 def tuned_knobs(model: str, knobs: dict | None = None) -> dict:
-    """File knobs plus this tag's num_ctx, num_thread, and num_batch."""
+    """File knobs plus this tag's num_ctx, num_thread, and num_batch.
+
+    `active_model` is the tag these limits were built for. Pro prompt shaping
+    reads it so a facts edit does not rewrite the cached system prefix.
+    """
     row = inference_knobs() if knobs is None else knobs
     tuned = dict(row)
     tuned.update(mode_limits(str(model or ""), row))
+    tuned["active_model"] = str(model or "")
     return tuned
 
 
