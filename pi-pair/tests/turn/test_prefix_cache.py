@@ -339,6 +339,14 @@ class PrefixCache(unittest.TestCase):
             self.assertEqual(before[-1]["content"], with_facts, question)
             self.assertEqual(after[-1]["content"], with_edit, question)
             self.assertEqual(before[1 : 1 + len(sample_turns())], sample_turns())
+        question = "Where did I leave my kettle?"
+        context = "(Context: Give a moderate amount of detail.)"
+        medium = shape_messages(
+            [_user(question)], question, knobs, effort="medium", facts=facts
+        )
+        self.assertEqual(
+            medium[-1]["content"], block + "\n\n" + context + "\n" + question
+        )
 
     def test_persona_prefix_is_byte_identical_across_turn_types(self) -> None:
         facts = "\n".join(
@@ -404,7 +412,13 @@ class PrefixCache(unittest.TestCase):
                             rows[0]["content"].index("Known facts about the user:"),
                         )
                 if name in ("effort", "search", "multi-facts"):
-                    self.assertTrue(user.startswith("(Context: "), f"{tag} {name}")
+                    if tag == PRO_MODEL and name == "multi-facts":
+                        self.assertLess(
+                            user.index("Known facts about the user:"),
+                            user.index("(Context: "),
+                        )
+                    else:
+                        self.assertTrue(user.startswith("(Context: "), f"{tag} {name}")
             self.assertEqual(len(set(prefixes)), 1, tag)
             self.assertEqual(prefixes[0], "<|im_start|>system\n\n" + persona)
 

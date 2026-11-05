@@ -383,7 +383,12 @@ class ReplyRoutes:
             return
         try:
             fact_text, summary_text = _memory_prompt(self._memory_scope())
-            knobs = tuned if isinstance(tuned, dict) else _tuned_knobs(model)
+            tag = used if kind != "llamacpp" else model
+            if not isinstance(tuned, dict) or str(
+                tuned.get("active_model") or ""
+            ) != str(tag or ""):
+                tuned = _tuned_knobs(tag)
+            knobs = tuned
             temperature = _cap_temperature(temperature, do_search)
             if do_search:
                 self._searched = True

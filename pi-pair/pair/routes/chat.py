@@ -454,6 +454,7 @@ class ChatRoutes:
                 if flash_tag and flash_tag in resident and model != flash_tag:
                     model = flash_tag
                     used = model
+                    tuned = _tuned_knobs(used if kind != "llamacpp" else model)
                     route_name = "flash"
                     self.pi_route = "flash"
                 elif route_name != "pro":

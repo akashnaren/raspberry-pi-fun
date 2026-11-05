@@ -719,19 +719,14 @@ def shape_messages(
 
     Flash appends known facts to system row 0. Pro leaves that row untouched
     so the persona and samples stay a cached prefix, and prepends the same
-    bullet block to the last user turn when that turn is first person.
+    bullet block to the finished last user turn when that full text is first
+    person. Facts lead the row, ahead of the context line.
     Summary and tail notes stay on the last user turn.
     """
     rows = fence_messages(messages, knobs)
     rows = add_persona(rows, prompt, "", knobs)
     known = _known_facts(facts or "")
-    # Caller row only. A sample turn says "I can download" and must stay byte-exact.
-    tail_row = None
-    if _pro_facts_tail(knobs):
-        index = _last_user(rows)
-        if index >= 0:
-            tail_row = rows[index]
-    elif known:
+    if known and not _pro_facts_tail(knobs):
         rows[0]["content"] = str(rows[0].get("content") or "") + "\n\n" + known
     stable = []
     summary_text = (summary or "").strip()
@@ -742,13 +737,9 @@ def shape_messages(
     combined = "\n".join(part for part in (calc, (notes or "").strip()) if part)
     tail = tail_note(effort, combined, hints)
     rows = add_notes(rows, tail)
-    if known and tail_row is not None:
-        question = str(tail_row.get("content") or "")
-        if _FIRST_PERSON.search(question):
-            tail_row["content"] = f"{known}\n\n{question}" if question else known
     own_count = len(stable)
     folded_tail = bool(tail)
-    return fold_system_rows(
+    shaped = fold_system_rows(
         fit_messages(
             rows,
             _prompt_budget(rows, knobs, own_count, folded_tail),
@@ -758,6 +749,9 @@ def shape_messages(
         own_count=own_count,
         folded_tail=folded_tail,
     )
+    if known and _pro_facts_tail(knobs):
+        _prepend_pro_facts(shaped, known)
+    return shaped
 
 
 def _plain_line(line: str, *, tail: bool) -> str:
@@ -802,7 +796,7 @@ def _context_sentence(notes: list[tuple[str, bool]]) -> str:
     """Summary and the tail note in one parenthetical.
 
     A Notes: header on the user turn made Pro wrap a plain answer in a fence.
-    Facts stay on the system row, so they are not part of this line.
+    The facts block is not part of this line.
     """
     parts = []
     for text, is_tail in notes:
@@ -820,6 +814,33 @@ def _last_user(rows: list) -> int:
         if isinstance(row, dict) and row.get("role") == "user":
             return index
     return -1
+
+
+def _last_caller_user(rows: list) -> int:
+    """Last user turn outside the sample block.
+
+    A sample says "I can download". Matching that row would rewrite the prefix.
+    """
+    samples = {(sample.get("role"), sample.get("content")) for sample in sample_turns()}
+    for index in range(len(rows) - 1, -1, -1):
+        row = rows[index]
+        if not isinstance(row, dict) or row.get("role") != "user":
+            continue
+        if (row.get("role"), row.get("content")) in samples:
+            continue
+        return index
+    return -1
+
+
+def _prepend_pro_facts(rows: list, known: str) -> None:
+    """Facts lead the finished user row, ahead of any context line."""
+    index = _last_caller_user(rows)
+    if index < 0:
+        return
+    text = str(rows[index].get("content") or "")
+    if not _FIRST_PERSON.search(text):
+        return
+    rows[index]["content"] = f"{known}\n\n{text}" if text else known
 
 
 def _own_rows(
