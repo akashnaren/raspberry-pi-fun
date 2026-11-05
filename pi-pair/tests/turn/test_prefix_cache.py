@@ -76,6 +76,27 @@ def _user(text: str) -> dict:
     return {"role": "user", "content": text}
 
 
+def _tail_case(prompt, messages, last, edited_last, common=None, **extra):
+    """One Pro facts-tail row. `common` fills the shared keys, then `extra`."""
+    row = {
+        "prompt": prompt,
+        "messages": messages,
+        "last": last,
+        "edited_last": edited_last,
+        "effort": "",
+        "system": "",
+        "facts": "",
+        "edited": "",
+        "knobs": None,
+        "limit": 0,
+        "kept": "",
+        "stable": True,
+    }
+    row.update(common or {})
+    row.update(extra)
+    return row
+
+
 def _assert_folded_prose(case: unittest.TestCase, content: str, label: str) -> None:
     """The folded user turn is one prose sentence, not a markdown document."""
     for line in content.splitlines():
@@ -307,189 +328,145 @@ class PrefixCache(unittest.TestCase):
         self.assertEqual(rows[1 : 1 + len(sample_turns())], sample_turns())
 
     def test_pro_facts_tail_before_a_first_person_turn(self) -> None:
-        """Facts leave system row 0 and lead only a first-person last turn."""
+        """Facts leave system row 0 and lead only a first-person final row."""
         knobs = _tuned(PRO_MODEL)
         persona = persona_text(knobs)
         facts = "The kettle is in the hall.\nThe cat is named Pepper."
         edited = "The spare key is in the blue mug."
         block = (
-            "Known facts about the user:\n"
-            "- The kettle is in the hall.\n"
+            "Known facts about the user:\n- The kettle is in the hall.\n"
             "- The cat is named Pepper."
         )
+        edited_block = "Known facts about the user:\n- " + edited
         kettle = "Where did I leave my kettle?"
         story = "write a story about a hero"
-        fitted_question = "Where did I put my key?"
-        fitted_history = []
+        context = "(Context: Give a moderate amount of detail.)"
+        sample = sample_turns()[2]["content"]
+        one = "Known facts about the user:\n- The kettle is in the hall."
+        fitted = "Where did I put my key?"
+        history = []
         for index in range(30):
-            fitted_history.append(_user(f"u{index} " + ("alpha " * 30)))
-            fitted_history.append(
+            history.append(_user(f"u{index} " + ("alpha " * 30)))
+            history.append(
                 {"role": "assistant", "content": f"a{index} " + ("beta " * 30)}
             )
-        fitted_history.append(_user(fitted_question))
-        long_facts = "\n".join(
+        history.append(_user(fitted))
+        lines = [
             f"The user said: fact {index} is stored in the blue mug."
             for index in range(12)
+        ]
+        long_facts = "\n".join(lines)
+        long_block = "Known facts about the user:\n" + "\n".join(
+            "- " + line for line in lines
         )
+        caller = {
+            "role": "system",
+            "content": "Caller system note. " + ("detail " * 800),
+        }
         shared = dict(_tuned(FLASH_MODEL))
         shared["pro_model"] = shared["model"]
+        bench = "Where is the hall bench?"
+        common = {"knobs": knobs, "facts": facts, "edited": edited, "system": persona}
         cases = (
-            {
-                "name": "first-person",
-                "messages": [_user(kettle)],
-                "prompt": kettle,
-                "knobs": knobs,
-                "facts": facts,
-                "edited": edited,
-                "last": block + "\n\n" + kettle,
-                "edited_last": (
-                    "Known facts about the user:\n- " + edited + "\n\n" + kettle
-                ),
-            },
-            {
-                "name": "other",
-                "messages": [_user(story)],
-                "prompt": story,
-                "knobs": knobs,
-                "facts": facts,
-                "edited": edited,
-                "last": story,
-                "edited_last": story,
-            },
-            {
-                "name": "fitted",
-                "messages": fitted_history,
-                "prompt": fitted_question,
-                "facts": long_facts,
-                "edited": edited,
-            },
-            {
-                "name": "empty-final",
-                "messages": [
+            _tail_case(
+                kettle,
+                [_user(kettle)],
+                block + "\n\n" + kettle,
+                edited_block + "\n\n" + kettle,
+                common,
+            ),
+            _tail_case(story, [_user(story)], story, story, common),
+            _tail_case(
+                fitted,
+                history,
+                long_block + "\n\n" + fitted,
+                edited_block + "\n\n" + fitted,
+                common,
+                facts=long_facts,
+                limit=knobs["num_ctx"],
+            ),
+            _tail_case(
+                kettle,
+                [_user(kettle), {"role": "assistant", "content": "In the hall."}],
+                "In the hall.",
+                "In the hall.",
+                common,
+                kept=kettle,
+            ),
+            _tail_case(
+                bench,
+                [_user(bench)],
+                bench,
+                bench,
+                knobs=shared,
+                facts=facts,
+                edited=edited,
+                system=persona_text(shared) + "\n\n" + block,
+                stable=False,
+            ),
+            _tail_case(
+                kettle,
+                [_user(kettle)],
+                block + "\n\n" + context + "\n" + kettle,
+                edited_block + "\n\n" + context + "\n" + kettle,
+                common,
+                effort="medium",
+            ),
+            _tail_case(
+                sample,
+                [
                     _user(kettle),
                     {"role": "assistant", "content": "In the hall."},
-                    _user(""),
+                    _user(sample),
                 ],
-                "prompt": kettle,
-                "knobs": knobs,
-                "facts": facts,
-                "edited": edited,
-            },
-            {
-                "name": "trailing-assistant",
-                "messages": [
-                    _user(kettle),
-                    {"role": "assistant", "content": "In the hall."},
-                ],
-                "prompt": kettle,
-                "knobs": knobs,
-                "facts": facts,
-                "edited": edited,
-            },
-            {
-                "name": "shared-tag",
-                "messages": [_user("Where is the hall bench?")],
-                "prompt": "Where is the hall bench?",
-                "knobs": shared,
-                "facts": facts,
-                "edited": edited,
-            },
+                one + "\n\n" + sample,
+                edited_block + "\n\n" + sample,
+                common,
+                facts="The kettle is in the hall.",
+                kept=kettle,
+            ),
+            _tail_case(
+                kettle,
+                [caller, _user(kettle)],
+                block + "\n\n" + kettle,
+                long_block + "\n\n" + kettle,
+                common,
+                facts=facts,
+                edited=long_facts,
+                system="",
+                limit=knobs["num_ctx"],
+            ),
         )
+        samples = sample_turns()
         for case in cases:
-            name = case["name"]
-            if name == "fitted":
-                for tag in (FLASH_MODEL, PRO_MODEL):
-                    tag_knobs = _tuned(tag)
-                    before = shape_messages(
-                        case["messages"],
-                        case["prompt"],
-                        tag_knobs,
-                        facts=case["facts"],
-                    )
-                    after = shape_messages(
-                        case["messages"],
-                        case["prompt"],
-                        tag_knobs,
-                        facts=case["edited"],
-                    )
-                    counted = sum(estimate_tokens(row["content"]) for row in before)
-                    self.assertLessEqual(counted, tag_knobs["num_ctx"], tag)
-                    self.assertEqual(
-                        before[1 : 1 + len(sample_turns())], sample_turns(), tag
-                    )
-                    if tag == PRO_MODEL:
-                        self.assertEqual(before[0]["content"], after[0]["content"])
-                        self.assertEqual(before[0]["content"], persona_text(tag_knobs))
-                        self.assertNotIn(
-                            "Known facts about the user:", before[0]["content"]
-                        )
-                        self.assertTrue(
-                            before[-1]["content"].startswith(
-                                "Known facts about the user:\n"
-                            )
-                        )
-                        self.assertTrue(before[-1]["content"].endswith(fitted_question))
-                    else:
-                        self.assertIn(
-                            "Known facts about the user:", before[0]["content"]
-                        )
-                        self.assertNotIn(
-                            "Known facts about the user:", before[-1]["content"]
-                        )
-                continue
+            prompt = case["prompt"]
             before = shape_messages(
-                case["messages"], case["prompt"], case["knobs"], facts=case["facts"]
+                case["messages"],
+                prompt,
+                case["knobs"],
+                facts=case["facts"],
+                effort=case["effort"],
             )
-            if name == "shared-tag":
-                self.assertIn("Known facts about the user:", before[0]["content"])
-                self.assertNotIn("Known facts about the user:", before[-1]["content"])
-                self.assertEqual(before[-1]["content"], case["prompt"])
-                continue
             after = shape_messages(
-                case["messages"], case["prompt"], case["knobs"], facts=case["edited"]
+                case["messages"],
+                prompt,
+                case["knobs"],
+                facts=case["edited"],
+                effort=case["effort"],
             )
-            self.assertEqual(before[0]["content"], after[0]["content"], name)
-            self.assertEqual(before[0]["content"], persona, name)
-            self.assertNotIn("Known facts about the user:", before[0]["content"])
-            if name in ("empty-final", "trailing-assistant"):
-                blob = "\n".join(row["content"] for row in before)
-                self.assertNotIn("Known facts about the user:", blob, name)
-                self.assertIn(
-                    {"role": "user", "content": kettle},
-                    before,
-                    name,
-                )
-                self.assertEqual(before[-1]["role"], "assistant", name)
-                self.assertEqual(before[-1]["content"], "In the hall.", name)
-                continue
-            self.assertEqual(before[-1]["content"], case["last"], name)
-            self.assertEqual(after[-1]["content"], case["edited_last"], name)
-            self.assertEqual(before[1 : 1 + len(sample_turns())], sample_turns())
-        question = "Where did I leave my kettle?"
-        context = "(Context: Give a moderate amount of detail.)"
-        medium = shape_messages(
-            [_user(question)], question, knobs, effort="medium", facts=facts
-        )
-        self.assertEqual(
-            medium[-1]["content"], block + "\n\n" + context + "\n" + question
-        )
-        earlier = "Where did I leave my kettle?"
-        question = sample_turns()[2]["content"]
-        known = "Known facts about the user:\n- The kettle is in the hall."
-        placed = shape_messages(
-            [
-                _user(earlier),
-                {"role": "assistant", "content": "In the hall."},
-                _user(question),
-            ],
-            question,
-            knobs,
-            facts="The kettle is in the hall.",
-        )
-        self.assertEqual(
-            (placed[-1]["content"], placed[-3]["content"]),
-            (known + "\n\n" + question, earlier),
-        )
+            self.assertEqual(before[-1]["content"], case["last"], prompt)
+            self.assertEqual(after[-1]["content"], case["edited_last"], prompt)
+            self.assertEqual(
+                before[0]["content"] == after[0]["content"], case["stable"], prompt
+            )
+            if case["system"]:
+                self.assertEqual(before[0]["content"], case["system"], prompt)
+            if case["limit"]:
+                counted = sum(estimate_tokens(row["content"]) for row in before)
+                self.assertLessEqual(counted, case["limit"], prompt)
+            if case["kept"]:
+                self.assertIn({"role": "user", "content": case["kept"]}, before, prompt)
+            self.assertEqual(before[1 : 1 + len(samples)], samples, prompt)
 
     def test_persona_prefix_is_byte_identical_across_turn_types(self) -> None:
         facts = "\n".join(

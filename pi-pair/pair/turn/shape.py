@@ -426,8 +426,8 @@ def _num_ctx(knobs: dict | None = None) -> int:
         ctx = int(row.get("num_ctx") or 2048)
     except (TypeError, ValueError):
         ctx = 2048
-    if ctx < 256:
-        ctx = 256
+    if ctx < _CTX_FLOOR:
+        ctx = _CTX_FLOOR
     return ctx
 
 
@@ -726,9 +726,9 @@ def shape_messages(
     Flash appends known facts to system row 0. Pro leaves that row untouched
     so the persona and samples stay a cached prefix, and prepends the same
     bullet block to the finished last user turn when that full text is first
-    person. Facts lead the row, ahead of the context line. Pro reserves the
-    block from num_ctx before the fit, including when the last row is not
-    first person.
+    person. Facts lead the row, ahead of the context line. Pro holds back a
+    fixed reserve only when that final user row is first person, then clips
+    the tail of the block to the reserve.
     Summary and tail notes stay on the last user turn.
     """
     rows = fence_messages(messages, knobs)
@@ -748,10 +748,11 @@ def shape_messages(
     rows = add_notes(rows, tail)
     own_count = len(stable)
     folded_tail = bool(tail)
+    reserve = _pro_facts_reserve(knobs, rows) if pro_tail else 0
     budget = _prompt_budget(rows, knobs, own_count, folded_tail)
-    if pro_tail:
+    if reserve:
         budget = dict(budget or knobs or {})
-        budget["num_ctx"] = _num_ctx(budget) - estimate_tokens(known + "\n\n")
+        budget["num_ctx"] = max(_CTX_FLOOR, _num_ctx(budget) - reserve)
     shaped, last_user = _fold_system_rows(
         fit_messages(
             rows,
@@ -763,7 +764,10 @@ def shape_messages(
         folded_tail=folded_tail,
     )
     if pro_tail:
-        _prepend_pro_facts(shaped, known, last_user)
+        room = reserve or max(0, _num_ctx(knobs) - _token_count(shaped))
+        block = _clip_facts_block(known, room)
+        if block:
+            _prepend_pro_facts(shaped, block, last_user)
     return shaped
 
 
@@ -827,6 +831,53 @@ def _last_user(rows: list) -> int:
         if isinstance(row, dict) and row.get("role") == "user":
             return index
     return -1
+
+
+# Widest store block: 150 three-character facts, the header, the bullets,
+# and the blank line before the question. 291 tokens, for every facts edit.
+_PRO_FACTS_RESERVE = 291
+_CTX_FLOOR = 256
+
+
+def _pro_facts_reserve(knobs: dict | None, rows: list) -> int:
+    """Fixed room for the facts block. Zero unless the final user row is first person."""
+    if not _final_user_is_first_person(rows):
+        return 0
+    room = _num_ctx(knobs) - _CTX_FLOOR
+    if room < 1:
+        return 0
+    return min(_PRO_FACTS_RESERVE, room)
+
+
+def _final_user_is_first_person(rows: list) -> bool:
+    if not rows or not isinstance(rows[-1], dict) or rows[-1].get("role") != "user":
+        return False
+    return _FIRST_PERSON.search(str(rows[-1].get("content") or "")) is not None
+
+
+def _clip_facts_block(known: str, reserve: int) -> str:
+    """Trim the tail of the facts block so it fits in `reserve` tokens."""
+    extra = "\n\n"
+    if reserve < 1:
+        return ""
+    if estimate_tokens(known + extra) <= reserve:
+        return known
+    keep = len(known)
+    text = known
+    guard = 0
+    while estimate_tokens(text + extra) > reserve and guard < 8:
+        guard += 1
+        overflow = estimate_tokens(text + extra) - reserve
+        keep = min(keep - 1, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
+        if keep < 1:
+            return ""
+        clipped = _clip_text(known, keep)
+        if len(clipped) >= len(text):
+            return ""
+        text = clipped
+    if estimate_tokens(text + extra) > reserve:
+        return ""
+    return text
 
 
 def _prepend_pro_facts(rows: list, known: str, index: int) -> None:

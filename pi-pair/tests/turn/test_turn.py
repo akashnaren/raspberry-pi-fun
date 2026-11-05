@@ -218,25 +218,30 @@ class TurnShape(unittest.TestCase):
         self.assertEqual(prefixes[0], PERSONA)
 
     def test_facts_count_against_num_ctx_without_clipping_the_persona(self):
-        knobs = {"num_ctx": 400}
         facts = "\n".join(
             f"The user said: spare key spot {index} is the blue mug on the bookshelf."
             for index in range(40)
         )
         question = "Where did I leave my spare house key?"
-        rows = shape_messages(
-            [{"role": "user", "content": question}],
-            question,
-            knobs,
-            facts=facts,
-        )
-        system = rows[0]["content"]
-        self.assertEqual(system[: len(PERSONA)], PERSONA)
-        self.assertIn("Known facts about the user:", system)
-        self.assertIn("spot 0", system)
-        self.assertNotIn("spot 39", system)
-        self.assertNotIn("blue mug", rows[-1]["content"])
-        self.assertLessEqual(sum(estimate_tokens(row["content"]) for row in rows), 400)
+        pro = dict(tuned_knobs(PRO_MODEL), num_ctx=400)
+        for knobs, on_system in (({"num_ctx": 400}, True), (pro, False)):
+            rows = shape_messages(
+                [{"role": "user", "content": question}], question, knobs, facts=facts
+            )
+            system = rows[0]["content"]
+            blob = "\n".join(row["content"] for row in rows)
+            self.assertEqual(system[: len(PERSONA)], PERSONA)
+            self.assertIn("spot 0", blob)
+            self.assertNotIn("spot 39", blob)
+            self.assertLessEqual(
+                sum(estimate_tokens(row["content"]) for row in rows), 400
+            )
+            if on_system:
+                self.assertIn("Known facts about the user:", system)
+                self.assertNotIn("blue mug", rows[-1]["content"])
+            else:
+                self.assertNotIn("Known facts about the user:", system)
+                self.assertIn("spot 0", rows[-1]["content"])
 
     def test_fit_clips_other_rows_before_the_facts(self):
         persona = "Persona sentence stays exact."
