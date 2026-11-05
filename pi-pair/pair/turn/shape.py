@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 from pair.core.errors import friendly_error
 from pair.model.knobs import attachment_limit, inference_knobs
-from pair.model.modes import PRO, resolve_mode
+from pair.model.modes import PRO
 from pair.turn.calc import notes_for
 
 ATTACH_MARK = "\n\n---\n"
@@ -696,13 +696,19 @@ def _prompt_budget(
 
 
 def _pro_facts_tail(knobs: dict | None) -> bool:
-    """True when this turn is Pro. Facts then stay off the cached prefix."""
+    """True when this turn is Pro. Facts then stay off the cached prefix.
+
+    A tag that is both Flash and Pro stays Flash, matching runner_options.
+    """
     if not isinstance(knobs, dict):
         return False
     tag = str(knobs.get("active_model") or "").strip()
     if not tag:
         return False
-    return resolve_mode(None, tag, knobs)[0] == PRO
+    flash = str(knobs.get("model") or "")
+    pro = str(knobs.get("pro_model") or "")
+    name = tag.lower()
+    return name == PRO or (bool(pro) and name == pro.lower() and name != flash.lower())
 
 
 def shape_messages(
@@ -720,13 +726,16 @@ def shape_messages(
     Flash appends known facts to system row 0. Pro leaves that row untouched
     so the persona and samples stay a cached prefix, and prepends the same
     bullet block to the finished last user turn when that full text is first
-    person. Facts lead the row, ahead of the context line.
+    person. Facts lead the row, ahead of the context line. Pro reserves the
+    block from num_ctx before the fit, including when the last row is not
+    first person.
     Summary and tail notes stay on the last user turn.
     """
     rows = fence_messages(messages, knobs)
     rows = add_persona(rows, prompt, "", knobs)
     known = _known_facts(facts or "")
-    if known and not _pro_facts_tail(knobs):
+    pro_tail = known and _pro_facts_tail(knobs)
+    if known and not pro_tail:
         rows[0]["content"] = str(rows[0].get("content") or "") + "\n\n" + known
     stable = []
     summary_text = (summary or "").strip()
@@ -739,17 +748,21 @@ def shape_messages(
     rows = add_notes(rows, tail)
     own_count = len(stable)
     folded_tail = bool(tail)
+    budget = _prompt_budget(rows, knobs, own_count, folded_tail)
+    if pro_tail:
+        budget = dict(budget or knobs or {})
+        budget["num_ctx"] = _num_ctx(budget) - estimate_tokens(known + "\n\n")
     shaped, last_user = _fold_system_rows(
         fit_messages(
             rows,
-            _prompt_budget(rows, knobs, own_count, folded_tail),
+            budget,
             own_count=own_count,
             folded_tail=folded_tail,
         ),
         own_count=own_count,
         folded_tail=folded_tail,
     )
-    if known and _pro_facts_tail(knobs):
+    if pro_tail:
         _prepend_pro_facts(shaped, known, last_user)
     return shaped
 
@@ -818,7 +831,7 @@ def _last_user(rows: list) -> int:
 
 def _prepend_pro_facts(rows: list, known: str, index: int) -> None:
     """Facts lead the finished last user row, ahead of any context line."""
-    if index < 0 or index >= len(rows):
+    if not rows or index != len(rows) - 1:
         return
     row = rows[index]
     if not isinstance(row, dict):
@@ -826,7 +839,7 @@ def _prepend_pro_facts(rows: list, known: str, index: int) -> None:
     text = str(row.get("content") or "")
     if not _FIRST_PERSON.search(text):
         return
-    row["content"] = f"{known}\n\n{text}" if text else known
+    row["content"] = f"{known}\n\n{text}"
 
 
 def _own_rows(
