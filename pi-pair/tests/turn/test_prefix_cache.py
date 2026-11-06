@@ -93,6 +93,7 @@ def _tail_case(prompt, messages, last, edited_last, common=None, **extra):
         "stable": True,
         "summary": "",
         "samples": True,
+        "header": None,
     }
     row.update(common or {})
     row.update(extra)
@@ -122,6 +123,11 @@ def _check_tail(test, case, samples):
     width = len(samples)
     test.assertEqual(text, case["last"] or text, prompt)
     test.assertEqual(edit, case["edited_last"] or edit, prompt)
+    on = "Known facts about the user:" in text
+    want = case["header"]
+    if want is None:
+        want = not case["last"] or on
+    test.assertEqual(on, want, prompt)
     test.assertEqual(head == after[0]["content"], case["stable"], prompt)
     test.assertEqual(head, case["system"] or head, prompt)
     test.assertLessEqual(counted, limit, prompt)
@@ -394,6 +400,7 @@ class PrefixCache(unittest.TestCase):
         ctx = block + "\n\n" + context + "\n" + kettle
         ctx_edit = edited_block + "\n\n" + context + "\n" + kettle
         cap = knobs["num_ctx"]
+        pump = ("cycle " * 2000) + "Why does my pump keep cycling?"
         specs = (
             (kettle, [_user(kettle)], lead, edit, {}),
             (story, [_user(story)], story, story, {}),
@@ -459,6 +466,8 @@ class PrefixCache(unittest.TestCase):
                     "samples": False,
                 },
             ),
+            ("pump", [_user(pump)], "", "", {"samples": False}),
+            ("hero", [_user(story)], "", "", {"header": False, "summary": "I asked."}),
         )
         samples = sample_turns()
         for prompt, messages, last, edited_last, extra in specs:

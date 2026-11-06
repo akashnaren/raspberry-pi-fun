@@ -725,8 +725,8 @@ def shape_messages(
 
     Flash appends known facts to system row 0. Pro leaves that row untouched
     so the persona and samples stay a cached prefix, and prepends the same
-    bullet block to the finished last user turn when that full text is first
-    person. Facts lead the row, ahead of the context line. Pro holds back a
+    bullet block to the finished last user turn when the raw final user row
+    is first person. Facts lead the row, ahead of the context line. Pro holds back a
     fixed reserve only when that final user row is first person, then clips
     the tail of the block to the tokens still free after the fold.
     Summary and tail notes stay on the last user turn.
@@ -763,9 +763,11 @@ def shape_messages(
         own_count=own_count,
         folded_tail=folded_tail,
     )
+    room = max(0, _num_ctx(knobs) - _token_count(shaped))
     if reserve:
-        room = max(0, _num_ctx(knobs) - _token_count(shaped))
         room = min(reserve, room)
+    # Insertion follows the raw-row reserve.
+    if reserve:
         block = _clip_facts_block(known, room)
         if block:
             _prepend_pro_facts(shaped, block, last_user)
@@ -889,8 +891,6 @@ def _prepend_pro_facts(rows: list, known: str, index: int) -> None:
     if not isinstance(row, dict):
         return
     text = str(row.get("content") or "")
-    if not _FIRST_PERSON.search(text):
-        return
     row["content"] = f"{known}\n\n{text}"
 
 
