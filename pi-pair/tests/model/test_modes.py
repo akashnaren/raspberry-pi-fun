@@ -797,6 +797,38 @@ class ModeHttp(unittest.TestCase):
         self.assertEqual(chats[0]["model"], "qwen3:0.6b")
         self.assertEqual(chats[0]["keep_alive"], -1)
         self.assertTrue(chats[0]["stream"])
+        ModeOllama.calls = []
+        ModeOllama.loaded = ["qwen3:0.6b"]
+        with patch(
+            "pair.routes.reply._memory_prompt",
+            return_value=("The kettle is in the hall.", ""),
+        ):
+            streamed = urllib.request.Request(
+                f"http://127.0.0.1:{port}/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "mode": "pro",
+                        "messages": [{"role": "user", "content": "cold pro turn"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                headers={
+                    "content-type": "application/json",
+                    "X-Pi-Target": "pi4",
+                    "X-Pi-Mesh": "off",
+                },
+            )
+            with urllib.request.urlopen(streamed, timeout=5) as response:
+                response.read()
+        turn = _turns()[0]
+        system = next(
+            row["content"] for row in turn["messages"] if row.get("role") == "system"
+        )
+        self.assertTrue(
+            turn["model"] == "qwen3:0.6b"
+            and "Known facts about the user:" in system
+            and "Known facts about the user:" not in turn["messages"][-1]["content"]
+        )
 
     def test_warm_pro_stream_says_thinking_before_the_first_token(self):
         release = threading.Event()
@@ -882,11 +914,18 @@ class ModeHttp(unittest.TestCase):
         port = self._boot()
         ModeOllama.loaded = ["qwen3:0.6b"]
         ModeOllama.calls = []
-        status, headers, body = self._post(
-            port,
-            {"mode": "pro", "messages": [{"role": "user", "content": "cold pro turn"}]},
-            {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
-        )
+        with patch(
+            "pair.routes.chat._memory_prompt",
+            return_value=("The kettle is in the hall.", ""),
+        ):
+            status, headers, body = self._post(
+                port,
+                {
+                    "mode": "pro",
+                    "messages": [{"role": "user", "content": "cold pro turn"}],
+                },
+                {"X-Pi-Target": "pi4", "X-Pi-Mesh": "off"},
+            )
         self.assertEqual(status, 200, body)
         self.assertEqual(body["pi_model"], "qwen3:0.6b")
         self.assertEqual(body["pi_route"], "flash")
@@ -895,8 +934,19 @@ class ModeHttp(unittest.TestCase):
         self.assertNotIn("Loading Pro", json.dumps(body))
         chats = _turns()
         self.assertEqual(chats[0]["model"], "qwen3:0.6b")
+        system = next(
+            row["content"]
+            for row in chats[0]["messages"]
+            if row.get("role") == "system"
+        )
+        self.assertTrue(
+            "Known facts about the user:" in system
+            and "Known facts about the user:" not in chats[0]["messages"][-1]["content"]
+        )
         deadline = time.time() + 2
-        while time.time() < deadline and not _warms():
+        while time.time() < deadline and not (
+            _warms() and "qwen3:1.7b" in ModeOllama.loaded
+        ):
             time.sleep(0.02)
         warm = _warms()
         self.assertEqual(len(warm), 1)

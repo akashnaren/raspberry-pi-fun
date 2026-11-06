@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from pair.core.errors import friendly_error
 from pair.model.knobs import attachment_limit, inference_knobs
+from pair.model.modes import PRO
 from pair.turn.calc import notes_for
 
 ATTACH_MARK = "\n\n---\n"
@@ -120,6 +121,7 @@ _ROLE_LINE = re.compile(
     r"(?m)^\s*(?:#{1,6}\s*)?(?:system|assistant|user|developer|tool)\s*:",
     re.I,
 )
+_FIRST_PERSON = re.compile(r"\b(i|me|my|mine|myself)\b", re.I)
 
 
 def neutralize(text: str) -> str:
@@ -424,8 +426,8 @@ def _num_ctx(knobs: dict | None = None) -> int:
         ctx = int(row.get("num_ctx") or 2048)
     except (TypeError, ValueError):
         ctx = 2048
-    if ctx < 256:
-        ctx = 256
+    if ctx < _CTX_FLOOR:
+        ctx = _CTX_FLOOR
     return ctx
 
 
@@ -653,7 +655,7 @@ def _fit_clip(text: str, persona: str, keep: int) -> str:
 
 
 def _known_facts(facts: str) -> str:
-    """Bullet list appended after the persona. Fact wording is not rewritten."""
+    """Bullet list. Fact wording is not rewritten and lines are not joined."""
     lines = []
     for raw in (facts or "").splitlines():
         line = " ".join(raw.split()).strip()
@@ -693,6 +695,22 @@ def _prompt_budget(
     return fitted
 
 
+def _pro_facts_tail(knobs: dict | None) -> bool:
+    """True when this turn is Pro. Facts then stay off the cached prefix.
+
+    A tag that is both Flash and Pro stays Flash, matching runner_options.
+    """
+    if not isinstance(knobs, dict):
+        return False
+    tag = str(knobs.get("active_model") or "").strip()
+    if not tag:
+        return False
+    flash = str(knobs.get("model") or "")
+    pro = str(knobs.get("pro_model") or "")
+    name = tag.lower()
+    return name == PRO or (bool(pro) and name == pro.lower() and name != flash.lower())
+
+
 def shape_messages(
     messages,
     prompt: str,
@@ -703,16 +721,21 @@ def shape_messages(
     facts: str = "",
     summary: str = "",
 ) -> list:
-    """Persona, known facts, sample turns, one tail note, then the last user.
+    """Persona, sample turns, one tail note, then the last user.
 
-    Facts are appended to system row 0 after the persona. The qwen3 template
-    prints that system block first, so those persona bytes stay a prefix.
+    Flash appends known facts to system row 0. Pro leaves that row untouched
+    so the persona and samples stay a cached prefix, and prepends the same
+    bullet block to the finished last user turn when the raw final user row
+    is first person. Facts lead the row, ahead of the context line. Pro holds
+    back a fixed reserve for that row, then clips the tail of the block to
+    the tokens still free after the fold.
     Summary and tail notes stay on the last user turn.
     """
     rows = fence_messages(messages, knobs)
     rows = add_persona(rows, prompt, "", knobs)
     known = _known_facts(facts or "")
-    if known:
+    pro_tail = known and _pro_facts_tail(knobs)
+    if known and not pro_tail:
         rows[0]["content"] = str(rows[0].get("content") or "") + "\n\n" + known
     stable = []
     summary_text = (summary or "").strip()
@@ -725,16 +748,27 @@ def shape_messages(
     rows = add_notes(rows, tail)
     own_count = len(stable)
     folded_tail = bool(tail)
-    return fold_system_rows(
+    reserve = _pro_facts_reserve(knobs, rows) if pro_tail else 0
+    budget = _prompt_budget(rows, knobs, own_count, folded_tail)
+    if reserve:
+        budget = dict(budget or knobs or {})
+        budget["num_ctx"] = max(_CTX_FLOOR, _num_ctx(budget) - reserve)
+    shaped, last_user = _fold_system_rows(
         fit_messages(
             rows,
-            _prompt_budget(rows, knobs, own_count, folded_tail),
+            budget,
             own_count=own_count,
             folded_tail=folded_tail,
         ),
         own_count=own_count,
         folded_tail=folded_tail,
     )
+    if reserve:
+        room = min(reserve, max(0, _num_ctx(knobs) - _token_count(shaped)))
+        block = _clip_facts_block(known, room)
+        if block:
+            _prepend_pro_facts(shaped, block, last_user)
+    return shaped
 
 
 def _plain_line(line: str, *, tail: bool) -> str:
@@ -779,7 +813,7 @@ def _context_sentence(notes: list[tuple[str, bool]]) -> str:
     """Summary and the tail note in one parenthetical.
 
     A Notes: header on the user turn made Pro wrap a plain answer in a fence.
-    Facts stay on the system row, so they are not part of this line.
+    The facts block is not part of this line.
     """
     parts = []
     for text, is_tail in notes:
@@ -797,6 +831,64 @@ def _last_user(rows: list) -> int:
         if isinstance(row, dict) and row.get("role") == "user":
             return index
     return -1
+
+
+# Widest store block: 150 three-character facts, the header, the bullets,
+# and the blank line before the question. 291 tokens, for every facts edit.
+_PRO_FACTS_RESERVE = 291
+_CTX_FLOOR = 256
+
+
+def _pro_facts_reserve(knobs: dict | None, rows: list) -> int:
+    """Fixed room for the facts block. Zero unless the final user row is first person."""
+    if not _final_user_is_first_person(rows):
+        return 0
+    room = _num_ctx(knobs) - _CTX_FLOOR
+    if room < 1:
+        return 0
+    return min(_PRO_FACTS_RESERVE, room)
+
+
+def _final_user_is_first_person(rows: list) -> bool:
+    if not rows or not isinstance(rows[-1], dict) or rows[-1].get("role") != "user":
+        return False
+    return _FIRST_PERSON.search(str(rows[-1].get("content") or "")) is not None
+
+
+def _clip_facts_block(known: str, reserve: int) -> str:
+    """Trim the tail of the facts block so it fits in `reserve` tokens."""
+    extra = "\n\n"
+    if reserve < 1:
+        return ""
+    if estimate_tokens(known + extra) <= reserve:
+        return known
+    keep = len(known)
+    text = known
+    guard = 0
+    while estimate_tokens(text + extra) > reserve and guard < 8:
+        guard += 1
+        overflow = estimate_tokens(text + extra) - reserve
+        keep = min(keep - 1, len(text) - int(overflow * CHARS_PER_TOKEN) - 1)
+        if keep < 1:
+            return ""
+        clipped = _clip_text(known, keep)
+        if len(clipped) >= len(text):
+            return ""
+        text = clipped
+    if estimate_tokens(text + extra) > reserve:
+        return ""
+    return text
+
+
+def _prepend_pro_facts(rows: list, known: str, index: int) -> None:
+    """Facts lead the finished last user row, ahead of any context line."""
+    if not rows or index != len(rows) - 1:
+        return
+    row = rows[index]
+    if not isinstance(row, dict):
+        return
+    text = str(row.get("content") or "")
+    row["content"] = f"{known}\n\n{text}"
 
 
 def _own_rows(
@@ -846,11 +938,21 @@ def fold_system_rows(
 
     Extra rows there invalidate the cached sample turns.
     """
+    folded, _last_user = _fold_system_rows(
+        rows, own_count=own_count, folded_tail=folded_tail
+    )
+    return folded
+
+
+def _fold_system_rows(
+    rows: list, *, own_count: int = 0, folded_tail: bool = False
+) -> tuple[list, int]:
+    """Fold system rows and return the index of the finished last user row."""
     if not rows:
-        return rows
+        return rows, -1
     last_user = _last_user(rows)
     if last_user < 0:
-        return rows
+        return rows, -1
     own, tail_at = _own_rows(rows, last_user, own_count, folded_tail)
     notes: list[tuple[str, bool]] = []
     callers: list[str] = []
@@ -865,8 +967,9 @@ def fold_system_rows(
         else:
             callers.append(text)
     if not notes and not callers:
-        return rows
+        return rows, last_user
     folded: list = []
+    folded_user = -1
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             folded.append(row)
@@ -876,15 +979,16 @@ def fold_system_rows(
         copied = dict(row)
         if index == 0 and callers:
             copied["content"] = _fold_callers(str(copied.get("content") or ""), callers)
-        if index == last_user and notes:
+        if index == last_user:
+            folded_user = len(folded)
             question = str(copied.get("content") or "")
-            context = _context_sentence(notes)
+            context = _context_sentence(notes) if notes else ""
             if context and question:
                 copied["content"] = context + "\n" + question
             elif context:
                 copied["content"] = context
         folded.append(copied)
-    return folded
+    return folded, folded_user
 
 
 def warm_messages(knobs: dict | None = None) -> list:
