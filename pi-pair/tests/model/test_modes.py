@@ -944,7 +944,9 @@ class ModeHttp(unittest.TestCase):
             and "Known facts about the user:" not in chats[0]["messages"][-1]["content"]
         )
         deadline = time.time() + 2
-        while time.time() < deadline and not _warms():
+        while time.time() < deadline and not (
+            _warms() and "qwen3:1.7b" in ModeOllama.loaded
+        ):
             time.sleep(0.02)
         warm = _warms()
         self.assertEqual(len(warm), 1)
