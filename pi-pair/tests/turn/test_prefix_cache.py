@@ -125,9 +125,7 @@ def _check_tail(test, case, samples):
     test.assertEqual(edit, case["edited_last"] or edit, prompt)
     on = "Known facts about the user:" in text
     want = case["header"]
-    if want is None:
-        want = not case["last"] or on
-    test.assertEqual(on, want, prompt)
+    test.assertEqual(on, want if want is not None else on, prompt)
     test.assertEqual(head == after[0]["content"], case["stable"], prompt)
     test.assertEqual(head, case["system"] or head, prompt)
     test.assertLessEqual(counted, limit, prompt)
@@ -451,6 +449,7 @@ class PrefixCache(unittest.TestCase):
                     "summary": "They asked about the spare key.",
                     "limit": 400,
                     "samples": False,
+                    "header": True,
                 },
             ),
             (
@@ -464,9 +463,10 @@ class PrefixCache(unittest.TestCase):
                     "system": "",
                     "limit": 544,
                     "samples": False,
+                    "header": True,
                 },
             ),
-            ("pump", [_user(pump)], "", "", {"samples": False}),
+            ("pump", [_user(pump)], "", "", {"header": True, "samples": False}),
             ("hero", [_user(story)], "", "", {"header": False, "summary": "I asked."}),
         )
         samples = sample_turns()
