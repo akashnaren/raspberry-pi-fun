@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenPi nightly downtime: apply state for current PT time (01:00-07:00 = banner)
+After=pi-pair.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/openpi-downtime/openpi-downtime.sh auto
+TimeoutStartSec=180
+
+[Install]
+WantedBy=default.target

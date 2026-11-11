@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#0a0a0a"/>
+<title>OpenPi</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='27.5' fill='none' stroke='%237cb8ff' stroke-width='1.7'/%3E%3Cpath d='M18 23h28M26.2 23c0 13-1.4 18.2-6.4 21.2M38.2 23c.6 14.2 2.4 19.6 8.4 21.6' fill='none' stroke='%235eead4' stroke-width='4.4' stroke-linecap='round'/%3E%3C/svg%3E"/>
+<script>
+try {
+  var saved = JSON.parse(localStorage.getItem("openpi.settings") || "{}");
+  var theme = saved.theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", theme);
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", theme === "light" ? "#f4f4f1" : "#0a0a0a");
+} catch (e) { document.documentElement.setAttribute("data-theme", "dark"); }
+</script>
+<style>
+:root{--bg:#0a0a0a;--elev:#141414;--ink:#ececec;--muted:#7d8187;--line:#1d1d1d;--accent:#7cb8ff;--think:#7ec8b8;--safe-t:env(safe-area-inset-top,0px)}
+html[data-theme=light]{--bg:#f4f4f1;--elev:#ffffff;--ink:#161616;--muted:#5c6168;--line:#e4e2dc;--accent:#1859b5;--think:#0c6b58;color-scheme:light}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:system-ui,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink);display:flex;flex-direction:column;min-height:100dvh;font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+header{flex-shrink:0;height:56px;padding:0 20px;padding-top:var(--safe-t);display:flex;align-items:center}
+.brand-mark{display:block;width:40px;height:40px}
+.brand-mark svg{width:40px;height:40px;display:block;filter:drop-shadow(0 0 5px rgba(94,234,212,.28));animation:mark-shimmer 4.8s ease-in-out infinite}
+@keyframes mark-shimmer{0%,100%{filter:drop-shadow(0 0 4px rgba(94,234,212,.28))}50%{filter:drop-shadow(0 0 11px rgba(124,184,255,.55))}}
+html[data-theme=light] .brand-mark .mark-a{stop-color:#0f766e}
+html[data-theme=light] .brand-mark .mark-b{stop-color:#1d4ed8}
+.empty{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:48px 20px}
+.card{max-width:46rem;padding:18px 22px;background:var(--elev);border:1px solid var(--line);border-radius:12px}
+.msg{margin:0;font-size:1rem;color:var(--ink)}
+.count{margin:10px 0 0;font-family:"Avenir Next",Bahnschrift,"Segoe UI",sans-serif;font-size:1.6rem;font-weight:600;letter-spacing:.02em;font-variant-numeric:tabular-nums;color:var(--accent)}
+.soon .count{display:none}
+[hidden]{display:none}
+</style>
+</head><body>
+<header><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 64 64"><defs><linearGradient id="openpi" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse"><stop class="mark-a" offset="0" stop-color="#5eead4"/><stop class="mark-b" offset="1" stop-color="#7cb8ff"/></linearGradient></defs><circle cx="32" cy="32" r="27.5" fill="none" stroke="url(#openpi)" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="128 12 20 14"/><circle cx="32" cy="4.5" r="1.8" fill="#5eead4"/><circle cx="57.2" cy="42" r="1.6" fill="#7cb8ff"/><circle cx="8.4" cy="46" r="1.5" fill="#7ec8b8"/><path d="M18 23h28" fill="none" stroke="url(#openpi)" stroke-width="4.4" stroke-linecap="round"/><path d="M26.2 23c0 13-1.4 18.2-6.4 21.2" fill="none" stroke="url(#openpi)" stroke-width="4.4" stroke-linecap="round"/><path d="M38.2 23c.6 14.2 2.4 19.6 8.4 21.6" fill="none" stroke="url(#openpi)" stroke-width="4.4" stroke-linecap="round"/></svg></span></header>
+<main class="empty"><div class="card" id="card" role="status" aria-live="polite">
+<p class="msg" id="msg">OpenPi is temporarily down and will open at 7:00 AM Pacific.</p>
+<p class="count" id="count">--:--:--</p>
+</div></main>
+<script id="openpi-downtime-logic">
+var TZ = "America/Los_Angeles", NEAR_MS = 10 * 60 * 1000;
+var MSG_DOWN = "OpenPi is temporarily down and will open at 7:00 AM Pacific.", MSG_SOON = "OpenPi will be up soon";
+var fmt = new Intl.DateTimeFormat("en-US", {timeZone: TZ, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit"});
+function ptParts(ms) { var o = {}; fmt.formatToParts(new Date(ms)).forEach(function (p) { if (p.type !== "literal") o[p.type] = +p.value; }); return o; }
+function ptOffset(ms) { var p = ptParts(ms); return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(ms / 1000) * 1000; }
+function next7am(nowMs) {
+  var p = ptParts(nowMs), add = p.hour >= 7 ? 1 : 0;
+  var wall = Date.UTC(p.year, p.month - 1, p.day + add, 7, 0, 0);
+  var guess = wall - ptOffset(wall);
+  return wall - ptOffset(guess);
+}
+function pad(n) { return (n < 10 ? "0" : "") + n; }
+function stateAt(nowMs, targetMs) {
+  var left = targetMs - nowMs;
+  if (left <= 0) return {mode: "open", text: MSG_SOON, count: ""};
+  if (left <= NEAR_MS) return {mode: "soon", text: MSG_SOON, count: ""};
+  var s = Math.ceil(left / 1000);
+  return {mode: "down", text: MSG_DOWN, count: pad(Math.floor(s / 3600)) + ":" + pad(Math.floor(s / 60) % 60) + ":" + pad(s % 60)};
+}
+if (typeof document !== "undefined") (function () {
+  var target = next7am(Date.now()), reloadAt = 0;
+  var card = document.getElementById("card"), msg = document.getElementById("msg"), count = document.getElementById("count");
+  function tick() {
+    var now = Date.now(), st = stateAt(now, target);
+    msg.textContent = st.text; count.textContent = st.count;
+    card.className = "card" + (st.mode === "down" ? "" : " soon");
+    if (st.mode === "open" && now >= reloadAt) { reloadAt = now + 15000 + Math.random() * 5000; if (now - target > 3000) location.reload(); }
+  }
+  tick(); setInterval(tick, 1000);
+})();
+</script>
+</body></html>

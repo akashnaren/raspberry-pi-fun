@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenPi nightly downtime banner (127.0.0.1:18080)
+Conflicts=pi-pair.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/openpi-downtime/banner_server.py
+Restart=on-failure
+RestartSec=2

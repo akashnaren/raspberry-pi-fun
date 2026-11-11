@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenPi nightly downtime start (01:00 America/Los_Angeles)
+
+[Timer]
+OnCalendar=*-*-* 01:00:00 America/Los_Angeles
+Persistent=true
+AccuracySec=1s
+Unit=openpi-downtime-apply.service
+
+[Install]
+WantedBy=timers.target
