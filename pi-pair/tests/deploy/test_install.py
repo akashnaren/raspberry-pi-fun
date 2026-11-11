@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -262,9 +263,12 @@ def _link_tools_without_git(bindir: Path) -> None:
         if not folder.is_dir():
             continue
         for item in folder.iterdir():
-            if item.name == "git" or (bindir / item.name).exists():
+            dest = bindir / item.name
+            # exists() is false for a dangling symlink, so a second pass over
+            # the same name (usr-merged /bin and /usr/bin) raises FileExistsError.
+            if item.name == "git" or os.path.lexists(dest):
                 continue
-            (bindir / item.name).symlink_to(item)
+            dest.symlink_to(item)
 
 
 if __name__ == "__main__":
