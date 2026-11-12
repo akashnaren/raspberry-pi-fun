@@ -12,8 +12,12 @@ with open(os.path.join(HERE, "banner.html"), "rb") as f:
     BODY = f.read()
 
 
-def retry_after():
-    now = datetime.datetime.now(TZ)
+def retry_after(now=None):
+    """Seconds until 07:00 America/Los_Angeles, including after midnight.
+
+    23:30 targets the next morning. 06:50 is ten minutes out. Never less than 30.
+    """
+    now = datetime.datetime.now(TZ) if now is None else now
     tgt = now.replace(hour=7, minute=0, second=0, microsecond=0)
     if now >= tgt:
         tgt = (now + datetime.timedelta(days=1)).replace(

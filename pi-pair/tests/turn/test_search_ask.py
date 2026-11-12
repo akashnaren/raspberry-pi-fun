@@ -71,8 +71,12 @@ class SearchAsk(unittest.TestCase):
         forced = {"web_search": True, "messages": []}
         self.assertTrue(web_search_request(forced))
         self.assertNotIn("web_search", forced)
-        self.assertFalse(web_search_request({"messages": []}))
-        self.assertFalse(web_search_request({"web_search": False}))
+        omitted = {"messages": []}
+        self.assertTrue(web_search_request(omitted))
+        self.assertNotIn("web_search", omitted)
+        explicit_off = {"web_search": False, "messages": []}
+        self.assertFalse(web_search_request(explicit_off))
+        self.assertNotIn("web_search", explicit_off)
         for value in (1, "true", "yes", None):
             with self.assertRaises(ValueError) as caught:
                 web_search_request({"web_search": value})

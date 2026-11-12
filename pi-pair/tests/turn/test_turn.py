@@ -839,6 +839,7 @@ class TurnHttp(unittest.TestCase):
                 "pi_mode": "auto",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
+                "web_search": False,
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
@@ -872,7 +873,11 @@ class TurnHttp(unittest.TestCase):
             self.search_calls.clear()
             status, _headers, _body = self._post(
                 port,
-                {"messages": [{"role": "user", "content": prompt}], "stream": False},
+                {
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "web_search": False,
+                },
                 {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, prompt)
@@ -882,7 +887,11 @@ class TurnHttp(unittest.TestCase):
         news = "list the latest news about the bench"
         status, _headers, body = self._post(
             port,
-            {"messages": [{"role": "user", "content": news}], "stream": False},
+            {
+                "messages": [{"role": "user", "content": news}],
+                "stream": False,
+                "web_search": False,
+            },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 200)
@@ -896,7 +905,11 @@ class TurnHttp(unittest.TestCase):
         prompt = f"what does the note say{ATTACH_MARK}{tail}"
         status, _headers, _body = self._post(
             port,
-            {"messages": [{"role": "user", "content": prompt}], "stream": False},
+            {
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "web_search": False,
+            },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 200)
@@ -938,6 +951,7 @@ class TurnHttp(unittest.TestCase):
                     {"role": "user", "content": "make a list of picnic foods"}
                 ],
                 "stream": False,
+                "web_search": False,
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
@@ -1195,7 +1209,11 @@ class TurnHttp(unittest.TestCase):
             self.search_calls.clear()
             status, _headers, body = self._post(
                 port,
-                {"messages": [{"role": "user", "content": prompt}], "stream": False},
+                {
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "web_search": False,
+                },
                 {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, prompt)
@@ -1271,6 +1289,7 @@ class TurnHttp(unittest.TestCase):
             {
                 "messages": [{"role": "user", "content": "Top 5 electric cars"}],
                 "stream": False,
+                "web_search": False,
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
@@ -1312,6 +1331,7 @@ class TurnHttp(unittest.TestCase):
             {
                 "messages": [{"role": "user", "content": "how to bake a cake"}],
                 "stream": False,
+                "web_search": False,
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )
@@ -1325,7 +1345,11 @@ class TurnHttp(unittest.TestCase):
         port = self._pi4()
         status, _headers, body = self._post(
             port,
-            {"messages": [{"role": "user", "content": "hello"}], "stream": False},
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+                "web_search": False,
+            },
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
         self.assertEqual(status, 200)
@@ -1517,7 +1541,11 @@ class TurnHttp(unittest.TestCase):
             self.search_calls.clear()
             status, _headers, body = self._post(
                 port,
-                {"messages": [{"role": "user", "content": prompt}], "stream": False},
+                {
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "web_search": False,
+                },
                 {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, prompt)
@@ -1684,7 +1712,11 @@ class TurnHttp(unittest.TestCase):
                 "POST",
                 "/v1/chat/completions",
                 body=json.dumps(
-                    {"messages": [{"role": "user", "content": prompt}], "stream": True}
+                    {
+                        "messages": [{"role": "user", "content": prompt}],
+                        "stream": True,
+                        "web_search": False,
+                    }
                 ).encode(),
                 headers={
                     "content-type": "application/json",
@@ -1855,7 +1887,11 @@ class TurnHttp(unittest.TestCase):
         )
         port = self._pair()
         headers = {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"}
-        body_json = {"mode": "flash", "messages": [{"role": "user", "content": prompt}]}
+        body_json = {
+            "mode": "flash",
+            "messages": [{"role": "user", "content": prompt}],
+            "web_search": False,
+        }
         status, _resp, body = self._post(port, {**body_json, "stream": False}, headers)
         self.assertEqual(status, 200)
         self.assertEqual(body["choices"][0]["message"]["content"], short)
@@ -1913,6 +1949,7 @@ class TurnHttp(unittest.TestCase):
                     {"role": "user", "content": "best comedy movies to watch"}
                 ],
                 "stream": False,
+                "web_search": False,
             },
             {"X-Pi-Target": "pi4", "X-Pi-Mesh": "on"},
         )

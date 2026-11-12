@@ -1,13 +1,13 @@
-/** Session-only Search control. Off leaves the model check in place. */
+/** Session-only Search control. Unset is on. "0" is an explicit off for this session. */
 
 export const WEB_SEARCH_KEY = "openpi.webSearch";
 
 export function readWebSearch(storage: Storage | null): boolean {
-  if (!storage) return false;
+  if (!storage) return true;
   try {
-    return storage.getItem(WEB_SEARCH_KEY) === "1";
+    return storage.getItem(WEB_SEARCH_KEY) !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
 

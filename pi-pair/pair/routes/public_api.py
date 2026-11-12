@@ -320,15 +320,15 @@ def openapi_document() -> dict:
                         },
                         "web_search": {
                             "type": "boolean",
-                            "default": False,
+                            "default": True,
                             "description": (
-                                "When true, search before answering. Omit or "
-                                "false to search only if the message asks to "
-                                "search or asks for the news (latest news, "
-                                "news about, news on, latest on, in the news, "
-                                "what's the latest). A bare news, latest, "
-                                "current, or today does not. "
-                                "Any other JSON type is rejected."
+                                "Search before answering. Omit this field, or "
+                                "send true, to search. false searches only if "
+                                "the message asks to search or asks for the "
+                                "news (latest news, news about, news on, "
+                                "latest on, in the news, what's the latest). "
+                                "A bare news, latest, current, or today does "
+                                "not. Any other JSON type is rejected."
                             ),
                         },
                         "think": {

@@ -726,6 +726,7 @@ class PairHttp(unittest.TestCase):
                 "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "Hi!"}],
                 "stream": False,
+                "web_search": False,
             },
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
@@ -1440,6 +1441,7 @@ class PairHttp(unittest.TestCase):
             port,
             "Hi!",
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+            {"web_search": False},
         )
         self.assertEqual(_statuses(hit), ["thinking", "answering"])
         self.assertNotIn("searching", _statuses(hit))
@@ -1489,6 +1491,7 @@ class PairHttp(unittest.TestCase):
                 "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": "Hi!"}],
                 "stream": False,
+                "web_search": False,
             },
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
@@ -1578,6 +1581,7 @@ class PairHttp(unittest.TestCase):
                 "model": "qwen3:0.6b",
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
+                "web_search": False,
             },
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
         )
@@ -1622,6 +1626,7 @@ class PairHttp(unittest.TestCase):
             port,
             prompt,
             {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
+            {"web_search": False},
         )
         self.assertEqual(headers.get("X-Pi-Peer"), "pi4")
         self.assertEqual(_statuses(raw), ["thinking", "answering"])
@@ -1708,6 +1713,7 @@ class PairHttp(unittest.TestCase):
                 "pi_mode": "auto",
                 "messages": [{"role": "user", "content": hard}],
                 "stream": False,
+                "web_search": False,
             },
         )
         self.assertEqual(status, 200)
@@ -1723,6 +1729,7 @@ class PairHttp(unittest.TestCase):
                 "think": "high",
                 "messages": [{"role": "user", "content": hard}],
                 "stream": False,
+                "web_search": False,
             },
         )
         self.assertEqual(status, 200)
@@ -1745,6 +1752,7 @@ class PairHttp(unittest.TestCase):
                 "think": "high",
                 "messages": [{"role": "user", "content": hard}],
                 "stream": False,
+                "web_search": False,
             },
         )
         self.assertEqual(status, 200)
@@ -1763,6 +1771,7 @@ class PairHttp(unittest.TestCase):
                 "pi_mode": "flash",
                 "messages": [{"role": "user", "content": hard}],
                 "stream": False,
+                "web_search": False,
             },
         )
         self.assertEqual(status, 200)
@@ -1872,7 +1881,7 @@ class PairHttp(unittest.TestCase):
         OllamaFake.posts = 0
         OllamaFake.decide_posts = 0
         port = self._pi4()
-        status, _headers, body = self._mesh_post(port, "hi")
+        status, _headers, body = self._mesh_post(port, "hi", {"web_search": False})
         self.assertEqual(status, 200)
         self.assertNotIn("searching", body["pi_stages"])
         self.assertEqual(self.search_calls, [])
@@ -1890,7 +1899,9 @@ class PairHttp(unittest.TestCase):
         OllamaFake.posts = 0
         OllamaFake.decide_posts = 0
         port = self._pi4()
-        status, _headers, body = self._mesh_post(port, "What is 2+2?")
+        status, _headers, body = self._mesh_post(
+            port, "What is 2+2?", {"web_search": False}
+        )
         self.assertEqual(status, 200)
         self.assertEqual(OllamaFake.decide_posts, 0)
         self.assertEqual(self.search_calls, [])
@@ -1911,6 +1922,7 @@ class PairHttp(unittest.TestCase):
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": True,
                     "pi_mesh": "on",
+                    "web_search": False,
                 }
             ).encode(),
             headers={
@@ -1949,6 +1961,20 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn("gate_ms", body.get("pi_timing") or {})
         self.assertLessEqual(OllamaFake.last_payload["options"]["temperature"], 0.3)
         self.assertIn(NO_RESULTS_RULE, json.dumps(OllamaFake.last_payload["messages"]))
+        self.assertEqual(OllamaFake.posts, 1)
+
+    def test_omitted_web_search_searches(self):
+        OllamaFake.decide = "SEARCH"
+        OllamaFake.posts = 0
+        OllamaFake.decide_posts = 0
+        port = self._pi4()
+        status, _headers, body = self._mesh_post(port, "hi")
+        self.assertEqual(status, 200)
+        self.assertEqual(self.search_calls, ["hi"])
+        self.assertIn("searching", body["pi_stages"])
+        self.assertEqual(body["pi_decide"], "search")
+        self.assertEqual(body["pi_decide_source"], "user")
+        self.assertEqual(OllamaFake.decide_posts, 0)
         self.assertEqual(OllamaFake.posts, 1)
 
     def test_web_search_false_stays_local_without_a_cue(self):

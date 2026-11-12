@@ -95,6 +95,6 @@ export function chatBody(turns: HistoryTurn[], options: ChatOptions): ChatBody {
     pi_mode: options.mode,
     pi_target: "auto",
     pi_mesh: "on",
-    web_search: options.webSearch === true,
+    web_search: options.webSearch !== false,
   };
 }

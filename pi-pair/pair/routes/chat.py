@@ -186,7 +186,7 @@ class ChatRoutes:
         self._queue_t0 = None
 
     def _arm_search(self, prompt: str, force: bool, mesh: bool) -> bool:
-        """Toggle on always searches. Otherwise only an explicit ask does."""
+        """On, or a missing flag, always searches. Explicit off uses an ask."""
         from pair.turn.shape import user_question
 
         if not mesh:
