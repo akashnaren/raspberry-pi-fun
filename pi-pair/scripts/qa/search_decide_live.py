@@ -4,10 +4,11 @@
 Stdlib only. Mesh on, Flash, except the cities prompt which uses auto.
 Prints each turn. Exits non-zero when a check fails.
 
-The Search control searches every turn. With it off, only an explicit ask
-searches (search, look up, the web, tools, google, or a news shape such as
-latest news). A bare news, latest, current, or today does not. hi, 2+2,
-code, and a poem stay near the recorded baseline:
+Search is on unless the body sends web_search false. An omitted field
+searches. With it off, only an explicit ask searches (search, look up, the
+web, tools, google, or a news shape such as latest news). A bare news,
+latest, current, or today does not. hi, 2+2, code, and a poem with search
+off stay near the recorded baseline:
 median total_ms at most max(baseline + 500, baseline * 1.2).
 
     python3 pi-pair/scripts/qa/search_decide_live.py \
@@ -218,6 +219,7 @@ def run(
             timeout,
             min_chars=40,
             claim=True,
+            web_search=False,
             source="keyword",
         )
         for prompt in NEWS:
@@ -233,6 +235,8 @@ def run(
         for prompt in FAST:
             _check_fast(failures, root, prompt, timeout, samples)
         _check_toggle(failures, root, timeout)
+        if rep == 0:
+            _check_omitted(failures, root, timeout)
     _check_regressions(failures, root, timeout)
     _check_yes(failures, root, timeout)
     _latency(failures, samples, baselines)
@@ -315,7 +319,7 @@ def _check_search(
 
 
 def _check_fast(failures, root, prompt, timeout, samples) -> None:
-    body, peer = _one(failures, root, prompt, timeout, None)
+    body, peer = _one(failures, root, prompt, timeout, False)
     if body is None:
         return
     stages = body.get("pi_stages") or []
@@ -327,6 +331,22 @@ def _check_fast(failures, root, prompt, timeout, samples) -> None:
         failures.append(f"{prompt} stamped a decision {body.get('pi_decide_source')!r}")
     _clean(failures, prompt, reply_text(body))
     _peer_ok(failures, body, peer, prompt)
+
+
+def _check_omitted(failures, root, timeout) -> None:
+    """A body with no web_search field searches, same as the control left on."""
+    body, peer = _one(failures, root, "hi", timeout, None)
+    if body is None:
+        return
+    stages = body.get("pi_stages") or []
+    if "searching" not in stages:
+        failures.append("omitted web_search did not search for hi")
+    if body.get("pi_decide_source") != "user":
+        failures.append(f"omitted source was {body.get('pi_decide_source')!r}")
+    if body.get("pi_decide") != "search":
+        failures.append(f"omitted decision was {body.get('pi_decide')!r}")
+    _clean(failures, "hi omitted", reply_text(body))
+    _peer_ok(failures, body, peer, "hi omitted")
 
 
 def _check_toggle(failures, root, timeout) -> None:
@@ -349,7 +369,7 @@ def _check_toggle(failures, root, timeout) -> None:
 
 def _check_regressions(failures, root, timeout) -> None:
     _cool(failures, root, timeout)
-    body, peer = _one(failures, root, PRIMES, timeout, None)
+    body, peer = _one(failures, root, PRIMES, timeout, False)
     if body is not None:
         _skip_ok(failures, PRIMES, body, peer)
         text = reply_text(body)
@@ -357,18 +377,18 @@ def _check_regressions(failures, root, timeout) -> None:
             if re.search(rf"(?<!\d){number}(?!\d)", text) is None:
                 failures.append(f"primes reply missing {number}")
                 break
-    body, peer = _one(failures, root, CITIES, timeout, None, mode="auto")
+    body, peer = _one(failures, root, CITIES, timeout, False, mode="auto")
     if body is not None:
         _skip_ok(failures, CITIES, body, peer)
         count = list_items(reply_text(body))
         if count < 10:
             failures.append(f"cities list items {count} < 10")
     for prompt in ORDINARY:
-        body, peer = _one(failures, root, prompt, timeout, None)
+        body, peer = _one(failures, root, prompt, timeout, False)
         if body is None:
             continue
         _skip_ok(failures, prompt, body, peer)
-    body, peer = _one(failures, root, HORROR, timeout, None)
+    body, peer = _one(failures, root, HORROR, timeout, False)
     if body is not None:
         _skip_ok(failures, HORROR, body, peer)
         count = list_items(reply_text(body))
@@ -407,7 +427,7 @@ def _check_yes(failures, root, timeout) -> None:
 
 
 def _check_stream(failures, root, timeout) -> None:
-    payload = chat_body(NATAN)
+    payload = chat_body(NATAN, False)
     payload["stream"] = True
     try:
         request = urllib.request.Request(

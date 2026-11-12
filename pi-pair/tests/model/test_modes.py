@@ -605,7 +605,11 @@ class ModeHttp(unittest.TestCase):
             ModeOllama.calls = []
             status, headers, body = self._post(
                 port,
-                {"mode": mode, "messages": [{"role": "user", "content": "Hi!"}]},
+                {
+                    "mode": mode,
+                    "messages": [{"role": "user", "content": "Hi!"}],
+                    "web_search": False,
+                },
                 {"X-Pi-Target": "auto", "X-Pi-Mesh": "on"},
             )
             self.assertEqual(status, 200, mode)

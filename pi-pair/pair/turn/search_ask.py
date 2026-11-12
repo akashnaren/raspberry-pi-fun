@@ -1,10 +1,11 @@
-"""Search when the button is on, or when the line asks for it.
+"""Search when the request leaves it on, or when the line asks for it.
 
-The composer control is the primary path. The list below is the backup for
-someone who forgot the button. It is an explicit ask to search, or a news
-shape: latest news, news about, news on, latest on, in the news, what's the
-latest, or latest <word> news. A bare news, latest, current, or today is not
-a cue. A pasted URL is not a cue.
+The composer control starts on. A request that omits web_search searches.
+web_search false is an explicit off for this turn, and the list below is
+the backup: an explicit ask to search, or a news shape: latest news, news
+about, news on, latest on, in the news, what's the latest, or latest
+<word> news. A bare news, latest, current, or today is not a cue. A pasted
+URL is not a cue.
 """
 
 from __future__ import annotations
@@ -53,12 +54,13 @@ def explicit_search(prompt: str) -> bool:
 
 
 def web_search_request(data: dict) -> bool:
-    """True forces a lookup. False, or a missing field, leaves the keyword backup.
+    """True forces a lookup. False leaves the keyword backup.
 
-    Anything that is not a JSON boolean is rejected.
+    A missing field forces a lookup too. Anything that is not a JSON boolean
+    is rejected.
     """
     if "web_search" not in data:
-        return False
+        return True
     value = data.pop("web_search")
     if isinstance(value, bool):
         return value

@@ -41,6 +41,7 @@ html[data-theme=light] .brand-mark .mark-b{stop-color:#1d4ed8}
 <script id="openpi-downtime-logic">
 var TZ = "America/Los_Angeles", NEAR_MS = 10 * 60 * 1000;
 var MSG_DOWN = "OpenPi is temporarily down and will open at 7:00 AM Pacific.", MSG_SOON = "OpenPi will be up soon";
+// Window is 23:00-07:00 PT. The count is always to the next 07:00, across midnight. 06:50 is "up soon".
 var fmt = new Intl.DateTimeFormat("en-US", {timeZone: TZ, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit"});
 function ptParts(ms) { var o = {}; fmt.formatToParts(new Date(ms)).forEach(function (p) { if (p.type !== "literal") o[p.type] = +p.value; }); return o; }
 function ptOffset(ms) { var p = ptParts(ms); return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(ms / 1000) * 1000; }

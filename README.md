@@ -40,7 +40,7 @@ pi-pair/pair/server.py   front server
 pi-pair/web              page source; npm run build writes pi-pair/static
 pi-pair/tests            unittest, mirrors pair/
 pi-pair/scripts          operator commands (bench/, qa/, data/, eval/, lifecycle/, train/)
-pi-pair/ops/downtime     pi4 nightly banner, 1:00-7:00 AM Pacific
+pi-pair/ops/downtime     pi4 nightly banner, 11:00 PM-7:00 AM Pacific
 pi-pair/docs             how the rack is built and run
 docs/rack                photos of the rack
 ```
@@ -57,7 +57,7 @@ Then run the `systemctl --user` lines it prints. The installer copies the whole 
 
 ## Nightly downtime
 
-The public link on pi4 is Tailscale Funnel to `http://127.0.0.1:18080`. From 1:00 AM to 7:00 AM America/Los_Angeles that port is the downtime banner instead of `pi-pair.service`. `openpi-downtime.sh auto` turns the banner on when the Pacific hour is 1–6. The same command is idempotent. It does not change `mini_chat.py`.
+The public link on pi4 is Tailscale Funnel to `http://127.0.0.1:18080`. From 11:00 PM to 7:00 AM America/Los_Angeles that port is the downtime banner instead of `pi-pair.service`. `openpi-downtime.sh auto` turns the banner on when the Pacific hour is 23 or 0–6, so the window crosses midnight. 6:50 AM is still inside it. The same command is idempotent. It does not change `mini_chat.py`.
 
 The copies that run on the board are under `~/openpi-downtime/` and `~/.config/systemd/user/`. The tracked files are in `pi-pair/ops/downtime/`. Install on pi4 as user `pi`, from a checkout:
 
@@ -69,7 +69,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now openpi-downtime-start.timer openpi-downtime-end.timer openpi-downtime-apply.service
 ```
 
-The start timer is 01:00 America/Los_Angeles and the end timer is 07:00. Both are persistent and both start `openpi-downtime-apply.service`, which runs `auto`. That unit also runs at boot.
+The start timer is 23:00 America/Los_Angeles and the end timer is 07:00. Both are persistent and both start `openpi-downtime-apply.service`, which runs `auto`. That unit also runs at boot, and `auto` uses the same midnight-crossing check.
 
 Disable the window and bring chat back:
 

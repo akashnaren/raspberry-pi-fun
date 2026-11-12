@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenPi nightly downtime: apply state for current PT time (01:00-07:00 = banner)
+Description=OpenPi nightly downtime: apply state for current PT time (23:00-07:00 = banner)
 After=pi-pair.service network-online.target
 
 [Service]
