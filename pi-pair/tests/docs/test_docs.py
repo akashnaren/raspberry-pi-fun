@@ -57,12 +57,24 @@ class ProductCopy(unittest.TestCase):
         text = root_readme
         readme_dir = ROOT.parent
         prefix = "docs/rack/"
-        if not text.startswith("# pi-pair\n"):
-            problems.append("README.md title is not pi-pair")
+        if not text.startswith("# OpenPi\n"):
+            problems.append("README.md title is not OpenPi")
         if retired in text:
             problems.append(f"{label} still says {retired}")
-        if "3D-printed server rack" not in text:
+        if "3D-printed vertical rack" not in text:
             problems.append(f"{label} does not mention the 3D-printed rack")
+        if any(
+            phrase in text.lower()
+            for phrase in (
+                "research paper",
+                "this paper",
+                "arxiv.org",
+                "preprint",
+                "we propose",
+                "experimental results",
+            )
+        ):
+            problems.append(f"{label} still reads like a research paper")
         hero = f"{prefix}rack-hero.jpg"
         if text.find(hero) == -1 or text.find(hero) > text.find(
             f"{prefix}rack-front.jpg"

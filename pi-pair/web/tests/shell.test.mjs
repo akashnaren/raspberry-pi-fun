@@ -203,7 +203,7 @@ box.dispatchEvent(new window.Event("input"));
 if (!brand.classList.contains("brand-logo") || brand.classList.contains("brand-title")) {
   throw new Error("clearing the draft did not return to the logo");
 }
-for (const id of ["btnIo", "ioPanel", "enterSend", "pictures", "sys", "modeBtn", "modePop", "modeLabel", "paperLink"]) {
+for (const id of ["btnIo", "ioPanel", "enterSend", "pictures", "sys", "modeBtn", "modePop", "modeLabel", "paperLink", "btnNew"]) {
   if (document.getElementById(id)) throw new Error(id + " should not be on the page");
 }
 if (document.querySelector(".info-dot, .info-pop, .set-foot, [data-theme-choice]")) {
@@ -213,14 +213,18 @@ if (!document.querySelector('.think-btn[data-think="low"]')) {
   throw new Error("the composer lost Low");
 }
 const modelSeg = document.getElementById("modelSeg");
+const group = document.querySelector(".composer-group");
 if (!modelSeg || modelSeg.getAttribute("role") !== "radiogroup") {
   throw new Error("model segmented picker is missing");
+}
+if (!group || !group.contains(modelSeg) || !group.querySelector(".think-set") || !group.contains(document.getElementById("webSearch"))) {
+  throw new Error("model, effort, and search are not one composer group");
 }
 if (document.querySelectorAll(".model-seg [data-mode]").length !== 3) {
   throw new Error("model picker needs three choices");
 }
-if (document.querySelector(".model-seg .info-dot")) {
-  throw new Error("model picker still has info icons");
+if (document.querySelector(".model-seg .info-dot") || document.querySelector(".model-seg-thumb")) {
+  throw new Error("model picker still has info icons or a sliding thumb");
 }
 document.querySelector('.model-seg [data-mode="pro"]').click();
 if (modelSeg.getAttribute("data-active") !== "pro") throw new Error("Pro was not selected");
@@ -321,6 +325,10 @@ if (follow.includes("wavelengths") || follow.includes("<think")) {
   throw new Error("saved history included the thought");
 }
 if (!follow.includes("Blue light scatters more.")) throw new Error("follow-up dropped the answer");
+const followStream = streams[streams.length - 1];
+followStream.push({ choices: [{ delta: { content: "Sunset looks red." } }] });
+followStream.end();
+await new Promise((resolve) => setTimeout(resolve, 80));
 
 const css = fs.readFileSync(new URL("../src/styles/main.scss", import.meta.url), "utf8");
 const titleRule = css.slice(css.indexOf(".brand.brand-title .brand-name"), css.indexOf(".brand.brand-title .brand-name") + 220);
@@ -341,11 +349,11 @@ if (!/&::-webkit-scrollbar\s*\{[^}]*display:\s*none/s.test(logRule)) {
 if (/html,\s*body\s*\{[^}]*scrollbar-width:\s*none/s.test(css)) {
   throw new Error("the page scrollbar was hidden");
 }
-if (!css.includes(".model-seg") || !/\.model-seg\s*\{[^}]*height:\s*32px/s.test(css)) {
-  throw new Error("model picker is not 32px tall");
+if (!css.includes(".composer-group") || !/\.composer-group\s*\{[^}]*height:\s*32px/s.test(css)) {
+  throw new Error("composer option group is not 32px tall");
 }
-if (!/\.model-seg-thumb\s*\{[^}]*transition:\s*transform 150ms ease/s.test(css)) {
-  throw new Error("model picker thumb has no 150ms slide");
+if (css.includes(".model-seg-thumb") || css.includes(".composer-footer")) {
+  throw new Error("removed footer picker styles are still present");
 }
 const page = webSource();
 if (!page.includes('setAttribute("aria-label", "Retry")') || !page.includes("retryIcon")) {
@@ -361,18 +369,18 @@ if (page.includes('speakText("Thinking")')) throw new Error("thinking is spoken 
 
 const docs = document.getElementById("apiDocsLink");
 const repo = document.getElementById("repoLink");
-const footer = document.querySelector(".composer-footer");
 const links = docs && docs.closest(".composer-links");
+const linksPill = docs && docs.closest(".composer-pill");
 if (
   !docs ||
   docs.getAttribute("href") !== "/docs" ||
   docs.getAttribute("target") !== "_blank" ||
   docs.getAttribute("rel") !== "noopener noreferrer" ||
-  !docs.getAttribute("aria-label") ||
+  docs.getAttribute("aria-label") !== "API documentation" ||
   !docs.querySelector("svg") ||
-  docs.textContent.trim() !== "API docs"
+  docs.textContent.trim() !== "API"
 ) {
-  throw new Error("API docs pill is missing under the composer");
+  throw new Error("API link is missing under the composer");
 }
 if (
   !repo ||
@@ -383,32 +391,36 @@ if (
   !repo.querySelector("svg") ||
   repo.textContent.trim() !== "GitHub"
 ) {
-  throw new Error("GitHub pill is missing under the composer");
+  throw new Error("GitHub link is missing under the composer");
 }
 if (
   !links ||
+  !linksPill ||
   links.getAttribute("aria-label") !== "OpenPi links" ||
   !links.closest(".composer-wrap") ||
+  linksPill.querySelectorAll("a").length !== 2 ||
+  !linksPill.querySelector(".composer-pill-div") ||
+  document.querySelector(".composer-footer") ||
   document.getElementById("paperLink") ||
   document.querySelector(".set-foot") ||
   /research paper/i.test(html)
 ) {
-  throw new Error("composer pills are misplaced or a research paper link is still in the page");
+  throw new Error("composer links pill is misplaced or a research paper link is still in the page");
 }
-if (!footer || footer.querySelector("#modelSeg") !== modelSeg || !footer.contains(links)) {
-  throw new Error("composer footer is missing the model picker or link row");
+if (links.previousElementSibling?.classList.contains("composer") !== true) {
+  throw new Error("link pill is not directly below the chat input");
 }
-if (footer.previousElementSibling?.classList.contains("composer") !== true) {
-  throw new Error("composer footer is not directly below the chat input");
+if (modelSeg.closest(".composer-bar") !== document.querySelector(".composer-bar")) {
+  throw new Error("model picker left the composer toolbar");
 }
 if (
   !css.includes(".composer-links") ||
   !css.includes(".composer-pill") ||
   !/\.composer-pill\s*\{[^}]*border-radius:\s*999px/s.test(css) ||
   !css.includes("body.voice-session") ||
-  !/body\.voice-session[^{]*\{[^}]*\.composer-footer/s.test(css)
+  !/body\.voice-session[^{]*\{[^}]*\.composer-links/s.test(css)
 ) {
-  throw new Error("composer pills have no styles");
+  throw new Error("composer pill has no styles");
 }
 if (css.includes('html[data-theme="light"]')) {
   throw new Error("light theme styles are still present");
@@ -418,9 +430,8 @@ if (/research paper/i.test(html)) {
 }
 const fileRule = css.slice(css.indexOf(".file-tag {"), css.indexOf(".file-tag {") + 500);
 if (!fileRule.includes("&.err")) throw new Error("a failed file chip has no error style");
-const newer = document.getElementById("btnNew");
-if (!newer || newer.getAttribute("aria-label") !== "New chat") {
-  throw new Error("new chat control is missing");
+if (document.getElementById("btnNew") || /aria-label="New chat"/.test(html)) {
+  throw new Error("new chat control is still on the page");
 }
 if (!page.includes("X-Pi-Request-Id") || !page.includes("couldn't read it")) {
   throw new Error("the page lost the request id or the file chip");
@@ -444,17 +455,6 @@ if (document.getElementById("sourcesPanel").classList.contains("open")) {
   throw new Error("Escape left sources open");
 }
 if (!composerFocused) throw new Error("Escape did not focus the composer");
-
-const beforeNew = document.body.textContent;
-if (!beforeNew.includes("Blue light")) throw new Error("new chat had nothing to clear");
-document.getElementById("btnNew").click();
-if (document.body.textContent.includes("Blue light")) {
-  throw new Error("new chat left the old reply");
-}
-if (!document.getElementById("empty")) throw new Error("new chat did not restore the empty state");
-if (document.getElementById("brand").classList.contains("brand-title")) {
-  throw new Error("new chat left the title up");
-}
 
 const idsBefore = sentHeaders.length;
 box.value = "one more";
@@ -530,21 +530,6 @@ const afterStop = streams[streams.length - 1];
 afterStop.push({ choices: [{ delta: { content: "stopped" } }] });
 afterStop.end();
 await new Promise((resolve) => setTimeout(resolve, 40));
-
-box.value = "fresh stream";
-document.getElementById("go").click();
-await new Promise((resolve) => setTimeout(resolve, 40));
-box.value = "forget this";
-box.dispatchEvent(new window.Event("input"));
-document.getElementById("go").click();
-await new Promise((resolve) => setTimeout(resolve, 20));
-if (!document.querySelector(".follow-chip")) throw new Error("new-chat setup missed the chip");
-document.getElementById("btnNew").click();
-await new Promise((resolve) => setTimeout(resolve, 40));
-if (document.querySelector(".follow-chip")) throw new Error("new chat left a queued message");
-if (sentBodies.some((body) => body.includes("forget this"))) {
-  throw new Error("new chat sent the queued message");
-}
 
 const realFetch = globalThis.fetch;
 let blown = false;

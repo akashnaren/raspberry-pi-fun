@@ -15,7 +15,7 @@ import re
 from urllib.parse import urlparse
 
 from pair.core.errors import friendly_error
-from pair.model.knobs import attachment_limit, inference_knobs
+from pair.model.knobs import attachment_limit, inference_knobs, search_note_limit
 from pair.model.modes import PRO
 from pair.turn.calc import notes_for
 
@@ -378,6 +378,22 @@ def add_persona(
     return [{"role": "system", "content": text}, *rows]
 
 
+def _cap_grounded_note(text: str) -> str:
+    """Keep the folded search context at `search_note_chars`, including effort."""
+    if not text:
+        return text
+    index = text.find(GROUNDED_RULE)
+    if index < 0:
+        return text
+    limit = search_note_limit()
+    head = text[:index].rstrip()
+    rest = text[index:]
+    flat = _flatten_clause(head, tail=True)
+    if len(flat) <= limit:
+        return text
+    return clip_words(flat, limit) + "\n" + rest
+
+
 def tail_note(effort: str = "", notes: str = "", hints: str = "") -> str:
     """One per-turn note: effort, then hints, then tool results.
 
@@ -393,7 +409,7 @@ def tail_note(effort: str = "", notes: str = "", hints: str = "") -> str:
     note = (notes or "").strip()
     if note:
         parts.append(note)
-    return "\n\n".join(parts)
+    return _cap_grounded_note("\n\n".join(parts))
 
 
 def add_notes(messages, note: str) -> list:

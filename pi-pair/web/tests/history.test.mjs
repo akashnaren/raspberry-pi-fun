@@ -59,6 +59,11 @@ if (replay.messages.some((row) => row.content === "I'm here to help with anythin
 if (replay.messages.some((row) => row.content === "anything you need")) {
   throw new Error("an echo user was sent");
 }
+const omittedEffort = chatBody(turns, { model: "flash", effort: "", mode: "auto" });
+if (omittedEffort.think !== "medium") {
+  throw new Error("missing effort did not default to medium: " + omittedEffort.think);
+}
+
 const last = replay.messages[replay.messages.length - 1];
 if (!last || last.role !== "user" || last.content !== "What is the top electric car to buy") {
   throw new Error("replay did not end on the real question: " + JSON.stringify(last));

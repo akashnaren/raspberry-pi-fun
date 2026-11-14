@@ -1,18 +1,7 @@
-import { cancelAttach } from "../attach/upload";
-import { clearFollowQueue } from "../chat/follow-queue-view";
-import { autoGrow } from "../chat/send";
-import { paint } from "../chat/transcript";
-import { abortImageJobs } from "../chat/turn-images";
 import { writeWebSearch } from "../chat/web-search";
 import { browserStorage, saveSettings } from "../core/settings";
-import { CHAT_KEY, ui } from "../core/state";
-import { freshId } from "../core/session";
-import { turns } from "../main";
-import { refreshMemoryRing } from "../memory/ring";
-import { voiceNote } from "../voice/mode";
+import { ui } from "../core/state";
 import { endOfUtteranceSilence } from "../voice/speech";
-import { paintBrand } from "./brand";
-import { setSourcesOpen } from "./panels";
 
 export function persistSettings(): void {
   ui.pageSettings = {
@@ -68,27 +57,4 @@ export function setModelMode(next: string): void {
   ui.modelMode = next === "flash" || next === "pro" ? next : "auto";
   paintModelMode();
   persistSettings();
-}
-
-export function newChat(): void {
-  abortImageJobs();
-  clearFollowQueue();
-  ui.chatId = freshId();
-  browserStorage("session")?.setItem(CHAT_KEY, ui.chatId);
-  ui.chatEpoch += 1;
-  ui.stopAsked = true;
-  ui.turnCtrl?.abort();
-  ui.sending = false;
-  turns.length = 0;
-  const box = document.getElementById("q") as HTMLTextAreaElement | null;
-  if (!box) return;
-  box.value = "";
-  autoGrow(box);
-  cancelAttach();
-  voiceNote("");
-  setSourcesOpen(false);
-  paint();
-  paintBrand();
-  box.focus();
-  void refreshMemoryRing();
 }

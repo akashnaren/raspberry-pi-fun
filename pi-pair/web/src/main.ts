@@ -11,7 +11,7 @@ import { ui } from "./core/state";
 import type { Turn } from "./core/types";
 import { compactMemory, hideMemPopSoon, holdRingTitle, refreshMemoryRing, showMemPop } from "./memory/ring";
 import { bootSplash, paintBrand } from "./ui/brand";
-import { newChat, paintModelMode, paintThinking, paintWebSearch, setModelMode, setThinking, setWebSearch } from "./ui/controls";
+import { paintModelMode, paintThinking, paintWebSearch, setModelMode, setThinking, setWebSearch } from "./ui/controls";
 import { setSourcesOpen } from "./ui/panels";
 import { armBarge, endVoiceMode, ensureOrb, releaseVoice, setVoiceState, toggleVoice, toggleVoiceMode } from "./voice/mode";
 import { firstSpokenSentence, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice/speech";
@@ -84,7 +84,17 @@ composer.addEventListener("keydown", (event) => {
 });
 
 document.querySelectorAll("[data-think]").forEach((btn) => {
-  (btn as HTMLButtonElement).onclick = () => setThinking(btn.getAttribute("data-think") || "medium");
+  (btn as HTMLButtonElement).onclick = () => {
+    const asked = btn.getAttribute("data-think") || "medium";
+    const compact = window.matchMedia("(max-width: 480px)").matches;
+    if (compact && asked === ui.thinking) {
+      const order = ["low", "medium", "high"] as const;
+      const idx = order.indexOf(ui.thinking as (typeof order)[number]);
+      setThinking(order[(idx + 1) % order.length]);
+      return;
+    }
+    setThinking(asked);
+  };
 });
 document.querySelectorAll(".model-seg [data-mode]").forEach((btn) => {
   (btn as HTMLButtonElement).onclick = () => setModelMode(btn.getAttribute("data-mode") || "auto");
@@ -139,7 +149,6 @@ const voiceEnd = document.getElementById("voiceEnd");
 els.voiceEnd = voiceEnd;
 
 if (voiceEnd) voiceEnd.onclick = () => endVoiceMode();
-byId("btnNew").onclick = () => newChat();
 export const RING_C = 56.55;
 
 const memoryButton = document.getElementById("btnMemory");

@@ -555,6 +555,38 @@ class ThinkHttp(unittest.TestCase):
         self.assertEqual(ThinkOllama.calls[0]["options"]["presence_penalty"], 0.5)
         self.assertTrue(chosen["choices"][0]["message"]["content"].strip())
 
+    def test_omitted_think_matches_medium(self):
+        ThinkOllama.replies = [{"content": "ok.", "thinking": ""}]
+        port = self._boot()
+        omitted = self._post(
+            port,
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+                "web_search": False,
+            },
+        )
+        self.assertTrue(omitted["choices"][0]["message"]["content"].strip())
+        self.assertEqual(ThinkOllama.calls[0]["options"]["num_predict"], 256)
+        self.assertEqual(ThinkOllama.calls[0]["options"]["temperature"], 0.3)
+        ThinkOllama.calls = []
+        ThinkOllama.replies = [{"content": "ok.", "thinking": ""}]
+        medium = self._post(
+            port,
+            {
+                "think": "medium",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+                "web_search": False,
+            },
+        )
+        self.assertEqual(ThinkOllama.calls[0]["options"]["num_predict"], 256)
+        self.assertEqual(ThinkOllama.calls[0]["options"]["temperature"], 0.3)
+        self.assertEqual(
+            omitted["choices"][0]["message"]["content"],
+            medium["choices"][0]["message"]["content"],
+        )
+
     def test_a_leftover_thinking_plan_still_returns_visible_text(self):
         from pair.model.chat_stream import iter_ollama_channels
 

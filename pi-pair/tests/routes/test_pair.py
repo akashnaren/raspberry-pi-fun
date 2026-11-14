@@ -26,7 +26,7 @@ from pair.routes import relay as relay_routes
 from pair.routes import search as search_routes
 from pair.routes import status as status_routes
 from pair.server import make_server
-from pair.turn.shape import GROUNDED_RULE
+from pair.turn.shape import EFFORT_HINT, GROUNDED_RULE
 from tests.support.fakes import LlamaFake, OllamaFake, _start
 from tests.support.paths import ROOT
 from tests.support.web import web_source
@@ -524,9 +524,11 @@ class PairHttp(unittest.TestCase):
         self.assertIn('data-mode="auto"', html)
         self.assertIn('data-mode="flash"', html)
         self.assertIn('data-mode="pro"', html)
-        self.assertIn('aria-label="Model mode"', html)
-        self.assertIn('id="modeLabel">Auto</span>', html)
+        self.assertIn('aria-label="Model"', html)
+        self.assertIn('class="composer-group"', html)
         self.assertIn("Ask anything.", html)
+        self.assertNotIn('id="btnNew"', html)
+        self.assertNotIn("New chat", html)
         lowered = html.lower()
         for word in ("cache", "brain", "chip", "peer", "pi2", "pi3", "pi4"):
             self.assertNotIn(word, lowered)
@@ -581,8 +583,10 @@ class PairHttp(unittest.TestCase):
         self.assertIn(".flex", css)
         self.assertIn(".stage", css)
         self.assertIn(".think-btn", css)
-        self.assertIn(".mode-btn", css)
-        self.assertIn(".mode-menu", css)
+        self.assertIn(".model-seg", css)
+        self.assertIn(".composer-group", css)
+        self.assertNotIn(".mode-menu", css)
+        self.assertNotIn(".model-seg-thumb", css)
         with urllib.request.urlopen(
             f"http://127.0.0.1:{port}/health", timeout=5
         ) as response:
@@ -592,15 +596,14 @@ class PairHttp(unittest.TestCase):
         self.assertEqual(health_body["modes"]["pro"], "qwen3:1.7b")
         self.assertEqual(health_body["pro_model"], "qwen3:1.7b")
         self.assertIsNotNone(health_body["pro_model"])
-        self.assertIn("Fast answers for everyday questions.", html)
-        self.assertIn("Slower, more careful answers for harder questions.", html)
         self.assertNotIn("__FLASH_TIP__", html)
         self.assertNotIn("__PRO_TIP__", html)
+        self.assertNotIn("info-dot", html)
         source_page = (ROOT / "web" / "public" / "index.html").read_text(
             encoding="utf-8"
         )
-        self.assertIn("__FLASH_TIP__", source_page)
-        self.assertIn("__PRO_TIP__", source_page)
+        self.assertNotIn("__FLASH_TIP__", source_page)
+        self.assertNotIn("__PRO_TIP__", source_page)
         self.assertNotIn("qwen3:0.6b, the fast resident model.", source_page)
         self.assertNotIn("qwen3:1.7b, loaded when the question needs it.", source_page)
         OllamaFake.decide = "SEARCH"
@@ -1547,6 +1550,8 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn("<search>", content)
         self.assertIn(GROUNDED_RULE, content)
         inner = content[len("(Context: ") : content.index(GROUNDED_RULE)].strip()
+        hint = EFFORT_HINT["medium"]
+        self.assertIn(hint, inner)
         self.assertLessEqual(len(inner), limit)
         self.assertIn("snippet", content)
         self.assertLess(len(content), len(page))
