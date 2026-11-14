@@ -202,56 +202,49 @@ def iter_ollama_channels(
     first_timeout = seconds if think and seconds else 180
     turn = begin_turn()
     try:
-        try:
-            with open_json(
-                url, payload, timeout=first_timeout, cancel=cancel
-            ) as response:
-                for line in _read_ndjson(response, cancel):
-                    content, thinking, done, skip, reason, frame_usage = ollama_parts(
-                        line
-                    )
-                    if skip:
-                        continue
-                    _keep_usage(usage, frame_usage)
-                    if done and usage is not None:
-                        usage["done_reason"] = reason
-                    now = time.monotonic()
-                    if thinking and not capped:
-                        merged = accumulated + thinking
-                        if budget and stop_thinking(
-                            reasoning_tokens(merged), started, now, budget, seconds
-                        ):
-                            kept = clip_reasoning(merged, budget)
-                            piece = (
-                                kept[len(accumulated) :]
-                                if kept.startswith(accumulated)
-                                else ""
-                            )
-                            if piece:
-                                yield "thinking", piece
-                            accumulated = kept
-                            capped = True
-                        else:
-                            accumulated = merged
-                            yield "thinking", thinking
-                    if (
-                        not capped
-                        and not saw_content
-                        and budget
-                        and stop_thinking(
-                            reasoning_tokens(accumulated), started, now, budget, seconds
-                        )
+        with open_json(url, payload, timeout=first_timeout, cancel=cancel) as response:
+            for line in _read_ndjson(response, cancel):
+                content, thinking, done, skip, reason, frame_usage = ollama_parts(line)
+                if skip:
+                    continue
+                _keep_usage(usage, frame_usage)
+                if done and usage is not None:
+                    usage["done_reason"] = reason
+                now = time.monotonic()
+                if thinking and not capped:
+                    merged = accumulated + thinking
+                    if budget and stop_thinking(
+                        reasoning_tokens(merged), started, now, budget, seconds
                     ):
+                        kept = clip_reasoning(merged, budget)
+                        piece = (
+                            kept[len(accumulated) :]
+                            if kept.startswith(accumulated)
+                            else ""
+                        )
+                        if piece:
+                            yield "thinking", piece
+                        accumulated = kept
                         capped = True
-                    if content:
-                        content_parts.append(content)
-                        if peel_think("".join(content_parts))[0].strip():
-                            saw_content = True
-                        yield "content", content
-                    if done or (capped and not saw_content):
-                        break
-        except TimeoutError:
-            return
+                    else:
+                        accumulated = merged
+                        yield "thinking", thinking
+                if (
+                    not capped
+                    and not saw_content
+                    and budget
+                    and stop_thinking(
+                        reasoning_tokens(accumulated), started, now, budget, seconds
+                    )
+                ):
+                    capped = True
+                if content:
+                    content_parts.append(content)
+                    if peel_think("".join(content_parts))[0].strip():
+                        saw_content = True
+                    yield "content", content
+                if done or (capped and not saw_content):
+                    break
     finally:
         end_turn(turn)
 

@@ -63,6 +63,18 @@ class ProductCopy(unittest.TestCase):
             problems.append(f"{label} still says {retired}")
         if "3D-printed vertical rack" not in text:
             problems.append(f"{label} does not mention the 3D-printed rack")
+        if any(
+            phrase in text.lower()
+            for phrase in (
+                "research paper",
+                "this paper",
+                "arxiv.org",
+                "preprint",
+                "we propose",
+                "experimental results",
+            )
+        ):
+            problems.append(f"{label} still reads like a research paper")
         hero = f"{prefix}rack-hero.jpg"
         if text.find(hero) == -1 or text.find(hero) > text.find(
             f"{prefix}rack-front.jpg"

@@ -1552,7 +1552,7 @@ class PairHttp(unittest.TestCase):
         inner = content[len("(Context: ") : content.index(GROUNDED_RULE)].strip()
         hint = EFFORT_HINT["medium"]
         self.assertIn(hint, inner)
-        self.assertLessEqual(len(inner), limit + len(hint) + 4)
+        self.assertLessEqual(len(inner), limit)
         self.assertIn("snippet", content)
         self.assertLess(len(content), len(page))
         for line in content.splitlines():

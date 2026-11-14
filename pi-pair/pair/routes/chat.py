@@ -123,7 +123,12 @@ def _apply_model_sample(handler, model: str, temperature: float, max_tokens: int
     if tuned is None:
         return temperature, max_tokens
     handler._decode_plan = tuned
-    return tuned.temperature, tuned.num_predict
+    keep_temp = getattr(handler, "_keep_caller_temperature", False)
+    keep_max = getattr(handler, "_keep_caller_max_tokens", False)
+    return (
+        temperature if keep_temp else tuned.temperature,
+        max_tokens if keep_max else tuned.num_predict,
+    )
 
 
 def apply_tier(handler, payload: dict) -> dict:
@@ -358,31 +363,37 @@ class ChatRoutes:
         messages = data.get("messages") or []
         prompt = last_user_text(messages)
         think_raw = data.pop("think", None)
-        has_sample = any(
-            data.get(key) is not None
-            for key in ("temperature", "max_tokens", "max_completion_tokens")
-        )
-        if think_raw is None or str(think_raw).strip() == "":
-            effort = decode_effort("medium" if not has_sample else "", prompt)
-        else:
-            effort = decode_effort(str(think_raw), prompt)
+        caller_temperature = data.get("temperature")
+        caller_max = data.get("max_tokens")
+        if caller_max is None:
+            caller_max = data.get("max_completion_tokens")
+        named_think = think_raw is not None and str(think_raw).strip() != ""
+        effort = decode_effort(str(think_raw) if named_think else "medium", prompt)
         self._decode_plan = effort
         self._last_reasoning = ""
+        self._keep_caller_temperature = (
+            not named_think
+        ) and caller_temperature is not None
+        self._keep_caller_max_tokens = (not named_think) and caller_max is not None
         if effort:
             think_name = effort.name
-            temperature = effort.temperature
-            max_tokens = effort.num_predict
+            temperature = (
+                float(caller_temperature)
+                if self._keep_caller_temperature
+                else effort.temperature
+            )
+            max_tokens = (
+                int(caller_max) if self._keep_caller_max_tokens else effort.num_predict
+            )
             data.pop("temperature", None)
             data.pop("max_tokens", None)
             data.pop("max_completion_tokens", None)
         else:
             think_name = ""
             temperature = float(
-                data.get("temperature") if data.get("temperature") is not None else 0.7
+                caller_temperature if caller_temperature is not None else 0.7
             )
-            max_tokens = int(
-                data.get("max_tokens") or data.get("max_completion_tokens") or 256
-            )
+            max_tokens = int(caller_max if caller_max is not None else 256)
         started = time.time()
         want_stream = bool(data.get("stream"))
         self._searched = False
