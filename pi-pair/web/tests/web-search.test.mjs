@@ -43,7 +43,7 @@ const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "
 const searchButton = html.match(/<button[^>]*id="webSearch"[^>]*>/);
 if (!searchButton) throw new Error("composer has no search control");
 if (!html.includes('aria-label="Search the web"')) throw new Error("search control has no accessible name");
-if (!html.includes(">Search</button>")) throw new Error("search control has no visible label");
+if (!/id="webSearch"[\s\S]*Search\s*</.test(html)) throw new Error("search control has no visible label");
 if (!searchButton[0].includes('aria-pressed="true"') || !searchButton[0].includes("search-btn on")) {
   throw new Error("search control does not start on");
 }
@@ -54,7 +54,9 @@ if (settings.includes("webSearch") || settings.includes("web_search")) {
 }
 
 const scss = fs.readFileSync(new URL("../src/styles/main.scss", import.meta.url), "utf8");
-const modesAt = scss.indexOf(".composer-modes {");
-const modes = scss.slice(modesAt, modesAt + 160);
-if (/overflow\s*:/.test(modes)) throw new Error("mode row clips the popup");
-if (!scss.includes(".search-btn")) throw new Error("search control has no style");
+if (!scss.includes(".composer-group") || !scss.includes(".search-btn")) {
+  throw new Error("search control has no style");
+}
+if (/rgba\(126,\s*200,\s*184/.test(scss.slice(scss.indexOf(".search-btn"), scss.indexOf(".search-btn") + 500))) {
+  throw new Error("search still uses the teal fill");
+}

@@ -6,7 +6,6 @@ import threading
 from pathlib import Path
 
 from pair.core.config import STATIC_DIR
-from pair.model.modes import mode_tips
 from pair.routes.base import safe_write
 
 _TYPES = {
@@ -65,11 +64,8 @@ def static_file(url_path: str) -> Path | None:
 
 
 def index_body() -> bytes:
-    """Fill the page from config: Flash and Pro tip text. Model tags stay off it."""
+    """Serve the chat page. Model tags stay off it."""
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    tips = mode_tips()
-    html = html.replace("__FLASH_TIP__", tips["flash"])
-    html = html.replace("__PRO_TIP__", tips["pro"])
     return html.encode("utf-8")
 
 

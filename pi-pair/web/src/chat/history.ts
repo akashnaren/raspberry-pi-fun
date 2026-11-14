@@ -91,7 +91,7 @@ export function chatBody(turns: HistoryTurn[], options: ChatOptions): ChatBody {
     model: options.model,
     messages,
     stream: true,
-    think: options.effort,
+    think: options.effort === "low" || options.effort === "high" ? options.effort : "medium",
     pi_mode: options.mode,
     pi_target: "auto",
     pi_mesh: "on",

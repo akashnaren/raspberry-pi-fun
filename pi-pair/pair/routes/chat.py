@@ -357,7 +357,11 @@ class ChatRoutes:
         )
         messages = data.get("messages") or []
         prompt = last_user_text(messages)
-        effort = decode_effort(str(data.pop("think", "") or ""), prompt)
+        think_raw = data.pop("think", None)
+        if think_raw is None or str(think_raw).strip() == "":
+            effort = decode_effort("medium", prompt)
+        else:
+            effort = decode_effort(str(think_raw), prompt)
         self._decode_plan = effort
         self._last_reasoning = ""
         if effort:
