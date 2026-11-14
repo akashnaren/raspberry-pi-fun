@@ -11,7 +11,7 @@ import { ui } from "./core/state";
 import type { Turn } from "./core/types";
 import { compactMemory, hideMemPopSoon, holdRingTitle, refreshMemoryRing, showMemPop } from "./memory/ring";
 import { bootSplash, paintBrand } from "./ui/brand";
-import { paintModelMode, paintThinking, paintWebSearch, setModelMode, setThinking, setWebSearch } from "./ui/controls";
+import { closeModelMenu, modelMenuOpen, moveModelMenu, paintModelMode, paintThinking, paintWebSearch, setModelMenuOpen, setModelMode, setThinking, setWebSearch } from "./ui/controls";
 import { setSourcesOpen } from "./ui/panels";
 import { armBarge, endVoiceMode, ensureOrb, releaseVoice, setVoiceState, toggleVoice, toggleVoiceMode } from "./voice/mode";
 import { firstSpokenSentence, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice/speech";
@@ -24,13 +24,6 @@ export const followExtra = new Map<number, { text: string; hidden: string; attac
 export const ATTACH_TIMEOUT_MS = 60_000;
 
 export const VOICE_CLASSES = ["listening", "heard", "thinking", "speaking", "error"];
-
-const MODE_CYCLE = ["auto", "flash", "pro"] as const;
-
-function focusModelSeg(): void {
-  const active = document.querySelector('.model-seg-btn[aria-checked="true"]') as HTMLButtonElement | null;
-  active?.focus();
-}
 
 byId("go").onclick = () => {
   if (ui.uploading || ui.attachError) return;
@@ -84,33 +77,41 @@ composer.addEventListener("keydown", (event) => {
 });
 
 document.querySelectorAll("[data-think]").forEach((btn) => {
+  (btn as HTMLButtonElement).onclick = () => setThinking(btn.getAttribute("data-think") || "medium");
+});
+document.querySelectorAll(".model-option[data-mode]").forEach((btn) => {
   (btn as HTMLButtonElement).onclick = () => {
-    const asked = btn.getAttribute("data-think") || "medium";
-    const compact = window.matchMedia("(max-width: 480px)").matches;
-    if (compact && asked === ui.thinking) {
-      const order = ["low", "medium", "high"] as const;
-      const idx = order.indexOf(ui.thinking as (typeof order)[number]);
-      setThinking(order[(idx + 1) % order.length]);
-      return;
-    }
-    setThinking(asked);
+    setModelMode(btn.getAttribute("data-mode") || "auto");
+    closeModelMenu(true);
   };
 });
-document.querySelectorAll(".model-seg [data-mode]").forEach((btn) => {
-  (btn as HTMLButtonElement).onclick = () => setModelMode(btn.getAttribute("data-mode") || "auto");
-});
-const modelSeg = document.getElementById("modelSeg");
-modelSeg?.addEventListener("keydown", (event) => {
-  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+const modelTrigger = document.getElementById("modelTrigger");
+if (modelTrigger) {
+  modelTrigger.onclick = () => setModelMenuOpen(!modelMenuOpen());
+}
+const modelMenu = document.getElementById("modelMenu");
+modelMenu?.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    if (!modelMenuOpen()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeModelMenu(true);
     return;
   }
-  event.preventDefault();
-  const idx = MODE_CYCLE.indexOf(ui.modelMode as (typeof MODE_CYCLE)[number]);
-  const next = event.key === "ArrowLeft" || event.key === "ArrowUp"
-    ? MODE_CYCLE[(idx + MODE_CYCLE.length - 1) % MODE_CYCLE.length]
-    : MODE_CYCLE[(idx + 1) % MODE_CYCLE.length];
-  setModelMode(next);
-  focusModelSeg();
+  if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+    event.preventDefault();
+    if (!modelMenuOpen()) {
+      setModelMenuOpen(true);
+      return;
+    }
+    moveModelMenu(event.key);
+    return;
+  }
+  if (event.key === "Tab") closeModelMenu(false);
+});
+document.addEventListener("click", (event) => {
+  if (modelMenu?.contains(event.target as Node)) return;
+  closeModelMenu(false);
 });
 
 document.addEventListener("keydown", (event) => {
@@ -118,6 +119,10 @@ document.addEventListener("keydown", (event) => {
   const pop = document.getElementById("memPop");
   if (pop) pop.hidden = true;
   setSourcesOpen(false);
+  if (modelMenuOpen()) {
+    closeModelMenu(true);
+    return;
+  }
   if (ui.voiceOn) endVoiceMode();
   byId<HTMLTextAreaElement>("q").focus();
 });

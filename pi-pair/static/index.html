@@ -51,24 +51,26 @@
       <div id="followQueue" class="follow-queue" hidden></div>
       <div class="composer">
         <textarea id="q" placeholder="Message" rows="1" enterkeyhint="send" aria-label="Message"></textarea>
-        <div class="composer-bar flex items-center justify-between">
-          <div class="composer-group" role="group" aria-label="Reply options">
-            <div class="model-seg" id="modelSeg" role="radiogroup" aria-label="Model" data-active="auto">
-              <button type="button" class="model-seg-btn on" data-mode="auto" role="radio" aria-checked="true" tabindex="0">Auto</button>
-              <button type="button" class="model-seg-btn" data-mode="flash" role="radio" aria-checked="false" tabindex="-1">Flash</button>
-              <button type="button" class="model-seg-btn" data-mode="pro" role="radio" aria-checked="false" tabindex="-1">Pro</button>
-            </div>
-            <div class="think-set" role="group" aria-label="Thinking">
-              <button type="button" class="think-btn" data-think="low">Low</button>
-              <button type="button" class="think-btn on" data-think="medium">Medium</button>
-              <button type="button" class="think-btn" data-think="high">High</button>
-            </div>
+        <div class="composer-bar flex items-center justify-end">
+          <div class="composer-tools flex items-center">
+            <div class="composer-choices">
             <button type="button" class="search-btn on" id="webSearch" aria-label="Search the web" aria-pressed="true">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M3 12h18M12 3c2.4 3 3.7 6 3.7 9s-1.3 6-3.7 9c-2.4-3-3.7-6-3.7-9s1.3-6 3.7-9z" stroke="currentColor" stroke-width="1.6"/></svg>
               Search
             </button>
-          </div>
-          <div class="composer-tools flex items-center">
+            <div class="model-menu" id="modelMenu">
+              <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="menu" aria-expanded="false" aria-controls="modelList" aria-label="Model: Auto">
+                <span id="modelCurrent">Auto</span>
+                <svg class="model-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="model-pop" id="modelList" role="menu" aria-label="Model" hidden>
+                <button type="button" class="model-option on" role="menuitemradio" data-mode="auto" aria-checked="true">Auto<svg class="model-check" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12.5 9.2 16.7 19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button type="button" class="model-option" role="menuitemradio" data-mode="flash" aria-checked="false">Flash<svg class="model-check" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12.5 9.2 16.7 19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button type="button" class="model-option" role="menuitemradio" data-mode="pro" aria-checked="false">Pro<svg class="model-check" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12.5 9.2 16.7 19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </div>
+            </div>
+            </div>
+            <div class="composer-actions">
             <button class="tool mic-off" id="btnVoice" type="button" aria-label="Voice" aria-pressed="false">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M6 11a6 6 0 0 0 12 0M12 17v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </button>
@@ -83,22 +85,27 @@
               <svg class="send-mark" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
               <svg class="stop-mark" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
             </button>
+            </div>
           </div>
         </div>
       </div>
-      <nav class="composer-links" aria-label="OpenPi links">
-        <div class="composer-pill">
-          <a id="repoLink" href="https://github.com/akashnaren/raspberry-pi-fun" target="_blank" rel="noopener noreferrer" aria-label="OpenPi source code on GitHub, opens in a new tab">
+      <div class="composer-links">
+        <div class="composer-group think-set" role="group" aria-label="Thinking">
+          <button type="button" class="think-btn" data-think="low">Low</button>
+          <button type="button" class="think-btn on" data-think="medium">Medium</button>
+          <button type="button" class="think-btn" data-think="high">High</button>
+        </div>
+        <nav aria-label="OpenPi links">
+          <a class="composer-pill" id="repoLink" href="https://github.com/akashnaren/raspberry-pi-fun" target="_blank" rel="noopener noreferrer" aria-label="OpenPi source code on GitHub, opens in a new tab">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
             GitHub
           </a>
-          <span class="composer-pill-div" aria-hidden="true"></span>
-          <a id="apiDocsLink" href="/docs" target="_blank" rel="noopener noreferrer" aria-label="API documentation">
+          <a class="composer-pill" id="apiDocsLink" href="/docs" target="_blank" rel="noopener noreferrer" aria-label="API documentation">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><path d="M6 3.2C4.4 3.2 3.2 4.5 3.2 6c0 1 .5 1.6 1.3 2-.8.4-1.3 1-1.3 2 0 1.5 1.2 2.8 2.8 2.8M10 3.2c1.6 0 2.8 1.3 2.8 2.8 0 1-.5 1.6-1.3 2 .8.4 1.3 1 1.3 2 0 1.5-1.2 2.8-2.8 2.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             API
           </a>
-        </div>
-      </nav>
+        </nav>
+      </div>
       <input type="file" id="attach" accept=".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.gif,.webp,.tif,.tiff,.bmp,text/plain,text/markdown,image/jpeg,image/png,image/gif,image/webp,image/tiff,image/bmp,application/pdf"/>
     </div>
   </footer>

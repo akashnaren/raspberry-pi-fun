@@ -212,25 +212,64 @@ if (document.querySelector(".info-dot, .info-pop, .set-foot, [data-theme-choice]
 if (!document.querySelector('.think-btn[data-think="low"]')) {
   throw new Error("the composer lost Low");
 }
-const modelSeg = document.getElementById("modelSeg");
-const group = document.querySelector(".composer-group");
-if (!modelSeg || modelSeg.getAttribute("role") !== "radiogroup") {
-  throw new Error("model segmented picker is missing");
+const modelTrigger = document.getElementById("modelTrigger");
+const modelList = document.getElementById("modelList");
+const modelMenu = document.getElementById("modelMenu");
+const effortSeg = document.querySelector(".think-set");
+const search = document.getElementById("webSearch");
+const composer = document.querySelector(".composer");
+const below = document.querySelector(".composer-links");
+if (!modelTrigger || !modelList || !modelMenu || modelTrigger.getAttribute("aria-haspopup") !== "menu") {
+  throw new Error("model dropdown is missing");
 }
-if (!group || !group.contains(modelSeg) || !group.querySelector(".think-set") || !group.contains(document.getElementById("webSearch"))) {
-  throw new Error("model, effort, and search are not one composer group");
+if (modelList.hidden !== true || modelTrigger.getAttribute("aria-expanded") !== "false") {
+  throw new Error("model menu starts open");
 }
-if (document.querySelectorAll(".model-seg [data-mode]").length !== 3) {
-  throw new Error("model picker needs three choices");
+if (document.getElementById("modelCurrent").textContent !== "Auto") {
+  throw new Error("model button does not show Auto");
 }
-if (document.querySelector(".model-seg .info-dot") || document.querySelector(".model-seg-thumb")) {
+const modelOptions = [...modelList.querySelectorAll(".model-option")];
+if (modelOptions.length !== 3 || modelList.querySelectorAll("[data-mode]").length !== 3) {
+  throw new Error("model menu needs Auto, Flash, and Pro only");
+}
+if (modelMenu.querySelector(".info-dot") || document.querySelector(".model-seg-thumb")) {
   throw new Error("model picker still has info icons or a sliding thumb");
 }
-document.querySelector('.model-seg [data-mode="pro"]').click();
-if (modelSeg.getAttribute("data-active") !== "pro") throw new Error("Pro was not selected");
-if (document.querySelector('.model-seg [data-mode="pro"]').getAttribute("aria-checked") !== "true") {
-  throw new Error("Pro radio was not checked");
+if (composer.contains(effortSeg) || !below.contains(effortSeg) || composer.contains(modelList) !== true) {
+  throw new Error("effort stayed in the composer or the model menu left it");
 }
+if (!composer.contains(search) || below.contains(search) || effortSeg.contains(search) || modelMenu.contains(search)) {
+  throw new Error("search is not its own composer toggle");
+}
+const toolOrder = [...document.querySelectorAll(".composer-tools #webSearch, .composer-tools #modelMenu, .composer-tools #btnVoice, .composer-tools #btnAttach, .composer-tools #go")].map((node) => node.id);
+if (toolOrder.join(",") !== "webSearch,modelMenu,btnVoice,btnAttach,go") {
+  throw new Error("composer cluster is out of order: " + toolOrder.join(","));
+}
+if (search.closest(".composer-actions") || !search.closest(".composer-choices") || !modelMenu.closest(".composer-choices")) {
+  throw new Error("search and model are not the leading composer choices");
+}
+if (document.getElementById("go").closest(".composer-actions") !== document.querySelector(".composer-actions")) {
+  throw new Error("send is not kept with mic and attach");
+}
+modelTrigger.click();
+if (modelList.hidden || modelTrigger.getAttribute("aria-expanded") !== "true") {
+  throw new Error("model menu did not open");
+}
+document.dispatchEvent(new window.Event("click", { bubbles: true }));
+if (!modelList.hidden) throw new Error("outside click left the model menu open");
+modelTrigger.click();
+document.querySelector('.model-option[data-mode="pro"]').click();
+if (modelList.hidden !== true) throw new Error("choosing a model left the menu open");
+if (document.getElementById("modelCurrent").textContent !== "Pro") throw new Error("Pro was not selected");
+if (document.querySelector('.model-option[data-mode="pro"]').getAttribute("aria-checked") !== "true") {
+  throw new Error("Pro check was not set");
+}
+if (document.querySelector('.model-option[data-mode="auto"]').getAttribute("aria-checked") !== "false") {
+  throw new Error("Auto stayed checked");
+}
+modelTrigger.click();
+modelMenu.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+if (!modelList.hidden) throw new Error("Escape left the model menu open");
 setModelMode("auto");
 document.querySelector('.think-btn[data-think="low"]').click();
 if (!document.querySelector('.think-btn[data-think="low"]').classList.contains("on")) {
@@ -350,7 +389,23 @@ if (/html,\s*body\s*\{[^}]*scrollbar-width:\s*none/s.test(css)) {
   throw new Error("the page scrollbar was hidden");
 }
 if (!css.includes(".composer-group") || !/\.composer-group\s*\{[^}]*height:\s*32px/s.test(css)) {
-  throw new Error("composer option group is not 32px tall");
+  throw new Error("effort pill is not 32px tall");
+}
+if (!/\.composer-links\s*\{[^}]*flex-wrap:\s*wrap/s.test(css) || !/\.composer-links\s*\{[^}]*gap:\s*8px/s.test(css)) {
+  throw new Error("the row under the composer does not wrap");
+}
+if (!/\.search-btn\s*\{[^}]*height:\s*32px/s.test(css) || !/\.search-btn\s*\{[^}]*border-radius:\s*999px/s.test(css)) {
+  throw new Error("search toggle does not match the composer pill");
+}
+if (!/\.model-pop\s*\{[^}]*border-radius:\s*14px/s.test(css) || !/\.composer-pill\s*\{[^}]*height:\s*32px/s.test(css)) {
+  throw new Error("model menu or link pills lost their shape");
+}
+if (!/\.composer-pill\s*\{[^}]*border:\s*1px solid rgba\(255,\s*255,\s*255,\s*0\.10\)/s.test(css) || !/\.composer-pill\s*\{[^}]*background:\s*#101010/s.test(css) || !/\.composer-pill\s*\{[^}]*border-radius:\s*999px/s.test(css)) {
+  throw new Error("GitHub and API are not pills matching the effort shell");
+}
+const phoneCss = css.slice(css.lastIndexOf("@media (max-width: 480px)"));
+if (!/\.tool,\s*\.send-btn\s*\{\s*width:\s*40px;\s*height:\s*40px/.test(phoneCss) || !/height:\s*40px/.test(phoneCss)) {
+  throw new Error("phone touch targets are under 40px");
 }
 if (css.includes(".model-seg-thumb") || css.includes(".composer-footer")) {
   throw new Error("removed footer picker styles are still present");
@@ -370,9 +425,10 @@ if (page.includes('speakText("Thinking")')) throw new Error("thinking is spoken 
 const docs = document.getElementById("apiDocsLink");
 const repo = document.getElementById("repoLink");
 const links = docs && docs.closest(".composer-links");
-const linksPill = docs && docs.closest(".composer-pill");
+const linkNav = docs && docs.closest("nav");
 if (
   !docs ||
+  !docs.classList.contains("composer-pill") ||
   docs.getAttribute("href") !== "/docs" ||
   docs.getAttribute("target") !== "_blank" ||
   docs.getAttribute("rel") !== "noopener noreferrer" ||
@@ -384,6 +440,8 @@ if (
 }
 if (
   !repo ||
+  !repo.classList.contains("composer-pill") ||
+  repo.parentElement !== docs.parentElement ||
   repo.getAttribute("href") !== "https://github.com/akashnaren/raspberry-pi-fun" ||
   repo.getAttribute("target") !== "_blank" ||
   repo.getAttribute("rel") !== "noopener noreferrer" ||
@@ -395,23 +453,28 @@ if (
 }
 if (
   !links ||
-  !linksPill ||
-  links.getAttribute("aria-label") !== "OpenPi links" ||
+  !linkNav ||
+  linkNav.getAttribute("aria-label") !== "OpenPi links" ||
   !links.closest(".composer-wrap") ||
-  linksPill.querySelectorAll("a").length !== 2 ||
-  !linksPill.querySelector(".composer-pill-div") ||
+  linkNav.querySelectorAll("a").length !== 2 ||
+  document.querySelector(".composer-pill-div") ||
+  repo.closest(".composer-pill") !== repo ||
+  docs.closest(".composer-pill") !== docs ||
   document.querySelector(".composer-footer") ||
   document.getElementById("paperLink") ||
   document.querySelector(".set-foot") ||
   /research paper/i.test(html)
 ) {
-  throw new Error("composer links pill is misplaced or a research paper link is still in the page");
+  throw new Error("composer links are still one shared pill or a research paper link is still in the page");
 }
 if (links.previousElementSibling?.classList.contains("composer") !== true) {
-  throw new Error("link pill is not directly below the chat input");
+  throw new Error("link row is not directly below the chat input");
 }
-if (modelSeg.closest(".composer-bar") !== document.querySelector(".composer-bar")) {
+if (modelTrigger.closest(".composer-bar") !== document.querySelector(".composer-bar")) {
   throw new Error("model picker left the composer toolbar");
+}
+if (effortSeg.closest(".composer") ) {
+  throw new Error("effort pill is still inside the composer");
 }
 if (
   !css.includes(".composer-links") ||
