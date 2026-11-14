@@ -213,12 +213,36 @@ if (!document.querySelector('.think-btn[data-think="low"]')) {
   throw new Error("the composer lost Low");
 }
 const modelSeg = document.getElementById("modelSeg");
-const group = document.querySelector(".composer-group");
+const effortSeg = document.querySelector(".think-set");
+const search = document.getElementById("webSearch");
+const pills = [...document.querySelectorAll(".composer-group")];
+const options = document.querySelector(".composer-options");
 if (!modelSeg || modelSeg.getAttribute("role") !== "radiogroup") {
   throw new Error("model segmented picker is missing");
 }
-if (!group || !group.contains(modelSeg) || !group.querySelector(".think-set") || !group.contains(document.getElementById("webSearch"))) {
-  throw new Error("model, effort, and search are not one composer group");
+if (
+  pills.length !== 2 ||
+  !modelSeg.classList.contains("composer-group") ||
+  !effortSeg ||
+  !effortSeg.classList.contains("composer-group") ||
+  pills[0] !== modelSeg ||
+  pills[1] !== effortSeg
+) {
+  throw new Error("model and effort are not separate composer pills");
+}
+if (
+  !options ||
+  options.getAttribute("aria-label") !== "Reply options" ||
+  !options.contains(modelSeg) ||
+  !options.contains(effortSeg) ||
+  !options.contains(search) ||
+  modelSeg.contains(effortSeg) ||
+  modelSeg.contains(search) ||
+  effortSeg.contains(search) ||
+  modelSeg.nextElementSibling !== effortSeg ||
+  effortSeg.nextElementSibling !== search
+) {
+  throw new Error("model, effort, and search are not separate controls in the composer");
 }
 if (document.querySelectorAll(".model-seg [data-mode]").length !== 3) {
   throw new Error("model picker needs three choices");
@@ -351,6 +375,12 @@ if (/html,\s*body\s*\{[^}]*scrollbar-width:\s*none/s.test(css)) {
 }
 if (!css.includes(".composer-group") || !/\.composer-group\s*\{[^}]*height:\s*32px/s.test(css)) {
   throw new Error("composer option group is not 32px tall");
+}
+if (!/\.composer-options\s*\{[^}]*gap:\s*6px/s.test(css) || !/\.composer-options\s*\{[^}]*flex-wrap:\s*wrap/s.test(css)) {
+  throw new Error("model and effort pills are not separate wrapping controls");
+}
+if (!/\.search-btn\s*\{[^}]*height:\s*32px/s.test(css) || !/\.search-btn\s*\{[^}]*border-radius:\s*999px/s.test(css)) {
+  throw new Error("search toggle does not match the composer pill");
 }
 if (css.includes(".model-seg-thumb") || css.includes(".composer-footer")) {
   throw new Error("removed footer picker styles are still present");
