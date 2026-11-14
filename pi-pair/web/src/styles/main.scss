@@ -1623,11 +1623,11 @@ body.voice-session {
   gap: 6px;
   height: 32px;
   max-width: 100%;
-  padding: 0 8px;
+  padding: 0 12px;
   border-radius: 999px;
-  border: none;
-  background: transparent;
-  color: var(--dim);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: #101010;
+  color: var(--muted);
   font-size: 12px;
   font-weight: 500;
   line-height: 1;
@@ -1636,7 +1636,7 @@ body.voice-session {
 
   svg { display: block; width: 14px; height: 14px; flex: none; }
   &:hover { color: var(--ink); }
-  &:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.28); outline-offset: 2px; color: var(--ink); }
+  &:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.28); outline-offset: -2px; color: var(--ink); }
 }
 
 @media (max-width: 480px) {
@@ -1656,7 +1656,7 @@ body.voice-session {
   .send-btn { width: 40px; height: 40px; }
   .model-option { min-height: 44px; }
   .think-btn { min-width: 44px; padding: 0 12px; }
-  .composer-pill { padding: 0 8px; }
+  .composer-pill { padding: 0 12px; }
 }
 
 .msg.streaming .body.arrived { animation: answer-in 0.45s ease; }

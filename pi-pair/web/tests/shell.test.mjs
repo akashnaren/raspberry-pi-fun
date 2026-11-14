@@ -400,6 +400,9 @@ if (!/\.search-btn\s*\{[^}]*height:\s*32px/s.test(css) || !/\.search-btn\s*\{[^}
 if (!/\.model-pop\s*\{[^}]*border-radius:\s*14px/s.test(css) || !/\.composer-pill\s*\{[^}]*height:\s*32px/s.test(css)) {
   throw new Error("model menu or link pills lost their shape");
 }
+if (!/\.composer-pill\s*\{[^}]*border:\s*1px solid rgba\(255,\s*255,\s*255,\s*0\.10\)/s.test(css) || !/\.composer-pill\s*\{[^}]*background:\s*#101010/s.test(css) || !/\.composer-pill\s*\{[^}]*border-radius:\s*999px/s.test(css)) {
+  throw new Error("GitHub and API are not pills matching the effort shell");
+}
 const phoneCss = css.slice(css.lastIndexOf("@media (max-width: 480px)"));
 if (!/\.tool,\s*\.send-btn\s*\{\s*width:\s*40px;\s*height:\s*40px/.test(phoneCss) || !/height:\s*40px/.test(phoneCss)) {
   throw new Error("phone touch targets are under 40px");
