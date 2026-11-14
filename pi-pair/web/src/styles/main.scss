@@ -1417,7 +1417,7 @@ body.voice-session {
   flex-direction: column;
   gap: 2px;
   min-width: 168px;
-  max-width: calc(100vw - 32px);
+  max-width: 220px;
   margin: 0;
   padding: 6px;
   border-radius: 14px;
@@ -1645,10 +1645,18 @@ body.voice-session {
   .user { max-width: 86%; }
   .bot { max-width: 100%; }
   .empty p { font-size: 1.75rem; }
-  .composer { border-radius: 24px; }
+  .composer { border-radius: 24px; padding-right: 12px; }
   .composer-wrap { padding-left: 12px; padding-right: 12px; }
-  .think-btn { min-width: 0; padding: 0 10px; }
-  .composer-pill { padding: 0 6px; }
+  .composer-group { height: auto; }
+  .search-btn,
+  .model-trigger,
+  .think-btn,
+  .composer-pill { height: 40px; }
+  .tool,
+  .send-btn { width: 40px; height: 40px; }
+  .model-option { min-height: 44px; }
+  .think-btn { min-width: 44px; padding: 0 12px; }
+  .composer-pill { padding: 0 8px; }
 }
 
 .msg.streaming .body.arrived { animation: answer-in 0.45s ease; }

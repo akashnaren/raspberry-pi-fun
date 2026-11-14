@@ -400,6 +400,10 @@ if (!/\.search-btn\s*\{[^}]*height:\s*32px/s.test(css) || !/\.search-btn\s*\{[^}
 if (!/\.model-pop\s*\{[^}]*border-radius:\s*14px/s.test(css) || !/\.composer-pill\s*\{[^}]*height:\s*32px/s.test(css)) {
   throw new Error("model menu or link pills lost their shape");
 }
+const phoneCss = css.slice(css.lastIndexOf("@media (max-width: 480px)"));
+if (!/\.tool,\s*\.send-btn\s*\{\s*width:\s*40px;\s*height:\s*40px/.test(phoneCss) || !/height:\s*40px/.test(phoneCss)) {
+  throw new Error("phone touch targets are under 40px");
+}
 if (css.includes(".model-seg-thumb") || css.includes(".composer-footer")) {
   throw new Error("removed footer picker styles are still present");
 }
