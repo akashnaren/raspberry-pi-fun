@@ -358,8 +358,12 @@ class ChatRoutes:
         messages = data.get("messages") or []
         prompt = last_user_text(messages)
         think_raw = data.pop("think", None)
+        has_sample = any(
+            data.get(key) is not None
+            for key in ("temperature", "max_tokens", "max_completion_tokens")
+        )
         if think_raw is None or str(think_raw).strip() == "":
-            effort = decode_effort("medium", prompt)
+            effort = decode_effort("medium" if not has_sample else "", prompt)
         else:
             effort = decode_effort(str(think_raw), prompt)
         self._decode_plan = effort

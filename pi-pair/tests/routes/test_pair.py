@@ -26,7 +26,7 @@ from pair.routes import relay as relay_routes
 from pair.routes import search as search_routes
 from pair.routes import status as status_routes
 from pair.server import make_server
-from pair.turn.shape import GROUNDED_RULE
+from pair.turn.shape import EFFORT_HINT, GROUNDED_RULE
 from tests.support.fakes import LlamaFake, OllamaFake, _start
 from tests.support.paths import ROOT
 from tests.support.web import web_source
@@ -1550,7 +1550,9 @@ class PairHttp(unittest.TestCase):
         self.assertNotIn("<search>", content)
         self.assertIn(GROUNDED_RULE, content)
         inner = content[len("(Context: ") : content.index(GROUNDED_RULE)].strip()
-        self.assertLessEqual(len(inner), limit)
+        hint = EFFORT_HINT["medium"]
+        self.assertIn(hint, inner)
+        self.assertLessEqual(len(inner), limit + len(hint) + 4)
         self.assertIn("snippet", content)
         self.assertLess(len(content), len(page))
         for line in content.splitlines():

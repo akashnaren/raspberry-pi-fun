@@ -1101,7 +1101,10 @@ class TurnHttp(unittest.TestCase):
         def boom(*_args, **_kwargs):
             raise TimeoutError("timed out")
 
-        with patch("pair.routes.reply.stream_ollama", boom):
+        with (
+            patch("pair.routes.reply.stream_ollama", boom),
+            patch("pair.routes.reply.iter_ollama_channels", boom),
+        ):
             conn = HTTPConnection("127.0.0.1", port, timeout=4)
             payload = json.dumps(
                 {
