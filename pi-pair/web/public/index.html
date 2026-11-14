@@ -51,12 +51,13 @@
       <div id="followQueue" class="follow-queue" hidden></div>
       <div class="composer">
         <textarea id="q" placeholder="Message" rows="1" enterkeyhint="send" aria-label="Message"></textarea>
-        <div class="composer-bar flex items-center justify-between">
+        <div class="composer-bar flex items-center justify-end">
+          <div class="composer-tools flex items-center">
+            <div class="composer-choices">
             <button type="button" class="search-btn on" id="webSearch" aria-label="Search the web" aria-pressed="true">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M3 12h18M12 3c2.4 3 3.7 6 3.7 9s-1.3 6-3.7 9c-2.4-3-3.7-6-3.7-9s1.3-6 3.7-9z" stroke="currentColor" stroke-width="1.6"/></svg>
               Search
             </button>
-          <div class="composer-tools flex items-center">
             <div class="model-menu" id="modelMenu">
               <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="menu" aria-expanded="false" aria-controls="modelList" aria-label="Model: Auto">
                 <span id="modelCurrent">Auto</span>
@@ -68,6 +69,8 @@
                 <button type="button" class="model-option" role="menuitemradio" data-mode="pro" aria-checked="false">Pro<svg class="model-check" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12.5 9.2 16.7 19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
               </div>
             </div>
+            </div>
+            <div class="composer-actions">
             <button class="tool mic-off" id="btnVoice" type="button" aria-label="Voice" aria-pressed="false">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M6 11a6 6 0 0 0 12 0M12 17v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </button>
@@ -82,6 +85,7 @@
               <svg class="send-mark" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
               <svg class="stop-mark" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
             </button>
+            </div>
           </div>
         </div>
       </div>

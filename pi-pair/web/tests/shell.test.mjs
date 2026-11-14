@@ -241,8 +241,15 @@ if (composer.contains(effortSeg) || !below.contains(effortSeg) || composer.conta
 if (!composer.contains(search) || below.contains(search) || effortSeg.contains(search) || modelMenu.contains(search)) {
   throw new Error("search is not its own composer toggle");
 }
-if (modelTrigger.closest(".composer-tools") !== document.querySelector(".composer-tools")) {
-  throw new Error("model dropdown is not beside the composer tools");
+const toolOrder = [...document.querySelectorAll(".composer-tools #webSearch, .composer-tools #modelMenu, .composer-tools #btnVoice, .composer-tools #btnAttach, .composer-tools #go")].map((node) => node.id);
+if (toolOrder.join(",") !== "webSearch,modelMenu,btnVoice,btnAttach,go") {
+  throw new Error("composer cluster is out of order: " + toolOrder.join(","));
+}
+if (search.closest(".composer-actions") || !search.closest(".composer-choices") || !modelMenu.closest(".composer-choices")) {
+  throw new Error("search and model are not the leading composer choices");
+}
+if (document.getElementById("go").closest(".composer-actions") !== document.querySelector(".composer-actions")) {
+  throw new Error("send is not kept with mic and attach");
 }
 modelTrigger.click();
 if (modelList.hidden || modelTrigger.getAttribute("aria-expanded") !== "true") {
