@@ -24,13 +24,6 @@ export function hideEmpty(): void {
   document.getElementById("empty")?.remove();
 }
 
-export function setSettingsOpen(on: boolean): void {
-  byId("ioPanel").classList.toggle("open", on);
-  if (on) byId("sourcesPanel").classList.remove("open");
-  const sourcesOpen = byId("sourcesPanel").classList.contains("open");
-  byId("overlay").classList.toggle("open", on || sourcesOpen);
-}
-
 export function setBodyContent(
   node: HTMLElement,
   text: string,
@@ -58,14 +51,12 @@ export function setSourcesOpen(on: boolean): void {
   const panel = byId("sourcesPanel");
   panel.classList.toggle("open", on);
   panel.setAttribute("aria-hidden", on ? "false" : "true");
-  const settingsOpen = byId("ioPanel").classList.contains("open");
-  byId("overlay").classList.toggle("open", on || settingsOpen);
+  byId("overlay").classList.toggle("open", on);
 }
 
 export function openSourcesPanel(detail: PanelDetail): void {
   const body = byId("sourcesBody");
   body.replaceChildren(renderSourcesPanelBody(document, detail));
-  setSettingsOpen(false);
   setSourcesOpen(true);
   document.querySelectorAll(".sources-pill").forEach((pill) => {
     pill.setAttribute("aria-expanded", "false");

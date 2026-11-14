@@ -156,7 +156,7 @@ globalThis.fetch = async (input, init) => {
 };
 
 await import("../src/main.ts");
-const { closeInfoTips, openInfo } = await import("../src/ui/controls.ts");
+const { setModelMode } = await import("../src/ui/controls.ts");
 
 const go = document.getElementById("go");
 if (!go.classList.contains("voice") || go.getAttribute("aria-label") !== "Voice mode") {
@@ -203,100 +203,37 @@ box.dispatchEvent(new window.Event("input"));
 if (!brand.classList.contains("brand-logo") || brand.classList.contains("brand-title")) {
   throw new Error("clearing the draft did not return to the logo");
 }
-if (!document.getElementById("btnIo").querySelector("svg path[d*='M12 15.5']")) {
-  throw new Error("settings control is not a gear");
+for (const id of ["btnIo", "ioPanel", "enterSend", "pictures", "sys", "modeBtn", "modePop", "modeLabel", "paperLink"]) {
+  if (document.getElementById(id)) throw new Error(id + " should not be on the page");
 }
-for (const id of ["serviceNow", "serviceLog", "voiceSilence", "modelSel", "btnMd", "btnTxt", "btnClear"]) {
-  if (document.getElementById(id)) throw new Error(id + " is still in settings");
-}
-if (document.querySelector("#ioPanel [data-think]")) {
-  throw new Error("settings still has a thinking control");
-}
-if (document.querySelector(".think-btn .info-dot")) {
-  throw new Error("thinking controls still show an info icon");
-}
-if (document.querySelectorAll(".mode-opt .info-dot").length !== 3) {
-  throw new Error("model choices lost their info icons");
+if (document.querySelector(".info-dot, .info-pop, .set-foot, [data-theme-choice]")) {
+  throw new Error("removed settings or theme UI is still present");
 }
 if (!document.querySelector('.think-btn[data-think="low"]')) {
   throw new Error("the composer lost Low");
 }
-
-document.getElementById("btnIo").click();
-if (!document.getElementById("ioPanel").classList.contains("open")) throw new Error("settings stayed closed");
-document.querySelector('[data-theme-choice="light"]').click();
-if (document.documentElement.getAttribute("data-theme") !== "light") throw new Error("light theme did not apply");
-if (!window.localStorage.getItem("openpi.settings").includes('"theme":"light"')) {
-  throw new Error("theme was not stored");
+const modelSeg = document.getElementById("modelSeg");
+if (!modelSeg || modelSeg.getAttribute("role") !== "radiogroup") {
+  throw new Error("model segmented picker is missing");
 }
-document.querySelector("#ioPanel [data-mode='pro']").click();
-if (document.getElementById("modeLabel").textContent !== "Pro") throw new Error("settings did not select Pro");
+if (document.querySelectorAll(".model-seg [data-mode]").length !== 3) {
+  throw new Error("model picker needs three choices");
+}
+if (document.querySelector(".model-seg .info-dot")) {
+  throw new Error("model picker still has info icons");
+}
+document.querySelector('.model-seg [data-mode="pro"]').click();
+if (modelSeg.getAttribute("data-active") !== "pro") throw new Error("Pro was not selected");
+if (document.querySelector('.model-seg [data-mode="pro"]').getAttribute("aria-checked") !== "true") {
+  throw new Error("Pro radio was not checked");
+}
+setModelMode("auto");
 document.querySelector('.think-btn[data-think="low"]').click();
 if (!document.querySelector('.think-btn[data-think="low"]').classList.contains("on")) {
   throw new Error("composer thinking did not change");
 }
-const enter = document.getElementById("enterSend");
-enter.checked = false;
-enter.dispatchEvent(new window.Event("change"));
-const before = streams.length;
-box.value = "should not send";
-box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-if (streams.length !== before) throw new Error("Enter sent while the setting was off");
-enter.checked = true;
-enter.dispatchEvent(new window.Event("change"));
-
-document.getElementById("modeBtn").click();
-const menu = document.getElementById("modePop");
-if (menu.hidden) throw new Error("Auto menu did not open");
-const autoInfo = menu.querySelector('[aria-label="About Auto"]');
-const modeBefore = document.getElementById("modeLabel").textContent;
-autoInfo.click();
-if (document.getElementById("modeLabel").textContent !== modeBefore) {
-  throw new Error("info tap changed the model");
-}
-const autoTip = document.getElementById("tip-menu-auto");
-if (autoTip.hidden || autoInfo.getAttribute("aria-expanded") !== "true") {
-  throw new Error("info tap did not open the tip");
-}
-const flashInfo = menu.querySelector('[aria-label="About Flash"]');
-flashInfo.click();
-if (!autoTip.hidden || document.getElementById("tip-menu-flash").hidden) {
-  throw new Error("two info tips stayed open");
-}
-document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-if (!document.getElementById("tip-menu-flash").hidden) throw new Error("Escape left the tip open");
-flashInfo.dispatchEvent(new window.Event("pointerenter", { bubbles: true }));
-if (document.getElementById("tip-menu-flash").hidden) throw new Error("fine pointer did not show the tip");
-document.dispatchEvent(new window.Event("click", { bubbles: true }));
-if (!document.getElementById("tip-menu-flash").hidden) throw new Error("outside click left the tip open");
-menu.querySelector('[data-mode="auto"]').click();
-if (document.getElementById("modeLabel").textContent !== "Auto" || !menu.hidden) {
-  throw new Error("menu did not return to Auto");
-}
-await new Promise((resolve) => setTimeout(resolve, 30));
-const flashText = document.getElementById("tip-menu-flash").textContent;
-const proText = document.getElementById("tip-menu-pro").textContent;
-if (flashText !== "Fast answers for everyday questions.") {
-  throw new Error("flash tip was not the general sentence: " + flashText);
-}
-if (proText !== "Slower, more careful answers for harder questions.") {
-  throw new Error("pro tip was not the general sentence: " + proText);
-}
-if (document.getElementById("tip-set-flash").textContent !== flashText) {
-  throw new Error("settings flash tip did not follow health");
-}
-if (document.getElementById("tip-set-pro").textContent !== proText) {
-  throw new Error("settings pro tip did not follow health");
-}
-if (
-  html.includes("qwen2.5:0.5b, the fast resident model")
-  || html.includes("qwen3:0.6b, the fast resident model")
-  || html.includes("qwen3:1.7b, loaded when the question needs it")
-) {
-  throw new Error("source html still hardcodes a model tip");
-}
-if (autoTip.textContent !== "Routes Flash or Pro from the question.") {
-  throw new Error("auto tip changed");
+if (document.documentElement.getAttribute("data-theme") !== "dark") {
+  throw new Error("theme is not locked to dark");
 }
 
 box.value = "Where is the bench?";
@@ -404,8 +341,11 @@ if (!/&::-webkit-scrollbar\s*\{[^}]*display:\s*none/s.test(logRule)) {
 if (/html,\s*body\s*\{[^}]*scrollbar-width:\s*none/s.test(css)) {
   throw new Error("the page scrollbar was hidden");
 }
-if (!css.includes(".info-dot") || !/\.info-dot\s*\{[^}]*min-width:\s*32px/s.test(css)) {
-  throw new Error("info hit target is under 32px");
+if (!css.includes(".model-seg") || !/\.model-seg\s*\{[^}]*height:\s*32px/s.test(css)) {
+  throw new Error("model picker is not 32px tall");
+}
+if (!/\.model-seg-thumb\s*\{[^}]*transition:\s*transform 150ms ease/s.test(css)) {
+  throw new Error("model picker thumb has no 150ms slide");
 }
 const page = webSource();
 if (!page.includes('setAttribute("aria-label", "Retry")') || !page.includes("retryIcon")) {
@@ -421,6 +361,7 @@ if (page.includes('speakText("Thinking")')) throw new Error("thinking is spoken 
 
 const docs = document.getElementById("apiDocsLink");
 const repo = document.getElementById("repoLink");
+const footer = document.querySelector(".composer-footer");
 const links = docs && docs.closest(".composer-links");
 if (
   !docs ||
@@ -454,53 +395,26 @@ if (
 ) {
   throw new Error("composer pills are misplaced or a research paper link is still in the page");
 }
-if (links.previousElementSibling?.classList.contains("composer") !== true) {
-  throw new Error("composer pills are not directly below the chat input");
+if (!footer || footer.querySelector("#modelSeg") !== modelSeg || !footer.contains(links)) {
+  throw new Error("composer footer is missing the model picker or link row");
+}
+if (footer.previousElementSibling?.classList.contains("composer") !== true) {
+  throw new Error("composer footer is not directly below the chat input");
 }
 if (
   !css.includes(".composer-links") ||
   !css.includes(".composer-pill") ||
   !/\.composer-pill\s*\{[^}]*border-radius:\s*999px/s.test(css) ||
   !css.includes("body.voice-session") ||
-  !/body\.voice-session[^{]*\{[^}]*\.composer-links/s.test(css)
+  !/body\.voice-session[^{]*\{[^}]*\.composer-footer/s.test(css)
 ) {
   throw new Error("composer pills have no styles");
 }
-const lightAt = css.indexOf('html[data-theme="light"]');
-if (lightAt < 0 || !css.slice(lightAt).includes(".composer-pill")) {
-  throw new Error("composer pills have no light-theme color");
+if (css.includes('html[data-theme="light"]')) {
+  throw new Error("light theme styles are still present");
 }
-if (
-  !/\.info-pop\s*\{[^}]*max-width:\s*min\(260px,\s*calc\(100vw - 24px\)\)/s.test(css) ||
-  !/\.info-pop\s*\{[^}]*white-space:\s*normal/s.test(css)
-) {
-  throw new Error("info tips do not wrap or stay within the viewport width");
-}
-const proInfo = document.querySelector('#modePop [aria-label="About Pro"]');
-const proTip = document.getElementById("tip-menu-pro");
-if (!proInfo || !proTip) throw new Error("Pro info tip is missing");
-Object.defineProperty(window, "innerWidth", { value: 400, configurable: true });
-Object.defineProperty(window, "innerHeight", { value: 600, configurable: true });
-proInfo.getBoundingClientRect = () => ({
-  left: 300, right: 332, top: 400, bottom: 432, width: 32, height: 32, x: 300, y: 400, toJSON() {},
-});
-proTip.getBoundingClientRect = () => {
-  const left = parseFloat(proTip.style.left) || 0;
-  const top = parseFloat(proTip.style.top) || 0;
-  return { left, right: left + 260, top, bottom: top + 40, width: 260, height: 40, x: left, y: top, toJSON() {} };
-};
-openInfo(proInfo, true);
-if (proTip.hidden || proTip.parentElement !== document.body || proTip.style.position !== "fixed") {
-  throw new Error("the open tip was not moved to a fixed layer");
-}
-const tipLeft = parseFloat(proTip.style.left);
-const tipTop = parseFloat(proTip.style.top);
-if (!(tipLeft >= 12) || tipLeft + 260 > 400 - 12 || tipTop < 12 || tipTop + 40 > 600 - 12) {
-  throw new Error("the Pro tip was not clamped on screen: " + tipLeft + "," + tipTop);
-}
-closeInfoTips();
-if (!proTip.hidden || !proInfo.closest(".info-slot")?.contains(proTip)) {
-  throw new Error("closing the tip did not put it back in its slot");
+if (/research paper/i.test(html)) {
+  throw new Error("research paper copy is still in the page");
 }
 const fileRule = css.slice(css.indexOf(".file-tag {"), css.indexOf(".file-tag {") + 500);
 if (!fileRule.includes("&.err")) throw new Error("a failed file chip has no error style");
@@ -515,19 +429,6 @@ if (page.includes("the fast resident model")) {
   throw new Error("tips still name the resident model");
 }
 
-document.getElementById("btnIo").click();
-document.getElementById("modeBtn").click();
-if (document.getElementById("modePop").hidden) throw new Error("menu did not open for dismiss");
-document.getElementById("modeBtn").dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
-if (document.getElementById("modePop").hidden) {
-  throw new Error("pointerdown on the mode button closed the menu");
-}
-document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
-if (!document.getElementById("modePop").hidden) {
-  throw new Error("outside pointerdown left the menu open");
-}
-document.getElementById("modeBtn").click();
-document.getElementById("btnIo").click();
 const sourcesPill = document.querySelector(".sources-pill");
 if (!sourcesPill) throw new Error("sources pill missing before Escape");
 sourcesPill.click();
@@ -539,13 +440,6 @@ box.focus = () => {
   composerFocused = true;
 };
 document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-if (!document.getElementById("modePop").hidden) throw new Error("Escape left the menu open");
-if (document.getElementById("modeBtn").getAttribute("aria-expanded") !== "false") {
-  throw new Error("Escape left the menu expanded");
-}
-if (document.getElementById("ioPanel").classList.contains("open")) {
-  throw new Error("Escape left settings open");
-}
 if (document.getElementById("sourcesPanel").classList.contains("open")) {
   throw new Error("Escape left sources open");
 }

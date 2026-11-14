@@ -87,12 +87,11 @@ export async function sendText(
   };
   void refresh();
   try {
-    const sys = (byId<HTMLTextAreaElement>("sys").value || "").trim();
     const body = chatBody(turns, {
       model,
       effort,
       mode: ui.modelMode,
-      sys,
+      sys: "",
       fresh,
       spoken,
       webSearch: ui.webSearch,

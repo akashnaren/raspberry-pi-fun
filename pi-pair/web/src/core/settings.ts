@@ -4,7 +4,7 @@ import { END_OF_UTTERANCE_SILENCE_MS, setEndOfUtteranceSilence } from "../voice/
 
 export const SETTINGS_KEY = "openpi.settings";
 
-export type ThemeName = "dark" | "light";
+export type ThemeName = "dark";
 export type ModelMode = "auto" | "flash" | "pro";
 export type ThinkLevel = "low" | "medium" | "high";
 
@@ -28,8 +28,8 @@ export function defaultSettings(): PageSettings {
   };
 }
 
-function asTheme(value: unknown): ThemeName {
-  return value === "light" ? "light" : "dark";
+function asTheme(_value: unknown): ThemeName {
+  return "dark";
 }
 
 function asMode(value: unknown): ModelMode {
@@ -77,10 +77,10 @@ export function saveSettings(storage: Storage | null, settings: PageSettings): v
   }
 }
 
-export function applyTheme(theme: ThemeName): void {
-  document.documentElement.setAttribute("data-theme", theme);
+export function applyTheme(_theme: ThemeName): void {
+  document.documentElement.setAttribute("data-theme", "dark");
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", theme === "light" ? "#f4f4f1" : "#0a0a0a");
+  if (meta) meta.setAttribute("content", "#0a0a0a");
 }
 
 export function applyVoiceSilence(ms: number): number {

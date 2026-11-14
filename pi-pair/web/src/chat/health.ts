@@ -2,7 +2,7 @@ import { byId, el } from "../core/dom";
 import { VISIBILITY_SETTLE_MS, serviceView, shouldPollHealth, shouldSoftRetry, softRetryDelay, suppressOfflineBanner } from "../core/presence";
 import { ui } from "../core/state";
 import type { HealthBody } from "../core/types";
-import { FLASH_TIP, PRO_TIP, serviceLines } from "../main";
+import { serviceLines } from "../main";
 import { sendText } from "./send";
 
 export function showOffline(): void {
@@ -46,7 +46,6 @@ export async function refresh(): Promise<void> {
       const banner = byId("banner");
       banner.className = "";
       banner.replaceChildren();
-      paintModelTips();
       paintServices(body);
       return;
     } catch {
@@ -63,17 +62,6 @@ export async function refresh(): Promise<void> {
       return;
     }
   }
-}
-
-export function paintModelTips(): void {
-  const write = (id: string, text: string) => {
-    const node = document.getElementById(id);
-    if (node) node.textContent = text;
-  };
-  write("tip-menu-flash", FLASH_TIP);
-  write("tip-set-flash", FLASH_TIP);
-  write("tip-menu-pro", PRO_TIP);
-  write("tip-set-pro", PRO_TIP);
 }
 
 export function paintServices(body: HealthBody): void {
