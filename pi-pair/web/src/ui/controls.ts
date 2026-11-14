@@ -92,27 +92,93 @@ export function infoTip(btn: HTMLElement): HTMLElement | null {
   return id ? document.getElementById(id) : null;
 }
 
+function clearTipStyle(tip: HTMLElement): void {
+  tip.style.position = "";
+  tip.style.left = "";
+  tip.style.top = "";
+  tip.style.right = "";
+  tip.style.bottom = "";
+  tip.style.transform = "";
+  tip.style.maxWidth = "";
+  tip.style.zIndex = "";
+  tip.style.width = "";
+}
+
+function restoreTip(tip: HTMLElement): void {
+  clearTipStyle(tip);
+  const btn = document.querySelector(`.info-dot[aria-describedby="${tip.id}"]`);
+  const slot = btn?.closest(".info-slot");
+  if (slot && tip.parentElement !== slot) slot.appendChild(tip);
+}
+
+export function hideInfo(btn: HTMLElement): void {
+  btn.setAttribute("aria-expanded", "false");
+  const tip = infoTip(btn);
+  if (!tip) return;
+  tip.hidden = true;
+  restoreTip(tip);
+}
+
+export function placeInfoTip(btn: HTMLElement, tip: HTMLElement): void {
+  const pad = 12;
+  watchInfoTips();
+  if (tip.parentElement !== document.body) document.body.appendChild(tip);
+  tip.style.position = "fixed";
+  tip.style.zIndex = "200";
+  tip.style.maxWidth = "min(260px, calc(100vw - 24px))";
+  tip.style.width = "max-content";
+  tip.style.right = "auto";
+  tip.style.bottom = "auto";
+  tip.style.transform = "none";
+  tip.style.left = "0px";
+  tip.style.top = "0px";
+  const br = btn.getBoundingClientRect();
+  const tr = tip.getBoundingClientRect();
+  const width = Math.min(tr.width || 260, Math.max(pad, window.innerWidth - pad * 2));
+  let left = br.left + br.width / 2 - width / 2;
+  left = Math.max(pad, Math.min(left, window.innerWidth - pad - width));
+  const above = br.top - (tr.height || 0) - 6;
+  const below = br.bottom + 6;
+  let top = above >= pad ? above : below;
+  const maxTop = window.innerHeight - pad - (tr.height || 0);
+  if (Number.isFinite(maxTop)) top = Math.max(pad, Math.min(top, maxTop));
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.top = `${Math.round(top)}px`;
+}
+
+function repositionOpenTips(): void {
+  document.querySelectorAll('.info-dot[aria-expanded="true"]').forEach((node) => {
+    const tip = infoTip(node as HTMLElement);
+    if (tip && !tip.hidden) placeInfoTip(node as HTMLElement, tip);
+  });
+}
+
+let watchingTips = false;
+export function watchInfoTips(): void {
+  if (watchingTips) return;
+  watchingTips = true;
+  window.addEventListener("resize", repositionOpenTips);
+  window.addEventListener("scroll", repositionOpenTips, true);
+}
+
 export function closeInfoTips(): void {
   ui.pinnedInfo = null;
   document.querySelectorAll(".info-dot").forEach((node) => {
-    node.setAttribute("aria-expanded", "false");
-    const tip = infoTip(node as HTMLElement);
-    if (tip) tip.hidden = true;
+    hideInfo(node as HTMLElement);
   });
 }
 
 export function openInfo(btn: HTMLElement, pin: boolean): void {
   document.querySelectorAll(".info-dot").forEach((node) => {
     if (node === btn) return;
-    node.setAttribute("aria-expanded", "false");
-    const other = infoTip(node as HTMLElement);
-    if (other) other.hidden = true;
+    hideInfo(node as HTMLElement);
   });
   if (ui.pinnedInfo && ui.pinnedInfo !== btn) ui.pinnedInfo = null;
   const tip = infoTip(btn);
   if (!tip) return;
   btn.setAttribute("aria-expanded", "true");
   tip.hidden = false;
+  placeInfoTip(btn, tip);
   if (pin) ui.pinnedInfo = btn;
 }
 

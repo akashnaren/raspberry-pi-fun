@@ -961,9 +961,9 @@ html[data-theme="light"] .brand-mark .mark-b { stop-color: #1d4ed8; }
   left: 50%;
   bottom: calc(100% + 6px);
   transform: translateX(-50%);
-  z-index: 80;
+  z-index: 200;
   width: max-content;
-  max-width: 220px;
+  max-width: min(260px, calc(100vw - 24px));
   padding: 8px 10px;
   border-radius: 10px;
   background: #1c1c1c;
@@ -1238,7 +1238,8 @@ body.voice-session {
   .file-tag,
   .read-bar,
   .follow-queue,
-  .voice-note { display: none; }
+  .voice-note,
+  .composer-links { display: none; }
 
   .voice-stage { display: flex; }
 
@@ -1661,18 +1662,34 @@ body.voice-session {
   gap: 14px;
 }
 
-.set-foot {
-  margin: auto 0 0;
-  padding-top: 4px;
+.composer-links {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
 }
 
-.api-docs-link {
-  font-size: 12px;
-  line-height: 1.4;
+.composer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
   text-decoration: none;
+  white-space: nowrap;
 
-  &:hover { color: var(--ink); text-decoration: underline; }
+  svg { display: block; width: 14px; height: 14px; flex: none; }
+  &:hover { color: var(--ink); border-color: rgba(255, 255, 255, 0.22); background: var(--hover); }
+  &:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.28); outline-offset: 1px; color: var(--ink); }
 }
 
 .set-block {
@@ -1878,7 +1895,11 @@ html[data-theme="light"] {
   .sources-links a:hover, .mode-opt:hover { background: rgba(0, 0, 0, 0.04); }
   .search-failed, .sources-step-failed { color: #9d2c28; }
   .overlay { background: rgba(20, 20, 20, 0.28); }
-  .api-docs-link { color: var(--dim); }
-  .api-docs-link:hover { color: var(--ink); }
+  .composer-pill {
+    border-color: rgba(0, 0, 0, 0.1);
+    color: var(--dim);
+
+    &:hover { color: var(--ink); border-color: rgba(0, 0, 0, 0.18); background: var(--hover); }
+  }
   .drawer-actions button, .field input, .field select, .field textarea { border-color: rgba(0, 0, 0, 0.1); }
 }

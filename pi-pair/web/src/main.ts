@@ -12,7 +12,7 @@ import { ui } from "./core/state";
 import type { Turn } from "./core/types";
 import { compactMemory, hideMemPopSoon, holdRingTitle, refreshMemoryRing, showMemPop } from "./memory/ring";
 import { bootSplash, paintBrand } from "./ui/brand";
-import { closeInfoTips, dismissPopovers, infoTip, newChat, openInfo, paintModelMode, paintThemeChoice, paintThinking, paintWebSearch, persistSettings, setModelMode, setTheme, setThinking, setWebSearch } from "./ui/controls";
+import { closeInfoTips, dismissPopovers, hideInfo, newChat, openInfo, paintModelMode, paintThemeChoice, paintThinking, paintWebSearch, persistSettings, setModelMode, setTheme, setThinking, setWebSearch } from "./ui/controls";
 import { setSettingsOpen, setSourcesOpen } from "./ui/panels";
 import { armBarge, endVoiceMode, ensureOrb, releaseVoice, setVoiceState, toggleVoice, toggleVoiceMode } from "./voice/mode";
 import { firstSpokenSentence, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice/speech";
@@ -96,9 +96,7 @@ document.querySelectorAll(".info-slot").forEach((slot) => {
     event.stopPropagation();
     if (ui.pinnedInfo === btn) {
       ui.pinnedInfo = null;
-      btn.setAttribute("aria-expanded", "false");
-      const tip = infoTip(btn);
-      if (tip) tip.hidden = true;
+      hideInfo(btn);
       return;
     }
     openInfo(btn, true);
@@ -111,9 +109,7 @@ document.querySelectorAll(".info-slot").forEach((slot) => {
   });
   slot.addEventListener("pointerleave", () => {
     if (ui.pinnedInfo === btn) return;
-    btn.setAttribute("aria-expanded", "false");
-    const tip = infoTip(btn);
-    if (tip) tip.hidden = true;
+    hideInfo(btn);
   });
 });
 

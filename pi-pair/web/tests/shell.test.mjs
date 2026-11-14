@@ -156,6 +156,7 @@ globalThis.fetch = async (input, init) => {
 };
 
 await import("../src/main.ts");
+const { closeInfoTips, openInfo } = await import("../src/ui/controls.ts");
 
 const go = document.getElementById("go");
 if (!go.classList.contains("voice") || go.getAttribute("aria-label") !== "Voice mode") {
@@ -419,40 +420,87 @@ if (!html.includes('id="voiceSend"') || !page.includes('voiceCaption("Thinking")
 if (page.includes('speakText("Thinking")')) throw new Error("thinking is spoken aloud");
 
 const docs = document.getElementById("apiDocsLink");
-if (!docs || docs.getAttribute("href") !== "/docs" || docs.getAttribute("target") !== "_blank") {
-  throw new Error("API docs link missing from the settings drawer");
-}
-if (!docs.closest("#ioPanel .drawer-body") || !docs.closest(".set-foot")) {
-  throw new Error("API docs link is not at the bottom of the settings drawer");
-}
-if (!css.includes(".api-docs-link") || !css.includes(".set-foot")) {
-  throw new Error("API docs link has no styles");
-}
 const repo = document.getElementById("repoLink");
-const paper = document.getElementById("paperLink");
-const foot = docs.closest(".set-foot");
+const links = docs && docs.closest(".composer-links");
+if (
+  !docs ||
+  docs.getAttribute("href") !== "/docs" ||
+  docs.getAttribute("target") !== "_blank" ||
+  docs.getAttribute("rel") !== "noopener noreferrer" ||
+  !docs.getAttribute("aria-label") ||
+  !docs.querySelector("svg") ||
+  docs.textContent.trim() !== "API docs"
+) {
+  throw new Error("API docs pill is missing under the composer");
+}
 if (
   !repo ||
   repo.getAttribute("href") !== "https://github.com/akashnaren/raspberry-pi-fun" ||
   repo.getAttribute("target") !== "_blank" ||
-  repo.getAttribute("rel") !== "noopener" ||
+  repo.getAttribute("rel") !== "noopener noreferrer" ||
   !repo.getAttribute("aria-label") ||
-  !repo.closest(".set-foot") ||
-  repo.closest(".set-foot") !== foot ||
-  !paper ||
-  paper.getAttribute("href") !== "https://akashnaren.github.io/research/pi-0.2-high/paper.pdf" ||
-  paper.getAttribute("target") !== "_blank" ||
-  paper.getAttribute("rel") !== "noopener" ||
-  paper.getAttribute("aria-label") !== "OpenPi research paper (PDF), opens in a new tab" ||
-  !paper.classList.contains("api-docs-link") ||
-  paper.closest(".set-foot") !== foot ||
-  foot.textContent.replace(/\s+/g, " ").trim() !== "API docs · Git repo · Research paper"
+  !repo.querySelector("svg") ||
+  repo.textContent.trim() !== "GitHub"
 ) {
-  throw new Error("repo or research paper link missing or misplaced next to the API docs link");
+  throw new Error("GitHub pill is missing under the composer");
+}
+if (
+  !links ||
+  links.getAttribute("aria-label") !== "OpenPi links" ||
+  !links.closest(".composer-wrap") ||
+  document.getElementById("paperLink") ||
+  document.querySelector(".set-foot") ||
+  /research paper/i.test(html)
+) {
+  throw new Error("composer pills are misplaced or a research paper link is still in the page");
+}
+if (links.previousElementSibling?.classList.contains("composer") !== true) {
+  throw new Error("composer pills are not directly below the chat input");
+}
+if (
+  !css.includes(".composer-links") ||
+  !css.includes(".composer-pill") ||
+  !/\.composer-pill\s*\{[^}]*border-radius:\s*999px/s.test(css) ||
+  !css.includes("body.voice-session") ||
+  !/body\.voice-session[^{]*\{[^}]*\.composer-links/s.test(css)
+) {
+  throw new Error("composer pills have no styles");
 }
 const lightAt = css.indexOf('html[data-theme="light"]');
-if (lightAt < 0 || !css.slice(lightAt).includes(".api-docs-link")) {
-  throw new Error("API docs link has no light-theme color");
+if (lightAt < 0 || !css.slice(lightAt).includes(".composer-pill")) {
+  throw new Error("composer pills have no light-theme color");
+}
+if (
+  !/\.info-pop\s*\{[^}]*max-width:\s*min\(260px,\s*calc\(100vw - 24px\)\)/s.test(css) ||
+  !/\.info-pop\s*\{[^}]*white-space:\s*normal/s.test(css)
+) {
+  throw new Error("info tips do not wrap or stay within the viewport width");
+}
+const proInfo = document.querySelector('#modePop [aria-label="About Pro"]');
+const proTip = document.getElementById("tip-menu-pro");
+if (!proInfo || !proTip) throw new Error("Pro info tip is missing");
+Object.defineProperty(window, "innerWidth", { value: 400, configurable: true });
+Object.defineProperty(window, "innerHeight", { value: 600, configurable: true });
+proInfo.getBoundingClientRect = () => ({
+  left: 300, right: 332, top: 400, bottom: 432, width: 32, height: 32, x: 300, y: 400, toJSON() {},
+});
+proTip.getBoundingClientRect = () => {
+  const left = parseFloat(proTip.style.left) || 0;
+  const top = parseFloat(proTip.style.top) || 0;
+  return { left, right: left + 260, top, bottom: top + 40, width: 260, height: 40, x: left, y: top, toJSON() {} };
+};
+openInfo(proInfo, true);
+if (proTip.hidden || proTip.parentElement !== document.body || proTip.style.position !== "fixed") {
+  throw new Error("the open tip was not moved to a fixed layer");
+}
+const tipLeft = parseFloat(proTip.style.left);
+const tipTop = parseFloat(proTip.style.top);
+if (!(tipLeft >= 12) || tipLeft + 260 > 400 - 12 || tipTop < 12 || tipTop + 40 > 600 - 12) {
+  throw new Error("the Pro tip was not clamped on screen: " + tipLeft + "," + tipTop);
+}
+closeInfoTips();
+if (!proTip.hidden || !proInfo.closest(".info-slot")?.contains(proTip)) {
+  throw new Error("closing the tip did not put it back in its slot");
 }
 const fileRule = css.slice(css.indexOf(".file-tag {"), css.indexOf(".file-tag {") + 500);
 if (!fileRule.includes("&.err")) throw new Error("a failed file chip has no error style");
