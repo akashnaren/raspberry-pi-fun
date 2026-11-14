@@ -317,10 +317,9 @@ if (picturedBody.querySelector(".image-cards")) {
   throw new Error("cards were written into the answer text");
 }
 
-const pictures = document.getElementById("pictures");
-if (!pictures || !pictures.checked) throw new Error("pictures should default on");
-pictures.checked = false;
-pictures.dispatchEvent(new window.Event("change"));
+const { ui } = await import("../src/core/state.ts");
+if (!ui.picturesOn) throw new Error("pictures should default on");
+ui.picturesOn = false;
 const callsBeforeToggle = imageCalls;
 const quiet = await sendTurn("Explain recursion briefly");
 await waitFor("quiet live row", () => document.querySelector(".msg.bot.streaming"));

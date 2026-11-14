@@ -1,9 +1,8 @@
 import type { DocCard } from "./attach/message";
 import { abortAttachForNavigation, cancelAttach, loadFile, releaseAttachButton } from "./attach/upload";
-import { paintModelTips, refresh } from "./chat/health";
+import { refresh } from "./chat/health";
 import { autoGrow, composerHasDraft, send, stopCurrent, syncSend } from "./chat/send";
 import { paint, restoreTurns } from "./chat/transcript";
-import { abortImageJobs } from "./chat/turn-images";
 import { byId, els } from "./core/dom";
 import { HEALTH_POLL_MS, VISIBILITY_SETTLE_MS, shouldPollHealth } from "./core/presence";
 import { sessionHeaders } from "./core/session";
@@ -12,21 +11,26 @@ import { ui } from "./core/state";
 import type { Turn } from "./core/types";
 import { compactMemory, hideMemPopSoon, holdRingTitle, refreshMemoryRing, showMemPop } from "./memory/ring";
 import { bootSplash, paintBrand } from "./ui/brand";
-import { closeInfoTips, dismissPopovers, infoTip, newChat, openInfo, paintModelMode, paintThemeChoice, paintThinking, paintWebSearch, persistSettings, setModelMode, setTheme, setThinking, setWebSearch } from "./ui/controls";
-import { setSettingsOpen, setSourcesOpen } from "./ui/panels";
+import { newChat, paintModelMode, paintThinking, paintWebSearch, setModelMode, setThinking, setWebSearch } from "./ui/controls";
+import { setSourcesOpen } from "./ui/panels";
 import { armBarge, endVoiceMode, ensureOrb, releaseVoice, setVoiceState, toggleVoice, toggleVoiceMode } from "./voice/mode";
 import { firstSpokenSentence, whenSpeechEnds, whenSpeechPulses, whenSpeechStarts } from "./voice/speech";
 export { loadFile } from "./attach/upload";
 export { ringDashOffset, refreshMemoryRing } from "./memory/ring";
 
-export const FLASH_TIP = "Fast answers for everyday questions.";
-export const PRO_TIP = "Slower, more careful answers for harder questions.";
 export const turns: Turn[] = [];
 export const serviceLines: string[] = [];
 export const followExtra = new Map<number, { text: string; hidden: string; attachment: DocCard | null }>();
 export const ATTACH_TIMEOUT_MS = 60_000;
 
 export const VOICE_CLASSES = ["listening", "heard", "thinking", "speaking", "error"];
+
+const MODE_CYCLE = ["auto", "flash", "pro"] as const;
+
+function focusModelSeg(): void {
+  const active = document.querySelector('.model-seg-btn[aria-checked="true"]') as HTMLButtonElement | null;
+  active?.focus();
+}
 
 byId("go").onclick = () => {
   if (ui.uploading || ui.attachError) return;
@@ -82,86 +86,36 @@ composer.addEventListener("keydown", (event) => {
 document.querySelectorAll("[data-think]").forEach((btn) => {
   (btn as HTMLButtonElement).onclick = () => setThinking(btn.getAttribute("data-think") || "medium");
 });
-document.querySelectorAll("[data-mode]").forEach((btn) => {
-  (btn as HTMLButtonElement).onclick = (event) => {
-    event.stopPropagation();
-    setModelMode(btn.getAttribute("data-mode") || "auto");
-  };
+document.querySelectorAll(".model-seg [data-mode]").forEach((btn) => {
+  (btn as HTMLButtonElement).onclick = () => setModelMode(btn.getAttribute("data-mode") || "auto");
 });
-
-document.querySelectorAll(".info-slot").forEach((slot) => {
-  const btn = slot.querySelector(".info-dot") as HTMLButtonElement | null;
-  if (!btn) return;
-  btn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (ui.pinnedInfo === btn) {
-      ui.pinnedInfo = null;
-      btn.setAttribute("aria-expanded", "false");
-      const tip = infoTip(btn);
-      if (tip) tip.hidden = true;
-      return;
-    }
-    openInfo(btn, true);
-  });
-  slot.addEventListener("pointerenter", (event) => {
-    const kind = (event as PointerEvent).pointerType || "";
-    if (kind === "touch" || kind === "pen") return;
-    if (!window.matchMedia("(pointer: fine)").matches) return;
-    openInfo(btn, false);
-  });
-  slot.addEventListener("pointerleave", () => {
-    if (ui.pinnedInfo === btn) return;
-    btn.setAttribute("aria-expanded", "false");
-    const tip = infoTip(btn);
-    if (tip) tip.hidden = true;
-  });
+const modelSeg = document.getElementById("modelSeg");
+modelSeg?.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+    return;
+  }
+  event.preventDefault();
+  const idx = MODE_CYCLE.indexOf(ui.modelMode as (typeof MODE_CYCLE)[number]);
+  const next = event.key === "ArrowLeft" || event.key === "ArrowUp"
+    ? MODE_CYCLE[(idx + MODE_CYCLE.length - 1) % MODE_CYCLE.length]
+    : MODE_CYCLE[(idx + 1) % MODE_CYCLE.length];
+  setModelMode(next);
+  focusModelSeg();
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   const pop = document.getElementById("memPop");
   if (pop) pop.hidden = true;
-  dismissPopovers();
-  setSettingsOpen(false);
   setSourcesOpen(false);
   if (ui.voiceOn) endVoiceMode();
   byId<HTMLTextAreaElement>("q").focus();
 });
-document.querySelectorAll("[data-theme-choice]").forEach((btn) => {
-  (btn as HTMLButtonElement).onclick = () => setTheme(btn.getAttribute("data-theme-choice") || "dark");
-});
-byId("modeBtn").onclick = (event) => {
-  event.stopPropagation();
-  closeInfoTips();
-  const menu = byId("modePop");
-  const open = menu.hidden;
-  menu.hidden = !open;
-  byId("modeBtn").setAttribute("aria-expanded", open ? "true" : "false");
-};
-document.addEventListener("pointerdown", (event) => dismissPopovers(event), true);
-document.addEventListener("click", (event) => dismissPopovers(event));
-const enterBox = byId<HTMLInputElement>("enterSend");
-els.enterBox = enterBox;
 
-enterBox.checked = ui.enterToSend;
-enterBox.addEventListener("change", () => {
-  ui.enterToSend = enterBox.checked;
-  persistSettings();
-});
-const picturesBox = byId<HTMLInputElement>("pictures");
-els.picturesBox = picturesBox;
-
-picturesBox.checked = ui.picturesOn;
-picturesBox.addEventListener("change", () => {
-  ui.picturesOn = picturesBox.checked;
-  if (!ui.picturesOn) abortImageJobs();
-  persistSettings();
-});
-applyTheme(ui.pageSettings.theme);
+applyTheme("dark");
 applyVoiceSilence(ui.pageSettings.voiceSilenceMs);
 paintThinking();
 paintModelMode();
-paintThemeChoice();
 paintWebSearch();
 byId("webSearch").onclick = () => setWebSearch(!ui.webSearch);
 whenSpeechStarts((text) => {
@@ -242,12 +196,7 @@ document.getElementById("memClear")?.addEventListener("click", () => {
   }, 3000);
 });
 void refreshMemoryRing();
-byId("btnIo").onclick = () => setSettingsOpen(true);
-byId("btnCloseIo").onclick = () => setSettingsOpen(false);
-byId("overlay").onclick = () => {
-  setSettingsOpen(false);
-  setSourcesOpen(false);
-};
+byId("overlay").onclick = () => setSourcesOpen(false);
 byId("sourcesClose").onclick = () => setSourcesOpen(false);
 byId("btnAttach").onclick = () => byId<HTMLInputElement>("attach").click();
 byId<HTMLInputElement>("attach").onchange = (event) => {
@@ -256,7 +205,6 @@ byId<HTMLInputElement>("attach").onchange = (event) => {
 };
 byId("fileClear").onclick = () => cancelAttach();
 bootSplash();
-paintModelTips();
 composer.addEventListener("paste", (event) => {
   const items = event.clipboardData?.items;
   if (!items) return;

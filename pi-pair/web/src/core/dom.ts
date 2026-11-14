@@ -1,7 +1,5 @@
 export const els = {} as {
   composer: HTMLTextAreaElement;
-  enterBox: HTMLInputElement;
-  picturesBox: HTMLInputElement;
   voiceSend: HTMLElement | null;
   voiceEnd: HTMLElement | null;
   memoryButton: HTMLElement | null;

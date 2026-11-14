@@ -54,7 +54,6 @@ interface Ui {
   followNextId: number;
   voiceUtterance: UtteranceHold | null;
   chatId: string;
-  pinnedInfo: HTMLElement | null;
   compactAt: number;
   compactBusyAt: number;
   ringCompactions: number;
@@ -118,7 +117,6 @@ export const ui: Ui = {
   followNextId: 1,
   voiceUtterance: null,
   chatId: storedId("session", CHAT_KEY),
-  pinnedInfo: null,
   compactAt: 0.7,
   compactBusyAt: 0.5,
   ringCompactions: 0,
