@@ -212,49 +212,57 @@ if (document.querySelector(".info-dot, .info-pop, .set-foot, [data-theme-choice]
 if (!document.querySelector('.think-btn[data-think="low"]')) {
   throw new Error("the composer lost Low");
 }
-const modelSeg = document.getElementById("modelSeg");
+const modelTrigger = document.getElementById("modelTrigger");
+const modelList = document.getElementById("modelList");
+const modelMenu = document.getElementById("modelMenu");
 const effortSeg = document.querySelector(".think-set");
 const search = document.getElementById("webSearch");
-const pills = [...document.querySelectorAll(".composer-group")];
-const options = document.querySelector(".composer-options");
-if (!modelSeg || modelSeg.getAttribute("role") !== "radiogroup") {
-  throw new Error("model segmented picker is missing");
+const composer = document.querySelector(".composer");
+const below = document.querySelector(".composer-links");
+if (!modelTrigger || !modelList || !modelMenu || modelTrigger.getAttribute("aria-haspopup") !== "menu") {
+  throw new Error("model dropdown is missing");
 }
-if (
-  pills.length !== 2 ||
-  !modelSeg.classList.contains("composer-group") ||
-  !effortSeg ||
-  !effortSeg.classList.contains("composer-group") ||
-  pills[0] !== modelSeg ||
-  pills[1] !== effortSeg
-) {
-  throw new Error("model and effort are not separate composer pills");
+if (modelList.hidden !== true || modelTrigger.getAttribute("aria-expanded") !== "false") {
+  throw new Error("model menu starts open");
 }
-if (
-  !options ||
-  options.getAttribute("aria-label") !== "Reply options" ||
-  !options.contains(modelSeg) ||
-  !options.contains(effortSeg) ||
-  !options.contains(search) ||
-  modelSeg.contains(effortSeg) ||
-  modelSeg.contains(search) ||
-  effortSeg.contains(search) ||
-  modelSeg.nextElementSibling !== effortSeg ||
-  effortSeg.nextElementSibling !== search
-) {
-  throw new Error("model, effort, and search are not separate controls in the composer");
+if (document.getElementById("modelCurrent").textContent !== "Auto") {
+  throw new Error("model button does not show Auto");
 }
-if (document.querySelectorAll(".model-seg [data-mode]").length !== 3) {
-  throw new Error("model picker needs three choices");
+const modelOptions = [...modelList.querySelectorAll(".model-option")];
+if (modelOptions.length !== 3 || modelList.querySelectorAll("[data-mode]").length !== 3) {
+  throw new Error("model menu needs Auto, Flash, and Pro only");
 }
-if (document.querySelector(".model-seg .info-dot") || document.querySelector(".model-seg-thumb")) {
+if (modelMenu.querySelector(".info-dot") || document.querySelector(".model-seg-thumb")) {
   throw new Error("model picker still has info icons or a sliding thumb");
 }
-document.querySelector('.model-seg [data-mode="pro"]').click();
-if (modelSeg.getAttribute("data-active") !== "pro") throw new Error("Pro was not selected");
-if (document.querySelector('.model-seg [data-mode="pro"]').getAttribute("aria-checked") !== "true") {
-  throw new Error("Pro radio was not checked");
+if (composer.contains(effortSeg) || !below.contains(effortSeg) || composer.contains(modelList) !== true) {
+  throw new Error("effort stayed in the composer or the model menu left it");
 }
+if (!composer.contains(search) || below.contains(search) || effortSeg.contains(search) || modelMenu.contains(search)) {
+  throw new Error("search is not its own composer toggle");
+}
+if (modelTrigger.closest(".composer-tools") !== document.querySelector(".composer-tools")) {
+  throw new Error("model dropdown is not beside the composer tools");
+}
+modelTrigger.click();
+if (modelList.hidden || modelTrigger.getAttribute("aria-expanded") !== "true") {
+  throw new Error("model menu did not open");
+}
+document.dispatchEvent(new window.Event("click", { bubbles: true }));
+if (!modelList.hidden) throw new Error("outside click left the model menu open");
+modelTrigger.click();
+document.querySelector('.model-option[data-mode="pro"]').click();
+if (modelList.hidden !== true) throw new Error("choosing a model left the menu open");
+if (document.getElementById("modelCurrent").textContent !== "Pro") throw new Error("Pro was not selected");
+if (document.querySelector('.model-option[data-mode="pro"]').getAttribute("aria-checked") !== "true") {
+  throw new Error("Pro check was not set");
+}
+if (document.querySelector('.model-option[data-mode="auto"]').getAttribute("aria-checked") !== "false") {
+  throw new Error("Auto stayed checked");
+}
+modelTrigger.click();
+modelMenu.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+if (!modelList.hidden) throw new Error("Escape left the model menu open");
 setModelMode("auto");
 document.querySelector('.think-btn[data-think="low"]').click();
 if (!document.querySelector('.think-btn[data-think="low"]').classList.contains("on")) {
@@ -374,13 +382,16 @@ if (/html,\s*body\s*\{[^}]*scrollbar-width:\s*none/s.test(css)) {
   throw new Error("the page scrollbar was hidden");
 }
 if (!css.includes(".composer-group") || !/\.composer-group\s*\{[^}]*height:\s*32px/s.test(css)) {
-  throw new Error("composer option group is not 32px tall");
+  throw new Error("effort pill is not 32px tall");
 }
-if (!/\.composer-options\s*\{[^}]*gap:\s*6px/s.test(css) || !/\.composer-options\s*\{[^}]*flex-wrap:\s*wrap/s.test(css)) {
-  throw new Error("model and effort pills are not separate wrapping controls");
+if (!/\.composer-links\s*\{[^}]*flex-wrap:\s*wrap/s.test(css) || !/\.composer-links\s*\{[^}]*gap:\s*8px/s.test(css)) {
+  throw new Error("the row under the composer does not wrap");
 }
 if (!/\.search-btn\s*\{[^}]*height:\s*32px/s.test(css) || !/\.search-btn\s*\{[^}]*border-radius:\s*999px/s.test(css)) {
   throw new Error("search toggle does not match the composer pill");
+}
+if (!/\.model-pop\s*\{[^}]*border-radius:\s*14px/s.test(css) || !/\.composer-pill\s*\{[^}]*height:\s*32px/s.test(css)) {
+  throw new Error("model menu or link pills lost their shape");
 }
 if (css.includes(".model-seg-thumb") || css.includes(".composer-footer")) {
   throw new Error("removed footer picker styles are still present");
@@ -400,9 +411,10 @@ if (page.includes('speakText("Thinking")')) throw new Error("thinking is spoken 
 const docs = document.getElementById("apiDocsLink");
 const repo = document.getElementById("repoLink");
 const links = docs && docs.closest(".composer-links");
-const linksPill = docs && docs.closest(".composer-pill");
+const linkNav = docs && docs.closest("nav");
 if (
   !docs ||
+  !docs.classList.contains("composer-pill") ||
   docs.getAttribute("href") !== "/docs" ||
   docs.getAttribute("target") !== "_blank" ||
   docs.getAttribute("rel") !== "noopener noreferrer" ||
@@ -414,6 +426,8 @@ if (
 }
 if (
   !repo ||
+  !repo.classList.contains("composer-pill") ||
+  repo.parentElement !== docs.parentElement ||
   repo.getAttribute("href") !== "https://github.com/akashnaren/raspberry-pi-fun" ||
   repo.getAttribute("target") !== "_blank" ||
   repo.getAttribute("rel") !== "noopener noreferrer" ||
@@ -425,23 +439,28 @@ if (
 }
 if (
   !links ||
-  !linksPill ||
-  links.getAttribute("aria-label") !== "OpenPi links" ||
+  !linkNav ||
+  linkNav.getAttribute("aria-label") !== "OpenPi links" ||
   !links.closest(".composer-wrap") ||
-  linksPill.querySelectorAll("a").length !== 2 ||
-  !linksPill.querySelector(".composer-pill-div") ||
+  linkNav.querySelectorAll("a").length !== 2 ||
+  document.querySelector(".composer-pill-div") ||
+  repo.closest(".composer-pill") !== repo ||
+  docs.closest(".composer-pill") !== docs ||
   document.querySelector(".composer-footer") ||
   document.getElementById("paperLink") ||
   document.querySelector(".set-foot") ||
   /research paper/i.test(html)
 ) {
-  throw new Error("composer links pill is misplaced or a research paper link is still in the page");
+  throw new Error("composer links are still one shared pill or a research paper link is still in the page");
 }
 if (links.previousElementSibling?.classList.contains("composer") !== true) {
-  throw new Error("link pill is not directly below the chat input");
+  throw new Error("link row is not directly below the chat input");
 }
-if (modelSeg.closest(".composer-bar") !== document.querySelector(".composer-bar")) {
+if (modelTrigger.closest(".composer-bar") !== document.querySelector(".composer-bar")) {
   throw new Error("model picker left the composer toolbar");
+}
+if (effortSeg.closest(".composer") ) {
+  throw new Error("effort pill is still inside the composer");
 }
 if (
   !css.includes(".composer-links") ||

@@ -34,17 +34,74 @@ export function paintThinking(): void {
   });
 }
 
+function asButton(node: EventTarget | null): HTMLButtonElement | null {
+  if (!node || typeof node !== "object" || !("tagName" in node)) return null;
+  if ((node as Element).tagName !== "BUTTON") return null;
+  return node as HTMLButtonElement;
+}
+
+export function modelLabel(mode: string): string {
+  if (mode === "flash") return "Flash";
+  if (mode === "pro") return "Pro";
+  return "Auto";
+}
+
 export function paintModelMode(): void {
-  const seg = document.getElementById("modelSeg");
-  if (seg) seg.setAttribute("data-active", ui.modelMode);
-  document.querySelectorAll(".model-seg [data-mode]").forEach((node) => {
+  const label = modelLabel(ui.modelMode);
+  const current = document.getElementById("modelCurrent");
+  if (current) current.textContent = label;
+  const trigger = document.getElementById("modelTrigger");
+  if (trigger) trigger.setAttribute("aria-label", "Model: " + label);
+  document.querySelectorAll(".model-option[data-mode]").forEach((node) => {
     const on = node.getAttribute("data-mode") === ui.modelMode;
     node.classList.toggle("on", on);
-    if (node.getAttribute("role") === "radio") {
-      node.setAttribute("aria-checked", on ? "true" : "false");
-      (node as HTMLButtonElement).tabIndex = on ? 0 : -1;
-    }
+    node.setAttribute("aria-checked", on ? "true" : "false");
   });
+}
+
+export function modelMenuOpen(): boolean {
+  return document.getElementById("modelTrigger")?.getAttribute("aria-expanded") === "true";
+}
+
+export function setModelMenuOpen(open: boolean): void {
+  const list = document.getElementById("modelList");
+  const trigger = document.getElementById("modelTrigger");
+  if (!list || !trigger) return;
+  list.hidden = !open;
+  trigger.setAttribute("aria-expanded", open ? "true" : "false");
+  if (!open) return;
+  const selected = list.querySelector('[aria-checked="true"]');
+  const target = asButton(selected ?? list.querySelector(".model-option"));
+  target?.focus();
+}
+
+export function closeModelMenu(focusTrigger: boolean): void {
+  const wasOpen = modelMenuOpen();
+  setModelMenuOpen(false);
+  if (!focusTrigger || !wasOpen) return;
+  asButton(document.getElementById("modelTrigger"))?.focus();
+}
+
+export function moveModelMenu(key: string): void {
+  const options = [...document.querySelectorAll(".model-option")].flatMap((node) => {
+    const button = asButton(node);
+    return button ? [button] : [];
+  });
+  if (!options.length) return;
+  const current = options.findIndex((node) => node === document.activeElement);
+  if (key === "Home") {
+    options[0]?.focus();
+    return;
+  }
+  if (key === "End") {
+    options[options.length - 1]?.focus();
+    return;
+  }
+  const delta = key === "ArrowDown" ? 1 : -1;
+  const start = current === -1
+    ? (key === "ArrowDown" ? 0 : options.length - 1)
+    : (current + delta + options.length) % options.length;
+  options[start]?.focus();
 }
 
 export function setThinking(next: string): void {

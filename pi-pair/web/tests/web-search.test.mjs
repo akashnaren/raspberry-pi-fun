@@ -54,12 +54,15 @@ if (settings.includes("webSearch") || settings.includes("web_search")) {
 }
 
 const scss = fs.readFileSync(new URL("../src/styles/main.scss", import.meta.url), "utf8");
-if (!scss.includes(".composer-group") || !scss.includes(".search-btn") || !scss.includes(".composer-options")) {
+if (!scss.includes(".search-btn") || !scss.includes(".model-trigger")) {
   throw new Error("search control has no style");
 }
-if (/<div class="composer-group"[\s\S]*id="webSearch"/.test(html)) {
-  throw new Error("search is still inside the combined composer pill");
-}
+const searchAt = html.indexOf('id="webSearch"');
+const composerAt = html.indexOf('class="composer"');
+const linksAt = html.indexOf('class="composer-links"');
+const effortAt = html.indexOf('class="composer-group think-set"');
+if (searchAt < composerAt || searchAt > linksAt) throw new Error("search left the composer");
+if (effortAt < linksAt) throw new Error("effort is still inside the composer");
 if (/rgba\(126,\s*200,\s*184/.test(scss.slice(scss.indexOf(".search-btn"), scss.indexOf(".search-btn") + 500))) {
   throw new Error("search still uses the teal fill");
 }
